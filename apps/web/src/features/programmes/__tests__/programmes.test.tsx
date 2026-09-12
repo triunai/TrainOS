@@ -5,6 +5,7 @@ import { PROGRAMME_LEADING_CHANGE } from "@trainos/contract";
 import { ProgrammesListPage } from "../ProgrammesListPage";
 import { ProgrammeDetailPage } from "../ProgrammeDetailPage";
 import { nearestWindow, poolRows } from "../availability";
+import { currentPrimaries } from "@/shared/components/kit";
 import { renderScreen } from "./render-harness";
 
 const DETAIL_ROUTE = "/training/programmes/:programmeRef";
@@ -106,6 +107,19 @@ describe("M06-S02 · programme detail", () => {
 
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText("Could not load this programme")).toBeInTheDocument();
+  });
+});
+
+describe("the one-solid-primary rule", () => {
+  it("claims exactly one primary for the catalogue owner and none for Sales", async () => {
+    const sales = renderScreen(<ProgrammeDetailPage />, { path: detailPath, route: DETAIL_ROUTE });
+    await screen.findByRole("heading", { name: "Leading Through Change" });
+    expect(currentPrimaries()).toHaveLength(0);
+    sales.unmount();
+
+    renderScreen(<ProgrammeDetailPage />, { path: detailPath, route: DETAIL_ROUTE, role: "ADMIN" });
+    await screen.findByRole("button", { name: "Edit programme" });
+    expect(new Set(currentPrimaries())).toEqual(new Set(["Edit programme"]));
   });
 });
 
