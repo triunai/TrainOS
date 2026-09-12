@@ -17,7 +17,8 @@
 
 import { Link } from "react-router-dom";
 import { APPROVAL_AURORA } from "@trainos/contract";
-import { Breadcrumb, StatusChip } from "@/shared/components/kit";
+import { StatusChip } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { navPath } from "@/shared/config/nav";
 import { APPROVALS_PATH, approvalPath } from "@/features/approvals";
 
@@ -232,12 +233,10 @@ const NOTES: { label: string; value: string }[] = [
 ];
 
 export function DemoIndex() {
+  useBreadcrumb([{ label: "Home", href: "/" }, { label: "Demo script" }]);
+
   return (
     <div className="flex flex-col gap-6 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Home", href: "/" }, { label: "Demo script" }]} />
-      </div>
-
       <header className="flex flex-col gap-2 px-5">
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="text-[22px] font-semibold tracking-[-0.015em]">Demo script</h1>

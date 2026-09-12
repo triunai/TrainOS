@@ -21,7 +21,6 @@ import type { ApprovalRequest, FilterClause, UrgencyGroup } from "@trainos/contr
 import {
   AIChip,
   AutonomyChip,
-  Breadcrumb,
   BulkActionBar,
   DataTable,
   EmptyState,
@@ -41,6 +40,7 @@ import {
   type FilterChipModel,
   type RowGroup,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { isDomainError, readableMessage, type ApiError } from "@/shared/api";
 import {
   useApprovalInbox,
@@ -97,6 +97,10 @@ function formatMedian(seconds: number): string {
 
 export function ApprovalInbox() {
   const navigate = useNavigate();
+
+  /* The top bar owns the path. CLAUDE.md: the breadcrumb owns the path and
+     RecordHeader owns the identity — neither is duplicated inside the card. */
+  useBreadcrumb([{ label: "Home", href: "/" }, { label: "Approvals" }]);
 
   const views = useApprovalViews();
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
@@ -274,11 +278,7 @@ export function ApprovalInbox() {
 
   const header = (
     <>
-      <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Home", href: "/" }, { label: "Approvals" }]} />
-      </div>
-
-      <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-4">
+      <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-5">
         <h1 className="text-[22px] font-semibold tracking-[-0.015em]">Approvals</h1>
         {typeof inbox.data?.page.total === "number" ? (
           <StatusChip tone="info">Assigned to me · {inbox.data.page.total}</StatusChip>

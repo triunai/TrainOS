@@ -17,7 +17,6 @@ import { useNavigate } from "react-router-dom";
 import type { AgentDaily, DashboardMetric } from "@trainos/contract";
 import {
   AutonomyChip,
-  Breadcrumb,
   CostBudgetBar,
   DataTable,
   DateText,
@@ -31,28 +30,21 @@ import {
   PrimaryButton,
   SecondaryButton,
   StatusChip,
+  formatPeriod,
   humanise,
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { isDomainError } from "@/shared/api";
 import { apiErrorFromThrown } from "./client";
 import { navPath } from "@/shared/config/nav";
 import { APPROVALS_PATH } from "@/features/approvals";
 import { useExecutiveDashboard, useProposalsVsWon } from "./api";
 
-/**
- * "2026-06" → "Jun". The series is keyed by period, and `DateText` renders a
- * full date — "01 Jun 2026" six times down a chart axis is noise, not an axis.
- */
-function monthLabel(period: string): string {
-  const [year, month] = period.split("-");
-  const date = new Date(Number(year), Number(month) - 1, 1);
-  return date.toLocaleString("en-MY", { month: "short" });
-}
-
 /** The period the demo story runs in. */
 const PERIOD = "2026-11";
+const PERIOD_LABEL = "November 2026";
 const CHART_MONTHS = 6;
 
 /**
@@ -106,6 +98,8 @@ function Section({
 export function ExecutiveDashboard() {
   const navigate = useNavigate();
 
+  useBreadcrumb([{ label: "Home", href: "/" }, { label: "Dashboard" }, { label: PERIOD_LABEL }]);
+
   const dashboard = useExecutiveDashboard(PERIOD);
   const chart = useProposalsVsWon(CHART_MONTHS);
 
@@ -121,14 +115,19 @@ export function ExecutiveDashboard() {
         return {
           label: metric.label,
           value: metric.value,
-          /* DECISIONS §4: the hours-saved tile must render its basis. The kit
-             writes that sentence itself when `estimate` is set, so passing the
-             fixture's identical `secondary` as well would print it twice. */
+          /* DECISIONS §4: the hours-saved tile must render its basis and may
+             not show a bare number. `estimate` takes the SERVER's sentence, so
+             the caveat can be reworded without a kit release — and passing it
+             here rather than as `sub` is what stops the line printing twice. */
           ...(metric.estimate === true
-            ? { estimate: true }
+            ? { estimate: metric.secondary ?? true }
             : metric.secondary
               ? { sub: metric.secondary }
               : {}),
+          /* The movement, with the server's severity deciding its ink. A rise
+             is not bad news by itself — UP on pipeline and UP on overdue
+             receivables are opposite facts, and only the server knows which. */
+          ...(metric.delta ? { delta: metric.delta } : {}),
           ...(to ? { onDrill: () => navigate(to) } : {}),
         };
       }),
@@ -172,14 +171,8 @@ export function ExecutiveDashboard() {
 
   const header = (
     <>
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[{ label: "Home", href: "/" }, { label: "Dashboard" }, { label: "November 2026" }]}
-        />
-      </div>
-
-      <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-4">
-        <h1 className="text-[22px] font-semibold tracking-[-0.015em]">November 2026</h1>
+      <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-5">
+        <h1 className="text-[22px] font-semibold tracking-[-0.015em]">{PERIOD_LABEL}</h1>
         <StatusChip tone="info">Company-wide</StatusChip>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <SecondaryButton onClick={() => navigate(navPath("Reports"))}>
@@ -271,7 +264,7 @@ export function ExecutiveDashboard() {
                 {series.map((point) => (
                   <li key={point.period} className="flex items-center gap-3">
                     <span className="w-8 shrink-0 font-mono text-[11px] text-ink-muted">
-                      {monthLabel(point.period)}
+                      {formatPeriod(point.period)}
                     </span>
                     {/* Capped, so the pair reads as a chart rather than as six
                         rules running the width of the column. */}

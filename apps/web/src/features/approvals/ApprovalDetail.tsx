@@ -19,7 +19,6 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { ApprovalDecision, DiffLine } from "@trainos/contract";
 import {
   AIChip,
-  Breadcrumb,
   CitationChip,
   DangerButton,
   DateText,
@@ -39,6 +38,7 @@ import {
   humanise,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { isDomainError } from "@/shared/api";
 import { useApproval, useApprovalAudit, useApprovalInbox, useDecideApproval } from "./api";
 import { apiErrorFromThrown } from "./client";
@@ -93,6 +93,14 @@ export function ApprovalDetail() {
   const [armed, setArmed] = useState<ApprovalDecision | null>(null);
   const [note, setNote] = useState("");
 
+  /* The trail names the record; RecordHeader names the subject. The two say
+     different things on purpose, so neither repeats the other. */
+  useBreadcrumb([
+    { label: "Home", href: "/" },
+    { label: "Approvals", href: APPROVALS_PATH },
+    { label: approval.data?.ref ?? ref },
+  ]);
+
   const detail = approval.data;
   const decided = decide.data;
   const pending = detail?.status === "PENDING" && decided === undefined;
@@ -130,22 +138,9 @@ export function ApprovalDetail() {
     setArmed(null);
   };
 
-  const breadcrumb = (
-    <div className="px-5 pt-4">
-      <Breadcrumb
-        items={[
-          { label: "Home", href: "/" },
-          { label: "Approvals", href: APPROVALS_PATH },
-          { label: detail?.ref ?? ref },
-        ]}
-      />
-    </div>
-  );
-
   if (approval.isPending) {
     return (
       <div className="flex flex-col">
-        {breadcrumb}
         <LoadingState rows={8} label="Loading the approval" className="px-5" />
       </div>
     );
@@ -159,7 +154,6 @@ export function ApprovalDetail() {
 
     return (
       <div className="flex flex-col">
-        {breadcrumb}
         <ErrorState
           title="That approval could not be opened"
           {...(failure ? { error: failure } : {})}
@@ -239,8 +233,6 @@ export function ApprovalDetail() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {breadcrumb}
-
       <RecordHeader
         title={detail.subject}
         recordRef={detail.ref}
