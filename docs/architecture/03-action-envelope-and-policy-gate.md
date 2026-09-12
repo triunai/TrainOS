@@ -37,8 +37,13 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | C14 | `approver_role` comparison or a permission check | keep the role comparison; it is a data match, not an authorisation decision | `sb-tenancy` ruled, §4.1 |
 | C15 | `app.pick_role_holder` and `sb-events`' `app.role_holders` are the same lookup | one function, `app.role_holders(tenant, roles[])`, owned by `sb-tenancy` because it reads their membership tables; both lanes wrap it | proposed, see §2.5 |
 | C16 | `ActionRequested` named in contract §3, absent from §14 | emitted by `perform_action` before dispatch; `sb-events` §1.7 is the merged event list both lanes implement | `sb-events` |
+| C17 | Money columns `_minor` or `_sen` | **`_sen`** throughout, per R-PROV and 01's own columns (`value_sen`, `sell_price_sen`, `floor_price_sen`) | lead's ruling |
+| C18 | One `gated_by` cannot express an edge three action types authorise | `gated_by` is `text[]`; the trigger checks membership | `sb-erd` found it, lead ruled R3 |
+| C19 | Collections trading hold had no action type | 22nd type `ACCOUNT_TRADING_HOLD`, MD-gated under `FIN-05` | lead's ruling R3, closes `sb-erd` Q24 |
+| C20 | Where `state_transitions` lives | `app` — it is gate machinery, not domain data | `sb-erd` proposed, taken |
+| C21 | Worker status vocabulary `SETTLED`/`SUCCEEDED` | worker sends `SUCCEEDED`/`FAILED`; the gate stores `SETTLED`/`DEAD_LETTERED` | `sb-events` owns the caller |
 | C12 | Jury sampling by event subscription or by cron | cron, 5-minute sweep | `sb-events` conceded |
-| C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_minor`, the one stable money column per gated target | `sb-erd` |
+| C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_sen`, the one stable money column per gated target | `sb-erd` |
 
 **C2 is not closed and this document may be wrong about it.** `01-domain-model.md` and
 `02-tenancy-auth-rls.md` are committed on `public`. Migration 001 is committed on `core`,
@@ -244,7 +249,7 @@ answer in §10. The other half is a trigger on `autonomy_grants` (§1.2), becaus
 ceiling must also be enforced when a *grant* is raised rather than when the catalogue
 is seeded.
 
-Seed values for the 19 types are in §3, which doubles as the seed script.
+Seed values for all 22 types are in §3, which doubles as the seed script.
 
 ### 1.2 `core.autonomy_grants` — agent × action type × level
 
@@ -261,7 +266,7 @@ create table core.autonomy_grants (
                     check (approver_role in ('SALES_MANAGER','OPS','FINANCE','MD','ADMIN')),
 
   -- the "value < RM 15k AND repeat client" band from DECISIONS.md §1
-  value_threshold_minor bigint,          -- AUTONOMOUS applies only below this; null = no band
+  value_threshold_sen bigint,          -- AUTONOMOUS applies only below this; null = no band
   currency          char(3) not null default 'MYR',
 
   min_confidence    numeric(4,3) not null default 0.700
@@ -270,7 +275,11 @@ create table core.autonomy_grants (
   paused            boolean not null default false,
   paused_at         timestamptz,
   paused_reason     text,                                  -- 'EVAL_REGRESSION', 'BUDGET_CAP', …
-  resume_condition  jsonb,                                 -- {metric, op, value}
+  resume_condition  jsonb                                  -- {metric, op, value}
+                    constraint autonomy_resume_shape check (
+                      resume_condition is null
+                      or (resume_condition ? 'metric' and resume_condition ? 'op'
+                          and resume_condition ? 'value')),
 
   -- promotion metadata (DECISIONS.md §1 "Promotion condition" column)
   promotion_condition       jsonb,       -- {windowDays, metric, op, value, extraConditions[]}
@@ -285,7 +294,7 @@ create table core.autonomy_grants (
   updated_at        timestamptz not null default now(),
 
   constraint autonomy_grants_threshold_needs_autonomous check (
-    value_threshold_minor is null or level = 'AUTONOMOUS'
+    value_threshold_sen is null or level = 'AUTONOMOUS'
   )
 );
 
@@ -293,7 +302,7 @@ create table core.autonomy_grants (
 -- touches the heap
 create unique index autonomy_grants_lookup
   on core.autonomy_grants (tenant_id, agent_id, action_type)
-  include (level, min_confidence, value_threshold_minor, approver_role, paused);
+  include (level, min_confidence, value_threshold_sen, approver_role, paused);
 ```
 
 The ceiling is enforced by trigger because it spans two tables:
@@ -436,7 +445,7 @@ create table core.action_requests (
   payload            jsonb not null default '{}'::jsonb,
 
   -- derived server-side in step 2, never taken from payload
-  value_minor        bigint,
+  value_sen        bigint,
   currency           char(3),
 
   requested_by_kind  text not null check (requested_by_kind in ('HUMAN','AGENT','SYSTEM','CLIENT')),
@@ -586,7 +595,7 @@ create table core.approval_requests (
 
   subject            text not null,                        -- 'Send proposal · Aurora Manufacturing Sdn Bhd'
   target_ref         text,
-  value_minor        bigint,
+  value_sen        bigint,
   currency           char(3),
   margin_rate        numeric(5,4),                         -- sb-money supplies; displayed only
 
@@ -638,7 +647,19 @@ create table core.approval_requests (
   ),
   constraint approval_note_required check (
     decision is null or decision = 'APPROVE' or nullif(btrim(decision_note), '') is not null
-  )
+  ),
+
+  -- R-JSONB: every jsonb column asserts the keys its consumers read, so a shape
+  -- error fails at write time rather than rendering an empty panel on M02-S02
+  constraint approval_recommendation_shape check (
+    recommendation is null or (recommendation ? 'verdict' and recommendation ? 'rationale')
+  ),
+  constraint approval_risk_shape check (
+    risk is null or (risk ? 'level' and risk ? 'note')
+  ),
+  constraint approval_evidence_shape check (jsonb_typeof(evidence) = 'array'),
+  constraint approval_deviations_shape check (jsonb_typeof(deviations) = 'array'),
+  constraint approval_diff_shape check (jsonb_typeof(diff) = 'array')
 );
 
 -- the M02-S01 inbox, grouped by urgency: role queue ordered by due date
@@ -797,7 +818,12 @@ create table core.suggested_drafts (
   expires_at        timestamptz not null default now() + interval '7 days',
   created_at        timestamptz not null default now(),
 
-  unique (tenant_id, ref)
+  unique (tenant_id, ref),
+  -- R-JSONB
+  constraint drafts_provenance_shape check (
+    provenance ? 'origin' and provenance ? 'generatedAt'
+  ),
+  constraint drafts_planned_effects_shape check (jsonb_typeof(planned_effects) = 'array')
 );
 
 create index suggested_drafts_open
@@ -836,7 +862,7 @@ compliance **rule** ids in §17. Two registries on one prefix is a defect.
 | `FIN-02` | `INVOICE_PUSH` | always | `FINANCE` | 240m | `MD` @360m | derived |
 | `FIN-03` | `REMINDER_SEND` | `payload.stage in (REMINDER_1, REMINDER_2)` | `FINANCE` | 240m | — | `API.md` |
 | `FIN-04` | `REMINDER_SEND` | `payload.stage = REMINDER_3` | `FINANCE` | 240m | `MD` @360m | `DECISIONS` §1 ("always human") |
-| `FIN-05` | `REMINDER_SEND` | `payload.stage = TRADING_HOLD` | `MD` | 480m | — | contract §9 ladder |
+| `FIN-05` | `ACCOUNT_TRADING_HOLD` | always | `MD` | 480m | — | contract §9 ladder, ruling R3 |
 | `FIN-06` | `PAYMENT_RECORD` | recorded amount ≠ outstanding (write-off or overpayment) | `FINANCE` | 240m | — | derived |
 | `FIN-07` | `BUDGET_CAP_RAISE` | always | `MD` | 480m | — | contract §17 |
 | `CMP-01` | `ATTENDANCE_APPROVE` | always (lock is one-way) | `OPS` | 240m | — | `DECISIONS` §1 |
@@ -887,7 +913,7 @@ create table core.jury_configs (
   tiers                   text[] not null default '{STRONG_1,STRONG_2,STRONG_3}',
   sample_rate             numeric(4,3) default 0.050,
   trigger_min_confidence  numeric(4,3),                     -- 0.70 per DECISIONS §2
-  trigger_max_value_minor bigint,                           -- 5000000 = RM 50,000
+  trigger_max_value_sen bigint,                           -- 5000000 = RM 50,000
   trigger_first_of_kind   boolean not null default false,
   active                  boolean not null default true,
   primary key (tenant_id, action_type),
@@ -913,7 +939,7 @@ create table core.jury_verdicts (
   opinions            jsonb not null default '[]'::jsonb,       -- [{tier, verdict, confidence, rationale}]
   verdict             text check (verdict in ('AGREE','DISAGREE','INCONCLUSIVE')),
   dissenters          jsonb not null default '[]'::jsonb,
-  cost_minor          bigint,
+  cost_sen          bigint,
 
   job_id              uuid,
   status              text not null default 'PENDING'
@@ -1220,23 +1246,23 @@ begin
     when 'PROPOSAL' then
       -- sb-erd: one stable money column per gated target, frozen by an
       -- immutability rule at the point the gate reads it
-      select p.value_minor, p.currency into v_amount, v_currency
+      select p.value_sen, p.currency into v_amount, v_currency
       from core.proposals p
       where p.tenant_id = p_tenant and p.id = p_target_id;
 
     when 'QUOTATION' then
       -- sb-money persists these; the gate compares, it never computes
-      select q.sell_price_minor, q.currency into v_amount, v_currency
+      select q.sell_price_sen, q.currency into v_amount, v_currency
       from core.quotations q
       where q.tenant_id = p_tenant and q.id = p_target_id;
 
     when 'INVOICE' then
-      select i.total_minor, i.currency into v_amount, v_currency
+      select i.total_sen, i.currency into v_amount, v_currency
       from core.invoices i
       where i.tenant_id = p_tenant and i.id = p_target_id;
 
     when 'HRDC_CLAIM' then
-      select h.claim_value_minor, h.currency into v_amount, v_currency
+      select h.claim_value_sen, h.currency into v_amount, v_currency
       from core.hrdc_packets h
       where h.tenant_id = p_tenant and h.engagement_id = p_target_id;
 
@@ -1266,17 +1292,17 @@ Autonomous for that band"):
   v_value := app.action_value(p_type, v_tenant, v_target_id, p_payload);
 
   if v_level = 'AUTONOMOUS'
-     and v_grant.value_threshold_minor is not null
-     and coalesce((v_value->>'amount')::bigint, 0) > v_grant.value_threshold_minor then
+     and v_grant.value_threshold_sen is not null
+     and coalesce((v_value->>'amount')::bigint, 0) > v_grant.value_threshold_sen then
     v_level := 'ACT_WITH_APPROVAL';
     v_trace := v_trace || jsonb_build_object(
       'step', 2, 'input', 'value', 'valueMinor', (v_value->>'amount')::bigint,
-      'thresholdMinor', v_grant.value_threshold_minor,
+      'thresholdMinor', v_grant.value_threshold_sen,
       'outcome', 'DOWNGRADED_THRESHOLD_EXCEEDED');
   else
     v_trace := v_trace || jsonb_build_object(
       'step', 2, 'input', 'value', 'valueMinor', (v_value->>'amount')::bigint,
-      'thresholdMinor', v_grant.value_threshold_minor, 'outcome', 'WITHIN_BAND');
+      'thresholdMinor', v_grant.value_threshold_sen, 'outcome', 'WITHIN_BAND');
   end if;
 ```
 
@@ -1314,13 +1340,13 @@ microseconds.
 
 **`belowFloorPrice`** — a comparison, not a calculation. `sb-money` resolved the §6
 fixture into two independent floors, and `sb-erd` persists all of them on the quotation:
-`absolute_floor_minor` from the pricing tier, `margin_floor_minor` computed from cost,
-`binding_floor` naming which one binds, and `floor_price_minor` holding the binding
+`absolute_floor_sen` from the pricing tier, `margin_floor_sen` computed from cost,
+`binding_floor` naming which one binds, and `floor_price_sen` holding the binding
 value. The gate reads only the last of those. Which floor binds is a pricing question
 and it is not the gate's to answer.
 
 ```sql
-select q.sell_price_minor < q.floor_price_minor
+select q.sell_price_sen < q.floor_price_sen
   into v_below_floor
 from core.quotations q
 where q.tenant_id = v_tenant and q.id = v_quotation_id;
@@ -1336,12 +1362,12 @@ select exists (
     and i.organisation_id = v_org_id
     and i.status in ('SENT','PARTIALLY_PAID','OVERDUE')
     and i.due_at < current_date
-    and i.outstanding_minor > 0
+    and i.outstanding_sen > 0
 ) into v_overdue;
 
 -- needed from sb-erd:
 create index invoices_overdue on core.invoices (tenant_id, organisation_id, due_at)
-  where outstanding_minor > 0 and status in ('SENT','PARTIALLY_PAID','OVERDUE');
+  where outstanding_sen > 0 and status in ('SENT','PARTIALLY_PAID','OVERDUE');
 ```
 
 **`attendanceLocked`**
@@ -1550,8 +1576,8 @@ because it consumes the same three numbers:
   if found and v_jury.mode = 'ESCALATE' and v_level = 'AUTONOMOUS' then
     if (v_jury.trigger_min_confidence is not null
         and coalesce(p_confidence, 0) < v_jury.trigger_min_confidence)
-       or (v_jury.trigger_max_value_minor is not null
-        and coalesce((v_value->>'amount')::bigint, 0) > v_jury.trigger_max_value_minor)
+       or (v_jury.trigger_max_value_sen is not null
+        and coalesce((v_value->>'amount')::bigint, 0) > v_jury.trigger_max_value_sen)
        or (v_jury.trigger_first_of_kind and v_first_of_kind) then
       v_level := 'ACT_WITH_APPROVAL';               -- blocks autonomy, not the transaction
       v_jury_triggered := true;
@@ -1669,7 +1695,7 @@ separate canonicaliser is needed.
 ```sql
   insert into core.action_requests (
     tenant_id, ref, action_type, target_ref, target_entity, target_id, payload,
-    value_minor, currency, requested_by_kind, requested_by_id, requested_by_role,
+    value_sen, currency, requested_by_kind, requested_by_id, requested_by_role,
     agent_run_id, confidence, reasoning, evidence,
     context_flags, autonomy_level, granted_level, matched_policy_id, evaluation_trace,
     status, effects, effects_hash, idempotency_key_id
@@ -1711,7 +1737,7 @@ Then one of three branches.
 ```sql
     insert into core.approval_requests (
       tenant_id, ref, action_request_id, policy_id, action_type, subject, target_ref,
-      value_minor, currency, margin_rate,
+      value_sen, currency, margin_rate,
       requested_by_kind, requested_by_id, requested_by_name, agent_run_id, confidence, autonomy,
       reason, recommendation, evidence, deviations, risk, diff, diff_hash, preview_url,
       approver_role, assigned_to_id, assigned_to_name,
@@ -1897,14 +1923,14 @@ client can set.
 revoke update on core.proposals from authenticated;
 
 -- grant only the columns a human or agent may legitimately edit.
--- `status`, `sent_at` and `value_minor` are simply absent from the list.
+-- `status`, `sent_at` and `value_sen` are simply absent from the list.
 grant update (title, sections, notes, contact_id, updated_at)
   on core.proposals to authenticated;
 ```
 
 Applied to every gated column: `proposals.status`, `invoices.status` and `sync_state`,
 `attendance_days.status`, `hrdc_packets.status` and `submission_reference`,
-`quotations.status` and `sell_price_minor`, `engagements.status`,
+`quotations.status` and `sell_price_sen`, `engagements.status`,
 `core.autonomy_grants.level`. The effect applier is `SECURITY DEFINER` and runs as the
 owner, so column grants do not constrain it.
 
@@ -1915,30 +1941,88 @@ a row that is *already* `SENT`, which is the same bypass by another door.
 applier cannot perform a transition nobody authorised. Legal transitions are data:
 
 ```sql
-create table core.state_transitions (
+create table app.state_transitions (
   entity          text not null,          -- 'proposals'
   column_name     text not null default 'status',
   from_status     text,                   -- null = insert
   to_status       text not null,
-  gated_by        text references core.action_types(key),  -- null = ungated
+  gated_by        text[],                 -- null or empty = ungated; ANY member authorises
   primary key (entity, column_name, from_status, to_status)
 );
 
-insert into core.state_transitions (entity, from_status, to_status, gated_by) values
-  ('proposals',       null,      'DRAFT',     null),                 -- drafting is free
-  ('proposals',       'DRAFT',   'SENT',      'PROPOSAL_SEND'),
-  ('proposals',       'SENT',    'VIEWED',    null),                 -- the client did this
-  ('proposals',       'SENT',    'ACCEPTED',  null),
-  ('attendance_days', 'OPEN',    'LOCKED',    'ATTENDANCE_APPROVE'),
-  ('attendance_days', 'LOCKED',  'OPEN',      'ATTENDANCE_UNLOCK'),
-  ('invoices',        null,      'DRAFT',     'INVOICE_CREATE'),
-  ('hrdc_packets',    'READY',   'SUBMITTED', 'HRDC_PACKET_MARK_SUBMITTED');
-  -- … one row per legal edge, per §12's status enums
+-- a CHECK may not contain a subquery and an array cannot carry an FK, so the
+-- referential rule on gated_by is a trigger. Without it a typo'd action type in a
+-- seed row silently produces an edge nothing can ever cross.
+create or replace function app.assert_gates_exist()
+returns trigger language plpgsql
+set search_path = pg_catalog, app, core, public, extensions, pg_temp
+as $$
+declare v_bad text;
+begin
+  select g into v_bad
+  from unnest(coalesce(new.gated_by, '{}')) g
+  where g not in (select key from core.action_types)
+  limit 1;
+
+  if v_bad is not null then
+    raise exception 'unknown action type %L in gated_by', v_bad;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger state_transitions_gates_exist
+  before insert or update on app.state_transitions
+  for each row execute function app.assert_gates_exist();
+
+insert into app.state_transitions (entity, from_status, to_status, gated_by) values
+  ('proposals',        null,        'DRAFT',        null),              -- drafting is free
+  ('proposals',        'DRAFT',     'SENT',         '{PROPOSAL_SEND}'),
+  ('proposals',        'SENT',      'VIEWED',       null),              -- the client did this
+  ('proposals',        'SENT',      'ACCEPTED',     null),
+  ('attendance_days',  'OPEN',      'LOCKED',       '{ATTENDANCE_APPROVE}'),
+  ('attendance_days',  'LOCKED',    'OPEN',         '{ATTENDANCE_UNLOCK}'),
+  ('invoices',         null,        'DRAFT',        '{INVOICE_CREATE}'),
+  ('hrdc_packets',     'READY',     'SUBMITTED',    '{HRDC_PACKET_MARK_SUBMITTED}'),
+  ('collections_cases','HUMAN_CALL','TRADING_HOLD', '{ACCOUNT_TRADING_HOLD}'),
+  -- the edge that forced the array: one table, three legitimate authorising actions
+  ('outbound_messages','DRAFT',     'QUEUED',
+     '{FOLLOWUP_SEND,REMINDER_SEND,BROADCAST_SEND}');
+  -- … 121 edges across 17 gated status columns; the full set is 01 §5
 ```
 
 Rendering the legal edges as rows rather than as `if` branches follows the same rule the
 project applies to pipeline stages: the transitions are configuration, and a new one is
 an insert rather than a migration to a trigger body.
+
+**Why `gated_by` is an array.** `sb-erd` found the defect while enumerating, and it was
+in my registry's shape rather than in their model. `outbound_messages` goes `DRAFT` to
+`QUEUED` under `FOLLOWUP_SEND`, `REMINDER_SEND` **or** `BROADCAST_SEND`, depending on why
+the message exists, and it is one table because the three draft shapes in §4 and §9 are
+identical. With a single `gated_by` and a fail-closed default, two of those three sends
+would have been rejected at send time — a defect that only shows up in production, on
+the second of the three flows somebody tests.
+
+I took their recommendation of an array over a discriminator in the key. The key is
+already four columns, and `text[]` reads as what it is: any of these action types
+authorises this edge. `outbound_messages.purpose` still exists and is still worth having,
+because the row needs to know what it is for regardless, but it is not load-bearing for
+the gate.
+
+**The real edge set is 121 across 17 gated status columns**, enumerated by `sb-erd` in
+01 §5, not the sixty this document first estimated. The difference is that §12's enums
+are larger than the estimate assumed, not that the set was padded; every edge is one a
+screen or an endpoint actually performs. `invoices` carries the trigger twice, on
+`status` and on `sync_state`, because `INVOICE_PUSH` gates edges in both — which is why
+the trigger takes the column as an argument rather than assuming `status`.
+
+`sb-erd` also listed the 16 status columns deliberately left **outside** `GOV-07` with
+reasons, and that list matters as much as the edges: silence there would read as an
+omission rather than a decision. Two are worth a gate reader's eye. `runs.status` is
+written by the run engine alone and frozen once ended by rule I7, so gating it would put
+the gate inside the agent runtime. `engagement_step_states.state` is computed by the
+check evaluator, and gating it would mean the lifecycle stepper could not render a
+`BLOCKED` step without somebody performing an action to block it.
 
 ```sql
 create or replace function app.enforce_state_transition()
@@ -1950,7 +2034,7 @@ as $$
 declare
   v_from     text;
   v_to       text;
-  v_gated_by text;
+  v_gated_by text[];
   v_applier  uuid;
   v_req      core.action_requests%rowtype;
   v_col      text := coalesce(tg_argv[0], 'status');
@@ -1965,7 +2049,7 @@ begin
   end if;
 
   select st.gated_by into v_gated_by
-  from core.state_transitions st
+  from app.state_transitions st
   where st.entity = tg_table_name and st.column_name = v_col
     and st.from_status is not distinct from v_from and st.to_status = v_to;
 
@@ -1976,7 +2060,7 @@ begin
       detail  = jsonb_build_object('code','ILLEGAL_STATE_TRANSITION')::text;
   end if;
 
-  if v_gated_by is null then
+  if v_gated_by is null or cardinality(v_gated_by) = 0 then
     return new;                                     -- ungated edge, e.g. the client viewing
   end if;
 
@@ -1986,20 +2070,22 @@ begin
 
   if v_applier is null then
     raise exception using errcode = 'TRNOS',
-      message = format('%s → %s requires the %s action', v_from, v_to, v_gated_by),
+      message = format('%s → %s requires one of %s',
+                       v_from, v_to, array_to_string(v_gated_by, ', ')),
       detail  = jsonb_build_object('code','FORBIDDEN', 'policyId','GOV-07',
-                  'requiredAction', v_gated_by)::text;
+                  'requiredActions', to_jsonb(v_gated_by))::text;
   end if;
 
   select * into v_req from core.action_requests where id = v_applier;
 
   if not found
-     or v_req.action_type <> v_gated_by
-     or v_req.tenant_id  <> new.tenant_id then
+     or not (v_req.action_type = any(v_gated_by))
+     or v_req.tenant_id <> new.tenant_id then
     raise exception using errcode = 'TRNOS',
       message = format('The running action does not authorise %s → %s', v_from, v_to),
       detail  = jsonb_build_object('code','FORBIDDEN', 'policyId','GOV-07',
-                  'requiredAction', v_gated_by, 'runningAction', v_req.action_type)::text;
+                  'requiredActions', to_jsonb(v_gated_by),
+                  'runningAction', v_req.action_type)::text;
   end if;
 
   return new;
@@ -2009,6 +2095,14 @@ $$;
 create trigger proposals_state_gate
   before insert or update of status on core.proposals
   for each row execute function app.enforce_state_transition('status');
+
+-- invoices carry it twice: INVOICE_PUSH gates edges on both columns
+create trigger invoices_state_gate
+  before insert or update of status on core.invoices
+  for each row execute function app.enforce_state_transition('status');
+create trigger invoices_sync_gate
+  before update of sync_state on core.invoices
+  for each row execute function app.enforce_state_transition('sync_state');
 ```
 
 The GUC is set by the applier and by nothing else, scoped to the transaction so it
@@ -2051,7 +2145,7 @@ attachments sit with whoever owns the table DDL.
 `trainos.unlock_action_id`, for the attendance lock trigger specifically, on the grounds
 that RLS cannot distinguish an approved `ATTENDANCE_UNLOCK` from an unauthorised write
 because `service_role` bypasses RLS. That reasoning is right and the mechanism is
-already here: `ATTENDANCE_UNLOCK` is two rows in `core.state_transitions`
+already here: `ATTENDANCE_UNLOCK` is two rows in `app.state_transitions`
 (`OPEN → LOCKED` gated by `ATTENDANCE_APPROVE`, `LOCKED → OPEN` gated by
 `ATTENDANCE_UNLOCK`) and the generic trigger reads `app.effect_applier`, loads that
 action request, and refuses unless its type is the gating one. A second key for one
@@ -2084,8 +2178,8 @@ outbox row each. Event names in the last column are `sb-events`' to emit; names 
 | 2 | `OPPORTUNITY_CONVERT` | | | | insert `opportunities`; upsert `organisations`, `contacts`; `enquiries.status → CONVERTED`; insert `tasks` | — | `OpportunityCreated` |
 | 3 | `TNA_RECOMMENDATION_ACCEPT` | | | | `tna_recommendations.accepted_at`; `tnas.status → COMPLETE`; insert `opportunity_programmes` | — | `TNARecommendationAccepted` *new* |
 | 4 | `PROPOSAL_SEND` | | ✓ | | `proposals.status DRAFT → SENT`, `sent_at`; `opportunities.stage → PROPOSAL_SENT`; insert `tasks` (follow-up); `quotations.draft_locked → false` | render PDF; send email with attachment | `ProposalSent` |
-| 5 | `QUOTATION_APPLY` | ✓ | | | `quotations.status → APPLIED`, `rate_card_version` pinned; `proposals.value_minor` | — | `QuotationApplied` *new* |
-| 6 | `DISCOUNT_APPROVE` | ✓ | | | `quotations.sell_price_minor`, `discount_pct`, `approved_below_floor`, `approval_ref` | — | `DiscountApproved` *new* |
+| 5 | `QUOTATION_APPLY` | ✓ | | | `quotations.status → APPLIED`, `rate_card_version` pinned; `proposals.value_sen` | — | `QuotationApplied` *new* |
+| 6 | `DISCOUNT_APPROVE` | ✓ | | | `quotations.sell_price_sen`, `discount_pct`, `approved_below_floor`, `approval_ref` | — | `DiscountApproved` *new* |
 | 7 | `TRAINER_BOOK` | ✓ | | | `trainer_assignments.status SOFT_HOLD → CONFIRMED`; `trainer_availability` blocked for the dates; `engagements.trainer_id` | notify the trainer | `TrainerBooked` *new* |
 | 8 | `ENGAGEMENT_CLOSE_OUT` | | ✓ | ✓ | `engagements.status → CLOSED`, `closed_at`; `evaluations` dispatch rows | send evaluation links | `EngagementClosedOut` *new* |
 | 9 | `ATTENDANCE_APPROVE` | | | ✓ | `attendance_days.status → LOCKED`, `immutable`, `approved_by`, `approved_at`; recompute `hrdc_packets.completeness` | — | `AttendanceLocked` |
@@ -2093,16 +2187,30 @@ outbox row each. Event names in the last column are `sb-events`' to emit; names 
 | 11 | `HRDC_PACKET_MARK_SUBMITTED` | | | ✓ | `hrdc_packets.status → SUBMITTED`, `submission_reference`, `submitted_at`, `claim_rule_set_version` pinned | — | `HRDCPacketSubmitted` |
 | 12 | `INVOICE_CREATE` | ✓ | ✓ | | insert `invoices` + `invoice_lines` (`sb-money` builds the lines); `status DRAFT` | — | `InvoiceCreated` *new* |
 | 13 | `INVOICE_PUSH` | ✓ | ✓ | | `invoices.sync_state → SENT`, `last_attempt_at`; insert `invoice_sync_log` | push to the accounting package | `InvoicePushed` |
-| 14 | `PAYMENT_RECORD` | ✓ | | | insert `payments`; `invoices.outstanding_minor` and `status` recomputed by `sb-money`; close the `collections_queue` row | — | `PaymentRecorded` *new* |
+| 14 | `PAYMENT_RECORD` | ✓ | | | insert `payments`; `invoices.outstanding_sen` and `status` recomputed by `sb-money`; close the `collections_queue` row | — | `PaymentRecorded` *new* |
 | 15 | `REMINDER_SEND` | | ✓ | | `collections_queue.stage` advanced, `last_sent_at`; insert `messages` | send email or WhatsApp; record the BSP cost | `ReminderSent` *new* |
 | 16 | `FOLLOWUP_SEND` | | ✓ | | `follow_ups.status → SENT`; insert `messages`; `contacts.last_contacted_at` | send on the chosen channel | `FollowUpSent` *new* |
 | 17 | `BROADCAST_SEND` | | ✓ | | insert `broadcasts`; insert one `messages` row per recipient | fan out, one job per recipient | `BroadcastSent` *new* |
 | 18 | `AGENT_AUTONOMY_CHANGE` | | | | `core.autonomy_grants.level` and the promotion metadata | — | `AgentAutonomyChanged` *new* |
 | 19 | `AGENT_PAUSE` | | | | `core.autonomy_grants.paused` or `core.agents.status → PAUSED` | — | `AgentPaused` *new* |
-| +1 | `BUDGET_CAP_RAISE` §17 | ✓ | | | `app.ai_budgets.cap_minor`; affected routing rows leave `PAUSED_BY_CAP` | — | `BudgetCapRaised` *new* |
+| +1 | `BUDGET_CAP_RAISE` §17 | ✓ | | | `app.ai_budgets.cap_sen`; affected routing rows leave `PAUSED_BY_CAP` | — | `BudgetCapRaised` *new* |
 | +2 | `RULE_CHANGE_APPROVE` §17 | | | ✓ | `core.compliance_rules` insert or supersede, dated from the **circular**, not the approval | re-evaluate affected engagements | `RuleChangeApproved` |
+| +3 | `ACCOUNT_TRADING_HOLD` R3 | ✓ | ✓ | | `core.collections_cases.stage → TRADING_HOLD`; `core.organisations.trading_hold_at`; blocks new proposals to that org | notify the account owner | `AccountTradingHeld` *new* |
 
-Twelve of the twenty-one need an event name that §14 does not define. That gap is
+**The 22nd action type.** `sb-erd` found the hole while enumerating `GOV-07`: §9 says a
+trading hold at 75 days needs MD approval, and §3's nineteen types have nothing that
+performs it. They gated the edge on `DISCOUNT_APPROVE` as a placeholder and marked it
+wrong, which is the right way to surface a gap rather than paper over it. The lead has
+ruled it a new type, `ACCOUNT_TRADING_HOLD`, MD-gated under `FIN-05`, added to
+`packages/contract` as ruling R3. Their Q24 closes with it.
+
+It is `money_moving` and `client_facing` both: a trading hold is a commercial decision
+about an account, visible to the client the moment their next order is refused. Ceiling
+`ACT_WITH_APPROVAL`, `promotion_blocked_reason = 'NEVER'`. `FIN-05` previously pointed at
+`REMINDER_SEND` with `payload.stage = TRADING_HOLD`, which was always a smell: it made
+the most consequential step of the collections ladder a variant of sending a message.
+
+Thirteen of the twenty-two need an event name that §14 does not define. That gap is
 `sb-events`' to close; the names above are a proposal, not a decision.
 
 The `ceiling_autonomy` column in `core.action_types` follows mechanically from the
@@ -2418,7 +2526,7 @@ declare v_blocked jsonb; v_results jsonb := '[]'::jsonb; v_id uuid;
 begin
   -- pre-flight: §7 says 409 if ANY id has bulkApprovable false
   select jsonb_agg(jsonb_build_object('id', id, 'ref', ref, 'reason',
-                     case when value_minor is not null then 'MONETARY_VALUE'
+                     case when value_sen is not null then 'MONETARY_VALUE'
                           else 'MONEY_MOVING_TYPE' end))
     into v_blocked
   from core.approval_requests
@@ -2767,15 +2875,16 @@ to parse. That argument wins, so both lanes are now on:
 ```sql
 app.report_effect_result(
   p_effect_id bigint,     -- app.action_effects.id, carried in app.outbox.effect_id
-  p_status    text,       -- SETTLED | FAILED
-  p_payload   jsonb,      -- provider ids, message ids, uin, cost
+  p_status    text,       -- SUCCEEDED | FAILED
+  p_result    jsonb,      -- provider ids, message ids, uin, cost
   p_error     jsonb       -- {code, message, retryable}
 ) returns void
 ```
 
-`p_status` takes `SETTLED` or `FAILED` from the worker; the stored effect status is
-`SETTLED` or `DEAD_LETTERED`, because `app.fail_job` calls this only on *terminal*
-failure and a retryable attempt never reaches the gate at all.
+`p_status` takes `SUCCEEDED` or `FAILED` from the worker, which are `sb-events`'
+vocabulary; the stored effect status is `SETTLED` or `DEAD_LETTERED`, which is the
+gate's. `app.fail_job` calls this only on *terminal* failure, so a retryable attempt
+never reaches the gate at all, which is why there is no `RETRYING` state on this side.
 
 `app.complete_job` calls it on success and the dead-letter branch of `app.fail_job` calls
 it on terminal failure. **The failure path is the one that matters**, and `sb-events` is
@@ -2805,8 +2914,8 @@ function, which is also the only place the action's own lifecycle advances:
 ```sql
 create or replace function app.report_effect_result(
   p_effect_id bigint,
-  p_status    text,                      -- SETTLED | FAILED
-  p_payload   jsonb default '{}'::jsonb,
+  p_status    text,                      -- SUCCEEDED | FAILED
+  p_result    jsonb default '{}'::jsonb,
   p_error     jsonb default null
 ) returns void
 language plpgsql security definer
@@ -2830,19 +2939,19 @@ begin
   end if;
 
   update app.action_effects
-     set status     = case when p_status = 'SETTLED' then 'SETTLED' else 'DEAD_LETTERED' end,
+     set status     = case when p_status = 'SUCCEEDED' then 'SETTLED' else 'DEAD_LETTERED' end,
          attempts   = attempts + 1,
          last_error = p_error,
          retryable  = coalesce((p_error->>'retryable')::boolean, true),
-         applied_at = case when p_status = 'SETTLED' then now() else applied_at end
+         applied_at = case when p_status = 'SUCCEEDED' then now() else applied_at end
    where id = e.id;
 
   -- the provider's own facts land on the domain row through the type's handler,
   -- the only place a worker's data reaches the domain schema
-  if p_status = 'SETTLED' then
+  if p_status = 'SUCCEEDED' then
     execute format('select app.confirm_%s($1, $2)',
                    lower(app.effect_action_type(e.id)))
-      using e.id, p_payload;
+      using e.id, p_result;
   end if;
 
   -- advance the action when the last external effect settles
@@ -2948,7 +3057,7 @@ effect that exhausts its retries sits at `DEAD_LETTERED` forever while the actio
 | `PARTIALLY_FAILED` | every effect settled, at least one dead-lettered | `app.report_effect_result`, on the last one |
 
 An action with no external effects goes straight to `EXECUTED` inside the gate's own
-transaction and never passes through `EXECUTING`. That is most of the twenty-one types:
+transaction and never passes through `EXECUTING`. That is most of the twenty-two types:
 only the seven with a send, a push or a render ever wait.
 
 **What the API returns, and why it still says `EXECUTED`.** §12's `ActionStatus` has four
@@ -3086,7 +3195,7 @@ is **element-for-element identical** to the refreshed `diff[]`.
 
 | Test | Assert |
 |---|---|
-| Value read from the record | agent sends `payload.value.amount = 1400000` on an RM 18,500 proposal → `APV-01` still matches; `action_requests.value_minor = 1850000` |
+| Value read from the record | agent sends `payload.value.amount = 1400000` on an RM 18,500 proposal → `APV-01` still matches; `action_requests.value_sen = 1850000` |
 | Policy beats grant | agent at `AUTONOMOUS` on a type where a policy matches → `QUEUED_FOR_APPROVAL`, never `EXECUTED` |
 | Confidence downgrade | `agent_proposal` at `AUTONOMOUS`, confidence 0.55, minimum 0.70 → `QUEUED_FOR_APPROVAL` with `risk.level = HIGH` and `GOV-05` in the trace |
 | Kill switch | `core.agents.kill_switch = true` → `409 AGENT_PAUSED`, `reason = AGENT_PAUSED`; `AGENT_PAUSE` on the same agent still succeeds |
@@ -3163,7 +3272,9 @@ overturn.
    are different facts with different consumers, so `INVOICE_CREATE` emits
    `InvoiceCreated` and only the push emits `InvoicePushed`.
 4. **Twelve action types need a new event name.** §14 defines events for nine of the
-   twenty-one. The names proposed in §3 are `sb-events`' to accept or replace.
+   twenty-two. `sb-events` §1.7 is now the merged list both lanes implement; they
+   accepted all of mine and added `ActionRequested`, `ApprovalExpired` and
+   `AgentResumed`.
 5. **`ESCALATE` caps autonomy rather than blocking on a model.** §18 says "`ESCALATE`
    blocks only when a trigger fires", which a literal reading makes a synchronous jury
    call. That would put an HTTP call inside the gate's transaction. The action is
@@ -3237,7 +3348,7 @@ No conflict.
 2. **Domain column names are confirmed for the five context flags and unverified
    elsewhere.** `sb-erd` has confirmed `proposals.organisation_id`, the
    `proposals_org_sent` and `invoices_overdue` partial indexes verbatim,
-   `quotations.floor_price_minor`, `attendance_days`, `engagements.starts_on`,
+   `quotations.floor_price_sen`, `attendance_days`, `engagements.starts_on`,
    `hrdc_packets.deadline_at` and `invoices.due_at`, and the four stable money columns.
    `core.contact_consents`, `core.messages`, `core.payments` and
    `core.compliance_rules`, which appear in §3's effect table, are still my guesses.
@@ -3252,31 +3363,37 @@ No conflict.
    `app.report_effect_result(effect_id, …)`. What is unverified is that the two
    documents' SQL actually compiles against each other, since neither has been run.
    `app.job_type_for(action_type, entity)` is theirs to write and does not exist yet.
-5. **`sb-money` must persist `floor_price_minor` on the quotation.** The
+5. **`sb-money` must persist `floor_price_sen` on the quotation.** The
    `belowFloorPrice` flag is a comparison of two stored columns. If the floor is
    computed on read instead of stored, the gate would have to call into money
    arithmetic, which this lane is explicitly not allowed to do.
 6. **`docs/research/08-supabase-agentic-best-practices.md` does not exist.** Only
    `07-agent-tooling.md` is in the repository, and it covers Claude Code configuration
    rather than policy gates or idempotency. Nothing from it informed this design.
-7. **`pg_cron` is not provisioned and this design needs it.** Migration 001 installs
-   `pgcrypto`, `citext`, `btree_gist` and `pg_trgm` into the `extensions` schema and
-   nothing else. The six scheduled jobs in §4.5 — escalation, breach notification,
-   expiry, idempotency cleanup, draft expiry and jury sampling — have no scheduler.
-   This is the one gap in this document that blocks working software rather than
-   describing a choice, and it belongs to whoever owns the migrations. The design
-   deliberately avoids `pgcrypto` by using the built-in `sha256()`, and deliberately
-   avoids `pg_net` and `http` entirely.
-11. **The trigger attachments in §2.9 are not written.** I own
-    `app.enforce_state_transition()` and `core.state_transitions`; attaching the trigger
-    to each gated table and applying the column-privilege grants sits with whoever owns
-    that table's DDL. Until both halves land, the bypass `sb-tenancy` §3.4 describes is
-    still open.
-12. **`core.state_transitions` is seeded with eight example edges, not the full set.**
-    The complete set is one row per legal edge across every status enum in §12, which is
-    roughly sixty rows. Deriving them is mechanical but it has not been done, and a
-    missing edge fails closed — a legitimate transition would raise
-    `ILLEGAL_STATE_TRANSITION` in production.
+7. **`pg_cron` is ruled in (R-EXT) and not yet written.** Migration 001 installs
+   `pgcrypto`, `citext`, `btree_gist` and `pg_trgm` and no scheduler; the lead has
+   assigned `pg_cron` and `pg_net` to `sb-migrations` as a 001 amendment. Until it
+   lands, the six jobs in §4.5 do not run, and `sb-events` makes the sharper point that
+   it is worse than six jobs: with no scheduler there is no worker tick at all, so
+   nothing in the outbox is ever claimed and every external effect stays `DISPATCHED`
+   forever. It is the largest single blocker across both lanes.
+
+   `pg_net` being enabled changes nothing here. This design still forbids network I/O
+   anywhere in the action path, for the reasons in §6.1, and an extension being
+   available is not an argument for using it inside a transaction that holds row locks.
+11. **`GOV-07`'s domain half is written and I have not read it line by line.**
+    `sb-erd` delivered the column grants, the trigger attachments and the full edge set
+    in 01 §5: 121 edges across 17 gated status columns, plus 16 columns deliberately
+    left outside the mechanism with reasons. This document quotes ten edges as
+    illustration and points at theirs for the rest. I have verified that the two shapes
+    agree, not that all 121 rows are right. Per R-GOV the derivation from the contract's
+    status enums belongs to `sb-migrations`, so the seed in §2.9 is illustrative and
+    must not be treated as the source.
+12. **A missing edge fails closed.** That is the right default and it is also the
+    failure mode to watch: an edge nobody enumerated makes a legitimate transition raise
+    `ILLEGAL_STATE_TRANSITION` in production rather than silently permitting it. The
+    referential trigger on `gated_by` catches a typo'd action type at seed time, but
+    nothing catches an edge that was simply never written down.
 8. **The policy catalogue in §1.9 is 4 sourced ids and 22 derived ones.** Only
    `APV-01`, `APV-02`, `FIN-01` and `FIN-03` appear in the sources. Every threshold,
    SLA and approver role on the other twenty-two rows is inferred from
