@@ -28,10 +28,11 @@ design, frontend.
 | D9 | Sandbox replay (§16 Q8) | **Snapshot pinned to the run.** Every tool read is captured in `run_snapshots`; replay serves reads from the snapshot, refuses writes, and hard-errors on a miss | Live reads during replay | Live reads make replay non-deterministic, which destroys its only purpose. A miss must fail loudly rather than silently diverge. |
 | D10 | Run PII | Redact in the worker **before** storage; full prompt/completion in `run_node_io` for 30 days, then the row is deleted; metadata (tokens, cost, tier, status) kept indefinitely | Storing raw and redacting later; deleting whole runs | The database should never hold the raw text. Keeping the row and nulling the columns bloats the hot trace table; deleting the side table is instant. |
 | D11 | Enum storage | `text` + `check` constraint | Postgres `enum` types | Job types, event types and run event types all grow. `ALTER TYPE … ADD VALUE` is awkward inside a migration transaction; a `check` constraint is a one-line change. |
-| D12 | Idempotency | Unique partial index on `events (tenant_id, idempotency_key)` and on `app.outbox (tenant_id, job_key)`; a richer `app.webhook_deliveries` ledger for inbound sources | A single global key table | Inbound webhook keys need the raw body and signature verdict for debugging; action keys need 24h TTL per §1. Different lifetimes, different tables. |
+| D12 | Idempotency | Unique partial index on `core.events (tenant_id, idempotency_key)` and on `app.outbox (tenant_id, idempotency_key)`; a richer `app.webhook_deliveries` ledger for inbound sources | A single global key table | Inbound webhook keys need the raw body and signature verdict for debugging; action keys need 24h TTL per §1. Different lifetimes, different tables. |
 | D13 | Long-running work | A handler **yields**: run to ~300s, checkpoint, re-enqueue | A long lease plus `EdgeRuntime.waitUntil` | Background tasks share the request's wall clock (400s paid) and do not get a longer budget. There is no fifteen-minute job on this runtime, so the checkpoint machinery is what makes agent runs possible at all. **The six-minute lease cap and the 300s yield are binding on the agent runtime**, per the team lead. See §2.6. |
 | D14 | Badge channel | **Per user**, `tenant:{t}:user:{u}:badges`, authorised by RLS | Flat `badges` channel (§11); per-role channel (my first draft) | The badge number differs per user, and §11 already calls the stream "per-user filtered". A per-role channel leaks one role's queue depth to every other role. See §3.4, §7.4. |
 | D15 | Client broadcast | A **restrictive** `INSERT` deny on `realtime.messages` | Relying on the absence of an `INSERT` policy | Absence is undone by the first permissive policy anyone adds; a restrictive policy `AND`s with all of them. Without it the approvals badge is spoofable from a browser console. |
+| D16 | Schema placement | `core` for what the API reads, `app` for what only workers touch | One schema for the lane | Ruling R-C2. `core.events`, `core.event_subjects`, `core.runs`, `core.run_nodes`, `core.run_node_io`, `core.run_events`, `core.run_state_cards`, `core.run_checkpoints`, `core.run_snapshots`, `core.evals` feed the audit drawer and the run trace over PostgREST. `app.outbox`, `app.dead_letters`, `app.event_subscriptions`, `app.webhook_deliveries`, `app.webhook_routes`, `app.key_access_audit` are never read by a client and stay in the unexposed schema. |
 
 ---
 
@@ -510,9 +511,8 @@ create table app.outbox (
   event_id           uuid references core.events(id) on delete set null,
   run_id             uuid references core.runs(id) on delete set null,
   action_request_id  uuid,                    -- seam to sb-actions, see §2.7
-  effect_id          bigint,                  -- app.action_effects.id; bigint, not uuid
   correlation_id     uuid not null,
-  job_key            text,                    -- sb-actions: '<action_request_id>:<seq>'
+  idempotency_key    text,                    -- effects: '<action_request_id>:<seq>'
 
   -- scheduling and lease
   run_after          timestamptz not null default now(),
@@ -552,8 +552,8 @@ create index outbox_failed_idx on app.outbox (tenant_id, finished_at desc)
   where state in ('FAILED','DEAD');
 
 -- dedupe
-create unique index outbox_job_key_idx on app.outbox (tenant_id, job_key)
-  where job_key is not null;
+create unique index outbox_idempotency_idx on app.outbox (tenant_id, idempotency_key)
+  where idempotency_key is not null;
 
 -- foreign keys (Postgres does not index these for you)
 create index outbox_run_idx on app.outbox (run_id) where run_id is not null;
@@ -736,9 +736,9 @@ begin
     );
   end if;
 
-  if j.effect_id is not null then
+  if j.idempotency_key is not null and j.action_request_id is not null then
     -- owned by sb-actions (§2.7); workers never write core tables directly
-    perform app.record_effect_result(j.effect_id, 'SUCCEEDED', p_result, null);
+    perform app.settle_effect(j.idempotency_key, 'SETTLED', p_result, null);
   end if;
 end $$;
 ```
@@ -769,8 +769,8 @@ begin
     );
 
     -- an action's external effect must not sit at DISPATCHED forever (§2.7)
-    if j.effect_id is not null then
-      perform app.record_effect_result(j.effect_id, 'FAILED', null, p_error);
+    if j.idempotency_key is not null and j.action_request_id is not null then
+      perform app.settle_effect(j.idempotency_key, 'DEAD_LETTERED', null, p_error);
     end if;
   else
     v_state := 'FAILED';
@@ -931,130 +931,117 @@ response table is unlogged, so it must never carry the guarantee.
 
 ### 2.7 The `sb-actions` seam
 
-**Settled.** `sb-actions` commit `28052e8` removed their direct inserts into the outbox, so
-the enqueue function is mine after all, and the write-back function is theirs. Both
-directions now cross the boundary through exactly one named call.
+**Settled, per ruling R-WB.** One function each way, and the addressing question that took
+three rounds is closed.
 
 ```
 core.action_requests ──► app.emit_event(tenant, event_name, action_request_id)   [mine]
-                    └──► app.enqueue_effect_jobs(action_request_id)              [mine]
-                                                     │
-                                              app.outbox
+                    └──► insert into app.outbox …                          [sb-actions]
                                                      │
                                                job-worker
                                                      │
-                         app.record_effect_result(effect_id, status, result, error)  [theirs]
+                         app.settle_effect(job_key, status, result, error)  [theirs]
                                                      └──► app.action_effects
 ```
 
-The gate calls both of mine inside its own transaction. It never writes `app.outbox`.
-Workers call only theirs, and it is the single door through which a worker's data reaches
-`core`.
+**Addressing: `job_key`, not `effect_id`.** I proposed an `action_request_id`-addressed
+write-back; `sb-actions` rightly objected that one action has N external effects that
+succeed and fail independently, so a `PROPOSAL_SEND`'s PDF render and email send need
+separate outcomes. I then proposed `effect_id`. The ruling settles on `job_key`, and it is
+the better answer to their own objection: `job_key = '<action_request_id>:<seq>'` already
+names exactly one effect, so it is as precise as `effect_id` while carrying the action and
+the sequence in a value both lanes already construct. `effect_id` is withdrawn and is no
+longer a column on `app.outbox`.
 
-**`app.enqueue_effect_jobs` — mine, and it carries their hard requirement.**
+**Column names, and why there are two for one string.** `sb-actions` writes:
 
 ```sql
-create or replace function app.enqueue_effect_jobs(p_action_request_id uuid)
-returns int
-language plpgsql security definer set search_path = ''
-as $$
-declare r core.action_requests%rowtype; n int;
-begin
-  select * into r from core.action_requests where id = p_action_request_id;
-  if not found then
-    raise exception 'action request % not found', p_action_request_id using errcode = 'P0002';
-  end if;
-
-  with enqueued as (
-    insert into app.outbox (
-      tenant_id, job_type, priority, payload,
-      action_request_id, effect_id, correlation_id, job_key, run_after
-    )
-    select r.tenant_id,
-           app.job_type_for(r.action_type, ae),          -- 'SEND_EMAIL', 'JURY_EVALUATE', …
-           app.job_priority_for(r.action_type, ae),
-           jsonb_build_object('actionRequestId', r.id,
-                              'effectId', ae.id,
-                              'seq', ae.seq,
-                              'payload', r.payload),
-           r.id, ae.id, r.id,
-           r.id::text || ':' || ae.seq::text,            -- the required job_key shape
-           now()
-      from app.action_effects ae
-     where ae.action_request_id = r.id
-       and ae.kind = 'EXTERNAL'
-    on conflict (tenant_id, job_key) where job_key is not null do nothing
-    returning 1
-  ) select count(*)::int into n from enqueued;
-
-  return n;
-end $$;
-
-revoke execute on function app.enqueue_effect_jobs(uuid) from public, anon, authenticated;
+insert into app.outbox (tenant_id, job_type, idempotency_key, payload,
+                        run_after, correlation_id, action_request_id)
+...
+on conflict (tenant_id, idempotency_key) do nothing;
 ```
 
-`job_key = '<action_request_id>:<seq>'` and the `unique (tenant_id, job_key)` constraint in
-§2.2 are `sb-actions`' one hard requirement, and they are met here rather than trusted to a
-caller. That pairing is the entire retry-safety story for external effects: a redelivered
-job cannot send a second proposal email or push a second invoice. Putting the key
-construction inside my function rather than in their insert also means there is one place
-that can get the shape wrong, not two.
+The same string is `app.action_effects.job_key` on their table and
+`app.outbox.idempotency_key` on mine — each lane naming the column it owns in its own
+vocabulary, and `app.settle_effect`'s parameter named after the caller's. That is a
+deliberate, documented equivalence rather than a drift, but it is still two names for one
+value, so it is recorded as a deviation. If the critic wants one name, `job_key` is the
+one to keep: on my table it is not a caller-supplied `Idempotency-Key` header, which is
+what `core.events.idempotency_key` means, and reusing the word across those two meanings is
+the more expensive confusion.
+
+**Yes, both columns exist**, answering `sb-actions`' direct question: `correlation_id uuid
+not null` and `action_request_id uuid` are in the §2.2 column list. `correlation_id` is
+`not null` for every row on every path. `action_request_id` is nullable on the table because
+event fan-out jobs have no action, and `not null` on the effect path by construction —
+enforced by a check rather than by the column type:
+
+```sql
+alter table app.outbox add constraint outbox_effect_path_complete
+  check (action_request_id is null or idempotency_key is not null);
+```
 
 Three enqueue paths, one table, one uniqueness rule:
 
-| Path | Who enqueues | `job_key` |
+| Path | Who enqueues | `idempotency_key` |
 |---|---|---|
-| External effect of an action | `app.enqueue_effect_jobs` | `<action_request_id>:<seq>` |
-| Jury evaluation | `app.enqueue_effect_jobs` (an effect row of kind `EXTERNAL`) | `<action_request_id>:<seq>` |
+| External effect of an action | `app.apply_effects` | `<action_request_id>:<seq>` |
+| Jury evaluation | `app.apply_effects` (an effect row of kind `EXTERNAL`) | `<action_request_id>:<seq>` |
 | Fan-out from a domain event | `app.emit_event` via `app.event_subscriptions` | `event:<event_id>:<job_type>` |
 
-**Write-back: `app.record_effect_result(p_effect_id bigint, p_status text, p_result jsonb,
-p_error jsonb)`.** I had assumed an `action_request_id`-addressed function; `sb-actions`
-corrected it and the correction is right on a point I had wrong.
+`unique (tenant_id, idempotency_key)` is `sb-actions`' one hard requirement and it is on the
+table in §2.2. It is the entire retry-safety story for external effects: a redelivered job
+cannot send a second proposal email or push a second invoice.
 
-One action has N external effects that succeed and fail independently. A `PROPOSAL_SEND`
-has a PDF render and an email send. If the email bounces, that one effect must go `FAILED`
-with its own attempt count and its own retryable flag — the action is not the right
-granularity, and `action_request_id` is not a sufficient address. So `effect_id` travels in
-the job payload and in `app.outbox.effect_id`, and it is a `bigint`, not a uuid.
+**`app.job_type_for(action_type, entity)` is mine and does not exist yet.** `sb-actions`
+flagged that without it they would have mapped their `topic` onto `job_type` mechanically
+and shipped `'effect.proposal_send'` into a column the worker dispatches on. That would not
+have failed loudly — it would have produced jobs no handler claims, which sit at `QUEUED`
+until someone notices the badge. It is listed among the seven unwritten helpers.
 
-**The write-back must not move `action_requests.status`, and my earlier text said it
-should.** In `sb-actions`' model the action is already `EXECUTED` once its in-database
-effects commit; a later external failure sets `partial_failure`, not a status change. Their
-reasoning is better than mine: rolling a proposal back from `SENT` because a delivery
-acknowledgement was lost would tell the sales team it was never sent while the client is
-reading it. The failure is real and must be visible, but it is a property of the delivery,
-not a retraction of the send.
+**Status vocabulary, aligned to theirs.** `app.settle_effect` is called with `SETTLED` on
+success and `DEAD_LETTERED` on terminal failure; their effect enum dropped `CONFIRMED` and
+`FAILED` to match. `app.complete_job` and the dead-letter branch of `app.fail_job` are the
+only two callers. A transient failure that will retry calls nothing — the effect stays
+`DISPATCHED`, because it has not settled.
 
-Both `app.complete_job` and the dead-letter branch of `app.fail_job` call it, keyed on
-`effect_id`. The failure path matters more than the success path: without it an effect that
-exhausts its retries sits at `DISPATCHED` forever and nothing on the approval screen ever
-says the email never arrived.
+**The lifecycle hole is closed, and it was mine to notice and theirs to fix.** I had said
+the write-back should advance `action_requests.status`; they correctly objected that
+rolling a proposal back from `SENT` on a lost delivery acknowledgement would tell the sales
+team it was never sent while the client is reading it. Their resolution (ruling R-STATUS)
+is better than either of our first answers: the row gains `EXECUTING` and
+`PARTIALLY_FAILED`, an action with an external effect commits as `EXECUTING`, and
+`settle_effect` moves it to `EXECUTED` when the last effect settles clean or
+`PARTIALLY_FAILED` when any dead-letters, stamping `completed_at` only then. An action with
+no external effect — most of the 21 types — goes straight to `EXECUTED`. The `partial_failure`
+boolean is gone.
+
+Consequence worth carrying here: §12's `ActionStatus` has four values and none is
+`EXECUTING`, so the row status and the response variant are now different things.
+`POST /v1/actions` still returns `202 EXECUTED` at decision time and a fold function maps
+the three execution states onto the three contract variants. Record screens render the row,
+not the response. That is a contract deviation and `sb-actions` has recorded it; it matters
+to me only because the audit drawer renders row states and must not be "corrected" to the
+response vocabulary.
 
 **Idempotency keys: reference the rule, not the table.** The raw key is
 `app.idempotency_keys.key` with the 24h rule on `expires_at`, and
-`core.action_requests.idempotency_key_id` is the foreign key. That table is in the `app`
-schema, which `config.toml` deliberately keeps out of PostgREST's exposed schemas, so my
-webhook ledger cannot read it over the Data API and does not try. `app.webhook_deliveries`
-keeps its own row under the same 24h rule for `ACTION`-scoped keys, and 30 days for its raw
-bodies (§5.5). Two tables, one rule, stated in both places.
+`core.action_requests.idempotency_key_id` is the foreign key. That table is in `app`, which
+`config.toml` keeps out of PostgREST's exposed schemas, so `app.webhook_deliveries` cannot
+read it over the Data API and does not try. It keeps its own row under the same 24h rule,
+and 30 days for raw bodies (§5.5). Two tables, one rule, stated in both places.
 
 Ownership, restated:
 
-- `sb-actions` calls `app.emit_event` and `app.enqueue_effect_jobs`, and writes no outbox
-  row itself.
+- `sb-actions` calls `app.emit_event` and writes its own `app.outbox` rows.
 - **Workers never write `core` tables directly.** Every write-back goes through
-  `app.record_effect_result`, which dispatches to a per-type confirm handler that is the
-  sole place a worker's data reaches `core`. This is `sb-actions`' rule and it is the right
-  one: a worker holds the service role and bypasses RLS, so the set of tables it may touch
-  has to be small and named.
+  `app.settle_effect`, which runs a per-type confirm handler on success only — the sole
+  place a worker's data reaches `core`. A worker holds the service role and bypasses RLS,
+  so the set of tables it may touch has to be small and named.
 - `core.action_requests.id` is the `correlation_id` for every event and job descending from
   that action, `ApprovalRequested` and `ApprovalDecided` included. `causation_id` is mine
   to derive.
-
-Note the schema move: `action_requests` and `approval_requests` are in `core`, not `app`,
-because `GET /v1/approvals` cannot read an unexposed schema. Only `app.action_effects` and
-`app.idempotency_keys` stayed in `app`. §7.2's badge SQL follows.
 
 ### 2.8 Dead letters
 
@@ -2256,6 +2243,15 @@ state, not on logs.
    grant claim and the claim window alone runs six months past completion. Only run I/O,
    snapshots and webhook bodies are aged out.
 
+8. **Two names for one string across the `sb-actions` seam** (§2.7). The effect key is
+   `app.action_effects.job_key` on their table and `app.outbox.idempotency_key` on mine,
+   and `app.settle_effect`'s parameter is `job_key`. Each lane names the column it owns,
+   which is coherent but is still a divergence, and the project's standing rules call
+   divergence a defect. Recorded rather than hidden. If it is collapsed to one name,
+   `job_key` should win on my table: this column is a derived key, whereas
+   `core.events.idempotency_key` is the caller-supplied `Idempotency-Key` header from §1,
+   and using one word for both meanings is the more expensive confusion.
+
 ### What I could NOT verify
 
 - **Research doc §4 recommends `pgmq` and this document does not use it.** That is a
@@ -2263,11 +2259,13 @@ state, not on logs.
   decision here most worth a second opinion. Everything else in research doc §4 is adopted.
 
 - **The `sb-actions` seam is settled in both directions and nothing is outstanding.**
-  `sb-actions` commit `28052e8` removed their direct outbox inserts, so `app.emit_event`'s
-  three-argument overload and `app.enqueue_effect_jobs` are mine, and
-  `app.record_effect_result(p_effect_id bigint, p_status, p_result, p_error)` is theirs.
-  The column renames I asked them for are moot — there is no longer an insert on their side
-  to rename. I have not compiled either function against their schema.
+  `app.emit_event`'s three-argument overload is mine; `sb-actions` writes its own
+  `app.outbox` rows; `app.settle_effect(job_key, status, result, error)` is theirs, per
+  ruling R-WB. The addressing changed twice before settling — `action_request_id`, then
+  `effect_id`, then `job_key` — and the record of that is in §2.7 rather than erased,
+  because the reason it moved is the design constraint (one action, N independently
+  failing effects) and a future reader will otherwise re-litigate it. I have not compiled
+  either function against their schema.
 
 - **Seven helper functions are named but not written**, and they are the largest piece of
   unwritten work this document implies: `app.aggregate_type_for`, `app.event_payload_for`,
