@@ -1,0 +1,27 @@
+{
+  "name": "@trainos/fixtures",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Demo fixture dataset and an in-memory client implementing the TrainOS API contract against it.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@trainos/contract": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vitest": "^2"
+  }
+}
