@@ -114,6 +114,25 @@ derived: the contract never catalogues its permission vocabulary, and the `/me`
 example shows only enquiry and proposal grants. `Me.permissions` stays
 `string[]` rather than a union that would be mostly invented.
 
+### R3: `ACCOUNT_TRADING_HOLD`
+
+§9 ends the collections ladder with a "trading hold at 75 with MD approval",
+and §12 catalogues `TRADING_HOLD` as a `CollectionStage`. No action type in the
+§3 list applies one, so the single step on that ladder that most needs an
+approval had no way through the endpoint that gates approvals. Ruling: add
+`ACCOUNT_TRADING_HOLD`, with `AccountTradingHoldPayload` and the
+`AccountTradingHoldApplied` event the §14 table also lacks.
+
+It lives in `RULED_ACTION_TYPES`, not in `ACTION_TYPES`. `ACTION_TYPES` is
+documented as the §3 list and stays exactly those nineteen, `AI_OPS_ACTION_TYPES`
+is the §17 pair, and `ALL_ACTION_TYPES` is the union of all three — twenty-two
+types, which is what `ActionRequest.type` accepts. Keeping the ruled type in its
+own group is what lets every other entry still trace to a section.
+
+Source note: this rule is API_CONTRACT §9, in the `GET /v1/collections/rules`
+sentence, not DECISIONS §7 — DECISIONS §7 is the rounding decision. The
+substance is unchanged.
+
 ## Fields with no source
 
 Copied from §15, then extended with what the contract itself leaves ambiguous.

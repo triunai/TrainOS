@@ -58,9 +58,25 @@ export type ActionType = (typeof ACTION_TYPES)[number];
 export const AI_OPS_ACTION_TYPES = ['BUDGET_CAP_RAISE', 'RULE_CHANGE_APPROVE'] as const;
 export type AiOpsActionType = (typeof AI_OPS_ACTION_TYPES)[number];
 
-/** §3 + §17 — every type `POST /v1/actions` accepts. */
-export const ALL_ACTION_TYPES = [...ACTION_TYPES, ...AI_OPS_ACTION_TYPES] as const;
-export type AnyActionType = ActionType | AiOpsActionType;
+/**
+ * Action types the contract's cadence requires but its lists never name.
+ *
+ * Ruling R3: `ACCOUNT_TRADING_HOLD`. §9 says the collections ladder ends in a
+ * "trading hold at 75 with MD approval" and §12 catalogues `TRADING_HOLD` as a
+ * `CollectionStage`, but the §3 list has no action type that applies one — so
+ * the step that needs the MD's approval cannot be expressed through the one
+ * endpoint that gates approvals. This closes that gap.
+ */
+export const RULED_ACTION_TYPES = ['ACCOUNT_TRADING_HOLD'] as const;
+export type RuledActionType = (typeof RULED_ACTION_TYPES)[number];
+
+/** §3 + §17 + ruling R3 — every type `POST /v1/actions` accepts. */
+export const ALL_ACTION_TYPES = [
+  ...ACTION_TYPES,
+  ...AI_OPS_ACTION_TYPES,
+  ...RULED_ACTION_TYPES,
+] as const;
+export type AnyActionType = ActionType | AiOpsActionType | RuledActionType;
 
 /**
  * §10 / §17 action types that carry an autonomy grant or a routing entry but

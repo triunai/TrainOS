@@ -445,6 +445,22 @@ export interface ReminderSendPayload {
   body?: string;
 }
 
+/**
+ * Ruling R3 `POST /v1/actions` `type: ACCOUNT_TRADING_HOLD`.
+ *
+ * The last rung of the §9 collections ladder: at 75 days overdue the account
+ * is put on trading hold, which §9 says requires MD approval. Routed through
+ * the action envelope like every other gated step, so the response is a
+ * `QUEUED_FOR_APPROVAL` with `approverRole: MD` rather than an effect.
+ * Emits `AccountTradingHoldApplied` once approved.
+ */
+export interface AccountTradingHoldPayload {
+  organisationRef: Ref;
+  /** The overdue invoices the hold is being raised on. */
+  invoiceRefs: Ref[];
+  reason: string;
+}
+
 /** §9 `POST /v1/actions` `type: INVOICE_CREATE` / `INVOICE_PUSH`. */
 export interface InvoicePushPayload {
   engagementRef?: Ref;

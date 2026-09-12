@@ -229,6 +229,20 @@ export interface AgentRunFailedPayload {
   deadLettered: boolean;
 }
 
+/**
+ * Ruling R3 `POST /v1/actions` `ACCOUNT_TRADING_HOLD`, once the MD approves.
+ *
+ * The §14 table has no event for the last rung of the §9 collections ladder;
+ * this is it. `approvalRef` is always present, because §9 makes the hold
+ * MD-approved and there is no path to it that skips the gate.
+ */
+export interface AccountTradingHoldAppliedPayload {
+  organisationRef: Ref;
+  invoiceRefs: Ref[];
+  appliedBy: AnyActor;
+  approvalRef: Ref;
+}
+
 /* §17 · New events -------------------------------------------------- */
 
 /** §17 provider health monitor. Shared by `TierDegraded` and `TierRecovered`. */
@@ -336,6 +350,7 @@ export type InvoiceValidatedEvent = DomainEventOf<'InvoiceValidated', InvoiceVal
 export type ReminderDraftedEvent = DomainEventOf<'ReminderDrafted', ReminderDraftedPayload>;
 export type AgentRunCompletedEvent = DomainEventOf<'AgentRunCompleted', AgentRunCompletedPayload>;
 export type AgentRunFailedEvent = DomainEventOf<'AgentRunFailed', AgentRunFailedPayload>;
+export type AccountTradingHoldAppliedEvent = DomainEventOf<'AccountTradingHoldApplied', AccountTradingHoldAppliedPayload>;
 export type TierDegradedEvent = DomainEventOf<'TierDegraded', TierHealthPayload>;
 export type TierRecoveredEvent = DomainEventOf<'TierRecovered', TierHealthPayload>;
 export type BudgetCapTrippedEvent = DomainEventOf<'BudgetCapTripped', BudgetCapTrippedPayload>;
@@ -370,6 +385,7 @@ export type DomainEvent =
   | ReminderDraftedEvent
   | AgentRunCompletedEvent
   | AgentRunFailedEvent
+  | AccountTradingHoldAppliedEvent
   | TierDegradedEvent
   | TierRecoveredEvent
   | BudgetCapTrippedEvent
@@ -407,6 +423,7 @@ export const DOMAIN_EVENT_TYPES = [
   'ReminderDrafted',
   'AgentRunCompleted',
   'AgentRunFailed',
+  'AccountTradingHoldApplied',
   'TierDegraded',
   'TierRecovered',
   'BudgetCapTripped',
