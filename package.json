@@ -1,0 +1,61 @@
+{
+  "name": "trainos",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "TrainOS — training-operations console. npm workspaces monorepo.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/web",
+    "build:dev": "npm run build:dev -w apps/web",
+    "preview": "npm run preview -w apps/web",
+    "lint": "npm run lint -w apps/web",
+    "lint:hooks": "npm run lint:hooks -w apps/web",
+    "typecheck": "npm run typecheck -w apps/web && npm run typecheck -w packages/contract",
+    "typecheck:strict": "npm run typecheck:strict -w apps/web",
+    "test": "npm run test -w apps/web --",
+    "test:watch": "npm run test:watch -w apps/web",
+    "test:coverage": "npm run test:coverage -w apps/web",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify:deploy": "npm run typecheck && npm run lint:hooks && npm run typecheck:strict && npm run test",
+    "guard": "node scripts/guard.mjs",
+    "guardrails:on": "node scripts/guard.mjs on",
+    "guardrails:off": "node scripts/guard.mjs off",
+    "guardrails:status": "node scripts/guard.mjs status",
+    "arch:graph": "depcruise apps/web/src --validate .dependency-cruiser.cjs --ignore-known --cache",
+    "arch:baseline": "depcruise apps/web/src --validate .dependency-cruiser.cjs --output-type baseline > .dependency-cruiser-known-violations.json",
+    "bundle:check": "node scripts/bundle-budget-check.mjs",
+    "bundle:baseline": "node scripts/bundle-budget-check.mjs --baseline",
+    "bundle:analyze": "npm run bundle:analyze -w apps/web",
+    "sast": "semgrep scan --config .semgrep/rules.yml",
+    "lint:sql": "node scripts/check-sql-parse.mjs",
+    "check:rpc": "node scripts/check-rpc-contract.mjs",
+    "check:grants": "node scripts/check-grants.mjs",
+    "prepare": "lefthook install"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css,html}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "dependency-cruiser": "^16.9.0",
+    "lefthook": "^1.10.10",
+    "lint-staged": "^15.4.3",
+    "prettier": "^3.4.2",
+    "libpg-query": "^16.2.0"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  // Per-file strict TypeScript ratchet.
+  //
+  // tsconfig.app.json has strictNullChecks off because flipping strict on
+  // globally would surface every legacy issue at once. This config is the
+  // GRADUATION ALLOWLIST — a file that has been audited and passes strict mode
+  // gets added to `include` below. CI runs `npm run typecheck:strict`, which
+  // only checks files in this allowlist.
+  //
+  // Workflow:
+  //   1. Pick a file. Add its path here temporarily and run
+  //        npx tsc -p tsconfig.strict.json --noEmit
+  //   2. Fix every strict error in that file (or its small dependency tree).
+  //   3. Commit the path here permanently. CI now enforces strict for that
+  //      file forever; a regression elsewhere cannot loosen it.
+  //
+  // New code should be strict-by-default: add the path as soon as the file
+  // is created, before it has anything to fix.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noEmit": true
+  },
+  "include": [
+    // Ambient declarations. NOT a graduate — this `include` REPLACES the base
+    // config's ["src"], so vite-env.d.ts (which augments ImportMetaEnv) would
+    // otherwise be absent from the strict program and every `import.meta.env`
+    // in a graduate's dependency tree fails with TS2339.
+    "src/vite-env.d.ts"
+    // Graduates go below, one path per line, newest last.
+  ]
+}
