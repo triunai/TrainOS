@@ -280,6 +280,9 @@ steps (branch protection, CI secrets, the first `.env` values).
 - **Adding a second toast library.** One toast library, one mutation-error path.
 - **Writing a migration without its rollback and test in the same commit.** The review gate
   rejects it and you will have lost the context by the time you come back.
+- **`git add` then a bare `git commit` in a shared checkout.** The index is process-wide, so
+  that commit takes whatever anyone else has staged. Commit with explicit pathspecs — see
+  `references/agent-tooling.md` §7.
 
 ## References
 
@@ -290,4 +293,5 @@ steps (branch protection, CI secrets, the first `.env` values).
 - `references/doc-spine.md` — folder tree, every skeleton, split triggers, editing rules.
 - `references/supabase.md` — layout, naming, catalog, templates, RLS, RPC contract, defaults.
 - `references/app-architecture.md` — auth, nav, typed RPC map, errors, forms, theme, routing.
-- `references/agent-tooling.md` — settings, hooks, permissions, commands, gitignore.
+- `references/agent-tooling.md` — settings, hooks, permissions, commands, gitignore, and the
+  pathspec commit rule for a shared worktree.

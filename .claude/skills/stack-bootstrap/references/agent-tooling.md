@@ -209,7 +209,52 @@ the tree. That is much cheaper than removing one from history.
 
 ---
 
-## 7. Agent-facing docs
+## 7. Multi-agent commits in one worktree
+
+**The git index is shared process-wide. It is not yours.** When several agents work in one
+checkout, another agent's files may already be staged at the moment you commit, and a bare
+`git commit` takes whatever is in the index — including their half-finished work, under your
+message, in your commit.
+
+**Rule: commit with explicit pathspecs. Never `git add` followed by a bare `git commit`.**
+
+```bash
+# Correct — the pathspec scopes the commit, the index is never consulted for
+# anything outside it.
+git commit .claude/skills/stack-bootstrap docs/research -m "docs: research pack and skill"
+
+# Wrong — stages into the shared index, then commits whatever is in it.
+git add .claude/skills/stack-bootstrap docs/research
+git commit -m "docs: research pack and skill"
+```
+
+`git commit <pathspec>` commits the working-tree contents of exactly those paths and leaves
+the rest of the index untouched, which is the property you want. A scoped `git add` is not
+enough on its own: it scopes what *you* stage, not what the subsequent commit *takes*.
+
+For a longer message, pathspecs and `-F -` combine:
+
+```bash
+git commit <pathspec>... -F - <<'MSG'
+<subject>
+
+<body>
+MSG
+```
+
+Two supporting habits:
+
+- **Verify the commit's contents, not your intent**: `git show --name-only --format="" HEAD`
+  after every commit. If a file you did not write is in it, you took someone else's work.
+- **Check `git status --short --branch` before and after.** Other agents' modified and
+  untracked files should appear unchanged on both sides.
+
+This rule applies to any shared checkout, agent fleet or not. A person with a partially
+staged change in another terminal is the same hazard.
+
+---
+
+## 8. Agent-facing docs
 
 The doc spine in `references/doc-spine.md` is what an agent reads to orient. Two files there
 do the heavy lifting for agents specifically:
@@ -223,7 +268,7 @@ do the heavy lifting for agents specifically:
 
 ---
 
-## 8. What was not verified
+## 9. What was not verified
 
 - **Project-scoped agent definitions** (`.claude/agents/*.md`): neither reference repo has
   any. Agents appear to be defined globally or dispatched dynamically from within skills.
