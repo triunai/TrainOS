@@ -56,19 +56,19 @@ export function useApi(): FixtureClient {
 /* ---- The action envelope --------------------------------------------- */
 
 /**
- * `ActionRequest` leaves `payload` open and parameterised because the contract
- * gives an example per section rather than a closed schema, so the envelope's
- * default `Record<string, unknown>` and a named payload interface do not
- * structurally overlap.
+ * A payload that is BOTH its named contract shape and an index-signature bag.
  *
- * The widening happens ONCE, here, where it can be read and justified, instead
- * of as a cast at every call site. A screen keeps the named payload type — and
- * therefore the compile error when the payload's shape changes.
+ * `ActionRequest` parameterises `payload` and defaults it to
+ * `Record<string, unknown>`, because §3 gives an example per section rather
+ * than a closed schema. A named interface like `ProposalSendPayload` has no
+ * index signature, so it does not structurally satisfy that default.
+ *
+ * `satisfies` at the call site is the fix rather than a cast: the object is
+ * still checked against the named payload type, so a field that the contract
+ * renames or retypes is still a compile error here, and the widening is a
+ * property of the literal rather than something a helper hides.
  */
-export type AnyActionRequest = ActionRequest<Record<string, unknown>>;
-
-export const actionRequest = <P extends object>(request: ActionRequest<P>): AnyActionRequest =>
-  request as unknown as AnyActionRequest;
+export type ActionPayload<P> = P & Record<string, unknown>;
 
 /* ---- Error helpers --------------------------------------------------- */
 

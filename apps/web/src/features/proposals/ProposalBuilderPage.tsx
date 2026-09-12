@@ -23,12 +23,13 @@ import {
   RecordHeader,
   SecondaryButton,
   StatusChip,
+  formatDate,
   humanise,
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useMe } from "@/shared/hooks/useMe";
 import {
-  actionRequest,
+  type ActionPayload,
   errorMessageOf,
   useApproval,
   useEditSection,
@@ -39,7 +40,7 @@ import {
   useSendProposal,
 } from "./api";
 import { PROPOSALS_LIST_PATH } from "./paths";
-import { needsReview, originLabel } from "./sections";
+import { EDITED_LABEL, isEdited, needsReview, originLabel, REVIEW_THRESHOLD } from "./sections";
 
 /**
  * M07-S02 · Proposal builder.
@@ -97,7 +98,7 @@ export function ProposalBuilderPage() {
     );
   }
 
-  const sendRequest = (): ActionRequest<ProposalSendPayload> => ({
+  const sendRequest = (): ActionRequest => ({
     type: "PROPOSAL_SEND",
     targetRef: proposal.ref,
     payload: {
@@ -105,12 +106,12 @@ export function ProposalBuilderPage() {
       templateId: proposal.templateId || TEMPLATE_PROPOSAL,
       to: [],
       attachPdf: true,
-    },
+    } satisfies ActionPayload<ProposalSendPayload>,
     requestedBy: { id: me.id, name: me.name, kind: "HUMAN" },
   });
 
   const onSend = () => {
-    send.mutate(actionRequest(sendRequest()), { onSuccess: (response) => setQueued(response) });
+    send.mutate(sendRequest(), { onSuccess: (response) => setQueued(response) });
   };
 
   const sendButton = (
@@ -135,7 +136,7 @@ export function ProposalBuilderPage() {
           meta={[
             proposal.opportunityRef,
             proposal.templateId,
-            `created ${proposal.createdAt.slice(0, 10)}`,
+            `created ${formatDate(proposal.createdAt)}`,
             `owner ${proposal.createdBy.name ?? proposal.createdBy.id}`,
           ]}
           chips={
@@ -457,9 +458,13 @@ function SectionEditor({
         <h2 className="text-[15px] font-semibold text-ink">
           {section.n} · {section.title}
         </h2>
+        {/* The chip and the rail read the same section the same way. The only
+            label passed explicitly is the edited state, which the kit's variant
+            vocabulary collapses but the pack names. */}
         {section.provenance ? (
           <AIChip
             provenance={section.provenance}
+            {...(isEdited(section) ? { label: EDITED_LABEL } : {})}
             {...(needsReview(section) ? { variant: "low-confidence" as const } : {})}
           />
         ) : null}
@@ -575,7 +580,7 @@ function LivePreview({ proposal }: { proposal: Proposal }) {
 
       <div className="rounded-[10px] border border-border bg-surface p-3">
         <p className="font-mono text-[10px] text-ink-muted">
-          {proposal.ref} · {proposal.createdAt.slice(0, 10)}
+          {proposal.ref} · {formatDate(proposal.createdAt)}
         </p>
         {lead ? (
           <>

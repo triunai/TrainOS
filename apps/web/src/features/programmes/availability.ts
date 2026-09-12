@@ -1,5 +1,6 @@
 import type { DateOnly, TrainerPoolEntry } from "@trainos/contract";
 import type { EngagementProjection, FixtureTrainer } from "@trainos/fixtures";
+import { formatDateRange } from "@/shared/components/kit";
 
 /**
  * Trainer availability, derived rather than stored.
@@ -82,11 +83,17 @@ export const POOL_LABEL = {
   AVAILABLE: "Available",
 } as const;
 
-/** `2026-11-12 – 2026-11-13`, or the single day when there is only one. */
+/**
+ * `12–13 Nov 2026`, through the kit's own range formatter.
+ *
+ * A set of committed days collapses to its first and last, which is the
+ * `from/to` shape `formatDateRange` already reads — so the app has one way of
+ * writing a date range rather than a second one grown here.
+ */
 export function dayRange(dates: readonly DateOnly[]): string {
   if (dates.length === 0) return "";
   const sorted = [...dates].sort();
   const first = sorted[0] as DateOnly;
   const last = sorted[sorted.length - 1] as DateOnly;
-  return first === last ? first : `${first} – ${last}`;
+  return formatDateRange(`${first}/${last}`);
 }

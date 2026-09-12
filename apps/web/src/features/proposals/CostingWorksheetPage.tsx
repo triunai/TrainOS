@@ -31,7 +31,7 @@ import {
 } from "@/shared/components/kit";
 import { useMe } from "@/shared/hooks/useMe";
 import {
-  actionRequest,
+  type ActionPayload,
   errorCodeOf,
   errorMessageOf,
   floorBreachOf,
@@ -97,15 +97,15 @@ export function CostingWorksheetPage() {
   const candidateMargin = marginOf(candidate, quotation.directCost);
   const belowFloor = candidate.amount < quotation.floorPrice.amount;
 
-  const applyRequest = (sellPrice: Money): ActionRequest<QuotationApplyPayload> => ({
+  const applyRequest = (sellPrice: Money): ActionRequest => ({
     type: "QUOTATION_APPLY",
     targetRef: quotation.ref,
-    payload: { sellPrice },
+    payload: { sellPrice } satisfies ActionPayload<QuotationApplyPayload>,
     requestedBy: { id: me.id, name: me.name, kind: "HUMAN" },
   });
 
   const onApply = () => {
-    apply.mutate(actionRequest(applyRequest(candidate)), {
+    apply.mutate(applyRequest(candidate), {
       onSuccess: (response) => setApplied(response),
     });
   };
@@ -231,17 +231,32 @@ export function CostingWorksheetPage() {
                     gross
                   </span>
                 </div>
-                <MiniBar
-                  label="Margin against the floor"
-                  value={candidateMargin}
-                  state={belowFloor ? "over" : "within"}
-                  size="md"
-                  valueText={`${Math.round(candidateMargin * 100)} percent, floor ${Math.round(quotation.floorMarginRate * 100)} percent`}
-                />
-                <div className="flex justify-between text-[11px] text-ink-muted">
-                  <span>0%</span>
-                  <span>floor {Math.round(quotation.floorMarginRate * 100)}%</span>
-                  <span>100%</span>
+                {/* The floor is a point on the track, not a caption floating in
+                    the middle of it. A label at 50% while the floor is at 35%
+                    is the kind of small lie a margin gauge cannot afford. */}
+                <div className="relative">
+                  <MiniBar
+                    label="Margin against the floor"
+                    value={candidateMargin}
+                    state={belowFloor ? "over" : "within"}
+                    size="md"
+                    valueText={`${Math.round(candidateMargin * 100)} percent, floor ${Math.round(quotation.floorMarginRate * 100)} percent`}
+                  />
+                  <span
+                    aria-hidden="true"
+                    style={{ left: `${quotation.floorMarginRate * 100}%` }}
+                    className="absolute top-0 h-1.5 w-px -translate-x-1/2 bg-ink"
+                  />
+                </div>
+                <div className="relative h-4 text-[11px] text-ink-muted">
+                  <span className="absolute left-0">0%</span>
+                  <span
+                    style={{ left: `${quotation.floorMarginRate * 100}%` }}
+                    className="absolute -translate-x-1/2 whitespace-nowrap"
+                  >
+                    floor {Math.round(quotation.floorMarginRate * 100)}%
+                  </span>
+                  <span className="absolute right-0">100%</span>
                 </div>
               </div>
             </section>
@@ -415,6 +430,13 @@ function FloorBreachBanner({
 
 /* ---- Cost lines ------------------------------------------------------ */
 
+/** `2 days`, `1 trip`, `30`. The unit is a contract enum, so it pluralises here. */
+function quantityText(line: QuotationLine): string {
+  if (!line.unit) return String(line.qty);
+  const unit = humanise(line.unit).toLowerCase();
+  return `${line.qty} ${line.qty === 1 ? unit : `${unit}s`}`;
+}
+
 function CostLinesTable({ quotation }: { quotation: QuotationWithFloors }) {
   const columns: Column<QuotationLine>[] = [
     {
@@ -434,10 +456,7 @@ function CostLinesTable({ quotation }: { quotation: QuotationWithFloors }) {
       /* A zero-quantity line is the client-site venue. It stays visible with an
          explicit zero rather than being dropped — the absence of a venue cost
          is a fact the approver needs. */
-      accessor: (line) =>
-        line.qty === 0
-          ? "—"
-          : `${line.qty}${line.unit ? ` ${humanise(line.unit).toLowerCase()}` : ""}`,
+      accessor: (line) => (line.qty === 0 ? "—" : quantityText(line)),
     },
     {
       key: "rate",

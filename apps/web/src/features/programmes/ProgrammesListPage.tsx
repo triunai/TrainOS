@@ -18,6 +18,7 @@ import {
   type FilterChipModel,
 } from "@/shared/components/kit";
 import { errorMessageOf, useProgrammes } from "./api";
+import { hrdcSchemeLabel } from "./labels";
 import { PROGRAMME_DETAIL_PATH } from "./paths";
 
 /**
@@ -148,11 +149,14 @@ export function ProgrammesListPage() {
     {
       key: "hrdc",
       label: "HRDC",
+      /* The scheme is a routing fact, not a status, so the chip stays neutral —
+         colouring every row green would spend accent budget on something the
+         reader cannot act on. Only the exception earns a tone. */
       accessor: (programme) =>
         programme.hrdcClaimable ? (
-          <StatusChip tone="success">{humanise(programme.hrdcScheme)}</StatusChip>
+          <StatusChip tone="neutral">{hrdcSchemeLabel(programme.hrdcScheme)}</StatusChip>
         ) : (
-          <StatusChip tone="neutral">Not claimable</StatusChip>
+          <StatusChip tone="warning">Not claimable</StatusChip>
         ),
     },
     {

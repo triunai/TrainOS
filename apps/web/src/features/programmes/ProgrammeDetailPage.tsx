@@ -16,6 +16,8 @@ import {
   RecordHeader,
   SecondaryButton,
   StatusChip,
+  formatDate,
+  formatDateRange,
   humanise,
   type Column,
   type MetricCellProps,
@@ -39,6 +41,7 @@ import {
   poolRows,
   type PoolRow,
 } from "./availability";
+import { hrdcSchemeLabel } from "./labels";
 import { PROGRAMMES_LIST_PATH } from "./paths";
 
 /**
@@ -130,7 +133,7 @@ export function ProgrammeDetailPage() {
             `${programme.days} ${programme.days === 1 ? "day" : "days"}`,
             `v${programme.version}`,
             "owner L&D",
-            `updated ${programme.updatedAt.slice(0, 10)}`,
+            `updated ${formatDate(programme.updatedAt)}`,
           ]}
           chips={
             <>
@@ -244,9 +247,11 @@ export function ProgrammeDetailPage() {
                 {programme.hrdcClaimable ? (
                   <>
                     Claimable under{" "}
-                    <b className="font-semibold text-ink">{humanise(programme.hrdcScheme)}</b>. The
-                    claim packet needs the attendance sheet, the trainer&rsquo;s TTT certificate,
-                    the tax invoice and the evaluation summary.
+                    <b className="font-semibold text-ink">
+                      {hrdcSchemeLabel(programme.hrdcScheme)}
+                    </b>
+                    . The claim packet needs the attendance sheet, the trainer&rsquo;s TTT
+                    certificate, the tax invoice and the evaluation summary.
                   </>
                 ) : (
                   "Not claimable. Any levy conversation on this programme is out of scope."
@@ -360,7 +365,7 @@ function DeliveriesTable({
 
   const columns: Column<ProgrammeDelivery>[] = [
     { key: "client", label: "Client", accessor: (row) => row.organisationName },
-    { key: "dates", label: "Dates", accessor: (row) => row.dates },
+    { key: "dates", label: "Dates", accessor: (row) => formatDateRange(row.dates) },
     { key: "pax", label: "Pax", align: "right", accessor: (row) => row.pax },
     {
       key: "evaluation",
