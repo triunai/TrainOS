@@ -884,7 +884,7 @@ begin
 
   if j.effect_id is not null then
     -- owned by sb-actions (§2.7); workers never write core tables directly
-    perform app.report_effect_result(j.effect_id, 'SETTLED', p_result, null);
+    perform app.report_effect_result(j.effect_id, 'SUCCEEDED', p_result, null);
   end if;
 end $$;
 ```
@@ -1075,6 +1075,13 @@ It is an optimisation: if `pg_net` is saturated or the request is dropped, the 1
 tick still picks the job up. `pg_net` is rated for about 200 requests/second and its
 response table is unlogged, so it must never carry the guarantee.
 
+**This does not contradict `sb-actions`' rule forbidding network I/O in the action path**,
+and the two documents should not be read as disagreeing. `pg_net` does not perform the
+request during the transaction — it queues it and fires after commit. So the nudge is not a
+network call inside a transaction holding row locks, which is the thing their §6.1 forbids
+and which would be wrong here too. An extension being available is not an argument for
+calling out from inside the gate; nothing in this design does.
+
 ### 2.7 The `sb-actions` seam
 
 **Settled.** One call out of the gate, one call back from workers.
@@ -1112,18 +1119,42 @@ insert.
 app.report_effect_result(p_effect_id bigint, p_status text, p_payload jsonb, p_error jsonb)
 ```
 
-**Status vocabulary, and the one thing they asked me to confirm.** The worker passes
-`SETTLED` or `FAILED`. Their stored effect status is `SETTLED` or `DEAD_LETTERED`, and the
-asymmetry is deliberate: `app.complete_job` calls with `SETTLED` on success, and only the
-**dead-letter branch** of `app.fail_job` calls at all, with `FAILED`. A transient failure
-that will retry calls nothing — the effect stays `DISPATCHED`, because it has not settled.
-So by construction the only failure that reaches them is terminal, which is why their
-stored value is `DEAD_LETTERED`. Confirming explicitly, since they asked: **`fail_job`
-passes `FAILED`, never `DEAD_LETTERED`.**
+**Status vocabulary — two vocabularies meeting at a boundary.** This flip-flopped three
+times across messages before settling, so it is pinned as a table rather than prose:
 
-**Column list, which they flagged as unverified against my committed §2.2.** This is the
-insert they committed in `2357080`, and it is the one `app.enqueue_effect_jobs` replaces.
-I checked it anyway, because until their two-line change lands it is what runs:
+| Call site | Value I pass | Value `sb-actions` stores |
+|---|---|---|
+| `app.complete_job`, on success | `SUCCEEDED` | `SETTLED` |
+| `app.fail_job`, dead-letter branch only | `FAILED` | `DEAD_LETTERED` |
+| `app.fail_job`, retryable branch | *nothing — no call* | effect stays `DISPATCHED` |
+
+The words differ on the two sides on purpose: mine are job outcomes, theirs are effect
+states. **`SUCCEEDED` is the success value, not `SETTLED`** — `SETTLED` is what they store,
+and passing it would mean the worker speaking the callee's vocabulary back at it.
+
+A transient failure calls nothing at all, so by construction every failure that reaches
+them is terminal — which is why their stored value is `DEAD_LETTERED` and why there is no
+`RETRYING` state on their side.
+
+**Their callback raises on an unrecognised status**, and that is the durable fix rather than
+either of us getting the constant right. Their earlier shape was a two-branch case: success
+value to `SETTLED`, everything else to `DEAD_LETTERED`. Under that shape my brief use of
+`SETTLED` would have recorded every delivered email as dead-lettered — silently, with the
+right row count and the wrong meaning, surfacing as `PARTIALLY_FAILED` on actions that
+succeeded completely. A two-branch case over a *foreign* vocabulary fails silently toward
+its else branch, so a wrong constant becomes a wrong row instead of an error. Now it raises,
+and my wrong constant would have failed the completion transaction loudly instead.
+
+That is the general lesson and it applies to me symmetrically: anywhere this document hands
+a string to another lane's function, the receiving side should reject what it does not
+recognise. The same reasoning is why `app.job_type_for` raises rather than returning null
+(§2.3a) — we arrived at it independently, one round apart, from the same failure mode.
+
+**Column list, checked while their direct insert still existed.** `sb-actions` dropped the
+insert entirely in `85cb624` and the gate now calls `app.enqueue_effect_jobs(r.id)` and
+nothing else, so this no longer runs anywhere. It is kept because the check is what closed
+their open question, and because a future reader comparing the two docs will find the
+insert in their history:
 
 ```sql
 insert into app.outbox (tenant_id, job_type, job_key, effect_id,
@@ -1136,8 +1167,8 @@ Every one of those eight is in §2.2 with that spelling and these types: `tenant
 `job_type text`, `job_key text`, `effect_id bigint`, `action_request_id uuid`,
 `correlation_id uuid not null`, `payload jsonb`, `run_after timestamptz`. The unique index
 is `(tenant_id, job_key) where job_key is not null`, so their `on conflict` target
-resolves. **This compiles**, so nothing is broken in the interim while the insert moves
-behind `app.enqueue_effect_jobs`.
+resolves. **It compiled**, so there was no broken window while the insert moved behind
+`app.enqueue_effect_jobs`.
 
 `correlation_id` is `not null` on every row on every path. `action_request_id` and
 `effect_id` are nullable on the table, because event fan-out jobs have neither; the effect
@@ -1177,10 +1208,9 @@ onto `job_type` mechanically and shipped `'effect.proposal_send'` into a column 
 dispatches on. That would not fail loudly; it would produce jobs no handler claims, sitting
 at `QUEUED` until somebody noticed the badge. The table fails closed instead.
 
-**`app.enqueue_effect_jobs` — accepted, and it makes the mapping invisible to them.**
-`sb-actions` offered to drop their direct insert and call one function, and asked me to
-decide. **Yes, take it.** Their commit `2357080` still carries the insert because our
-messages crossed; the change is theirs to make and is two lines.
+**`app.enqueue_effect_jobs` — live.** `sb-actions` offered to drop their direct insert and
+call one function, asked me to decide, and landed it in `85cb624`. The gate now calls
+`app.enqueue_effect_jobs(r.id)` and nothing else.
 
 ```sql
 app.enqueue_effect_jobs(p_action_request_id uuid) returns int
@@ -1195,9 +1225,9 @@ third is the one that decided it:
   thing that can get it wrong instead of two.
 - `sb-actions` stops passing `job_type` at all, so §2.3a's mapping becomes an internal
   detail of my lane. They no longer need to know that handler keys exist.
-- It removes the cross-lane dependency that prompted this: their committed SQL no longer
-  references an unwritten function of mine, because it no longer references my functions at
-  all beyond the two named calls.
+- It removes the cross-lane dependency that prompted this: their SQL no longer references
+  an unwritten function of mine, because it no longer references my functions at all beyond
+  the two named calls.
 
 **The lifecycle hole is closed, and the fix is theirs.** I had said the write-back should
 advance `action_requests.status`. They objected that rolling a proposal back from `SENT`
@@ -1226,7 +1256,7 @@ and 30 days for raw bodies (§5.5). Two tables, one rule, stated in both places.
 Ownership, restated:
 
 - `sb-actions` calls `app.emit_event` and `app.enqueue_effect_jobs`. It writes no
-  `app.outbox` row itself once its two-line change lands.
+  `app.outbox` row itself.
 - **Workers never write `core` tables directly.** Every write-back goes through
   `app.report_effect_result`, which runs a per-type confirm handler on success only — the
   sole place a worker's data reaches `core`. A worker holds the service role and bypasses
