@@ -91,13 +91,15 @@ import {
  * agents: if a pattern is not on this page, it is not in the kit, and inventing
  * it on a screen is the divergence CLAUDE.md calls a defect.
  *
- * Layout: each entry renders twice, side by side. The LEFT column follows the
- * app's theme; the RIGHT column is pinned to `data-theme="dark"`. So with the
- * app in light mode the page IS the light/dark comparison, and with the app in
- * dark mode both columns are dark, which is the honest rendering given
- * `tokens.css` defines its light palette on bare `:root` with no
- * `[data-theme="light"]` selector to re-assert it inside a dark subtree. See the
- * note at the top of the page.
+ * Layout: each entry renders twice, side by side, with the LEFT column pinned
+ * to `data-theme="light"` and the RIGHT to `data-theme="dark"`. The comparison
+ * therefore holds whichever theme the app itself is in.
+ *
+ * That only became possible once `tokens.css` grew a `[data-theme="light"]`
+ * selector carrying the same values as bare `:root`. Before it, a light island
+ * inside a dark page had no rule to re-assert the light palette and rendered
+ * dark, so this page could only compare the two themes while the app was in
+ * light mode.
  *
  * The sample values below are literals local to this file. They are not
  * fixtures and nothing else may import them — a kit that ships data has stopped
@@ -420,7 +422,12 @@ function Entry({
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="min-w-0 rounded-card border border-border bg-card p-4">{children}</div>
+        <div
+          data-theme="light"
+          className="min-w-0 rounded-card border border-border bg-card p-4 text-ink"
+        >
+          {children}
+        </div>
         <div
           data-theme="dark"
           className="min-w-0 rounded-card border border-border bg-card p-4 text-ink"
@@ -509,11 +516,9 @@ export default function KitShowcase() {
         </p>
         <h1>Kit showcase</h1>
         <p className="max-w-3xl text-[13px] leading-relaxed text-ink-secondary">
-          Every component in the kit, every variant the design pack names. The left panel of each
-          pair follows the app theme; the right is pinned to dark. With the app in light mode this
-          page is the light-and-dark comparison; in dark mode both panels are dark, because
-          `tokens.css` declares its light palette on bare `:root` and there is no
-          `[data-theme="light"]` selector to re-assert it inside a dark subtree.
+          Every component in the kit, every variant the design pack names. Each pair is the same
+          markup twice: the left panel pinned to light, the right pinned to dark. Nothing between
+          them changes but the tokens, which is the whole claim dark mode makes here.
         </p>
       </header>
 
