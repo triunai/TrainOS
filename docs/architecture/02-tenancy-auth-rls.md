@@ -597,6 +597,77 @@ If `sb-erd` models the trainer on the session rather than the engagement (§8 sh
 `sessions[].trainerRef`), the body becomes a union over `engagement_trainers` and `sessions`. Flagged
 to `sb-erd`.
 
+### 2.6 `app.role_holders()` — the shared membership lookup (C15)
+
+`sb-actions` needs the users holding an approval's `approver_role`, to pick an assignee.
+`sb-events` needs the same set, to fan out badge counts. Both would otherwise join into
+`public.memberships` directly. Accepted as mine, because two implementations of one membership query
+drift the first time a role gains a scope condition, and because neither lane should be reaching
+into the identity tables.
+
+```sql
+create or replace function app.role_holders(
+  p_tenant              uuid,
+  p_roles               app.app_role[],
+  p_requires_permission text default null
+)
+returns table (user_id uuid, role app.app_role, team_id uuid)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  -- A caller-supplied tenant on a SECURITY DEFINER function is a cross-tenant read
+  -- waiting to happen. Only service_role may name a tenant other than its own.
+  if current_user <> 'service_role'
+     and p_tenant is distinct from app.current_tenant_id() then
+    raise exception 'CROSS_TENANT_DENIED' using errcode = 'insufficient_privilege';
+  end if;
+
+  return query
+    select m.user_id, m.role, m.primary_team_id
+    from   public.memberships m
+    where  m.tenant_id  = p_tenant
+      and  m.status     = 'ACTIVE'
+      and  m.actor_kind = 'HUMAN'          -- never route an approval to an agent
+      and  m.role       = any (p_roles)
+      and  ( p_requires_permission is null
+             or exists (select 1 from app.role_permissions rp
+                        where rp.role = m.role
+                          and rp.permission = p_requires_permission) );
+end;
+$$;
+revoke execute on function app.role_holders(uuid, app.app_role[], text) from public, anon;
+grant  execute on function app.role_holders(uuid, app.app_role[], text) to authenticated, service_role;
+```
+
+Three things about the signature, since it differs from what was asked for.
+
+**The tenant guard is not optional.** A `SECURITY DEFINER` function that takes a tenant id and reads
+`memberships` will happily enumerate another tenant's users if the caller passes their id. That is
+the single worst bug available in this document, and it would be introduced by a helper written to be
+convenient. `service_role` is exempt because the badge fan-out legitimately iterates tenants.
+
+**`p_requires_permission` is the addition.** `approver_role` is a routing value stored on the policy
+row (§4.6), so routing by role is correct. But the role-to-permission matrix is data and can move:
+if someone shifts `approval:decide` off `SALES_MANAGER`, routing by role alone would keep assigning
+approvals to people who can no longer decide them, and the failure would look like an inert queue
+rather than a misconfiguration. Passing `'approval:decide'` intersects the two, so the routing value
+and the permission matrix cannot silently disagree. Callers who genuinely want the raw role set pass
+null.
+
+**`AGENT` memberships are excluded unconditionally.** An agent holds no `approval:decide` (§2.3) and
+§3's fifth policy input forbids self-approval, so an agent assignee is never correct. Filtering it
+here rather than in each caller means neither lane has to remember.
+
+**The function does not read `core.approval_requests`, and will not.** `sb-actions` offered to let it
+order holders by open approval count. Declining: ordering an assignment queue is their policy, and
+counting is over their table. A helper in `app` that reaches into a domain table inverts the
+dependency and couples my identity lookup to their schema. `app.role_holders()` returns membership
+facts; `pick_role_holder()` wraps it with the ordering and the requester exclusion. Clean seam, and
+it stays clean when the ordering rule changes.
+
 ---
 
 ## 3 · The `AGENT` service principal
@@ -2462,6 +2533,19 @@ select tests.as_user('u_kelvin','T1','SALES_MANAGER','MY_TEAM','MY_TEAM','aal1')
 select throws_ok($$ insert into core.approval_decisions (request_id, decided_by, decision)
                     values ('<kelvin''s own request>','u_kelvin','APPROVE') $$, '42501',
                 'nobody approves their own request');
+
+-- §2.6 role_holders: the cross-tenant guard is the one that matters.
+select tests.as_user('u_kelvin','T1','SALES_MANAGER','MY_TEAM','MY_TEAM');
+select throws_ok($$ select * from app.role_holders('T2', array['SALES_MANAGER']::app.app_role[]) $$,
+                '42501', 'cannot enumerate another tenant''s role holders');
+select isnt_empty($$ select * from app.role_holders('T1', array['SALES_MANAGER']::app.app_role[]) $$,
+                'own tenant resolves');
+select is_empty($$ select * from app.role_holders('T1', array['AGENT']::app.app_role[]) $$,
+                'agents are never returned as role holders');
+select is_empty($$ select * from app.role_holders('T1', array['OPS']::app.app_role[], 'approval:decide') $$,
+                'permission filter excludes a role that cannot decide');
+select isnt_empty($$ select * from app.role_holders('T1', array['SALES_MANAGER']::app.app_role[], 'approval:decide') $$,
+                'permission filter admits a role that can');
 ```
 
 ### 8.7 Regression guards the suite must also carry
