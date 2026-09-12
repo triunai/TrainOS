@@ -1173,7 +1173,7 @@ during design; this is the suite that keeps them true.
 **Schema placement**
 83. Every table in the placement table above is in the schema that table names. A catalogue query, because a table in `app` fails silently at the API rather than loudly in CI, which is the whole reason this test exists.
 84. `provenance_subject` is the only object of this lane's in `app` that is a table.
-85. Every function this lane owns has a non-null `proconfig` pinning `search_path`, and every one of them pins it to exactly `search_path=""`. Assert the stored string, not merely that a setting exists. This catches three things at once: a new function with no setting, a `search_path=app, pg_catalog` that puts a writable schema ahead of the catalogue, and a `search_path="app, pg_catalog"` whose comma is inside the quotes and therefore names one schema that does not exist. The third is invisible to any test that only checks `proconfig is not null`.
+85. Every function this lane owns stores a `proconfig` entry equal to the exact string `search_path=""` — six characters, then two literal double-quote characters. Assert that string, not `proconfig is not null`, and not a prefix. sb-tenancy hit this writing the same test: matching on `search_path=` alone fails against a correct function, because the stored value has the quotes in it rather than an empty tail. The exact match catches three defects at once: a function with no setting, a `search_path=app, pg_catalog` putting a writable schema ahead of the catalogue, and a `search_path="app, pg_catalog"` whose comma sits inside the quotes and so names one schema that does not exist. The last two are invisible to a null check, and the third is invisible to a behavioural test as well. **This test is load-bearing for this lane specifically**, because thirteen of its functions are plpgsql, which defers the failure to the first production call rather than failing the migration.
 86. A `core` table's generated column calling an `app` helper still computes after a schema rebuild.
 87. Each of the client-callable RPCs is reachable in `core` and returns its documented shape.
 
@@ -1343,8 +1343,28 @@ quoted form is silently broken. It looks more careful than the unquoted form,
 passes review, and leaves a path that resolves nothing. A function under it that
 only touches built-ins appears to work, because `pg_catalog` is still implicitly
 searched, and the accidental protection is indistinguishable from a correct
-setting. A function that relies on the path to find an `app` object fails at
-runtime instead. Either way the stated intent is not what is in force.
+setting.
+
+**And the failure surfaces at different times depending on language** — found by
+sb-tenancy on an independent reproduction, confirmed here:
+
+| body language | broken quoted path | when it fails |
+|---|---|---|
+| `LANGUAGE sql` | `CREATE FUNCTION` errors immediately | deploy time, loud |
+| `LANGUAGE plpgsql` | `CREATE FUNCTION` succeeds | **first call, in production** |
+
+That inverts which lane is most exposed. This one is: thirteen of its functions
+are plpgsql and most are trigger functions, including `invoice_recalc`,
+`invoice_assert_reconciled`, `quotation_recalc`, `provenance_on_edit`,
+`rate_card_version_immutable` and the two halves of the deterministic-check
+guard. A plpgsql trigger with a broken path deploys cleanly, passes any migration
+that does not exercise it, and then fails inside the first real invoice line
+insert — someone else's write, not the deployer's.
+
+This is the concrete reason the CI assertion is not optional here. For a
+SQL-bodied function the migration itself is the test; for a plpgsql trigger
+nothing catches it before production except an explicit check on the stored
+setting.
 
 The empty-path recommendation above is unaffected and was verified independently:
 `''` stores `search_path=""`, which is a genuinely empty path, not a schema named
