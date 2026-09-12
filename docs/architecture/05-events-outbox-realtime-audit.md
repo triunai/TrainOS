@@ -613,6 +613,7 @@ permissive policy.
 | `RETENTION_REDACT` | cron, daily 03:00 MYT | 9 | 2 | §6.6 |
 | `WHATSAPP_RATE_REFRESH` | cron, per §16 Q4 TTL | 9 | 2 | Cached BSP rate card |
 | `JURY_EVALUATE` | `app.apply_effects`, topic `jury.evaluate` (§18 `ESCALATE` mode) | 1 | 2 | Blocking jury; the action waits on it |
+| `NOTIFY_OWNER` | `ACCOUNT_TRADING_HOLD`, and any action whose owner must be told | 1 | 5 | Internal notification to the record owner and Finance; resolves the recipient from the record, not from the payload |
 | `AUTH_SIGN_OUT` | membership or role change (`sb-tenancy` §7.4) | 1 | 5 | Calls `auth.admin.signOut` for the affected user. The application role rides in the JWT claim, so a revoked membership is not revoked until the token is. Priority 1 is a security property, not a nicety. |
 
 ### 2.3a `app.job_type_for` — action type to handler
@@ -666,14 +667,24 @@ never called.
 | `RULE_CHANGE_APPROVE` | `*` | `COMPLIANCE_CHECK_EVALUATE` | 5 | Re-evaluates every affected engagement |
 | `BUDGET_CAP_RAISE` | `*` | `USAGE_ROLLUP` | 9 | Recomputes budget state after the cap moves |
 | `AGENT_PAUSE` | `*` | `USAGE_ROLLUP` | 9 | |
+| `ACCOUNT_TRADING_HOLD` | `*` | `NOTIFY_OWNER` | 1 | MD-gated (FIN-05). The account flag is in-database; the notification is the external effect |
 | *(jury, not an action type)* | `JURY` | `JURY_EVALUATE` | 1 | `apply_effects` writes a `JURY` effect row; `ESCALATE` mode blocks on it |
 
 Six action types are **absent by design** and the lookup is never reached for them,
 because every one of their effects is in-database: `ENQUIRY_ARCHIVE`,
 `OPPORTUNITY_CONVERT`, `TNA_RECOMMENDATION_ACCEPT`, `QUOTATION_APPLY`, `DISCOUNT_APPROVE`
-and `AGENT_AUTONOMY_CHANGE`. Fifteen mapped plus six absent is the full 21 — 19 from §3 and
-two from §17. If one of the six later grows an external effect, the lookup raises and the
-fix is an insert. That is the intended behaviour, not a bug to route around.
+and `AGENT_AUTONOMY_CHANGE`. Sixteen mapped plus six absent is the full **22** — 19 from
+§3, two from §17, and `ACCOUNT_TRADING_HOLD` from ruling R3 (FIN-05 in doc 03). If one of
+the six later grows an external effect, the lookup raises and the fix is an insert. That is
+the intended behaviour, not a bug to route around.
+
+**`ACCOUNT_TRADING_HOLD` deliberately does not notify the client.** Putting an account on
+trading hold has two effects: the account flag, which is in-database and needs no job, and
+telling the people who must stop supplying, which is `NOTIFY_OWNER` — the account owner and
+Finance. Telling the *client* they have been put on hold is a commercial and contractual
+decision, not a mechanical consequence of a flag being set, so it is not mapped here. If it
+is ever wanted it is an `EMAIL` entity row and an explicit decision, which is exactly the
+kind of thing this table should force someone to make on purpose.
 
 **The lookup.**
 
@@ -744,8 +755,10 @@ Both are `stable`, not `immutable`: the table can change between transactions.
 - **Priority does not fail closed.** `job_priority_for('NEW_UNMAPPED_ACTION')` returns 5.
 - **Coverage against the contract.** For every action type in
   `packages/contract`'s enum that `apply_effects` can produce an `EXTERNAL` effect for,
-  assert a row exists. This is the test that fails when someone adds action type 22 — which
-  is the entire point of the table.
+  assert a row exists, and assert the union of mapped and deliberately-absent action types
+  is exactly the 22 in the enum. This is the test that fails when someone adds action type
+  23 — which is the entire point of the table, and it is how `ACCOUNT_TRADING_HOLD` would
+  have been caught had it landed after this was written rather than before.
 
 ### 2.4 State machine
 
@@ -871,7 +884,7 @@ begin
 
   if j.effect_id is not null then
     -- owned by sb-actions (§2.7); workers never write core tables directly
-    perform app.report_effect_result(j.effect_id, 'SUCCEEDED', p_result, null);
+    perform app.report_effect_result(j.effect_id, 'SETTLED', p_result, null);
   end if;
 end $$;
 ```
@@ -2219,13 +2232,31 @@ and a count you cannot act on is noise.
 
 Two behaviours of `role_holders` that matter here:
 
-- **`service_role` is exempt from its cross-tenant guard.** It raises `CROSS_TENANT_DENIED`
-  when an *authenticated* caller passes a tenant other than their own. The approval-trigger
-  path passes the row's own tenant so it never trips; the tenant-wide paths (a dead-lettered
-  job, a failed run) run from the worker as `service_role` and pass through. If a badge
-  broadcast is ever called from a third context, expect the raise and treat it as correct.
+- **Its cross-tenant guard tests for an end user, not for a Postgres role.**
+  `app.role_holders` raises `CROSS_TENANT_DENIED` when a call made *on behalf of a signed-in
+  user* names a tenant other than that user's. The test is `app.jwt() ? 'sub'` — is there an
+  end user behind this call — not `current_user <> 'service_role'`.
+
+  That distinction is load-bearing for my lane and I had the reasoning wrong. I told
+  `sb-tenancy` my worker paths would pass "because they run as `service_role`". They would
+  not have: inside a `SECURITY DEFINER` function `current_user` is the function's *owner*,
+  not the invoker, so a call from inside `app.claim_jobs` — which is `security definer` —
+  would have failed the role test and raised on a legitimate tenant-wide fan-out.
+  `sb-tenancy` found and fixed that in `622f5c3` because I stated the assumption back
+  instead of just acknowledging it.
+
+  Both my call sites pass, for the corrected reason: the approval-trigger path runs inside
+  the user's own request and names their own tenant; the tenant-wide paths (a dead-lettered
+  job, a failed run) carry no JWT at all because nobody is behind them. The second reason
+  survives wrapping those calls in another definer layer later, which the role test would
+  not have.
 - **`AGENT` memberships are excluded unconditionally**, which is what this wants: an agent
   principal has no sidebar and no badges. No opt-in needed.
+- **`enum_range(null::app.app_role)` is safe for the null case.** It returns
+  `app.app_role[]`, matching the parameter type, and `app.app_role` is the exact type name
+  (migration 002). The array includes `AGENT` and `CLIENT`, which is harmless only because
+  `role_holders` filters on `actor_kind = 'HUMAN'` and `CLIENT` never holds a membership
+  row — safe because of the filtering, not because the input is tidy.
 
 The exception handler is **inside** the loop, not around it. A single user whose broadcast
 fails must not stop the remaining users from getting theirs, and no broadcast failure may
