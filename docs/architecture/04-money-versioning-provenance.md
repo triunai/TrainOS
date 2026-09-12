@@ -1173,7 +1173,20 @@ during design; this is the suite that keeps them true.
 **Schema placement**
 83. Every table in the placement table above is in the schema that table names. A catalogue query, because a table in `app` fails silently at the API rather than loudly in CI, which is the whole reason this test exists.
 84. `provenance_subject` is the only object of this lane's in `app` that is a table.
-85. Every function this lane owns stores a `proconfig` entry equal to the exact string `search_path=""` — six characters, then two literal double-quote characters. Assert that string, not `proconfig is not null`, and not a prefix. sb-tenancy hit this writing the same test: matching on `search_path=` alone fails against a correct function, because the stored value has the quotes in it rather than an empty tail. The exact match catches three defects at once: a function with no setting, a `search_path=app, pg_catalog` putting a writable schema ahead of the catalogue, and a `search_path="app, pg_catalog"` whose comma sits inside the quotes and so names one schema that does not exist. The last two are invisible to a null check, and the third is invisible to a behavioural test as well. **This test is load-bearing for this lane specifically**, because thirteen of its functions are plpgsql, which defers the failure to the first production call rather than failing the migration.
+85. `search_path` hardening. **The implementation lives in sb-tenancy's §8.7 and is the single version; this lane does not carry a second copy.** It sweeps `app`, `public` and `core`, so both lanes are covered by one test and there is nothing to drift. What belongs here is why it matters on this side, below.
+
+    Its shape, for readers who will not open the other document: it asserts `proconfig @> array['search_path=""']` — containment, not `proconfig[1] = …`. Three revisions were needed to get there and each was found by running it, not by reading it.
+
+    | defect | caught by |
+    |---|---|
+    | no setting at all | any version |
+    | `search_path=app, pg_catalog` — writable schema ahead of the catalogue | any version |
+    | `search_path="app, pg_catalog"` — comma inside the quotes, names one schema that does not exist | exact-value or containment only, never a null check |
+    | correct setting pinned **second**, after `statement_timeout` | containment only; the index form reports a false failure |
+
+    The false failure is the dangerous revision, not the missed defect. A correctly hardened function that later acquires a `statement_timeout` turns CI red with no defect behind it, and the quickest way to green is to weaken the assertion. sb-tenancy also widened it to `prokind in ('f','p')`, since `prokind = 'f'` silently skips procedures, and excluded extension-owned objects via `pg_depend deptype = 'e'`, which otherwise fail on functions we did not write and cannot alter. Verified all four rows of that table on PostgreSQL 17.11.
+
+    **Load-bearing for this lane specifically.** Thirteen of its functions are plpgsql and most are triggers on the invoice and quotation write paths. plpgsql defers a broken path to the first call, so the deploy passes, every migration that does not exercise the trigger passes, and the failure lands inside someone else's write long after the deploy that caused it. A SQL-bodied function fails at `CREATE FUNCTION` and needs no test. These need this one.
 86. A `core` table's generated column calling an `app` helper still computes after a schema rebuild.
 87. Each of the client-callable RPCs is reachable in `core` and returns its documented shape.
 
