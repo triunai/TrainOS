@@ -1,0 +1,488 @@
+import { useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import type {
+  ContactSummary,
+  Money,
+  OrganisationRelations,
+  RelatedEngagement,
+  RelatedHrdcPacket,
+} from "@trainos/contract";
+import {
+  AIChip,
+  Breadcrumb,
+  CitationChip,
+  DataTable,
+  ErrorState,
+  ExceptionBanner,
+  Fab,
+  GhostButton,
+  LifecycleStepper,
+  LoadingState,
+  MoneyText,
+  PillTabGroup,
+  PrimaryButton,
+  RecordHeader,
+  RefChip,
+  SecondaryButton,
+  StatusChip,
+  formatDate,
+  humanise,
+  type Column,
+} from "@/shared/components/kit";
+import {
+  errorMessageOf,
+  useDealChainStages,
+  useOrganisation,
+  useOrganisationRelations,
+  useOrganisationSuggestions,
+} from "./api";
+
+/**
+ * M04-S02 · Organisation 360 (Kit.dc.html `proof-m04s02`).
+ *
+ * This is the canonical record page — breadcrumb, title and status chips,
+ * identity line, metric strip, chain stepper, tabs, exception banner,
+ * relationship panels, right rail. Every other record screen reuses this
+ * skeleton, so nothing here may be special-cased for organisations.
+ *
+ * Record identity appears exactly once: RecordHeader owns the title, the
+ * breadcrumb owns the path, and neither repeats the other.
+ *
+ * The primary is "New opportunity". It is a navigation, not an envelope call —
+ * `OPPORTUNITY_CREATE` is a UI intent in the contract, not a governed action —
+ * so no approval can be queued from this screen and none is drawn.
+ */
+
+const TAB_OVERVIEW = "overview";
+
+export function Organisation360Page() {
+  const { organisationId } = useParams<{ organisationId: string }>();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState(TAB_OVERVIEW);
+
+  const organisation = useOrganisation(organisationId);
+  const relations = useOrganisationRelations(organisationId);
+  const suggestions = useOrganisationSuggestions(organisationId);
+  const stages = useDealChainStages();
+
+  const related: OrganisationRelations = relations.data ?? {};
+  const engagements = related.engagements ?? [];
+  const contacts = related.contacts ?? [];
+  const invoices = related.invoices ?? [];
+  const hrdc = related.hrdc;
+
+  const overdueInvoice = invoices.find((invoice) => invoice.status === "OVERDUE");
+
+  const tabs = useMemo(
+    () => [
+      { id: TAB_OVERVIEW, label: "Overview" },
+      { id: "contacts", label: "Contacts", count: contacts.length },
+      { id: "engagements", label: "Engagements", count: engagements.length },
+      { id: "finance", label: "Finance", count: invoices.length },
+      { id: "hrdc", label: "HRD Corp", count: hrdc?.packets.length },
+    ],
+    [contacts.length, engagements.length, invoices.length, hrdc],
+  );
+
+  if (organisation.isPending) return <LoadingState rows={8} label="Loading the organisation" />;
+
+  if (organisation.isError || !organisation.data) {
+    return (
+      <ErrorState
+        title="The organisation did not load"
+        description={errorMessageOf(organisation.error)}
+        onRetry={() => void organisation.refetch()}
+      />
+    );
+  }
+
+  const org = organisation.data;
+
+  /* The header's variant-A stepper walks the CURRENT engagement — the most
+     recent one the organisation has in flight. Labels and order come from the
+     DEAL_CHAIN pipeline configuration, never from this file. */
+  const currentEngagement = engagements[0];
+
+  const engagementColumns: Column<RelatedEngagement>[] = [
+    {
+      key: "engagement",
+      label: "Engagement",
+      accessor: (row) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-ink">{row.title}</span>
+          <span className="font-mono text-[11px] text-ink-muted">{row.ref}</span>
+        </div>
+      ),
+    },
+    {
+      key: "progress",
+      label: "Progress",
+      width: "180px",
+      accessor: (row) => (
+        <LifecycleStepper steps={row.lifecycle} stages={stages.data?.stages} variant="table" />
+      ),
+    },
+    {
+      key: "dates",
+      label: "Dates",
+      width: "160px",
+      accessor: (row) => <span className="text-ink-secondary">{readableRange(row.dates)}</span>,
+    },
+    {
+      key: "value",
+      label: "Value",
+      align: "right",
+      width: "148px",
+      accessor: (row) => <MoneyText value={row.value} />,
+    },
+  ];
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="px-5 pt-4">
+        <Breadcrumb items={[{ label: "Sales" }, { label: "Organisations" }, { label: org.ref }]} />
+      </div>
+
+      <RecordHeaderBlock
+        org={org}
+        currentEngagement={currentEngagement}
+        stages={stages.data?.stages}
+        onNewOpportunity={() => navigate("/sales/pipeline")}
+      />
+
+      <div className="px-5 pb-2.5">
+        <PillTabGroup tabs={tabs} activeId={tab} onSelect={setTab} label="Organisation sections" />
+      </div>
+
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-auto px-5 pb-5">
+          {relations.isPending ? (
+            <LoadingState rows={6} label="Loading relationships" />
+          ) : relations.isError ? (
+            <ErrorState
+              title="Relationships did not load"
+              description={errorMessageOf(relations.error)}
+              onRetry={() => void relations.refetch()}
+            />
+          ) : (
+            <>
+              {overdueInvoice ? (
+                <ExceptionBanner
+                  severity="DANGER"
+                  title={`${overdueInvoice.ref} overdue ${overdueInvoice.daysOverdue ?? 0} days`}
+                  subtitle="Collections Agent has drafted a second reminder — awaiting your approval"
+                  action={
+                    <SecondaryButton onClick={() => navigate("/finance/collections")}>
+                      Review draft
+                    </SecondaryButton>
+                  }
+                />
+              ) : null}
+
+              {/* Overview shows every panel; a named tab narrows to one. The
+                  tab is a filter over the same panels, never a different page,
+                  so no relationship gets a second layout. */}
+              {tab === TAB_OVERVIEW || tab === "engagements" ? (
+                <section className="flex flex-col gap-2">
+                  <div className="flex items-baseline gap-2 pb-1">
+                    <h2 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                      Engagements · {engagements.length}
+                    </h2>
+                    <GhostButton
+                      className="ml-auto"
+                      onClick={() => navigate("/training/engagements")}
+                    >
+                      View all
+                    </GhostButton>
+                  </div>
+                  <DataTable
+                    label={`Engagements for ${org.name}`}
+                    columns={engagementColumns}
+                    rows={engagements}
+                    rowKey={(row) => row.ref}
+                    density="compact"
+                    stickyHeader={false}
+                  />
+                </section>
+              ) : null}
+
+              {tab === "finance" ? (
+                <section className="flex flex-col gap-2">
+                  <h2 className="pb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                    Invoices · {invoices.length}
+                  </h2>
+                  {invoices.map((invoice) => (
+                    <div
+                      key={invoice.ref}
+                      className="flex items-center gap-2.5 border-b border-divider py-2 text-[13px]"
+                    >
+                      <RefChip type="INVOICE" />
+                      <span className="font-medium text-ink">{invoice.ref}</span>
+                      <StatusChip tone={invoice.status === "OVERDUE" ? "danger" : "neutral"}>
+                        {humanise(invoice.status)}
+                        {invoice.daysOverdue ? ` · ${invoice.daysOverdue} days` : ""}
+                      </StatusChip>
+                      <span className="ml-auto">
+                        <MoneyText value={invoice.amount} />
+                      </span>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              <div
+                className={
+                  tab === TAB_OVERVIEW ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 gap-3"
+                }
+              >
+                {tab === TAB_OVERVIEW || tab === "contacts" ? (
+                  <section className="flex flex-col gap-1 border-t border-divider pt-2.5">
+                    <h2 className="pb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                      Contacts · {contacts.length}
+                    </h2>
+                    {contacts.map((contact) => (
+                      <ContactRow key={contact.ref} contact={contact} />
+                    ))}
+                  </section>
+                ) : null}
+
+                {tab === TAB_OVERVIEW || tab === "hrdc" ? (
+                  <section className="flex flex-col gap-2 border-t border-divider pt-2.5">
+                    <h2 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                      HRD Corp
+                    </h2>
+                    {hrdc ? (
+                      <div className="flex flex-col gap-2 text-[13px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-secondary">Levy available</span>
+                          <MoneyText value={hrdc.levyAvailable} compact />
+                        </div>
+                        {hrdc.packets.map((packet) => (
+                          <PacketRow key={packet.ref} packet={packet} />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[13px] text-ink-muted">Not registered with HRD Corp.</p>
+                    )}
+                  </section>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+
+        <aside
+          aria-label="Assistant"
+          className="flex w-[340px] shrink-0 flex-col gap-3 overflow-auto border-l border-border bg-surface px-3.5 py-3.5"
+        >
+          <div className="flex items-center gap-2">
+            <h2 className="text-[13px] font-semibold">Assistant</h2>
+            <span className="text-[12px] text-ink-muted">context: {org.ref}</span>
+          </div>
+
+          {(suggestions.data?.data ?? []).map((suggestion) => (
+            <article
+              key={suggestion.programmeId}
+              className="overflow-hidden rounded-control border border-border bg-card"
+            >
+              <div className="flex items-center gap-2 border-b border-primary-border bg-ai-tint px-2.5 py-2">
+                <AIChip provenance={suggestion.provenance} label="Cross-sell suggestion" />
+              </div>
+              <div className="flex flex-col gap-2 p-2.5">
+                <p className="text-[12px] leading-[1.55] text-ink-secondary">
+                  {suggestion.rationale}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(suggestion.provenance.sources ?? []).map((source, index) => (
+                    <CitationChip
+                      key={`${source.ref}-${index}`}
+                      variant="inline"
+                      label={`Source ${index + 1}: ${source.ref}`}
+                    >
+                      {index + 1}
+                    </CitationChip>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestion.actions.map((suggestionAction) => (
+                    <SecondaryButton
+                      key={suggestionAction.type}
+                      onClick={
+                        suggestionAction.type === "OPPORTUNITY_CREATE"
+                          ? () => navigate("/sales/pipeline")
+                          : undefined
+                      }
+                    >
+                      {suggestionAction.label}
+                    </SecondaryButton>
+                  ))}
+                </div>
+              </div>
+            </article>
+          ))}
+
+          <section className="flex flex-col gap-1.5 border-t border-divider pt-3">
+            <h3 className="pb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+              Related records
+            </h3>
+            <RailRow label="Engagements" value={`${engagements.length}`} />
+            <RailRow
+              label="Invoices"
+              value={`${invoices.length} · ${invoices.filter((i) => i.status === "OVERDUE").length} overdue`}
+            />
+            <RailRow label="Contacts" value={`${contacts.length}`} />
+          </section>
+        </aside>
+      </div>
+
+      <Fab />
+    </div>
+  );
+}
+
+/* The header is lifted out so the page body reads as a sequence of sections
+   rather than one 200-line expression. It is the kit's RecordHeader with the
+   record's own values — no second header pattern exists. */
+function RecordHeaderBlock({
+  org,
+  currentEngagement,
+  stages,
+  onNewOpportunity,
+}: {
+  org: NonNullable<ReturnType<typeof useOrganisation>["data"]>;
+  currentEngagement: RelatedEngagement | undefined;
+  stages: { key: string; label: string; order: number }[] | undefined;
+  onNewOpportunity: () => void;
+}) {
+  const metrics = org.metrics;
+
+  return (
+    <RecordHeader
+      title={org.name}
+      recordRef={org.ref}
+      meta={[
+        humanise(org.industry),
+        org.location,
+        `owner ${org.owner.name ?? org.owner.id}`,
+        `created ${formatDate(org.createdAt)}`,
+      ]}
+      chips={
+        <>
+          <StatusChip tone={org.status === "ACTIVE_CLIENT" ? "success" : "neutral"} live>
+            {humanise(org.status)}
+          </StatusChip>
+          {org.hrdcRegistered ? <StatusChip tone="info">HRD Corp registered</StatusChip> : null}
+        </>
+      }
+      actions={<SecondaryButton>Audit trail</SecondaryButton>}
+      primaryAction={<PrimaryButton onClick={onNewOpportunity}>New opportunity</PrimaryButton>}
+      metrics={[
+        {
+          label: "Lifetime value",
+          value: metrics.lifetimeValue.value as Money,
+          sub: metrics.lifetimeValue.secondary,
+        },
+        {
+          label: "Open pipeline",
+          value: metrics.openPipeline.value as Money,
+          sub: metrics.openPipeline.secondary,
+        },
+        {
+          label: "AR overdue",
+          value: metrics.arOverdue.value as Money,
+          sub: metrics.arOverdue.secondary,
+        },
+        {
+          label: "HRDC levy",
+          value: metrics.hrdcLevyAvailable.value as Money,
+          sub: metrics.hrdcLevyAvailable.secondary,
+        },
+        {
+          label: "Health",
+          value: `${metrics.healthScore.value as number}`,
+          sub: metrics.healthScore.secondary,
+          bar: (metrics.healthScore.value as number) / 100,
+        },
+      ]}
+      stepper={
+        currentEngagement ? (
+          <LifecycleStepper steps={currentEngagement.lifecycle} stages={stages} variant="header" />
+        ) : undefined
+      }
+    />
+  );
+}
+
+/**
+ * "2026-11-12/2026-11-13" -> "12–13 Nov 2026".
+ *
+ * TEMPORARY SHAPE — a range formatter belongs beside `formatDate` in the kit
+ * and has been requested there. The contract hands back a rendered ISO range,
+ * which is unambiguous and unreadable; same month collapses to one month name,
+ * anything else keeps both dates in full rather than guessing at a shorter
+ * form. `features/tna` carries the same copy until the kit export lands.
+ */
+function readableRange(range: string): string {
+  const [from, to] = range.split("/");
+  if (!from) return range;
+  if (!to || from === to) return formatDate(from);
+
+  const start = formatDate(from);
+  const end = formatDate(to);
+  const startParts = start.split(" ");
+  const endParts = end.split(" ");
+
+  if (startParts[1] === endParts[1] && startParts[2] === endParts[2]) {
+    return `${startParts[0]}–${end}`;
+  }
+  return `${start} – ${end}`;
+}
+
+function ContactRow({ contact }: { contact: ContactSummary }) {
+  const noConsent = !contact.consent.email && !contact.consent.whatsapp;
+
+  return (
+    <div className="flex items-center gap-2.5 py-1.5 text-[13px]">
+      <RefChip type="CONTACT" />
+      <div className="min-w-0">
+        <div className="truncate font-medium text-ink">{contact.name}</div>
+        <div className="truncate text-[11px] text-ink-muted">
+          {contact.role}
+          {contact.primary ? " · primary" : ""}
+          {noConsent ? " · no consent" : ""}
+        </div>
+      </div>
+      {contact.pdpaFlag ? (
+        <StatusChip tone="warning" className="ml-auto">
+          PDPA
+        </StatusChip>
+      ) : null}
+    </div>
+  );
+}
+
+function PacketRow({ packet }: { packet: RelatedHrdcPacket }) {
+  const atRisk = packet.daysRemaining !== undefined && packet.daysRemaining <= 7;
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-ink-secondary">{packet.ref} claim</span>
+      <StatusChip tone={packet.state === "BLOCKED" ? "warning" : atRisk ? "danger" : "neutral"}>
+        {packet.state === "BLOCKED"
+          ? `Blocked · ${packet.missingDocuments ?? 0} docs`
+          : atRisk
+            ? `Apply within ${packet.daysRemaining} days`
+            : humanise(packet.state)}
+      </StatusChip>
+    </div>
+  );
+}
+
+function RailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between text-[12px]">
+      <span className="text-ink-secondary">{label}</span>
+      <span className="text-ink">{value}</span>
+    </div>
+  );
+}
