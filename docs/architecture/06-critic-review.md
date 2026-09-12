@@ -517,3 +517,134 @@ Plus 19 cross-doc naming and shape mismatches (§1.1), ~25 undeclared types (§1
 - **No external specification was consulted.** The MyInvois field list in `C-11`, the SST registration mechanics in `H-21` and the HRD Corp grant lifecycle in `H-22` are from domain knowledge, not from LHDN, RMCD or HRD Corp documents. They should be checked against the real specifications before anyone builds to them — which is the same caveat `04:1661` and `04:1668` raise about the compliance rules themselves.
 - **The frontend was not reviewed**, per the brief. Where a finding says a screen breaks, that is inferred from the endpoint and the typed payload, not from the screen.
 - **`GET /v1/me` may already be fixed.** `002:186` creates `public.user_profiles`, which doc 01 never defined. I did not audit migration 002 against every other doc-01 gap, so other §3 findings may likewise be closed in migrations I treated as out of scope.
+
+---
+
+# Part 2 · Second pass, against the FINAL rulings
+
+Re-review after the lanes swept. Part 1 above is left as written; this part says
+which of its findings are closed, which stand, and what is new. Where Part 1 and
+Part 2 disagree, **Part 2 wins** — it is the later evidence.
+
+Baseline: the consolidated rulings file (R-C2, R-WB, R-GOV, R-STATUS, R-TEN,
+R-EXT, R-AUTH, R-QUO, R-PROV, R-JSONB, R-COMMIT). Commits and checksums reviewed:
+
+| File | Commit | MD5 |
+|---|---|---|
+| `01-domain-model.md` | `e532d09` | `0efa2b6f3e2fb7490dfb8782e88b8529` |
+| `02-tenancy-auth-rls.md` | `8178da9` | `ea7c7d11685120af647da90b4949008c` |
+| `03-action-envelope-and-policy-gate.md` | `5eed654` | `ea528743be5273d32d25252d6bef2090` |
+| `04-money-versioning-provenance.md` | `4762dea` | `68bdc82dee0bfeb44d9e9fa4a5e71af2` |
+| `05-events-outbox-realtime-audit.md` | `cc3a330` | `aa2b8434c4d0f85b8f523c8f4520823e` |
+| `001_foundation_schemas_and_helpers.sql` | `2a24c76` | `91cf828720227b38a453859b56467bf0` |
+| `002_tenancy_identity_and_permissions.sql` | `8b8bffd` | `0c64325c29d050d621728c140bb7c76f` |
+| `003_enum_types.sql` | `c9ddb30` | `3d9b90ca21abbd08088090f9fc074bb8` |
+| `004_shell_config_and_ref_allocation.sql` | `d18de06` | `8b7016e9b258bbe618875e167fc4e2a5` |
+| `005_sales_organisations_enquiries_tna.sql` | **uncommitted on disk** | `b47b7ef02c947419ef4501ecd9d2720a` |
+| `spikes/2026-09-12-agent-jwt-minting.md` | `f5cc811` | `e57e12c0b7e5a77ffa1ec2603edd4b1d` |
+
+`001`'s MD5 is byte-identical to the one reviewed in Part 1. That matters: see `N-01`.
+
+## 2.1 · Rulings compliance
+
+| Ruling | State | Evidence |
+|---|---|---|
+| **R-C2** schema | **Applied, clean** | Zero matches for `public.<domain>` across all ten files, searched over 17 domain table names. Part 1's `C-01` is closed. |
+| **R-WB** `report_effect_result`, `job_key` | **Applied** | `report_effect_result` 12× in 03, 6× in 05; `record_effect_result` gone; `job_key` 12× / 25×. One stale mention of the withdrawn name — `N-10`. |
+| **R-GOV** single `app.effect_applier` | **Applied** | `effect_applier` in 01/02/03; `trainos.unlock_action_id` appears only as explicitly withdrawn (`01:2254`, `01:2794`, `03:36`). |
+| **R-TEN** `app.current_tenant_id()`, top-level claims | **Applied** | 66/6/4/24 across 02/03/05/002. Every `app.tenant_id` mention is a note that it does not exist (`02:1172`, `002:292`). Every `app_metadata` mention is a warning against reading it, except the deliberate not-built-at-launch extension point at `02:310`. |
+| **R-EXT** 001 enables pg_cron + pg_net | **NOT APPLIED** | `N-01`. |
+| **R-AUTH** no self-minting | **Applied** | Spike exists at `spikes/2026-09-12-agent-jwt-minting.md`; `02` carries GoTrue sign-in. Part 1's `H-14` is closed. |
+| **R-QUO** `core.quotations` | **Partially applied** | `core.quotations` in 01/02/03/001, but `app.quotation` still 6× in 04 — `N-08`. |
+| **R-PROV** provenance keyed `(subject_table, subject_id, field)`, `_sen` | **Applied** | `unique (subject_table, subject_id, field)` at `04:673`. `_sen` now 101/43/110/5 across 01/03/04/05; the surviving `_minor` strings are the rulings themselves (`03:40`, `05:1804`). Part 1's `C-02` is closed. |
+| **R-JSONB** every jsonb CHECK asserts key presence | **Applied in 04 and 03; absent in 05** | `N-02`. |
+| **R-STATUS**, **R-COMMIT** | Applied | Row lifecycle table present; commits are per-file with explicit pathspec. |
+
+## 2.2 · Part 1 findings now closed
+
+`C-01` schema split · `C-02` money columns · `C-05` `app.role_permissions` is now seeded at `002:742` · `H-01` tenant helper, closed by the ruling reversal · `H-14` the JWT spike now exists.
+
+**`C-04` (no RLS on `core`) is substantially closed by a better mechanism than I asked for.** `app.finalise_table` (`004:220-224`) enables *and* forces RLS and revokes all grants, with the comment *"RLS: enabled AND forced, with no policy. Deny-all until 014. Enabling here rather than in 014 means no table in this set is ever open, not even for the duration of one migration."* All 14 tables in `005` call it. The remaining exposure is sequencing only: `03:1812-1816`'s `grant select … to authenticated` must not land before the gate tables have policies. Flag it in the 011 migration, do not re-derive the finding.
+
+## 2.3 · New findings
+
+**N-01 · CRITICAL · R-EXT was not applied; `001` is byte-identical to the version reviewed in Part 1.**
+`001:195-198` still enables `pgcrypto`, `citext`, `btree_gist`, `pg_trgm` and nothing else, and `001:377-387` still verifies exactly that list. `pg_cron` is referenced 3× in 03, 1× in 04, 3× in 05; `pg_net` 4× in 03 and 12× in 05; `vector` 3× in 01. Nine cron jobs still have no scheduler. The ruling names sb-migrations as blocker owner and amends forward, rollback, test, catalog and changelog. **Nothing moved.** This is now the only CRITICAL left in the pack and it blocks every scheduled behaviour in the design.
+
+**N-02 · HIGH · R-JSONB is unimplemented in doc 05.**
+Doc 05 has 16 `check (` constraints and **every one is on a scalar `text` or `smallint` column**. It contains no `?` key-presence operator, no `jsonb_typeof`, and no constraint of any kind on any jsonb column. Fourteen structured jsonb columns carry their required shape in a comment and nowhere else, including `core.events.actor jsonb not null` (`05:59`, rendered by the audit drawer), `app.outbox.last_error` (`05:528`), `app.dead_letters.dead_lettered_by jsonb not null` (`05:1283`), `core.runs.trigger jsonb not null` (`05:1761`), `core.runs.halted_by` (`05:1767`), `core.run_state_cards.plan` / `budgets` (`05:1930`, `05:1935`) and `core.run_checkpoints.cursor jsonb not null` (`05:1947`).
+Doc 04 is the opposite and is the source of the lesson — `04:735-760` reproduces the trap by execution (*"A legacy boolean jury `{"enabled":true,"quorum":2,"of":3}` was accepted by that constraint in testing"*) and hardens every constraint. Doc 03 is also clean: `app.is_valid_condition_set` (`03:419-432`) opens with `e ? 'field' and e ? 'op'`, and payload validation (`03:1132`) tests `not (p_payload ? k) or p_payload->>k is null`.
+**Fix:** apply 04's pattern to the fourteen columns in 05. The ruling says *every* jsonb CHECK asserts key presence; a table with no CHECK at all satisfies the letter and defeats the purpose.
+
+**N-03 · HIGH · The gate's only payload guard fails open on a typo, by the same mechanism.**
+`core.action_types.payload_schema jsonb not null default '{}'` (`03:237`) has **no constraint on its own shape**, and the validator reads it as `jsonb_array_elements_text(coalesce(v_type.payload_schema->'required','[]'::jsonb))` (`03:1130`). A seed row spelling the key `requires`, `required_keys`, or nesting it one level deeper yields NULL, the `coalesce` substitutes an empty array, the loop runs zero times, and **every payload for that action type validates**. This is the jsonb trap one level up, sitting on the single guard that produces §1's `details.fields[]`.
+**Fix:** constrain `payload_schema` itself — `check (payload_schema ? 'required' and jsonb_typeof(payload_schema->'required') = 'array')` — and drop the `coalesce` so an unreadable schema raises instead of passing.
+
+**N-04 · HIGH · Doc 01 still uses the rule-versioning model doc 04 tested and rejected.**
+`04:35` (D9) records the measurement: *"Compliance rules are **bitemporal**… Copying rules per snapshot makes every unchanged rule look changed. Verified: the naive model emitted ten drift warnings where one was correct."* `04:385-388`: *"The first attempt modelled `rule_set` as a snapshot containing copies of every [rule]… Rule identity must be stable across snapshots."* 04's `app.compliance_rule.id text primary key -- 'HRD-014', stable across snapshots` carries two ranges, `validity` (daterange) and `known` (tstzrange), with a gist exclusion over both (`04:421-442`).
+Doc 01 has neither axis. Its `compliance_rules` carries `rule_set_version_id uuid NOT NULL → rule_set_versions ON DELETE RESTRICT` with **`UNIQUE (tenant_id, rule_key, rule_set_version_id)`** — one row per rule per snapshot, which is exactly the copy model — and `rule_set_versions` has a single `effective_from`/`effective_to` axis with no registry-knowledge range at all.
+Doc 03 is consistent with neither in detail but leans 01's way: `03:2324` has `RULE_CHANGE_APPROVE` performing *"`core.compliance_rules` insert or supersede, dated from the **circular**, not the approval"*, and `03:2314` pins `claim_rule_set_version` on the packet.
+**Fix:** 01 adopts 04's bitemporal shape, or the lead rules 01's model authoritative and 04 reverts — but the drift-warning multiplication is measured, not theoretical, so 04 should win. Either way 03's `RULE_CHANGE_APPROVE` effect and the `claim_rule_set_version` pin need re-stating against whichever survives.
+
+**N-05 · HIGH · The single search_path gate both lanes now depend on contradicts the executable migrations.**
+Doc 02's §8.7 sweep (`02:1271-1283`) is excellent work — it asserts the exact stored string rather than non-nullness, covers `app`, `public` and `core`, includes procedures, and skips extension-owned functions:
+```sql
+and (p.proconfig is null or not (p.proconfig @> array['search_path=""']))
+```
+and `02:1265` states the rule correctly: *"assert the exact stored string, not that `proconfig` is non-null."* Since `4762dea`, doc 04 defers to this single version.
+But migrations `001`, `002` and `004` create roughly twenty-five functions with `SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'`, whose `proconfig` stores `search_path=pg_catalog, public, extensions, pg_temp` — not `search_path=""`. **Every one of them fails the sweep.** `002:269` already records this as *"⚠ DEVIATION D1, recorded. Doc 02 writes `set search_path = ''` on these."*
+**Fix:** one spelling, then one assertion. Recommend the migrations' 4-part form is changed to `''` with fully-qualified bodies, because that is what three of the five docs already write and what the sweep already asserts; otherwise the sweep must accept both spellings explicitly, which weakens it.
+**Not a defect, to save the next reviewer the trip:** the migrations' `SET search_path TO 'a', 'b'` form quotes each element separately and is a correct multi-schema path. The trap is `SET search_path = 'a, b'` — one quoted string containing a comma. Every occurrence of the broken form in the pack (`01:229`, `02:1239`, `03:1969`, `04:1335`, `04:1340`, `04:1350`) is a labelled example of the trap, not live DDL. The retraction the lead asked about is properly in place: `04:1330` retracts the wrong result and `02:1232` replaces it with a measured three-row table.
+
+**N-06 · MEDIUM · The rule grammar is typed in 04 and unconstrained jsonb in 01.**
+04 uses typed columns `subject_field`, `op`, `reference_kind`, `reference`, `offset_amount`, `offset_unit` (`04:414-419`). 01 keeps `expression jsonb NOT NULL -- {field, op, reference, offsetDays}` with no constraint — so it is also an `N-02` instance, on the table whose contents defend an HRD Corp claim.
+
+**N-07 · MEDIUM · The circular-number conflict is now a schema-level divergence, not just a source conflict.**
+Doc 01's `compliance_rules.source_title` carries the example `"Circular 04/2026"`, following API_CONTRACT §17. Doc 04 seeds `DOC-0188` / `"Circular 2/2026"`, following DECISIONS §3, and says plainly at `04:1661` that *"a citation is the one thing a compliance rule cannot get wrong."* Recorded in the client decisions register as **D-44, owner Compliance, blocking**. Two documents will now seed two different citations for the same nine rules.
+
+**N-08 · MEDIUM · R-QUO not fully swept in doc 04.** `app.quotation` survives 6× in 04 against `core.quotations` elsewhere. Also `/v1/costings` persists in 01 (2×) and 02 (2×) where the ruling applies contract R2's `/v1/quotations`.
+
+**N-09 · LOW · Two actor-kind vocabularies in doc 05.** `core.events.actor` is documented `kind ∈ HUMAN|AGENT|SYSTEM|CLIENT` (`05:59`); `app.key_access_audit.actor` is documented `kind ∈ HUMAN|AGENT|SYSTEM` (`05:1686`). Both are comments with no constraint, so nothing enforces either — an `N-02` instance where the two comments also disagree. `02:83` fixes four kinds as a cross-lane convention.
+
+**N-10 · LOW · Withdrawn name still cited.** `03:2998` explains `job_key` in terms of `settle_effect(job_key, ...)`, a name R-WB withdrew.
+
+## 2.4 · Cross-lane conventions (doc 02 §0), checked lane by lane
+
+Every row of `02:80-90` was checked against the other four documents. **All followed**, with two qualifications already recorded: the `app` schema row (*"A table in `app` is unreachable by the Data API… This has now bitten two lanes"*) is now satisfied everywhere except 04's residual `app.quotation` (`N-08`), and the minting row (*"Nobody mints tokens. Ever."*) is satisfied and backed by the spike.
+
+## 2.5 · Standing rule recommended
+
+Three lanes independently found a silent failure only because a test asserted an exact expected value rather than a shape: the search_path spelling (`02:1265`), the jsonb key-presence trap (`04:735`), and the rule-snapshot drift count (`04:35`). In all three the wrong version *looked more careful than the right one* and passed review.
+
+**Adopt as a project rule: a test asserts the exact expected value, never non-nullness, never "contains", never "is not empty".** Three worked instances to cite when it is questioned:
+
+- `proconfig @> array['search_path=""']`, not `proconfig is not null` — the non-null form passes all three spellings including the broken one.
+- `jury ? 'mode' and jury ? 'quorum'`, not `jury->>'mode' in (...)` — a CHECK that evaluates to NULL passes.
+- Count the drift warnings the model emits and compare against the number that should be correct — 04 found ten where one was right.
+
+This belongs in the guardrail scripts, not in a doc, or it will be rediscovered a fourth time.
+
+## 2.6 · Contract question answered
+
+`DiffLine.description` required versus `Effect.description` optional: **make both required**, and it is already done. `packages/contract/src/actions.ts` now declares `description: string` on `Effect` with the note *"Required, like `DiffLine.description`: the policy gate always produces a sentence for every effect, so the two lists can be compared field for field without a null case"* (commit `273a12f`). That is the right call — §7 requires `effects[]` to equal `diff[]` field for field, and an optional field on one side of an equality makes the comparison ill-defined.
+
+## 2.7 · Revised counts
+
+| Severity | Part 1 | Closed | New in Part 2 | Standing |
+|---|---|---|---|---|
+| CRITICAL | 11 | 5 (`C-01`, `C-02`, `C-04` mechanism, `C-05`, plus `H-14`) | 1 (`N-01`) | **7** |
+| HIGH | 26 | 1 (`H-01`) | 4 (`N-02`–`N-05`) | **29** |
+| MEDIUM | 26 | 0 | 3 (`N-06`–`N-08`) | **29** |
+| LOW | 8 | 0 | 2 (`N-09`, `N-10`) | **10** |
+
+The seven standing CRITICALs are `N-01` (extensions), `C-03` (04's tables in `app`, partly swept), `C-06` (same as `N-01`), `C-07` (retention unimplemented), `C-08` (poison-pill retry), `C-09` (PDPA vs the append-only event log), `C-10` (levy staleness) and `C-11` (MyInvois fields). `C-06` and `N-01` are the same defect counted once.
+
+**One thing to fix before anything else:** `N-01`. It is a five-line change to `001`, it is assigned, and until it lands nothing in the design that is supposed to happen on a schedule happens at all.
+
+## 2.8 · What I could NOT verify in Part 2
+
+- Still nothing executed. No database, no `pgTAP` run. The measured claims in 02 and 04 read as sound and I did not re-run them.
+- `005_sales_organisations_enquiries_tna.sql` is **uncommitted on disk**. I reviewed the working-tree copy; it may change or never land.
+- Migrations `006`–`016` do not exist. `C-04`'s residue, all of 05's event and run tables, and the gate tables in 03 are still governed by migrations nobody has written, so their RLS posture is a promise, not a fact. The `app.finalise_table` mechanism makes that promise much more likely to be kept.
+- The JWT spike was confirmed to exist and to support `02`'s position; I did not audit its argument in depth.
+- `config.toml` was not read, again. It remains the thing that exposes `core`, and nothing in the repo I looked at proves it does.
