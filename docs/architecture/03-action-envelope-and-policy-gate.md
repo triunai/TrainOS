@@ -24,16 +24,19 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | # | Conflict | Resolution | Whose call |
 |---|---|---|---|
 | C1 | Gate tables in `app`, which PostgREST does not expose | Read-path tables to the domain schema; only `action_effects`, `idempotency_keys` and `outbox` stay in `app` | `sb-tenancy` raised it, applied here |
-| C2 | Domain schema is `core` (migration 001, doc 05) or `public` (docs 01, 02) | **`public`**, following `sb-erd` who owns the domain schema. Still live — see below | deferred to the lead |
-| C3 | `app.policies` collides with RLS "policies" | renamed `public.action_policies` | mine |
+| C2 | Domain schema is `core` or `public` | **`core`**. Closed: `sb-tenancy` retargeted and now writes RLS naming `core.approval_requests`; `sb-events` and migration 001 agree. `sb-erd` is the outlier | settled by weight of committed artefacts |
+| C3 | `app.policies` collides with RLS "policies" | renamed `core.action_policies` | mine |
 | C4 | Tenant helper `app.tenant_id()` or `app.current_tenant_id()` | `app.current_tenant_id()`; the gate calls the raising sibling `app.require_tenant_id()` | lead's ruling |
 | C5 | Tenant claim under `app_metadata` or top level | **top level** on `auth.jwt()` | `sb-tenancy` |
-| C6 | Outbox columns `topic`/`job_key`/`available_at` | `job_type`/`idempotency_key`/`run_after`, plus `correlation_id` and `action_request_id` | `sb-events` owns the table |
+| C6 | Outbox columns `topic`/`job_key`/`available_at` | `job_type`/`job_key`/`run_after`, plus `effect_id`, `correlation_id` and `action_request_id`. `sb-events` first asked for `idempotency_key`, then kept my `job_key` and reserved `idempotency_key` on `core.events` for the caller-supplied header from §1 | `sb-events` owns the table |
 | C7 | `job_type` is a rename of `topic` | it is **not**: `topic` was `'effect.proposal_send'`, `job_type` is a handler key like `'SEND_EMAIL'`, mapped by `app.job_type_for` | `sb-events` |
-| C8 | Worker write-back signature | `app.settle_effect(job_key, status, result)`, theirs, adopted unchanged | `sb-events` |
+| C8 | Worker write-back signature | `app.report_effect_result(effect_id, status, payload, error)`. We each conceded to the other's proposal and swapped; their argument for `effect_id` is the better one, so both lanes are now on it | settled on the merits |
 | C9 | An action read `EXECUTED` while an effect was still outstanding | `EXECUTING` → `EXECUTED` or `PARTIALLY_FAILED`; `partial_failure` boolean removed | lead's ruling |
 | C10 | `CREATE` vs `ADD` in the effect op union | one union `ADD·UPDATE·REMOVE`; `CREATE` normalises to `ADD` at plan time | ruling R1 |
-| C11 | Two applier session variables: my `app.effect_applier`, `sb-erd`'s `trainos.unlock_action_id` | one, `app.effect_applier`, carrying the action request id | mine, see §2.9 |
+| C11 | Two applier session variables: my `app.effect_applier`, `sb-erd`'s `trainos.unlock_action_id` | one, `app.effect_applier`, carrying the action request id | mine, see §2.9; `sb-tenancy` concurred |
+| C14 | `approver_role` comparison or a permission check | keep the role comparison; it is a data match, not an authorisation decision | `sb-tenancy` ruled, §4.1 |
+| C15 | `app.pick_role_holder` and `sb-events`' `app.role_holders` are the same lookup | one function, `app.role_holders(tenant, roles[])`, owned by `sb-tenancy` because it reads their membership tables; both lanes wrap it | proposed, see §2.5 |
+| C16 | `ActionRequested` named in contract §3, absent from §14 | emitted by `perform_action` before dispatch; `sb-events` §1.7 is the merged event list both lanes implement | `sb-events` |
 | C12 | Jury sampling by event subscription or by cron | cron, 5-minute sweep | `sb-events` conceded |
 | C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_minor`, the one stable money column per gated target | `sb-erd` |
 
@@ -136,11 +139,10 @@ if you only want to know what changed.
 
 **Added after review by the tenancy, events and contract-types lanes**
 
-19. **Read-path tables live in `public`, private ones in `app`.** `app` is absent from
+19. **Read-path tables live in `core`, private ones in `app`.** `app` is absent from
     PostgREST's exposed schemas by design, so `approval_requests` could not live there
-    and still feed `GET /v1/approvals`. The domain schema is `public` because `sb-erd`
-    owns it and has declared it so. The gate's functions stay in `app` and are called by
-    an Edge Function holding the service role, which makes the contract's promise
+    and still feed `GET /v1/approvals`. The gate's functions stay in `app` and are called
+    by an Edge Function holding the service role, which makes the contract's promise
     structural: the UI cannot reach the gate.
 20. **Gated state transitions get three layers, not a trigger.** Column privileges stop
     the `UPDATE`, a trigger stops the `INSERT`, and the same trigger validates the edge
@@ -166,19 +168,21 @@ in `config.toml`, because it holds the tenant resolver, the permission lookup an
 gate, "none of which a client may call directly". A table the Data API must read cannot
 live there, or `GET /v1/approvals` has no data source.
 
-The domain schema is **`public`**. `01-domain-model.md` §"Schema and naming" is
-committed and states that all tables live in `public` in the plural, matching
-`02-tenancy-auth-rls.md` whose RLS policies already target those names. `sb-erd` owns
-the domain schema and has declared it, so this document follows them. The disagreement
-with migration 001 is live and recorded in §0.
+The domain schema is **`core`**, and C2 in §0 is now closed. `sb-tenancy` has
+retargeted its whole §4 catalogue to `core` per migration 001's conflict C1 and has
+written RLS policies naming `core.approval_requests`, `core.approval_decisions` and
+`core.action_policies` outright. Policies that name my tables are the strongest possible
+statement of where those tables are, so this document follows them. `sb-events` is on
+`core` and so is the executable migration. `sb-erd` is the remaining outlier and has
+been told.
 
 | Schema | Tables | Why |
 |---|---|---|
-| `public` | `action_types`, `action_policies`, `autonomy_grants`, `action_requests`, `approval_requests`, `approval_decisions`, `suggested_drafts`, `state_transitions`, `jury_configs`, `jury_verdicts` | rendered by §2, §3, §7, §10 and §17 endpoints |
+| `core` | `action_types`, `action_policies`, `autonomy_grants`, `action_requests`, `approval_requests`, `approval_decisions`, `suggested_drafts`, `state_transitions`, `jury_configs`, `jury_verdicts` | rendered by §2, §3, §7, §10 and §17 endpoints |
 | `app` | `action_effects`, `idempotency_keys`, `outbox` | never appear in a response: the execution ledger, the replay cache, and `sb-events`' queue |
 | `app` | every function in this document | the gate is reached through an Edge Function, never the Data API |
 
-`app.policies` was renamed `public.action_policies`: `policies` is an overloaded word in
+`app.policies` was renamed `core.action_policies`: `policies` is an overloaded word in
 a schema that also carries row-level security policies, and a table called `policies`
 in a shared namespace invites exactly the confusion the project rules forbid.
 
@@ -191,13 +195,13 @@ Conventions follow the Supabase Postgres guidance: lowercase snake_case identifi
 integer minor units for money, and `check` constraints in place of enum types so that
 adding a value is a migration on one line rather than a type rewrite.
 
-### 1.1 `public.action_types` — the catalogue
+### 1.1 `core.action_types` — the catalogue
 
 Global, not tenant-scoped: this is the product's vocabulary, seeded by migration.
 Tenants customise *policies* and *grants*, never the catalogue.
 
 ```sql
-create table public.action_types (
+create table core.action_types (
   key               text primary key,
   label             text not null,
   domain            text not null
@@ -242,14 +246,14 @@ is seeded.
 
 Seed values for the 19 types are in §3, which doubles as the seed script.
 
-### 1.2 `public.autonomy_grants` — agent × action type × level
+### 1.2 `core.autonomy_grants` — agent × action type × level
 
 ```sql
-create table public.autonomy_grants (
+create table core.autonomy_grants (
   id                uuid primary key default gen_random_uuid(),
   tenant_id         uuid not null,
   agent_id          text not null,                        -- 'agent_proposal'
-  action_type       text not null references public.action_types(key),
+  action_type       text not null references core.action_types(key),
 
   level             text not null
                     check (level in ('OBSERVE','SUGGEST','ACT_WITH_APPROVAL','AUTONOMOUS')),
@@ -288,7 +292,7 @@ create table public.autonomy_grants (
 -- covering index: the step-1 lookup reads only these columns, so it never
 -- touches the heap
 create unique index autonomy_grants_lookup
-  on public.autonomy_grants (tenant_id, agent_id, action_type)
+  on core.autonomy_grants (tenant_id, agent_id, action_type)
   include (level, min_confidence, value_threshold_minor, approver_role, paused);
 ```
 
@@ -306,7 +310,7 @@ declare
 begin
   select ceiling_autonomy, ceiling_reason
     into v_ceiling, v_reason
-  from public.action_types
+  from core.action_types
   where key = new.action_type;
 
   if app.autonomy_rank(new.level) > app.autonomy_rank(v_ceiling) then
@@ -325,7 +329,7 @@ end;
 $$;
 
 create trigger autonomy_grants_ceiling
-  before insert or update on public.autonomy_grants
+  before insert or update on core.autonomy_grants
   for each row execute function app.enforce_autonomy_ceiling();
 
 create or replace function app.autonomy_rank(p_level text)
@@ -343,13 +347,13 @@ $$;
 fires inside `perform_action` and the `422` reaches the client with
 `details.reason: "MONEY_MOVING_CEILING"` exactly as §10 specifies.
 
-### 1.3 `public.action_policies` — the rule rows
+### 1.3 `core.action_policies` — the rule rows
 
 ```sql
-create table public.action_policies (
+create table core.action_policies (
   tenant_id              uuid not null,
   id                     text not null,                    -- 'APV-01'
-  action_type            text not null references public.action_types(key),
+  action_type            text not null references core.action_types(key),
   description            text not null,
 
   conditions             jsonb not null default '[]'::jsonb,
@@ -382,7 +386,7 @@ create table public.action_policies (
 
 -- the hot path: all active policies for one action type, in priority order
 create index policies_by_action
-  on public.action_policies (tenant_id, action_type, priority)
+  on core.action_policies (tenant_id, action_type, priority)
   where active;
 ```
 
@@ -414,17 +418,17 @@ $$;
 The numeric-operator clause matters: it is what stops a malformed policy row from
 turning a `numeric` cast into a runtime error inside the gate.
 
-### 1.4 `public.action_requests` — the envelope log
+### 1.4 `core.action_requests` — the envelope log
 
 Every call, its evaluation trace, its result. This is the table the run trace in §10
 joins to when it renders `haltedBy`.
 
 ```sql
-create table public.action_requests (
+create table core.action_requests (
   id                 uuid primary key default gen_random_uuid(),
   tenant_id          uuid not null,
   ref                text not null,                        -- 'ACT-2026-0912'
-  action_type        text not null references public.action_types(key),
+  action_type        text not null references core.action_types(key),
 
   target_ref         text,
   target_entity      text,
@@ -470,20 +474,20 @@ create table public.action_requests (
 );
 
 create index action_requests_by_type
-  on public.action_requests (tenant_id, action_type, created_at desc);
+  on core.action_requests (tenant_id, action_type, created_at desc);
 create index action_requests_by_target
-  on public.action_requests (tenant_id, target_ref, created_at desc)
+  on core.action_requests (tenant_id, target_ref, created_at desc)
   where target_ref is not null;
 create index action_requests_by_run
-  on public.action_requests (tenant_id, agent_run_id)
+  on core.action_requests (tenant_id, agent_run_id)
   where agent_run_id is not null;
 -- the firstProposalToOrg fallback probe and the "how many actions this month" tile
 create index action_requests_executed
-  on public.action_requests (tenant_id, action_type, completed_at)
+  on core.action_requests (tenant_id, action_type, completed_at)
   where status in ('EXECUTED','PARTIALLY_FAILED');
 -- the operations view: actions still waiting on an external effect
 create index action_requests_executing
-  on public.action_requests (tenant_id, created_at)
+  on core.action_requests (tenant_id, created_at)
   where status = 'EXECUTING';
 ```
 
@@ -518,7 +522,7 @@ frozen for hashing and updated as a WhatsApp send retries.
 create table app.action_effects (
   id                bigint generated always as identity primary key,
   tenant_id         uuid not null,
-  action_request_id uuid not null references public.action_requests(id) on delete cascade,
+  action_request_id uuid not null references core.action_requests(id) on delete cascade,
   seq               int not null,                          -- position in effects[]
 
   op                text not null check (op in ('ADD','UPDATE','REMOVE')),
@@ -532,7 +536,7 @@ create table app.action_effects (
 
   job_id            uuid,                                  -- sb-events owns app.outbox
   job_key           text,                                  -- deterministic: '<action_request_id>:<seq>'
-                                                           -- written to outbox.idempotency_key
+                                                           -- written to app.outbox.job_key
   attempts          int not null default 0,
   retryable         boolean not null default true,
   last_error        jsonb,
@@ -547,11 +551,12 @@ create index action_effects_open
   where status in ('PLANNED','DISPATCHED');
 ```
 
-`unique (tenant_id, job_key)` here, and `unique (tenant_id, idempotency_key)` on
-`app.outbox`, are the whole retry-safety story for external effects: the worker cannot
-create a second send for the same effect however many times the job is redelivered. The
-gate's `job_key` and the outbox's `idempotency_key` are the same string under two names,
-each lane using its own vocabulary for the column it owns.
+`unique (tenant_id, job_key)` here and the matching constraint on `app.outbox` are the
+whole retry-safety story for external effects: the worker cannot create a second send
+for the same effect however many times the job is redelivered. `sb-events` kept this
+spelling on their table too, and reserved `idempotency_key` on `core.events` for a
+different thing — the caller-supplied `Idempotency-Key` header from §1. Two keys, two
+names, no ambiguity.
 
 **The `op` union, per the contract-types ruling.** `DiffLine.op` and `Effect.op` are one
 union, `ADD | UPDATE | REMOVE`, and the `CREATE` in the §4 `OPPORTUNITY_CONVERT` example
@@ -568,16 +573,16 @@ One asymmetry worth noting against that package: `DiffLine.description` is requi
 gate always produces the stronger of the two. That is deliberate, because the same
 column is read back as both.
 
-### 1.6 `public.approval_requests` — the full §7 shape
+### 1.6 `core.approval_requests` — the full §7 shape
 
 ```sql
-create table public.approval_requests (
+create table core.approval_requests (
   id                 uuid primary key default gen_random_uuid(),
   tenant_id          uuid not null,
   ref                text not null,                        -- 'APV-2026-0771'
-  action_request_id  uuid not null references public.action_requests(id),
+  action_request_id  uuid not null references core.action_requests(id),
   policy_id          text not null,
-  action_type        text not null references public.action_types(key),
+  action_type        text not null references core.action_types(key),
 
   subject            text not null,                        -- 'Send proposal · Aurora Manufacturing Sdn Bhd'
   target_ref         text,
@@ -638,25 +643,25 @@ create table public.approval_requests (
 
 -- the M02-S01 inbox, grouped by urgency: role queue ordered by due date
 create index approval_requests_queue
-  on public.approval_requests (tenant_id, approver_role, sla_due_at)
+  on core.approval_requests (tenant_id, approver_role, sla_due_at)
   where status = 'PENDING';
 
 -- "assigned to me"
 create index approval_requests_assigned
-  on public.approval_requests (tenant_id, assigned_to_id, sla_due_at)
+  on core.approval_requests (tenant_id, assigned_to_id, sla_due_at)
   where status = 'PENDING';
 
 -- the cron sweeps: cross-tenant, ordered by the clock
 create index approval_requests_due
-  on public.approval_requests (sla_due_at)
+  on core.approval_requests (sla_due_at)
   where status = 'PENDING';
 create index approval_requests_escalation
-  on public.approval_requests (escalate_at)
+  on core.approval_requests (escalate_at)
   where status = 'PENDING' and escalated_at is null;
 
 -- an action may have at most one open approval, enforced not asserted
 create unique index approval_requests_one_open_per_action
-  on public.approval_requests (action_request_id)
+  on core.approval_requests (action_request_id)
   where status = 'PENDING';
 ```
 
@@ -664,7 +669,7 @@ Two fields in the §7 response are **not** stored, because they are functions of
 clock and storing them guarantees they will be wrong:
 
 ```sql
-create or replace view public.v_approval_requests as
+create or replace view core.v_approval_requests as
 select a.*,
        (a.status = 'PENDING' and now() > a.sla_due_at)                        as sla_breached,
        greatest(0, floor(extract(epoch from (a.sla_due_at - now())) / 60))::int as sla_remaining_minutes,
@@ -676,14 +681,14 @@ select a.*,
          when a.sla_due_at < now() + interval '7 days'  then 'THIS_WEEK'
          else 'LATER'
        end                                                                     as urgency_group
-from public.approval_requests a;
+from core.approval_requests a;
 ```
 
 `breach_notified_at` is a different thing from `sla_breached`: the column records that
 the `ApprovalSLABreached` event has been emitted, so the badge fires exactly once. The
 boolean the API returns is always computed.
 
-### 1.6a `public.approval_decisions` — the decision ledger
+### 1.6a `core.approval_decisions` — the decision ledger
 
 `sb-tenancy` §4.6 already writes RLS for this table, and it is the right shape. Every
 decision attempt appends a row; `approval_requests.status` and its `decided_*` columns
@@ -695,10 +700,10 @@ belongs, because it can carry an `INSERT` policy. A projection is what M02-S01 n
 that rendering seven queue rows is seven column reads rather than seven joins.
 
 ```sql
-create table public.approval_decisions (
+create table core.approval_decisions (
   id                  uuid primary key default gen_random_uuid(),
   tenant_id           uuid not null,
-  approval_request_id uuid not null references public.approval_requests(id),
+  approval_request_id uuid not null references core.approval_requests(id),
   decision            text not null check (decision in ('APPROVE','REQUEST_CHANGES','REJECT')),
   note                text,
   decided_by_id       text not null,
@@ -714,10 +719,10 @@ create table public.approval_decisions (
 );
 
 create index approval_decisions_by_request
-  on public.approval_decisions (approval_request_id, decided_at desc);
+  on core.approval_decisions (approval_request_id, decided_at desc);
 -- the M02-S01 "median decision time this week" figure §15 asks for
 create index approval_decisions_recent
-  on public.approval_decisions (tenant_id, decided_at desc);
+  on core.approval_decisions (tenant_id, decided_at desc);
 ```
 
 `sb-tenancy` puts the self-approval prohibition into this table's `INSERT` policy as
@@ -768,15 +773,15 @@ needs it.
 
 Cleanup is a `pg_cron` job, batched so it never takes a long lock (§4.4).
 
-### 1.8 `public.suggested_drafts`
+### 1.8 `core.suggested_drafts`
 
 ```sql
-create table public.suggested_drafts (
+create table core.suggested_drafts (
   id                uuid primary key default gen_random_uuid(),
   tenant_id         uuid not null,
   ref               text not null,                         -- 'drf_88…'
-  action_request_id uuid not null references public.action_requests(id),
-  action_type       text not null references public.action_types(key),
+  action_request_id uuid not null references core.action_requests(id),
+  action_type       text not null references core.action_types(key),
   target_ref        text,
 
   body              text,                                  -- the rendered draft the UI shows
@@ -796,7 +801,7 @@ create table public.suggested_drafts (
 );
 
 create index suggested_drafts_open
-  on public.suggested_drafts (tenant_id, action_type, expires_at)
+  on core.suggested_drafts (tenant_id, action_type, expires_at)
   where status = 'OPEN';
 ```
 
@@ -846,7 +851,7 @@ compliance **rule** ids in §17. Two registries on one prefix is a defect.
 | `GOV-05` | *(cross-cutting)* | confidence below the agent minimum | — | — | — | contract §3 input 4 |
 | `GOV-06` | *(cross-cutting)* | jury `ESCALATE` trigger fired | — | — | — | contract §18 |
 
-`GOV-03` through `GOV-06` are not rows in `public.action_policies`. They are hard rules inside
+`GOV-03` through `GOV-06` are not rows in `core.action_policies`. They are hard rules inside
 `perform_action` that no tenant may switch off. They carry ids anyway so that a `403`
 or a downgraded autonomy level can cite one, and so the run trace can say *which* rule
 halted the agent rather than only *that* one did.
@@ -859,7 +864,7 @@ senior approver": a second row, a lower number, a different `approver_role`.
 byte:
 
 ```sql
-insert into public.action_policies
+insert into core.action_policies
   (tenant_id, id, action_type, description, conditions, combinator,
    approver_role, sla_minutes, escalate_to_role, escalate_after_minutes)
 values
@@ -873,9 +878,9 @@ values
 ### 1.10 Jury tables
 
 ```sql
-create table public.jury_configs (
+create table core.jury_configs (
   tenant_id               uuid not null,
-  action_type             text not null references public.action_types(key),
+  action_type             text not null references core.action_types(key),
   mode                    text not null check (mode in ('GATE','SAMPLE','ESCALATE')),
   quorum                  int  not null default 2,
   of                      int  not null default 3,
@@ -890,12 +895,12 @@ create table public.jury_configs (
   constraint jury_sample_rate_needs_sample check (mode <> 'SAMPLE' or sample_rate is not null)
 );
 
-create table public.jury_verdicts (
+create table core.jury_verdicts (
   id                  uuid primary key default gen_random_uuid(),
   tenant_id           uuid not null,
-  action_request_id   uuid references public.action_requests(id),
-  approval_request_id uuid references public.approval_requests(id),
-  autonomy_grant_id   uuid references public.autonomy_grants(id),   -- GATE runs at promotion
+  action_request_id   uuid references core.action_requests(id),
+  approval_request_id uuid references core.approval_requests(id),
+  autonomy_grant_id   uuid references core.autonomy_grants(id),   -- GATE runs at promotion
 
   mode                text not null check (mode in ('GATE','SAMPLE','ESCALATE')),
   trigger_reason      text check (trigger_reason in
@@ -918,7 +923,7 @@ create table public.jury_verdicts (
 );
 
 create index jury_verdicts_pending
-  on public.jury_verdicts (tenant_id, status, created_at)
+  on core.jury_verdicts (tenant_id, status, created_at)
   where status = 'PENDING';
 ```
 
@@ -969,11 +974,11 @@ declare
   v_actor      record := app.current_actor();           -- sb-tenancy: (id, kind, role)
   v_actor_kind text;
   v_actor_id   text;
-  v_type       public.action_types%rowtype;
+  v_type       core.action_types%rowtype;
   v_hash       text;
   v_idem       app.idempotency_keys%rowtype;
-  v_grant      public.autonomy_grants%rowtype;
-  v_policy     public.action_policies%rowtype;
+  v_grant      core.autonomy_grants%rowtype;
+  v_policy     core.action_policies%rowtype;
   v_level      text;
   v_granted    text;
   v_value      jsonb;
@@ -981,7 +986,7 @@ declare
   v_doc        jsonb;
   v_effects    jsonb;
   v_trace      jsonb := '[]'::jsonb;
-  v_req        public.action_requests%rowtype;
+  v_req        core.action_requests%rowtype;
   v_result     jsonb;
 begin
 ```
@@ -1071,7 +1076,7 @@ slightly different rationale string must not be treated as a different request.
 **(c) The action type must exist and be active.**
 
 ```sql
-  select * into v_type from public.action_types where key = p_type and active;
+  select * into v_type from core.action_types where key = p_type and active;
   if not found then
     raise exception using errcode = 'TRNOS',
       message = format('Unknown action type %L', p_type),
@@ -1112,7 +1117,7 @@ possible, including stopping an already-degraded agent.
         detail  = jsonb_build_object('code','AGENT_PAUSED','reason','TENANT_KILL_SWITCH')::text;
     end if;
 
-    if exists (select 1 from public.agents a
+    if exists (select 1 from core.agents a
                where a.tenant_id = v_tenant and a.id = v_actor_id
                  and (a.kill_switch or a.status = 'PAUSED')) then
       raise exception using errcode = 'TRNOS',
@@ -1148,7 +1153,7 @@ stores anything.
 ```sql
   if v_actor_kind = 'AGENT' then
     select * into v_grant
-    from public.autonomy_grants
+    from core.autonomy_grants
     where tenant_id = v_tenant and agent_id = v_actor_id and action_type = p_type;
 
     if not found then
@@ -1210,29 +1215,29 @@ set search_path = pg_catalog, app, core, public, extensions, pg_temp
 as $$
 declare v_amount bigint; v_currency char(3) := 'MYR';
 begin
-  case (select value_source from public.action_types where key = p_type)
+  case (select value_source from core.action_types where key = p_type)
 
     when 'PROPOSAL' then
       -- sb-erd: one stable money column per gated target, frozen by an
       -- immutability rule at the point the gate reads it
       select p.value_minor, p.currency into v_amount, v_currency
-      from public.proposals p
+      from core.proposals p
       where p.tenant_id = p_tenant and p.id = p_target_id;
 
     when 'QUOTATION' then
       -- sb-money persists these; the gate compares, it never computes
       select q.sell_price_minor, q.currency into v_amount, v_currency
-      from public.quotations q
+      from core.quotations q
       where q.tenant_id = p_tenant and q.id = p_target_id;
 
     when 'INVOICE' then
       select i.total_minor, i.currency into v_amount, v_currency
-      from public.invoices i
+      from core.invoices i
       where i.tenant_id = p_tenant and i.id = p_target_id;
 
     when 'HRDC_CLAIM' then
       select h.claim_value_minor, h.currency into v_amount, v_currency
-      from public.hrdc_packets h
+      from core.hrdc_packets h
       where h.tenant_id = p_tenant and h.engagement_id = p_target_id;
 
     when 'PAYMENT' then
@@ -1288,7 +1293,7 @@ probe needs is named alongside it.
 ```sql
 select not exists (
   select 1
-  from public.proposals p
+  from core.proposals p
   where p.tenant_id      = v_tenant
     and p.organisation_id = v_org_id
     and p.status in ('SENT','VIEWED','ACCEPTED','LOST')
@@ -1296,7 +1301,7 @@ select not exists (
 ) into v_first_proposal;
 
 -- needed from sb-erd:
-create index proposals_org_sent on public.proposals (tenant_id, organisation_id)
+create index proposals_org_sent on core.proposals (tenant_id, organisation_id)
   where status in ('SENT','VIEWED','ACCEPTED','LOST');
 ```
 
@@ -1317,7 +1322,7 @@ and it is not the gate's to answer.
 ```sql
 select q.sell_price_minor < q.floor_price_minor
   into v_below_floor
-from public.quotations q
+from core.quotations q
 where q.tenant_id = v_tenant and q.id = v_quotation_id;
 ```
 
@@ -1326,7 +1331,7 @@ where q.tenant_id = v_tenant and q.id = v_quotation_id;
 ```sql
 select exists (
   select 1
-  from public.invoices i
+  from core.invoices i
   where i.tenant_id       = v_tenant
     and i.organisation_id = v_org_id
     and i.status in ('SENT','PARTIALLY_PAID','OVERDUE')
@@ -1335,7 +1340,7 @@ select exists (
 ) into v_overdue;
 
 -- needed from sb-erd:
-create index invoices_overdue on public.invoices (tenant_id, organisation_id, due_at)
+create index invoices_overdue on core.invoices (tenant_id, organisation_id, due_at)
   where outstanding_minor > 0 and status in ('SENT','PARTIALLY_PAID','OVERDUE');
 ```
 
@@ -1344,7 +1349,7 @@ create index invoices_overdue on public.invoices (tenant_id, organisation_id, du
 ```sql
 select exists (
   select 1
-  from public.attendance_days ad
+  from core.attendance_days ad
   where ad.tenant_id     = v_tenant
     and ad.engagement_id  = v_engagement_id
     and (v_day is null or ad.day = v_day)
@@ -1359,15 +1364,15 @@ days, negative when already passed. `null` when the target has no deadline.
 select min(d)::int into v_deadline_days
 from (
   select (hp.deadline_at at time zone 'Asia/Kuala_Lumpur')::date - current_date as d
-    from public.hrdc_packets hp
+    from core.hrdc_packets hp
    where hp.tenant_id = v_tenant and hp.engagement_id = v_engagement_id
   union all
   select i.due_at - current_date
-    from public.invoices i
+    from core.invoices i
    where i.tenant_id = v_tenant and i.id = v_invoice_id
   union all
   select e.starts_on - current_date
-    from public.engagements e
+    from core.engagements e
    where e.tenant_id = v_tenant and e.id = v_engagement_id
 ) s(d)
 where d is not null;
@@ -1383,26 +1388,26 @@ names:
 
 ```sql
 -- consentWithdrawn: FOLLOWUP_SEND, BROADCAST_SEND, REMINDER_SEND
-select exists (select 1 from public.contact_consents c
+select exists (select 1 from core.contact_consents c
                where c.tenant_id = v_tenant and c.contact_id = v_contact_id
                  and c.channel = p_payload->>'channel' and c.withdrawn_at is not null)
   into v_consent_withdrawn;
 
 -- packetIncomplete: HRDC_PACKET_MARK_SUBMITTED is 422 while completeness < 1
 select hp.completeness < 1.0 into v_packet_incomplete
-from public.hrdc_packets hp
+from core.hrdc_packets hp
 where hp.tenant_id = v_tenant and hp.engagement_id = v_engagement_id;
 
 -- claimReferenceExists: ATTENDANCE_UNLOCK, §16 Q5
 select hp.submission_reference is not null into v_claim_ref_exists
-from public.hrdc_packets hp
+from core.hrdc_packets hp
 where hp.tenant_id = v_tenant and hp.engagement_id = v_engagement_id;
 
 -- firstOfKind: the jury trigger in §18 — new client, new programme, or new trainer
-select not exists (select 1 from public.engagements e
+select not exists (select 1 from core.engagements e
                    where e.tenant_id = v_tenant and e.organisation_id = v_org_id
                      and e.status in ('DELIVERED','CLOSED'))
-    or not exists (select 1 from public.engagements e
+    or not exists (select 1 from core.engagements e
                    where e.tenant_id = v_tenant and e.programme_id = v_programme_id
                      and e.status in ('DELIVERED','CLOSED'))
   into v_first_of_kind;
@@ -1443,7 +1448,7 @@ both the value and the flags exist. Its result is consumed by step 5.
 
 ```sql
   select p.* into v_policy
-  from public.action_policies p
+  from core.action_policies p
   where p.tenant_id = v_tenant
     and p.action_type = p_type
     and p.active
@@ -1539,7 +1544,7 @@ the approval it raises carries `risk.level = 'HIGH'` and a `reason` that names
 because it consumes the same three numbers:
 
 ```sql
-  select * into v_jury from public.jury_configs
+  select * into v_jury from core.jury_configs
   where tenant_id = v_tenant and action_type = p_type and active;
 
   if found and v_jury.mode = 'ESCALATE' and v_level = 'AUTONOMOUS' then
@@ -1601,9 +1606,18 @@ because it consumes the same three numbers:
   end if;
 ```
 
-`app.role_holders(tenant, role)` is a `stable` helper over `sb-tenancy`'s membership
+`app.role_holders(tenant, roles[])` is a `stable` helper over `sb-tenancy`'s membership
 tables, returning each holder with their open approval count so assignment is a crude
 but honest round-robin rather than always landing on the same manager.
+
+**One function, not two.** `sb-events` needs the same lookup for badge fan-out — the set
+of users holding a role — where the gate needs one of them. They asked whose lane should
+hold it. It should be **`sb-tenancy`'s**, because it reads their membership tables and
+neither of us should be joining across into those directly. So: `app.role_holders`
+returns the set and takes an array, `sb-events` calls it as-is, and the gate's
+`app.pick_role_holder(tenant, role, exclude_actor)` becomes a thin wrapper that adds the
+ordering and the exclusion. Two implementations of one membership query would drift the
+first time a role gained a scope condition.
 
 Self-approval is enforced **twice**: here, so it can never be assigned to the
 requester, and again in `app.decide_approval`, so an assignment written before a role
@@ -1612,7 +1626,7 @@ a reorganisation.
 
 ### 2.6 Dispatch
 
-The matrix, complete. "Policy matched" means a row in `public.action_policies` matched at the end
+The matrix, complete. "Policy matched" means a row in `core.action_policies` matched at the end
 of step 3.
 
 | Requester | Effective level after steps 1–4 | Policy matched | Outcome | HTTP |
@@ -1653,7 +1667,7 @@ given value and the hash is stable across sessions, servers and Postgres restart
 separate canonicaliser is needed.
 
 ```sql
-  insert into public.action_requests (
+  insert into core.action_requests (
     tenant_id, ref, action_type, target_ref, target_entity, target_id, payload,
     value_minor, currency, requested_by_kind, requested_by_id, requested_by_role,
     agent_run_id, confidence, reasoning, evidence,
@@ -1668,6 +1682,13 @@ separate canonicaliser is needed.
     v_context, v_level, v_granted, v_policy.id, v_trace,
     v_dispatch, v_effects, v_effects_hash, v_idem.id
   ) returning * into v_req;
+
+  -- §3: "Emits: `ActionRequested`, then `ApprovalRequested` or the type's own event."
+  -- It fires for all three variants, including SUGGESTED and a policy halt, because
+  -- the fact being recorded is that somebody asked — which is exactly what the M18-S04
+  -- trace needs in order to prove an agent asked and was refused. `sb-events` §1.7
+  -- carries the merged event list; §14 of the contract omits this one.
+  perform app.emit_event(v_tenant, 'ActionRequested', v_req.id);
 ```
 
 Then one of three branches.
@@ -1688,7 +1709,7 @@ Then one of three branches.
 **`QUEUED_FOR_APPROVAL`**
 
 ```sql
-    insert into public.approval_requests (
+    insert into core.approval_requests (
       tenant_id, ref, action_request_id, policy_id, action_type, subject, target_ref,
       value_minor, currency, margin_rate,
       requested_by_kind, requested_by_id, requested_by_name, agent_run_id, confidence, autonomy,
@@ -1717,7 +1738,7 @@ Then one of three branches.
       (v_value is null and not v_type.money_moving)
     ) returning * into v_approval;
 
-    update public.action_requests
+    update core.action_requests
        set approval_request_id = v_approval.id, completed_at = now()
      where id = v_req.id;
 
@@ -1743,7 +1764,7 @@ and the only trace is a row in the gate's own tables.
 **`SUGGESTED`**
 
 ```sql
-    insert into public.suggested_drafts (
+    insert into core.suggested_drafts (
       tenant_id, ref, action_request_id, action_type, target_ref,
       body, payload, planned_effects, provenance, expires_at
     ) values (
@@ -1810,11 +1831,11 @@ grant  usage on schema app to service_role;
 
 -- the read-path tables live in `core`, which IS exposed: select only, RLS on
 revoke all on all tables in schema core from authenticated;
-grant  select on public.v_approval_requests, public.action_types, public.action_policies,
-                 public.autonomy_grants, public.action_requests, public.suggested_drafts,
-                 public.jury_configs, public.jury_verdicts
+grant  select on core.v_approval_requests, core.action_types, core.action_policies,
+                 core.autonomy_grants, core.action_requests, core.suggested_drafts,
+                 core.jury_configs, core.jury_verdicts
   to authenticated;
-grant  insert on public.approval_decisions to authenticated;   -- sb-tenancy's INSERT policy gates it
+grant  insert on core.approval_decisions to authenticated;   -- sb-tenancy's INSERT policy gates it
 
 grant execute on function app.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)
   to service_role;
@@ -1826,12 +1847,12 @@ grant execute on function app.bulk_decide(uuid[],text,text,text)        to servi
 called by an Edge Function holding the service role, exactly as §6.3 describes. This is
 not a workaround, it is the strongest form of the contract's own promise: the UI cannot
 call the gate even if it wanted to, because the schema is not on the Data API. The
-alternative considered and rejected was a thin `public.perform_action` wrapper exposed to
+alternative considered and rejected was a thin `core.perform_action` wrapper exposed to
 `authenticated`; it is simpler to deploy and it reopens a door `config.toml` closed on
 purpose.
 
 Reads stay under `sb-tenancy`'s RLS; no login role has `INSERT`, `UPDATE` or `DELETE` on
-any gate table except the append-only `public.approval_decisions`, whose `INSERT` policy
+any gate table except the append-only `core.approval_decisions`, whose `INSERT` policy
 carries the self-approval backstop. The `core` tables need RLS enabled regardless,
 because a `SECURITY DEFINER` function bypasses RLS and the `select` grants above do not.
 
@@ -1859,7 +1880,7 @@ already-paused agent succeeds and changes nothing.
 writing. The gap is real and it is the most dangerous one in the design.
 
 RLS answers "may this principal touch this row". It sees one row and cannot tell a
-draft from a send. So `agent_proposal` writing a `public.proposals` row is legitimately
+draft from a send. So `agent_proposal` writing a `core.proposals` row is legitimately
 RLS-allowed, and the *same* policy also lets it set `status = 'SENT'` in that write.
 `PROPOSAL_SEND` is `ACT_WITH_APPROVAL`. An agent that could flip that column directly
 would have routed around the entire gate, and nothing in §2 would ever run.
@@ -1873,18 +1894,18 @@ client can set.
 
 ```sql
 -- no blanket update grant on a table with a gated state column
-revoke update on public.proposals from authenticated;
+revoke update on core.proposals from authenticated;
 
 -- grant only the columns a human or agent may legitimately edit.
 -- `status`, `sent_at` and `value_minor` are simply absent from the list.
 grant update (title, sections, notes, contact_id, updated_at)
-  on public.proposals to authenticated;
+  on core.proposals to authenticated;
 ```
 
 Applied to every gated column: `proposals.status`, `invoices.status` and `sync_state`,
 `attendance_days.status`, `hrdc_packets.status` and `submission_reference`,
 `quotations.status` and `sell_price_minor`, `engagements.status`,
-`public.autonomy_grants.level`. The effect applier is `SECURITY DEFINER` and runs as the
+`core.autonomy_grants.level`. The effect applier is `SECURITY DEFINER` and runs as the
 owner, so column grants do not constrain it.
 
 **Layer 2 · a trigger stops the `INSERT`.** Column privileges do not prevent inserting
@@ -1894,16 +1915,16 @@ a row that is *already* `SENT`, which is the same bypass by another door.
 applier cannot perform a transition nobody authorised. Legal transitions are data:
 
 ```sql
-create table public.state_transitions (
+create table core.state_transitions (
   entity          text not null,          -- 'proposals'
   column_name     text not null default 'status',
   from_status     text,                   -- null = insert
   to_status       text not null,
-  gated_by        text references public.action_types(key),  -- null = ungated
+  gated_by        text references core.action_types(key),  -- null = ungated
   primary key (entity, column_name, from_status, to_status)
 );
 
-insert into public.state_transitions (entity, from_status, to_status, gated_by) values
+insert into core.state_transitions (entity, from_status, to_status, gated_by) values
   ('proposals',       null,      'DRAFT',     null),                 -- drafting is free
   ('proposals',       'DRAFT',   'SENT',      'PROPOSAL_SEND'),
   ('proposals',       'SENT',    'VIEWED',    null),                 -- the client did this
@@ -1931,7 +1952,7 @@ declare
   v_to       text;
   v_gated_by text;
   v_applier  uuid;
-  v_req      public.action_requests%rowtype;
+  v_req      core.action_requests%rowtype;
   v_col      text := coalesce(tg_argv[0], 'status');
 begin
   execute format('select ($1).%I::text', v_col) into v_to using new;
@@ -1944,7 +1965,7 @@ begin
   end if;
 
   select st.gated_by into v_gated_by
-  from public.state_transitions st
+  from core.state_transitions st
   where st.entity = tg_table_name and st.column_name = v_col
     and st.from_status is not distinct from v_from and st.to_status = v_to;
 
@@ -1970,7 +1991,7 @@ begin
                   'requiredAction', v_gated_by)::text;
   end if;
 
-  select * into v_req from public.action_requests where id = v_applier;
+  select * into v_req from core.action_requests where id = v_applier;
 
   if not found
      or v_req.action_type <> v_gated_by
@@ -1986,7 +2007,7 @@ end;
 $$;
 
 create trigger proposals_state_gate
-  before insert or update of status on public.proposals
+  before insert or update of status on core.proposals
   for each row execute function app.enforce_state_transition('status');
 ```
 
@@ -2002,15 +2023,21 @@ perform set_config('app.effect_applier', p_action_request_id::text, true);
 control: anything that can run SQL can set one. It is not the control here. The control
 is that the trigger then goes and *reads the action request the GUC names* and checks
 that its type is the one gating this specific edge, in this tenant. To forge a
-`DRAFT → SENT` transition, an attacker would have to produce a `public.action_requests`
+`DRAFT → SENT` transition, an attacker would have to produce a `core.action_requests`
 row whose `action_type` is `PROPOSAL_SEND` — and the only way to produce one is to go
 through `app.perform_action`, which is where the policy gate lives. The GUC carries a
 reference; the check is against durable state.
 
+`sb-tenancy` puts the same move in one line, and it is worth both lanes using the same
+words so the pattern is recognisable when it recurs: **ground a claim in a row somebody
+else wrote, rather than trusting what the caller presents.** Their `app.aal2_verified()`
+in §7.2a does it for a different reason. A boolean in a session variable is the caller's
+assertion. An id resolved against a table the caller cannot write is evidence.
+
 This is registered as `GOV-07` in the cross-cutting rules, alongside the other four that
 no tenant may switch off.
 
-**What this costs.** One extra index probe on `public.action_requests` per gated
+**What this costs.** One extra index probe on `core.action_requests` per gated
 transition, and a small reference table read that Postgres will keep in cache. Against
 that, a category of bypass disappears: after this, an agent that clears RLS can write
 its *proposal* and cannot send it, which is precisely the distinction `sb-tenancy` §3.4
@@ -2024,7 +2051,7 @@ attachments sit with whoever owns the table DDL.
 `trainos.unlock_action_id`, for the attendance lock trigger specifically, on the grounds
 that RLS cannot distinguish an approved `ATTENDANCE_UNLOCK` from an unauthorised write
 because `service_role` bypasses RLS. That reasoning is right and the mechanism is
-already here: `ATTENDANCE_UNLOCK` is two rows in `public.state_transitions`
+already here: `ATTENDANCE_UNLOCK` is two rows in `core.state_transitions`
 (`OPEN → LOCKED` gated by `ATTENDANCE_APPROVE`, `LOCKED → OPEN` gated by
 `ATTENDANCE_UNLOCK`) and the generic trigger reads `app.effect_applier`, loads that
 action request, and refuses unless its type is the gating one. A second key for one
@@ -2034,7 +2061,7 @@ carrying the action request id, for every gated transition including attendance.
 
 It is also strictly stronger than a bespoke key would be. `trainos.unlock_action_id`
 holding an id proves only that *someone* set a variable. `app.effect_applier` is
-resolved against `public.action_requests` and checked for the right `action_type` and
+resolved against `core.action_requests` and checked for the right `action_type` and
 the right tenant, so setting it to an `ENQUIRY_ARCHIVE` id buys nothing.
 
 ---
@@ -2070,15 +2097,15 @@ outbox row each. Event names in the last column are `sb-events`' to emit; names 
 | 15 | `REMINDER_SEND` | | ✓ | | `collections_queue.stage` advanced, `last_sent_at`; insert `messages` | send email or WhatsApp; record the BSP cost | `ReminderSent` *new* |
 | 16 | `FOLLOWUP_SEND` | | ✓ | | `follow_ups.status → SENT`; insert `messages`; `contacts.last_contacted_at` | send on the chosen channel | `FollowUpSent` *new* |
 | 17 | `BROADCAST_SEND` | | ✓ | | insert `broadcasts`; insert one `messages` row per recipient | fan out, one job per recipient | `BroadcastSent` *new* |
-| 18 | `AGENT_AUTONOMY_CHANGE` | | | | `public.autonomy_grants.level` and the promotion metadata | — | `AgentAutonomyChanged` *new* |
-| 19 | `AGENT_PAUSE` | | | | `public.autonomy_grants.paused` or `public.agents.status → PAUSED` | — | `AgentPaused` *new* |
+| 18 | `AGENT_AUTONOMY_CHANGE` | | | | `core.autonomy_grants.level` and the promotion metadata | — | `AgentAutonomyChanged` *new* |
+| 19 | `AGENT_PAUSE` | | | | `core.autonomy_grants.paused` or `core.agents.status → PAUSED` | — | `AgentPaused` *new* |
 | +1 | `BUDGET_CAP_RAISE` §17 | ✓ | | | `app.ai_budgets.cap_minor`; affected routing rows leave `PAUSED_BY_CAP` | — | `BudgetCapRaised` *new* |
-| +2 | `RULE_CHANGE_APPROVE` §17 | | | ✓ | `public.compliance_rules` insert or supersede, dated from the **circular**, not the approval | re-evaluate affected engagements | `RuleChangeApproved` |
+| +2 | `RULE_CHANGE_APPROVE` §17 | | | ✓ | `core.compliance_rules` insert or supersede, dated from the **circular**, not the approval | re-evaluate affected engagements | `RuleChangeApproved` |
 
 Twelve of the twenty-one need an event name that §14 does not define. That gap is
 `sb-events`' to close; the names above are a proposal, not a decision.
 
-The `ceiling_autonomy` column in `public.action_types` follows mechanically from the
+The `ceiling_autonomy` column in `core.action_types` follows mechanically from the
 three flags and `DECISIONS.md` §1. The five that may **never** promote, carrying
 `promotion_blocked_reason = 'NEVER'`: `DISCOUNT_APPROVE`, `TRAINER_BOOK`,
 `ATTENDANCE_APPROVE`, `HRDC_PACKET_MARK_SUBMITTED` and `RULE_CHANGE_APPROVE`. Invoice
@@ -2096,12 +2123,12 @@ security definer
 set search_path = pg_catalog, app, core, public, extensions, pg_temp
 as $$
 declare
-  r        public.action_requests%rowtype;
+  r        core.action_requests%rowtype;
   e        jsonb;
   v_seq    int := 0;
   v_kind   text;
 begin
-  select * into r from public.action_requests where id = p_action_request_id for update;
+  select * into r from core.action_requests where id = p_action_request_id for update;
 
   for e in select * from jsonb_array_elements(r.effects) loop
     v_seq  := v_seq + 1;
@@ -2131,20 +2158,20 @@ begin
 
   -- external effects become outbox rows. sb-events owns app.outbox and its
   -- columns; the gate supplies the deterministic key that makes redelivery safe.
-  insert into app.outbox (tenant_id, job_type, idempotency_key, payload,
-                          run_after, correlation_id, action_request_id)
+  insert into app.outbox (tenant_id, job_type, job_key, effect_id,
+                          action_request_id, correlation_id, payload, run_after)
   select r.tenant_id,
          app.job_type_for(r.action_type, ae.entity),   -- 'SEND_EMAIL', sb-events owns it
          ae.job_key,                                   -- '<action_request_id>:<seq>'
-         jsonb_build_object('actionRequestId', r.id, 'effectId', ae.id,
-                            'seq', ae.seq, 'jobKey', ae.job_key,
-                            'payload', r.payload),
-         now(),
+         ae.id,                                        -- what report_effect_result keys on
          r.id,
-         r.id
+         r.id,
+         jsonb_build_object('actionRequestId', r.id, 'effectId', ae.id,
+                            'seq', ae.seq, 'payload', r.payload),
+         now()
   from app.action_effects ae
   where ae.action_request_id = r.id and ae.kind = 'EXTERNAL'
-  on conflict (tenant_id, idempotency_key) do nothing;
+  on conflict (tenant_id, job_key) do nothing;
 
   update app.action_effects
      set status = 'DISPATCHED'
@@ -2179,7 +2206,7 @@ as $$
 declare
   v_tenant uuid   := app.current_tenant_id();
   v_actor  record := app.current_actor();
-  a        public.approval_requests%rowtype;
+  a        core.approval_requests%rowtype;
   v_fresh  jsonb;
   v_hash   text;
   v_result jsonb;
@@ -2189,7 +2216,7 @@ begin
   -- … identical claim-or-replay block, endpoint 'POST /v1/approvals/{id}/decide' …
 
   -- (2) row lock: two managers clicking Approve at the same instant serialise here
-  select * into a from public.approval_requests
+  select * into a from core.approval_requests
   where id = p_approval_id and tenant_id = v_tenant
   for update;
 
@@ -2207,8 +2234,19 @@ begin
                   'decidedBy', a.decided_by_id, 'decidedAt', a.decided_at)::text;  -- 409
   end if;
 
-  -- (4) may this actor decide? approver_role, or the escalation role once escalated,
-  --     or MD/ADMIN at any time
+  -- (4) may this actor decide? Two different questions, and sb-tenancy ruled that
+  --     they stay different. app.has_permission('approval:decide') is authorisation:
+  --     may this principal decide approvals at all. The approver_role comparison is a
+  --     data match: is THIS approval addressed to you. Making the second one
+  --     permission-shaped would mean minting a permission per role, which is the
+  --     permission matrix collapsing back into role checks under another name.
+  if not app.has_permission('approval:decide') then
+    raise exception using errcode = 'TRNOS',
+      message = 'This principal may not decide approvals',
+      detail  = jsonb_build_object('code','FORBIDDEN',
+                  'requiredRole', a.approver_role)::text;
+  end if;
+
   if not (v_actor.role = a.approver_role
           or (a.escalated_at is not null and v_actor.role = a.escalated_to_role)
           or v_actor.role in ('MD','ADMIN')) then
@@ -2258,7 +2296,7 @@ client rendering an older version than the one on the server.
     v_hash  := encode(sha256(convert_to(v_fresh::text, 'UTF8')), 'hex');
 
     if v_hash is distinct from a.diff_hash then
-      update public.approval_requests
+      update core.approval_requests
          set diff = v_fresh, diff_hash = v_hash
        where id = a.id;
 
@@ -2293,7 +2331,7 @@ persist, the recompute must run in its own transaction — a helper
   case p_decision
 
     when 'APPROVE' then
-      update public.approval_requests
+      update core.approval_requests
          set status = 'APPROVED', decision = 'APPROVE', decision_note = p_note,
              decided_by_id = v_actor.id, decided_by_name = app.actor_name(v_actor.id),
              decided_at = now()
@@ -2310,16 +2348,16 @@ persist, the recompute must run in its own transaction — a helper
                'decidedAt', now(),
                'effects', ar.effects)
         into v_result
-      from public.action_requests ar where ar.id = a.action_request_id;
+      from core.action_requests ar where ar.id = a.action_request_id;
 
     when 'REJECT' then
-      update public.approval_requests
+      update core.approval_requests
          set status = 'REJECTED', decision = 'REJECT', decision_note = p_note,
              decided_by_id = v_actor.id, decided_by_name = app.actor_name(v_actor.id),
              decided_at = now()
        where id = a.id;
 
-      update public.action_requests
+      update core.action_requests
          set status = 'REJECTED', error_code = 'APPROVAL_REJECTED',
              error_details = jsonb_build_object('note', p_note), completed_at = now()
        where id = a.action_request_id;
@@ -2330,13 +2368,13 @@ persist, the recompute must run in its own transaction — a helper
                     'decidedAt', now());
 
     when 'REQUEST_CHANGES' then
-      update public.approval_requests
+      update core.approval_requests
          set status = 'CHANGES_REQUESTED', decision = 'REQUEST_CHANGES',
              decision_note = p_note, decided_by_id = v_actor.id,
              decided_by_name = app.actor_name(v_actor.id), decided_at = now()
        where id = a.id;
 
-      update public.action_requests
+      update core.action_requests
          set status = 'REJECTED', error_code = 'CHANGES_REQUESTED',
              error_details = jsonb_build_object('note', p_note), completed_at = now()
        where id = a.action_request_id;
@@ -2383,7 +2421,7 @@ begin
                      case when value_minor is not null then 'MONETARY_VALUE'
                           else 'MONEY_MOVING_TYPE' end))
     into v_blocked
-  from public.approval_requests
+  from core.approval_requests
   where id = any(p_ids) and tenant_id = app.current_tenant_id()
     and not bulk_approvable;
 
@@ -2419,8 +2457,8 @@ aborts the batch with the same `409 DIFF_CHANGED` a single decide would produce.
 select cron.schedule('approvals-escalate', '* * * * *', $job$
   with due as (
     select a.id, a.tenant_id, p.escalate_to_role
-    from public.approval_requests a
-    join public.action_policies p on p.tenant_id = a.tenant_id and p.id = a.policy_id
+    from core.approval_requests a
+    join core.action_policies p on p.tenant_id = a.tenant_id and p.id = a.policy_id
     where a.status = 'PENDING'
       and a.escalated_at is null
       and a.escalate_at is not null
@@ -2429,7 +2467,7 @@ select cron.schedule('approvals-escalate', '* * * * *', $job$
     limit 500
     for update of a skip locked
   )
-  update public.approval_requests a
+  update core.approval_requests a
      set escalated_at = now(),
          escalated_to_role = due.escalate_to_role,
          assigned_to_id = app.pick_role_holder(a.tenant_id, due.escalate_to_role,
@@ -2440,12 +2478,12 @@ $job$);
 
 -- every minute: emit the SLA breach event exactly once
 select cron.schedule('approvals-breach', '* * * * *', $job$
-  update public.approval_requests a
+  update core.approval_requests a
      set breach_notified_at = now()
    where a.status = 'PENDING'
      and a.breach_notified_at is null
      and now() > a.sla_due_at
-     and a.id in (select id from public.approval_requests
+     and a.id in (select id from core.approval_requests
                   where status = 'PENDING' and breach_notified_at is null
                     and now() > sla_due_at
                   order by sla_due_at limit 500 for update skip locked);
@@ -2465,7 +2503,7 @@ $job$);
 
 -- hourly: suggested draft expiry
 select cron.schedule('drafts-expire', '23 * * * *', $job$
-  update public.suggested_drafts set status = 'EXPIRED'
+  update core.suggested_drafts set status = 'EXPIRED'
   where status = 'OPEN' and expires_at < now();
 $job$);
 
@@ -2491,18 +2529,18 @@ declare v_count int;
 begin
   with due as (
     select id, action_request_id, tenant_id
-    from public.approval_requests
+    from core.approval_requests
     where status = 'PENDING' and now() > expires_at
     order by expires_at
     limit p_limit
     for update skip locked
   ), closed as (
-    update public.approval_requests a
+    update core.approval_requests a
        set status = 'EXPIRED'
     from due where a.id = due.id
     returning a.id, a.action_request_id, a.tenant_id
   )
-  update public.action_requests ar
+  update core.action_requests ar
      set status = 'REJECTED', error_code = 'APPROVAL_EXPIRED', completed_at = now()
   from closed
   where ar.id = closed.action_request_id;
@@ -2569,15 +2607,15 @@ create or replace function app.enqueue_jury(
 language plpgsql security definer
 set search_path = pg_catalog, app, core, public, extensions, pg_temp
 as $$
-declare v_id uuid; v_cfg public.jury_configs%rowtype; v_tenant uuid;
+declare v_id uuid; v_cfg core.jury_configs%rowtype; v_tenant uuid;
 begin
-  select tenant_id into v_tenant from public.action_requests where id = p_action_request_id;
-  select * into v_cfg from public.jury_configs
+  select tenant_id into v_tenant from core.action_requests where id = p_action_request_id;
+  select * into v_cfg from core.jury_configs
   where tenant_id = v_tenant
-    and action_type = (select action_type from public.action_requests
+    and action_type = (select action_type from core.action_requests
                        where id = p_action_request_id);
 
-  insert into public.jury_verdicts (tenant_id, action_request_id, approval_request_id,
+  insert into core.jury_verdicts (tenant_id, action_request_id, approval_request_id,
                                  mode, trigger_reason, quorum, "of", tiers)
   values (v_tenant, p_action_request_id, p_approval_id, p_mode, p_reason,
           v_cfg.quorum, v_cfg."of", v_cfg.tiers)
@@ -2608,19 +2646,19 @@ declare v_count int;
 begin
   with candidates as (
     select a.id as approval_id, a.action_request_id, a.tenant_id, c.quorum, c."of", c.tiers
-    from public.approval_requests a
-    join public.jury_configs c
+    from core.approval_requests a
+    join core.jury_configs c
       on c.tenant_id = a.tenant_id and c.action_type = a.action_type
     where a.status in ('APPROVED','REJECTED')
       and a.decided_at between now() - interval '1 hour' and now() - interval '5 minutes'
       and c.mode = 'SAMPLE' and c.active
-      and not exists (select 1 from public.jury_verdicts j where j.approval_request_id = a.id)
+      and not exists (select 1 from core.jury_verdicts j where j.approval_request_id = a.id)
       -- deterministic 5%: hash the ref rather than calling random(), so a re-run
       -- of the job picks the same rows and cannot double-sample
       and (hashtext(a.ref) & 2147483647) % 1000 < (c.sample_rate * 1000)::int
     limit 200
   )
-  insert into public.jury_verdicts (tenant_id, action_request_id, approval_request_id,
+  insert into core.jury_verdicts (tenant_id, action_request_id, approval_request_id,
                                  mode, trigger_reason, quorum, "of", tiers)
   select tenant_id, action_request_id, approval_id, 'SAMPLE', 'SAMPLED', quorum, "of", tiers
   from candidates;
@@ -2649,7 +2687,7 @@ per promotion rather than once per action, which is the whole argument in
 ```sql
 -- in decide_approval, before the APPROVE branch
 if a.action_type = 'AGENT_AUTONOMY_CHANGE' and p_decision = 'APPROVE' then
-  if exists (select 1 from public.jury_verdicts j
+  if exists (select 1 from core.jury_verdicts j
              where j.approval_request_id = a.id and j.mode = 'GATE'
                and j.status <> 'COMPLETE') then
     raise exception using errcode = 'TRNOS',
@@ -2699,7 +2737,7 @@ POST /v1/actions
   later, independently:
       worker claims a job from the outbox
         → performs the external call
-        → app.settle_effect(job_key, status, result)
+        → app.report_effect_result(effect_id, status, payload, error)
 ```
 
 ### 6.2a The seam with `sb-events`, agreed
@@ -2713,30 +2751,37 @@ evaluation. Four points settle the boundary.
 subscriptions fan out to jobs; they then withdrew it, and they were right to. An
 external effect is enumerated on the action request *before* the event exists, so
 routing it through a generic subscription would lose the per-effect identity that §7
-renders and that `settle_effect` addresses. Both paths write the same table and both are
+renders and that `report_effect_result` addresses. Both paths write the same table and both are
 idempotent, so an effect that is also subscribed to its own event enqueues once.
 
-**The write-back is `app.settle_effect`, addressed by job key.** `sb-events`' first
-proposal was `app.record_effect(action_request_id, effect)`, which cannot address the
-write-back: one action has N external effects that succeed and fail independently, and a
-`PROPOSAL_SEND` whose email bounced needs that one effect marked failed, not the action.
-Their revised proposal addresses it by job key, which resolves that completely, because
-`job_key` is `'<action_request_id>:<seq>'` and therefore names exactly one effect. Their
-name and signature, adopted unchanged:
+**The write-back is `app.report_effect_result`, keyed on the effect id.** This one took
+three rounds and is worth recording, because both lanes conceded and we briefly swapped
+positions. `sb-events` first proposed `app.record_effect(action_request_id, effect)`. I
+objected that the action id cannot address the write-back, since one action has N
+external effects that succeed and fail independently. They proposed
+`settle_effect(job_key, ...)`, which fixes that because `job_key` names exactly one
+effect, and I adopted it. They then adopted *my* original instead, on the better
+argument: `effect_id` is the primary key, so there is no lookup and no composite string
+to parse. That argument wins, so both lanes are now on:
 
 ```sql
-app.settle_effect(
-  p_job_key text,     -- '<action_request_id>:<seq>', unique per tenant
-  p_status  text,     -- SETTLED | FAILED
-  p_result  jsonb     -- provider ids, message ids, uin, cost, or {code, message, retryable}
+app.report_effect_result(
+  p_effect_id bigint,     -- app.action_effects.id, carried in app.outbox.effect_id
+  p_status    text,       -- SETTLED | FAILED
+  p_payload   jsonb,      -- provider ids, message ids, uin, cost
+  p_error     jsonb       -- {code, message, retryable}
 ) returns void
 ```
 
-`app.complete_job` calls it on success and `app.fail_job` calls it on the dead-letter
-branch. **The failure path is the one that matters**, and `sb-events` is right to say so:
-without it, an action whose effect exhausts its retries would show `DISPATCHED` forever
-while the action itself read `EXECUTED`. That is the exact inconsistency §7.3 now
-forbids.
+`p_status` takes `SETTLED` or `FAILED` from the worker; the stored effect status is
+`SETTLED` or `DEAD_LETTERED`, because `app.fail_job` calls this only on *terminal*
+failure and a retryable attempt never reaches the gate at all.
+
+`app.complete_job` calls it on success and the dead-letter branch of `app.fail_job` calls
+it on terminal failure. **The failure path is the one that matters**, and `sb-events` is
+right to say so: without it, an action whose effect exhausts its retries would show
+`DISPATCHED` forever while the action itself read `EXECUTED`. That is the exact
+inconsistency §7.3 now forbids.
 
 **The outbox must carry the gate's key.** The one hard requirement on `app.outbox` is a
 unique constraint on `(tenant_id, idempotency_key)`, with the gate supplying
@@ -2758,10 +2803,11 @@ The worker never writes domain tables. It reports through one narrow, validating
 function, which is also the only place the action's own lifecycle advances:
 
 ```sql
-create or replace function app.settle_effect(
-  p_job_key text,
-  p_status  text,                      -- SETTLED | FAILED
-  p_result  jsonb default '{}'::jsonb
+create or replace function app.report_effect_result(
+  p_effect_id bigint,
+  p_status    text,                      -- SETTLED | FAILED
+  p_payload   jsonb default '{}'::jsonb,
+  p_error     jsonb default null
 ) returns void
 language plpgsql security definer
 set search_path = pg_catalog, app, core, public, extensions, pg_temp
@@ -2771,15 +2817,13 @@ declare
   v_open    int;
   v_failed  int;
 begin
-  select * into e from app.action_effects
-  where tenant_id = app.current_tenant_id() and job_key = p_job_key
-  for update;
+  select * into e from app.action_effects where id = p_effect_id for update;
 
   if not found then
-    raise exception 'no effect for job key %', p_job_key;
+    raise exception 'no effect %', p_effect_id;
   end if;
   if e.kind <> 'EXTERNAL' then
-    raise exception 'effect % is not external', p_job_key;
+    raise exception 'effect % is not external', p_effect_id;
   end if;
   if e.status in ('SETTLED','DEAD_LETTERED') then
     return;                                        -- late duplicate report, ignore
@@ -2788,8 +2832,8 @@ begin
   update app.action_effects
      set status     = case when p_status = 'SETTLED' then 'SETTLED' else 'DEAD_LETTERED' end,
          attempts   = attempts + 1,
-         last_error = case when p_status = 'SETTLED' then null else p_result end,
-         retryable  = coalesce((p_result->>'retryable')::boolean, true),
+         last_error = p_error,
+         retryable  = coalesce((p_error->>'retryable')::boolean, true),
          applied_at = case when p_status = 'SETTLED' then now() else applied_at end
    where id = e.id;
 
@@ -2798,7 +2842,7 @@ begin
   if p_status = 'SETTLED' then
     execute format('select app.confirm_%s($1, $2)',
                    lower(app.effect_action_type(e.id)))
-      using e.id, p_result;
+      using e.id, p_payload;
   end if;
 
   -- advance the action when the last external effect settles
@@ -2809,7 +2853,7 @@ begin
   where action_request_id = e.action_request_id;
 
   if v_open = 0 then
-    update public.action_requests
+    update core.action_requests
        set status = case when v_failed > 0 then 'PARTIALLY_FAILED' else 'EXECUTED' end,
            completed_at = now()
      where id = e.action_request_id
@@ -2900,8 +2944,8 @@ effect that exhausts its retries sits at `DEAD_LETTERED` forever while the actio
 | `action_requests.status` | Meaning | Set by |
 |---|---|---|
 | `EXECUTING` | in-database effects committed; at least one external effect outstanding | `app.apply_effects` |
-| `EXECUTED` | every effect settled successfully | `app.settle_effect`, on the last one |
-| `PARTIALLY_FAILED` | every effect settled, at least one dead-lettered | `app.settle_effect`, on the last one |
+| `EXECUTED` | every effect settled successfully | `app.report_effect_result`, on the last one |
+| `PARTIALLY_FAILED` | every effect settled, at least one dead-lettered | `app.report_effect_result`, on the last one |
 
 An action with no external effects goes straight to `EXECUTED` inside the gate's own
 transaction and never passes through `EXECUTING`. That is most of the twenty-one types:
@@ -3016,7 +3060,7 @@ self-assignment.
 `{ actionType: 'PROPOSAL_SEND', level: 'AUTONOMOUS' }`.
 
 Assert: `422 VALIDATION_FAILED` with `details.reason = 'MONEY_MOVING_CEILING'`; no row
-in `autonomy_grants` changed. Then the second path: `update public.autonomy_grants set
+in `autonomy_grants` changed. Then the second path: `update core.autonomy_grants set
 level = 'AUTONOMOUS'` directly in SQL, asserting the **trigger** raises too, so the
 ceiling holds even against a migration or a console edit. Then the third: lower
 `action_types.ceiling_autonomy` after a grant exists, and assert `perform_action`
@@ -3045,7 +3089,7 @@ is **element-for-element identical** to the refreshed `diff[]`.
 | Value read from the record | agent sends `payload.value.amount = 1400000` on an RM 18,500 proposal → `APV-01` still matches; `action_requests.value_minor = 1850000` |
 | Policy beats grant | agent at `AUTONOMOUS` on a type where a policy matches → `QUEUED_FOR_APPROVAL`, never `EXECUTED` |
 | Confidence downgrade | `agent_proposal` at `AUTONOMOUS`, confidence 0.55, minimum 0.70 → `QUEUED_FOR_APPROVAL` with `risk.level = HIGH` and `GOV-05` in the trace |
-| Kill switch | `public.agents.kill_switch = true` → `409 AGENT_PAUSED`, `reason = AGENT_PAUSED`; `AGENT_PAUSE` on the same agent still succeeds |
+| Kill switch | `core.agents.kill_switch = true` → `409 AGENT_PAUSED`, `reason = AGENT_PAUSED`; `AGENT_PAUSE` on the same agent still succeeds |
 | Budget cap | tier `PAUSED_BY_CAP` → `409 AGENT_PAUSED`, `reason = BUDGET_CAP` |
 | Attendance lock one-way | `ATTENDANCE_APPROVE` then a capture → `409 ATTENDANCE_LOCKED` with `unlockActionType` in the details |
 | Unlock voids the claim | `ATTENDANCE_UNLOCK` effects[] explicitly contains the packet void; `CMP-03` routes to `MD` when a claim reference exists |
@@ -3056,8 +3100,8 @@ is **element-for-element identical** to the refreshed `diff[]`.
 | Jury sample determinism | run `enqueue_jury_samples` twice → the same rows, no duplicates |
 | Tenant isolation | tenant B cannot read, decide, or replay tenant A's approval or idempotency key (`sb-tenancy` owns the RLS; this asserts it) |
 | Concurrent decide | two `SALES_MANAGER` sessions approve the same id simultaneously → one `APPROVED`, one `409 ALREADY_DECIDED`, effects applied exactly once |
-| `GOV-07` direct flip | as `agent_proposal` over the Data API, `update public.proposals set status = 'SENT'` → permission denied on the column, before any trigger runs |
-| `GOV-07` insert bypass | as `agent_proposal`, `insert into public.proposals (…, status) values (…, 'SENT')` → `ILLEGAL_STATE_TRANSITION`, since no edge has `from_status` null and `to_status` `SENT` |
+| `GOV-07` direct flip | as `agent_proposal` over the Data API, `update core.proposals set status = 'SENT'` → permission denied on the column, before any trigger runs |
+| `GOV-07` insert bypass | as `agent_proposal`, `insert into core.proposals (…, status) values (…, 'SENT')` → `ILLEGAL_STATE_TRANSITION`, since no edge has `from_status` null and `to_status` `SENT` |
 | `GOV-07` forged applier | `set_config('app.effect_applier', <a real ENQUIRY_ARCHIVE action id>)` then flip a proposal to `SENT` → `FORBIDDEN`, because the running action's type is not `PROPOSAL_SEND` |
 | `GOV-07` happy path | approve `APV-2026-0771` → the applier crosses `DRAFT → SENT` and no other path can |
 | Ungated edge | the client portal marks a proposal `SENT → VIEWED` with no applier set → succeeds, since that edge has `gated_by` null |
@@ -3065,7 +3109,7 @@ is **element-for-element identical** to the refreshed `diff[]`.
 | `EXECUTING` lifecycle | `PROPOSAL_SEND` executes → row is `EXECUTING`, response says `EXECUTED`, `completed_at` is null; the email effect settles → row is `EXECUTED` and `completed_at` is stamped |
 | Dead-lettered effect | the email effect exhausts its retries → row is `PARTIALLY_FAILED`, never `EXECUTED`; the proposal is still `SENT` |
 | No external effect | `ENQUIRY_ARCHIVE` executes → `EXECUTED` directly, never passes through `EXECUTING` |
-| `settle_effect` idempotence | call it twice with the same job key → the second returns without changing attempts or re-running the confirm handler |
+| `report_effect_result` idempotence | call it twice for the same effect → the second returns without changing attempts or re-running the confirm handler |
 | Outbox key collision | run `apply_effects` twice for one action → one outbox row per effect, `on conflict` absorbs the second |
 
 That last one is the row-lock test and it is the one most worth writing first: it is
@@ -3081,7 +3125,7 @@ the failure that would send a proposal twice.
 |---|---|---|---|
 | Q1 | Does an approval expire? | Yes. `EXPIRED` at 24h, MD escalation at 6h, never auto-approve, never nag forever. Agent runs get `APPROVAL_EXPIRED` and are retryable. | §4.5 |
 | Q2 | Diff staleness | Hash check → `409` with the recomputed diff. A soft lock on the target was considered and rejected. | §4.2 |
-| Q3 | Who owns `firstProposalToOrg`? | Computed live from a partial index on `public.proposals`. Not denormalised: a flag has too many invalidation paths and fails silently. | §2.3 |
+| Q3 | Who owns `firstProposalToOrg`? | Computed live from a partial index on `core.proposals`. Not denormalised: a flag has too many invalidation paths and fails silently. | §2.3 |
 | Q7 | Agent service principals | One per agent **per tenant**. `autonomy_grants` is keyed `(tenant_id, agent_id, action_type)` and every check is tenant-scoped. | §1.2 |
 
 **Answered with a recommendation that needs a human decision.**
@@ -3156,10 +3200,10 @@ overturn.
     source. The read-path tables are now in `core` and only the execution ledger and the
     replay cache remain in `app`. Migration 001's comment on the `app` schema needs the
     same correction.
-14. **`app.policies` renamed `public.action_policies`.** A table called `policies` sitting
+14. **`app.policies` renamed `core.action_policies`.** A table called `policies` sitting
     in a schema that also carries row-level security policies is an invitation to
     misread one for the other.
-15. **`public.approval_decisions` adopted from `sb-tenancy`.** My first draft kept the
+15. **`core.approval_decisions` adopted from `sb-tenancy`.** My first draft kept the
     decision on `approval_requests` alone. Their append-only table is better, because a
     rule whose failure is fraud rather than a defect can then carry an `INSERT` policy.
     The denormalised columns stay as the projection the list endpoint reads.
@@ -3174,10 +3218,9 @@ overturn.
     `EXECUTED` for all three, mapped by `app.response_status`. The response variant and
     the row lifecycle are now different things, which is a real divergence from a
     contract that uses one enum for both.
-18. **The domain schema is `public`, not `core`.** Migration 001 adjudicated the
-    opposite and cited an earlier draft of this document as its reason. See C2 in §0;
-    this is the one open conflict that a ruling has to settle rather than a design
-    choice I can defend.
+18. **`ActionRequested` fires for all three variants**, including `SUGGESTED` and a
+    policy halt. §3 names the event and §14 omits it. Firing it only on execution would
+    lose the case the M18-S04 trace most needs: an agent asked and was refused.
 
 **One thing that reconciles rather than deviates.** `DECISIONS.md` §2 sets the jury
 escalation value trigger at RM 50,000 and §18 writes it as
@@ -3196,8 +3239,8 @@ No conflict.
    `proposals_org_sent` and `invoices_overdue` partial indexes verbatim,
    `quotations.floor_price_minor`, `attendance_days`, `engagements.starts_on`,
    `hrdc_packets.deadline_at` and `invoices.due_at`, and the four stable money columns.
-   `public.contact_consents`, `public.messages`, `public.payments` and
-   `public.compliance_rules`, which appear in §3's effect table, are still my guesses.
+   `core.contact_consents`, `core.messages`, `core.payments` and
+   `core.compliance_rules`, which appear in §3's effect table, are still my guesses.
 3. **`sb-tenancy`'s helpers are now confirmed**, with two corrections applied:
    `app.require_tenant_id()` rather than the nullable `app.current_tenant_id()` inside
    the gate, and `actor_kind` carries four values because portal RPCs produce `CLIENT`.
@@ -3206,7 +3249,7 @@ No conflict.
 4. **The `sb-events` seam is now agreed on both sides** and reflected in §6.2a: the
    gate writes `app.outbox` directly with their column names, emits through their
    three-argument `app.emit_event` overload, and the worker reports through their
-   `app.settle_effect(job_key, status, result)`. What is unverified is that the two
+   `app.report_effect_result(effect_id, …)`. What is unverified is that the two
    documents' SQL actually compiles against each other, since neither has been run.
    `app.job_type_for(action_type, entity)` is theirs to write and does not exist yet.
 5. **`sb-money` must persist `floor_price_minor` on the quotation.** The
@@ -3225,11 +3268,11 @@ No conflict.
    deliberately avoids `pgcrypto` by using the built-in `sha256()`, and deliberately
    avoids `pg_net` and `http` entirely.
 11. **The trigger attachments in §2.9 are not written.** I own
-    `app.enforce_state_transition()` and `public.state_transitions`; attaching the trigger
+    `app.enforce_state_transition()` and `core.state_transitions`; attaching the trigger
     to each gated table and applying the column-privilege grants sits with whoever owns
     that table's DDL. Until both halves land, the bypass `sb-tenancy` §3.4 describes is
     still open.
-12. **`public.state_transitions` is seeded with eight example edges, not the full set.**
+12. **`core.state_transitions` is seeded with eight example edges, not the full set.**
     The complete set is one row per legal edge across every status enum in §12, which is
     roughly sixty rows. Deriving them is mechanical but it has not been done, and a
     missing edge fails closed — a legitimate transition would raise
