@@ -25,7 +25,7 @@ npx tsc -p tsconfig.json   # strict, noEmit, zero errors
 | §3 The action envelope, policy evaluation, §7 `ApprovalRequest` | `src/actions.ts` |
 | §4 Enquiries, leads and follow-ups | `src/domain/enquiries.ts` |
 | §5 Organisations, contacts, opportunities | `src/domain/organisations.ts` |
-| §6 TNA, programmes, proposals, costings, §18 rate card | `src/domain/proposals.ts` |
+| §6 TNA, programmes, proposals, quotations, §18 rate card | `src/domain/proposals.ts` |
 | §7 Approvals | `src/domain/approvals.ts` |
 | §8 Engagements, participants, attendance | `src/domain/engagements.ts` |
 | §9 HRD Corp and finance, §17 compliance rules, §18 rule resolution | `src/domain/hrdc-finance.ts` |
@@ -93,6 +93,27 @@ to equal the `diff[]` rendered on the approval detail, and two vocabularies
 cannot be compared field for field. `DiffLine.op` and `Effect.op` share one
 union, `DIFF_OPS`. Servers emit `ADD`; clients never see `CREATE`.
 
+`Effect.description` is required, matching `DiffLine.description`. The policy
+gate always produces a sentence for every effect, so comparing the two lists
+never has to handle a null.
+
+### R2: costings are quotations
+
+§6 calls the M07-S03 record a "costing" in prose and serves it at
+`/v1/costings/{id}`. Everything else calls it a quotation: the ref prefix is
+`QUO-`, §18 says "every `Quotation` stores `rateCardVersion`", API.md serves
+`/quotations/{id}` with a `QuotationLine`, and the REPORT recurring-entities
+block lists `Quotation{...}`. Ruling: quotation wins. The path is
+`/v1/quotations/{id}`, and the types are `Quotation`, `QuotationLine` and
+`QuotationWrite`. No `Costing` alias is kept — two names for one record is the
+divergence this repo treats as a defect, and nothing consumed the old names.
+
+Permission strings for the object are `quotation:read`, `quotation:write` and
+`quotation:apply`, published as `QUOTATION_PERMISSIONS`. These are ruled, not
+derived: the contract never catalogues its permission vocabulary, and the `/me`
+example shows only enquiry and proposal grants. `Me.permissions` stays
+`string[]` rather than a union that would be mostly invented.
+
 ## Fields with no source
 
 Copied from §15, then extended with what the contract itself leaves ambiguous.
@@ -155,7 +176,11 @@ Each is typed conservatively and marked in code.
     A/B/C, venue modes (client site / own venue / external) and travel regions
     (Klang Valley / peninsular / East Malaysia) are `DECISIONS.md` §5 prose,
     rendered here as `UPPER_SNAKE` unions.
-15. **`/notifications` and `/assistant/messages` exist only in API.md.** Neither
+15. **The permission vocabulary is never catalogued.** `/me` returns
+    `permissions[]` with four example strings and no table. `Me.permissions`
+    is `string[]`; only the quotation grants are published as constants, and
+    only because ruling R2 fixed them.
+16. **`/notifications` and `/assistant/messages` exist only in API.md.** Neither
     appears in the §13 matrix or in any §2–§18 shape, so neither is typed or
     listed in `ENDPOINTS`.
 

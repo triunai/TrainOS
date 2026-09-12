@@ -84,7 +84,7 @@ export const ENDPOINTS = [
   { method: 'GET', path: '/v1/opportunities/{id}', screenIds: [], roles: ['SALES', 'SALES_MANAGER', 'MD'], gated: false, idempotent: true },
   { method: 'PATCH', path: '/v1/opportunities/{id}', screenIds: [], roles: ['SALES', 'SALES_MANAGER'], gated: false, idempotent: true },
 
-  /* §6 · TNA, programmes, proposals, costings */
+  /* §6 · TNA, programmes, proposals, quotations (ruling R2) */
   { method: 'GET', path: '/v1/tnas/{id}', screenIds: ['M05-S02'], roles: ['SALES'], gated: false, idempotent: true },
   { method: 'GET', path: '/v1/tnas/{id}/recommendations', screenIds: ['M05-S02'], roles: ['SALES'], gated: false, idempotent: true },
   { method: 'POST', path: '/v1/tnas/{id}/reopen', screenIds: ['M05-S02'], roles: ['SALES'], gated: false, idempotent: false },
@@ -98,8 +98,8 @@ export const ENDPOINTS = [
   { method: 'PUT', path: '/v1/proposals/{id}/sections/{n}', screenIds: ['M07-S02'], roles: ['SALES'], gated: false, idempotent: true },
   { method: 'POST', path: '/v1/proposals/{id}/sections/{n}/regenerate', screenIds: ['M07-S02'], roles: ['SALES'], gated: false, idempotent: false },
   { method: 'GET', path: '/v1/proposals/{id}/preview', screenIds: ['M07-S02', 'M02-S02'], roles: ['SALES', 'SALES_MANAGER'], gated: false, idempotent: true },
-  { method: 'GET', path: '/v1/costings/{id}', screenIds: ['M07-S03'], roles: ['SALES', 'FINANCE'], gated: false, idempotent: true },
-  { method: 'PUT', path: '/v1/costings/{id}', screenIds: ['M07-S03'], roles: ['SALES', 'FINANCE'], gated: false, idempotent: true },
+  { method: 'GET', path: '/v1/quotations/{id}', screenIds: ['M07-S03'], roles: ['SALES', 'FINANCE'], gated: false, idempotent: true },
+  { method: 'PUT', path: '/v1/quotations/{id}', screenIds: ['M07-S03'], roles: ['SALES', 'FINANCE'], gated: false, idempotent: true },
 
   /* §7 · Approvals */
   { method: 'GET', path: '/v1/approvals', screenIds: ['M02-S01', 'M01-S01'], roles: ['SALES_MANAGER', 'MD', 'FINANCE'], gated: false, idempotent: true },

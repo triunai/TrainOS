@@ -1,5 +1,5 @@
 /**
- * §6 · TNA, programmes, proposals, costings — plus the §18 rate card.
+ * §6 · TNA, programmes, proposals, quotations — plus the §18 rate card.
  *
  * Screens M05-S02 (TNA detail), M06-S02 (programme detail),
  * M07-S02 (proposal builder), M07-S03 (costing worksheet).
@@ -247,17 +247,17 @@ export interface ProposalPreview {
 }
 
 /* ------------------------------------------------------------------ *
- * §6 · Costings and quotations — M07-S03
+ * §6 · Quotations — M07-S03 (ruling R2: the section's "costing" is a quotation)
  * ------------------------------------------------------------------ */
 
 /**
- * §6 one costing line.
+ * §6 one quotation line.
  *
- * §18: `total` is `rate × qty` rounded half-up to the sen. The costing total
+ * §18: `total` is `rate × qty` rounded half-up to the sen. The quotation total
  * sums the rounded lines. A zero-quantity line (client-site venue) still
  * carries an explicit zero `total`.
  */
-export interface CostingLine {
+export interface QuotationLine {
   item: string;
   detail?: string;
   qty: number;
@@ -267,19 +267,23 @@ export interface CostingLine {
 }
 
 /**
- * §6 the costing / quotation record.
+ * §6 the quotation record, served at `GET /v1/quotations/{id}`.
+ *
+ * Ruling R2: §6 calls this a "costing" in prose, but the ref prefix is `QUO-`,
+ * §18 calls it a quotation, and API.md and the REPORT recurring-entities block
+ * both say `Quotation`. One name wins; this is it.
  *
  * §15 item 3: `perParticipant` (`sellPrice ÷ pax`) is display-only, and §18
  * makes that explicit — a per-pax figure that does not multiply cleanly must
  * never become a line.
  */
-export interface Costing extends EntityEnvelope {
+export interface Quotation extends EntityEnvelope {
   proposalRef: Ref;
   /** §6 original field. */
   rateCardYear?: number;
   /** §18 supersede: every quotation stores the rate card version it was priced against. */
   rateCardVersion: string;
-  lines: CostingLine[];
+  lines: QuotationLine[];
   sellPrice: Money;
   directCost: Money;
   marginRate: Rate;
@@ -292,9 +296,9 @@ export interface Costing extends EntityEnvelope {
   display?: { perPax?: Money };
 }
 
-/** §6 `PUT /v1/costings/{id}` — recalculates server-side. */
-export interface CostingWrite {
-  lines?: CostingLine[];
+/** §6 `PUT /v1/quotations/{id}` — recalculates server-side. */
+export interface QuotationWrite {
+  lines?: QuotationLine[];
   sellPrice?: Money;
 }
 

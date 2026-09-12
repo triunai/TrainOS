@@ -48,6 +48,24 @@ export interface Me {
 }
 
 /**
+ * §2 permission strings for the quotation object (ruling R2).
+ *
+ * The contract never catalogues the permission vocabulary — the `/me` example
+ * shows only `enquiry:read`, `enquiry:convert`, `proposal:write` and
+ * `proposal:submit`. These three are ruled, not derived, and are published as
+ * constants so the fixture client and the Supabase policies spell them the
+ * same way. `Me.permissions` stays `string[]`; a closed union would be an
+ * invention.
+ * TODO(contract §2): catalogue the full permission vocabulary.
+ */
+export const QUOTATION_PERMISSIONS = [
+  'quotation:read',
+  'quotation:write',
+  'quotation:apply',
+] as const;
+export type QuotationPermission = (typeof QUOTATION_PERMISSIONS)[number];
+
+/**
  * §2 row-level scope.
  *
  * Only `MY_ACCOUNTS` and `MY_TEAM` appear in the example and §12 catalogues

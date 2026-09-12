@@ -141,7 +141,12 @@ export interface Effect {
   op: DiffOp;
   entity: string;
   ref?: Ref;
-  description?: string;
+  /**
+   * Required, like `DiffLine.description`: the policy gate always produces a
+   * sentence for every effect, so the two lists can be compared field for
+   * field without a null case.
+   */
+  description: string;
 }
 
 /* ------------------------------------------------------------------ *
