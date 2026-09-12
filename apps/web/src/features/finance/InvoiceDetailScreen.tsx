@@ -217,7 +217,7 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
                 ))}
                 <tr className="border-b border-divider">
                   <td className="px-4 py-2.5 text-ink-secondary" colSpan={3}>
-                    Subtotal · sum of {data.lines.length} lines
+                    {`Subtotal · sum of ${data.lines.length} line${data.lines.length === 1 ? "" : "s"}`}
                   </td>
                   <td className="px-4 py-2.5 text-right font-mono text-ink">
                     <MoneyText value={computedSubtotal} />

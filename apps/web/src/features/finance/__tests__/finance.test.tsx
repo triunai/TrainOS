@@ -18,7 +18,7 @@ describe("M13-S02 · invoice detail", () => {
     expect(await screen.findByRole("heading", { name: "INV-2026-0311" })).toBeInTheDocument();
 
     /* The subtotal is the sum of the lines, said out loud. */
-    expect(screen.getByText("Subtotal · sum of 1 lines")).toBeInTheDocument();
+    expect(screen.getByText("Subtotal · sum of 1 line")).toBeInTheDocument();
     expect(screen.getByText(/SST on net/)).toBeInTheDocument();
     expect(
       screen.getByText(/The total is the sum of the lines plus SST on the net/),

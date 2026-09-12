@@ -132,7 +132,7 @@ export function CollectionsQueueScreen() {
     {
       key: "daysOverdue",
       label: "Overdue",
-      width: "96px",
+      width: "88px",
       sortable: true,
       accessor: (row) => (
         <StatusChip
@@ -145,22 +145,24 @@ export function CollectionsQueueScreen() {
     {
       key: "amount",
       label: "Amount",
-      width: "120px",
+      width: "116px",
       align: "right",
-      accessor: (row) => <MoneyText value={row.amount} />,
+      accessor: (row) => <MoneyText value={row.amount} className="whitespace-nowrap" />,
     },
     {
       key: "stage",
       label: "Stage",
-      width: "132px",
+      width: "104px",
       accessor: (row) => <span className="text-[13px] text-ink">{humanise(row.stage)}</span>,
     },
     {
       key: "nextAction",
       label: "Next action",
-      width: "220px",
+      width: "148px",
       accessor: (row) => (
-        <div className="flex items-center gap-1.5">
+        /* Stacked, not side by side: at 1440px a two-pane layout has no room
+           for both chips on one line and a clipped column is worse than two. */
+        <div className="flex flex-col items-start gap-1">
           <StatusChip tone={row.nextAction.status === "DRAFT_READY" ? "info" : "neutral"}>
             {humanise(row.nextAction.status)}
           </StatusChip>
@@ -248,7 +250,7 @@ export function CollectionsQueueScreen() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-5 px-6 py-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-5 px-6 py-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div>
           {queue.isPending ? <LoadingState rows={6} label="Loading the collections queue" /> : null}
           {queue.error ? (

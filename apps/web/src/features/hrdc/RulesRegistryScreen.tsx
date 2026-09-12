@@ -102,13 +102,15 @@ export function RulesRegistryScreen() {
     {
       key: "id",
       label: "Rule",
-      width: "96px",
-      accessor: (rule) => <span className="font-mono text-[12px] text-ink">{rule.id}</span>,
+      width: "88px",
+      accessor: (rule) => (
+        <span className="whitespace-nowrap font-mono text-[12px] text-ink">{rule.id}</span>
+      ),
     },
     {
       key: "scheme",
       label: "Scheme",
-      width: "104px",
+      width: "96px",
       accessor: (rule) => <StatusChip>{rule.scheme.replace("_", "-")}</StatusChip>,
     },
     {
@@ -126,7 +128,7 @@ export function RulesRegistryScreen() {
     {
       key: "effective",
       label: "Effective",
-      width: "128px",
+      width: "116px",
       accessor: (rule) => (
         <span className="font-mono text-[12px] text-ink-secondary">
           <DateText value={rule.effectiveFrom} />
@@ -138,7 +140,7 @@ export function RulesRegistryScreen() {
     {
       key: "source",
       label: "Source",
-      width: "148px",
+      width: "168px",
       accessor: (rule) => (
         <span className="text-[12px] text-ink-secondary">
           {rule.source.title} §{rule.source.section}

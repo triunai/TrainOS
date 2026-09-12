@@ -325,7 +325,6 @@ function ChangeCard({
     <ContentCard
       className={selected ? "border-primary-border" : undefined}
       title={`${change.targetRuleId ?? "New rule"}${change.newRuleId ? ` → ${change.newRuleId}` : ""}`}
-      eyebrow={change.op}
       actions={
         <div className="flex items-center gap-2">
           <StatusChip tone={OP_TONE[change.op]}>{change.op}</StatusChip>
