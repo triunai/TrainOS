@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { fixtureClient } from "@trainos/fixtures";
 import { currentPrimaries } from "@/shared/components/kit";
 import { EnquiryInboxPage } from "../EnquiryInboxPage";
 import { EnquiryDetailPage } from "../EnquiryDetailPage";
@@ -53,9 +54,19 @@ describe("M03-S01 · enquiry inbox", () => {
     const user = userEvent.setup();
     renderScreen(<EnquiryInboxPage />, { path: "/sales/enquiries", route: "/sales/enquiries" });
 
-    /* Only ENQ-2026-0912 carries a suggested action in the seed, so every other
-       row exercises the fallback: a human-initiated convert, labelled as one. */
-    await user.click(await screen.findByText(/Ganesh Pillai/));
+    /* Which enquiries carry a suggestion is seed data and it changes, so the
+       row is found from the store rather than named here: the first one the
+       Lead Agent proposed nothing for is the one that exercises this path. */
+    const listed = await fixtureClient.listEnquiries({ page: { size: 50 } });
+    const details = await Promise.all(listed.data.map((row) => fixtureClient.getEnquiry(row.ref)));
+    const unsuggested = details.find(
+      (row) =>
+        !row.suggestedAction && row.status !== "ARCHIVED" && !row.classification.needsHumanReview,
+    );
+    expect(unsuggested, "the seed has no enquiry without a suggested action").toBeDefined();
+
+    await screen.findByRole("heading", { name: "Enquiry inbox" });
+    await user.click(await screen.findByText(new RegExp(unsuggested!.from.name)));
 
     expect(await screen.findByText(/The Lead Agent proposed no next step/)).toBeInTheDocument();
 
@@ -162,8 +173,12 @@ describe("M03-S06 · follow-up queue", () => {
 
     /* The cost of the click, before the click. */
     const cost = await screen.findByRole("region", { name: "Message cost" });
-    expect(within(cost).getByText("RM 0.06")).toBeInTheDocument();
     expect(within(cost).getByText("Recipients")).toBeInTheDocument();
+    /* The per-message rate runs to four decimals; rounding it to the sen would
+       mis-state what the send costs. */
+    expect(within(cost).getByText("RM 0.0564")).toBeInTheDocument();
+    /* And the dearer alternative is named, which is why this template is used. */
+    expect(within(cost).getByText(/not permitted for this template/)).toBeInTheDocument();
 
     /* PDPA is checked in the open, not in a log. */
     expect(screen.getByText(/Consent on file: WhatsApp ✓/)).toBeInTheDocument();

@@ -287,9 +287,9 @@ export function FollowUpQueuePage() {
                           templateLabel={draft.data.templateId}
                           recipients={draft.data.recipients}
                           ratePerMessage={draft.data.ratePerMessage}
+                          ratePerMessageExact={draft.data.ratePerMessageExact}
                           estimatedCost={draft.data.estimatedCost}
-                          alternativeCategory={draft.data.alternativeCategoryRate?.category}
-                          alternativeRate={draft.data.alternativeCategoryRate?.ratePerMessage}
+                          alternative={draft.data.alternativeCategoryRate}
                         />
                       ) : null}
 
