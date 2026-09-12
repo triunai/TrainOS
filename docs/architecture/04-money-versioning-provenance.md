@@ -1163,6 +1163,12 @@ during design; this is the suite that keeps them true.
 74. `key_fingerprint` is unique per tenant where present, and null-tolerant.
 75. Every table in the A-5 allowlist permits a null `tenant_id`; every table outside it does not. Pairs with sb-tenancy's §8.7 guard so the two tests cannot disagree.
 76. Deleting a subject row clears its provenance rows, and the periodic sweep finds zero orphans on a clean database. This is the replacement for the foreign key C-1 gives up, so it is tested, not assumed.
+77. Provenance on a `DETERMINISTIC` check result → `PT422 DETERMINISTIC_CHECK_HAS_PROVENANCE`. Replaces the row constraint C-1 destroyed.
+78. An `INTERPRETED` check result accepts provenance with model and confidence.
+79. Flipping an `INTERPRETED` check to `DETERMINISTIC` while provenance exists → refused. **The provenance-side trigger alone does not catch this**; the gap was found by testing and needs both halves.
+80. `binding_floor_basis` is `MARGIN` when the margin floor binds and `ABSOLUTE` when the programme floor does, including at equality.
+81. An invoice or quotation in any currency but MYR → check violation, so no `_sen` column can hold a non-MYR amount while the convention stands.
+82. No column named `*_minor` survives anywhere; a catalogue query, so the two suffixes cannot both come back.
 
 ---
 
@@ -1330,11 +1336,25 @@ Verified: renaming `v1-2026` is refused, while `effective_to` remains editable
 so a card can still be closed. With the label immutable, the FK is strictly
 stronger than the text copy and the API's `rateCardVersion` string is a join.
 
+sb-erd adds a second reason this is safe, worth having in both documents: an
+`APPLIED` quotation is frozen entirely under its immutability rule I2, so the row
+holding `rate_card_id` cannot be repriced after the fact even deliberately.
+
 **What sb-erd must change:** `quotations.rate_card_version text` becomes
 `quotations.rate_card_id uuid not null references rate_card(id)`. The API field
-name and its `v0-placeholder` value are unchanged; only the column is. Keep
-`floor_price_minor` snapshotted as sb-erd has it, and add
-`programme_floor_price_sen` alongside it per Deviation D-2.
+name and its `v0-placeholder` value are unchanged; only the column is.
+
+**Correction.** An earlier draft of this paragraph said "keep `floor_price_minor`
+snapshotted as sb-erd has it", which contradicted the column list in C-4. sb-erd
+caught it and followed C-4, which is correct. **C-4 is authoritative: there is no
+stored `floor_price_minor`.** The floor is generated.
+
+A stored snapshot would have been the right call if the floor depended on the
+rate card at read time, but it does not: `floor_margin_rate` and
+`programme_floor_price_sen` are both stamped onto the quotation at pricing time,
+so the generated floor is reproducible from the row alone, after the card it was
+priced from has been retired. Generating it removes the possibility of a snapshot
+disagreeing with its own inputs. No column is both stored and generated.
 
 ### C-4. Table ownership: `quotations`
 
@@ -1344,8 +1364,113 @@ the verification harness, not a second table. Columns contributed by this lane:
 `rate_card_id`, `sell_price_sen`, `direct_cost_sen`, `floor_margin_rate`,
 `commission_rate`, `discount_approval_id`, `invoice_id`, and the generated
 `margin_sen`, `margin_rate`, `programme_floor_price_sen`,
-`margin_floor_price_sen`, `floor_price_sen`, `below_floor`, `commission_sen`,
-`display_per_pax_sen`, plus the `floor_price_needs_approval` constraint.
+`margin_floor_price_sen`, `floor_price_sen`, `below_floor`,
+`binding_floor_basis`, `commission_sen`, `display_per_pax_sen`, plus the
+`floor_price_needs_approval` constraint.
+
+`binding_floor_basis` was missing from the first version of this list. sb-erd
+had it as an `ABSOLUTE`/`MARGIN` enum and dropped it rather than add a column to
+this lane unilaterally, which was the right call, but the lead asked for it
+explicitly. It is restored as a generated column so it cannot disagree with the
+floors it describes:
+
+```sql
+binding_floor_basis text generated always as (
+  case when programme_floor_price_sen >=
+            ceil(direct_cost_sen::numeric / nullif(1 - floor_margin_rate, 0))::bigint
+       then 'ABSOLUTE' else 'MARGIN' end) stored
+```
+
+Verified on the fixture: `MARGIN` at a programme floor of RM 13,900 against a
+margin floor of RM 17,538, flipping to `ABSOLUTE` when the programme floor is
+raised above it. It is generated rather than stored precisely because sb-erd is
+right that it is derivable; deriving it in the database means the UI and the
+approval screen cannot compute it differently.
+
+### C-5. The deterministic-check invariant moves to this lane
+
+Dropping `provenance_id` killed a constraint sb-erd owned, and it is this lane's
+to replace. §17 states that a deterministic check carries no model, which sb-erd
+enforced as a row constraint:
+`method <> 'DETERMINISTIC' OR provenance_id IS NULL`. With the column gone that
+is no longer expressible from the subject row.
+
+It needs **both** halves, because each catches a different write. This was found
+by testing: the provenance-side trigger alone still allows a check to be flipped
+to `DETERMINISTIC` after its provenance row already exists.
+
+```sql
+-- half 1, this lane: refuse provenance whose subject is a deterministic check
+create or replace function app.provenance_reject_deterministic() returns trigger
+language plpgsql as $$
+declare v_method text;
+begin
+  if new.subject_table = 'compliance_check_results' then
+    select method into v_method from app.compliance_check_results where id = new.subject_id;
+    if v_method = 'DETERMINISTIC' then
+      raise exception 'a deterministic check carries no model (§17)'
+        using errcode = 'PT422',
+              detail = json_build_object('reason','DETERMINISTIC_CHECK_HAS_PROVENANCE',
+                                         'subjectId', new.subject_id)::text;
+    end if;
+  end if;
+  return new;
+end $$;
+
+-- half 2, sb-erd's table: refuse the after-the-fact flip
+create or replace function app.check_result_reject_provenance() returns trigger
+language plpgsql as $$
+begin
+  if new.method = 'DETERMINISTIC' and exists (
+       select 1 from app.provenance
+        where subject_table = 'compliance_check_results' and subject_id = new.id) then
+    raise exception 'check % already carries provenance and cannot become DETERMINISTIC', new.id
+      using errcode = 'PT422', detail = '{"reason":"DETERMINISTIC_CHECK_HAS_PROVENANCE"}';
+  end if;
+  return new;
+end $$;
+```
+
+Both verified: a deterministic subject is refused provenance, an interpreted one
+accepts it with model and confidence, and flipping an interpreted check to
+deterministic while provenance exists is refused. `compliance_check_results` is
+added to the `app.provenance_subject` allow-list.
+
+This is a real cost of C-1 and belongs next to it: a constraint that was one
+column check is now two triggers. It is cheaper than the nine-way union C-1
+avoids, but it is not free.
+
+### C-6. `_sen` confirmed, with the reservation made enforceable
+
+sb-erd renamed 95 money columns from `_minor` to `_sen` to match this lane, and
+recorded a reservation rather than arguing it: `_sen` names the Malaysian minor
+unit in the column name, so a second currency makes every such column a
+misnomer, where `_minor` would not.
+
+The reservation is correct and the naming stands, for a reason that is visible
+elsewhere in this document. §5.5 already stores AI cost as `cost_usd_micros` and
+`cost_myr_micros` side by side. The convention is **name the unit, including its
+currency**, and it is what makes that pair unambiguous. A future USD column would
+be `_cents` or `_usd_micros`, never a `_sen` column holding cents.
+
+The failure sb-erd is guarding against is someone storing a non-MYR amount in a
+`_sen` column. That is equally wrong in a `_minor` column; the difference is that
+`_minor` hides it and `_sen` makes it obvious. So the reservation becomes an
+enforced invariant rather than a note:
+
+```sql
+alter table app.invoice   add constraint invoice_myr_only   check (currency = 'MYR');
+alter table app.quotation add constraint quotation_myr_only check (currency = 'MYR');
+```
+
+Verified: an invoice in USD is refused. If a second currency is ever needed, this
+constraint fails loudly at the point of change and forces the rename as part of
+that work, instead of leaving mislabelled columns behind. sb-erd's reservation is
+what the constraint is for, and is recorded here so the constraint is not
+mistaken for a limitation nobody thought about.
+
+sb-erd's `quotations.invoice_id` with `invoices.quotation_id` removed is adopted;
+the edge has one spelling and §1.7's `commission_ledger` joins on it.
 
 ---
 
