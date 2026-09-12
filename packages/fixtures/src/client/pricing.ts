@@ -73,6 +73,32 @@ const formatMyr = (money: Money): string =>
   `RM ${(money.amount / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** §6 the `422 FLOOR_PRICE_BREACH` the quotation screen renders as its red field state. */
+/**
+ * A quotation with both floors and the binding basis made explicit.
+ *
+ * The contract's `Quotation` carries `floorPrice` and `floorMarginRate` but
+ * nothing that says which of the two constraints is actually binding, so every
+ * screen would have to derive it for itself. Computed here and reported as a
+ * contract gap rather than added to the contract.
+ */
+export type QuotationWithFloors = Quotation & {
+  absoluteFloorPrice: Money;
+  marginFloorPrice: Money;
+  bindingFloorBasis: BindingFloor;
+};
+
+/** Decorates a stored quotation with its two floors and the binding basis. */
+export const withFloors = (quotation: Quotation, programme?: Programme): QuotationWithFloors => {
+  const evaluation = evaluateFloors(quotation, quotation.sellPrice, programme);
+  return {
+    ...quotation,
+    floorPrice: evaluation.floorPrice,
+    absoluteFloorPrice: evaluation.absoluteFloorPrice,
+    marginFloorPrice: evaluation.marginFloorPrice,
+    bindingFloorBasis: evaluation.bindingFloor,
+  };
+};
+
 export const floorPriceBreach = (
   evaluation: FloorEvaluation,
   sellPrice: Money,
@@ -88,6 +114,7 @@ export const floorPriceBreach = (
       absoluteFloorPrice: evaluation.absoluteFloorPrice,
       marginFloorPrice: evaluation.marginFloorPrice,
       bindingFloor: evaluation.bindingFloor,
+      bindingFloorBasis: evaluation.bindingFloor,
     },
   );
 

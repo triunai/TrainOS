@@ -10,6 +10,7 @@ import type { ActionRequest } from "@trainos/contract";
 import {
   AGENT_FOLLOWUP,
   AGENT_PROPOSAL,
+  APPROVAL_AURORA,
   ENQUIRY_AURORA,
   FOLLOW_UP_AURORA,
   ORG_AURORA,
@@ -17,7 +18,10 @@ import {
   TEMPLATE_EMAIL_PROPOSAL,
   TEMPLATE_FOLLOWUP_WHATSAPP,
   USER_AMIRAH,
+  USER_JASON,
 } from "@trainos/contract";
+import { ORG_SUTERA } from "../data/organisations";
+import { PROPOSAL_MERIDIAN } from "../data/proposals";
 import { createFixtureClient } from "../index";
 import { ContractError } from "../client/errors";
 import type { FixtureClient } from "../client/FixtureClient";
@@ -75,16 +79,52 @@ describe("EXECUTED", () => {
 
 describe("QUEUED_FOR_APPROVAL", () => {
   it("intercepts a proposal send above the APV-01 threshold", async () => {
-    const created: string[] = [];
-    api.events.on("ApprovalRequested", (event) => created.push(event.payload.approvalRef));
-
     const response = await api.performAction(humanSend());
 
     expect(response.status).toBe("QUEUED_FOR_APPROVAL");
     if (response.status !== "QUEUED_FOR_APPROVAL") return;
     expect(response.approvalRequest.policyId).toBe("APV-01");
     expect(response.approvalRequest.approverRole).toBe("SALES_MANAGER");
+    /** The standing approval, not a duplicate queued behind it. */
+    expect(response.approvalRequest.ref).toBe(APPROVAL_AURORA);
+    expect(response.approvalRequest.assignedTo?.name).toBe("Kelvin Tan");
+  });
+
+  it("raises a new approval, event and badge when nothing is standing", async () => {
+    const created: string[] = [];
+    api.events.on("ApprovalRequested", (event) => created.push(event.payload.approvalRef));
+    const frames: unknown[] = [];
+    api.events.subscribe(["approvals", "badges"], (message) => frames.push(message));
+
+    const response = await api.performAction({
+      ...humanSend(),
+      targetRef: PROPOSAL_MERIDIAN,
+    });
+
+    expect(response.status).toBe("QUEUED_FOR_APPROVAL");
+    if (response.status !== "QUEUED_FOR_APPROVAL") return;
+    expect(response.approvalRequest.ref).not.toBe(APPROVAL_AURORA);
     expect(created).toEqual([response.approvalRequest.ref]);
+    expect(frames).toHaveLength(2);
+    const badges = await api.getBadges();
+    expect(badges.approvals).toBe(8);
+  });
+
+  it("reads the gated value from the record, not the request body", async () => {
+    /** An agent understating the value must not slip under the RM 15,000 gate. */
+    const response = await api.performAction({
+      ...humanSend(),
+      targetRef: PROPOSAL_MERIDIAN,
+      payload: { ...humanSend().payload, value: { amount: 100, currency: "MYR" } },
+      requestedBy: { kind: "AGENT", id: AGENT_PROPOSAL, name: "Proposal Agent" },
+      confidence: 0.9,
+    });
+
+    expect(response.status).toBe("QUEUED_FOR_APPROVAL");
+    if (response.status !== "QUEUED_FOR_APPROVAL") return;
+    const approval = await api.getApproval(response.approvalRequest.ref);
+    expect(approval.value).toEqual({ amount: 1920000, currency: "MYR" });
+    expect(approval.bulkApprovable).toBe(false);
   });
 
   it("never assigns an approval back to the person who raised it", async () => {
@@ -105,14 +145,25 @@ describe("QUEUED_FOR_APPROVAL", () => {
     expect(approval.bulkApprovable).toBe(false);
   });
 
-  it("pushes the approval onto the realtime channel and the badge count", async () => {
-    const frames: unknown[] = [];
-    api.events.subscribe(["approvals", "badges"], (message) => frames.push(message));
-    await api.performAction(humanSend());
-    expect(frames).toHaveLength(2);
-    const badgesBefore = 7;
-    const badges = await api.getBadges();
-    expect(badges.approvals).toBe(badgesBefore + 1);
+  it("queues the day-75 trading hold to the MD", async () => {
+    const response = await api.performAction({
+      type: "ACCOUNT_TRADING_HOLD",
+      targetRef: ORG_SUTERA,
+      payload: {
+        organisationRef: ORG_SUTERA,
+        invoiceRefs: ["INV-2026-0244"],
+        reason: "78 days overdue with no contact since September.",
+      },
+      requestedBy: { kind: "HUMAN", id: USER_JASON, name: "Jason Lee" },
+    });
+
+    expect(response.status).toBe("QUEUED_FOR_APPROVAL");
+    if (response.status !== "QUEUED_FOR_APPROVAL") return;
+    expect(response.approvalRequest.policyId).toBe("FIN-04");
+    expect(response.approvalRequest.approverRole).toBe("MD");
+    const approval = await api.getApproval(response.approvalRequest.ref);
+    /** The value is the account's overdue balance, read from the receivables. */
+    expect(approval.value).toEqual({ amount: 940000, currency: "MYR" });
   });
 });
 
@@ -174,7 +225,7 @@ describe("idempotency", () => {
     expect(api.lastMeta.status).toBe(200);
     expect(api.lastMeta.headers["Idempotent-Replay"]).toBe("true");
     const approvals = await api.listApprovals({ page: { size: 50 } });
-    expect(approvals.data.filter((row) => row.actionType === "PROPOSAL_SEND")).toHaveLength(2);
+    expect(approvals.data.filter((row) => row.actionType === "PROPOSAL_SEND")).toHaveLength(1);
   });
 
   it("rejects the same key with a different body", async () => {

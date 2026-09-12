@@ -19,7 +19,14 @@ export * as fixtures from "./data";
 export * from "./data";
 
 export { FixtureClient } from "./client/FixtureClient";
-export type { FixtureClientConfig, RequestOptions, ResponseMeta } from "./client/FixtureClient";
+export type {
+  ComputedQuotation,
+  EngagementProjection,
+  FixtureClientConfig,
+  FixtureCollectionsQueueResponse,
+  RequestOptions,
+  ResponseMeta,
+} from "./client/FixtureClient";
 
 export { ContractError, isContractError, forbidden, notFound, validationFailed } from "./client/errors";
 export { EventBus } from "./client/events";
@@ -31,8 +38,14 @@ export {
   marginFloorPrice,
   reconcileInvoice,
   resultingMarginRate,
+  withFloors,
 } from "./client/pricing";
-export type { BindingFloor, FloorEvaluation, InvoiceReconciliation } from "./client/pricing";
+export type {
+  BindingFloor,
+  FloorEvaluation,
+  InvoiceReconciliation,
+  QuotationWithFloors,
+} from "./client/pricing";
 export {
   DEFAULT_MINIMUM_CONFIDENCE,
   MINIMUM_CONFIDENCE,

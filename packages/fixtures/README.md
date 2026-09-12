@@ -15,7 +15,7 @@ const inbox = await api.listApprovals({ page: { size: 10 } });
 
 ```bash
 npx tsc -p tsconfig.json   # strict, noEmit, zero errors
-npx vitest run             # 81 tests
+npx vitest run             # 101 tests
 ```
 
 ## What is in the box
@@ -58,6 +58,44 @@ and this package implements the later text.
 The three rulings the contract package made — `CREATE` normalises to `ADD`,
 "costing" is a `Quotation`, and `ACCOUNT_TRADING_HOLD` closes the collections
 ladder — are followed here too.
+
+## Roles decide what comes back
+
+Permissions come from `/me`, and the client enforces them rather than trusting
+the screen. The tenancy design withholds `quotation:read` from OPS, so two
+things follow:
+
+- `getQuotation` and `putQuotation` return `403 FORBIDDEN` with both
+  `requiredRole` and `requiredPermission`, so the UI can explain rather than
+  just disable.
+- The OPS projection of an engagement **drops** the `finance` block. A missing
+  field is honest; a zeroed one would be a lie about margin.
+
+`SALES` holds all three quotation grants, `FINANCE` reads and writes because it
+owns the rate card, `SALES_MANAGER` and `MD` read, and `OPS` and `TRAINER` hold
+none.
+
+## Two rules the policy gate will not bend
+
+**The gated value comes from the record, never the request body.** An agent
+that understates a proposal in its payload still gets measured against the
+stored `proposal.value`, so nothing slips under the APV-01 threshold by lying
+about itself. The payload is consulted only where it *is* the value being
+proposed — a new sell price, a new budget cap.
+
+**An identical pending approval is the same request, not a second one.**
+Re-proposing `PROPOSAL_SEND` on PRO-2026-0184 returns the standing
+APV-2026-0771 rather than queueing a duplicate behind it.
+
+## Reads the agent runtime codes against
+
+`searchOrganisations`, `searchProgrammes`, `listTrainerAvailability`,
+`computeQuotation`, `getEnquiry`, `createProposal` and `performAction` are
+derivations over the same store the endpoint methods use, so an agent and a
+screen can never see different numbers. `computeQuotation` returns
+`proposalValue` separate from `total`: the gate compares the ex-SST figure, and
+folding tax in would push an RM 14,900 proposal over an RM 15,000 gate on tax
+alone.
 
 ## Deviations from the verbatim JSON examples
 
@@ -117,6 +155,17 @@ Reported rather than patched — no change was made to `packages/contract`.
    the only 409 in the table and is reused here with the documented `details`.
 8. **Siti's surname.** §8 says Siti Nordin, the design-pack inventory says
    Siti Rahman. The contract wins.
+9. **`Quotation` cannot say which floor binds.** It carries `floorPrice` and
+   `floorMarginRate`, so both floors are derivable, but nothing records which
+   constraint is actually binding. `QuotationWithFloors` adds
+   `absoluteFloorPrice`, `marginFloorPrice` and `bindingFloorBasis`.
+10. **`Engagement.finance` is required**, so the OPS projection that has to drop
+    it cannot be typed as an `Engagement`. Hence `EngagementProjection`.
+11. **`CollectionNextAction.type` is `ActionType`**, which is the §3 list only,
+    so the ruled `ACCOUNT_TRADING_HOLD` cannot sit on the queue row that needs
+    it. Widened locally as `FixtureReceivable`.
+12. **No permission vocabulary.** `QUOTATION_PERMISSIONS` is the only published
+    set; every other grant in the `/me` fixtures is invented and marked as such.
 
 ## What I could not verify
 

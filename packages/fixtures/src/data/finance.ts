@@ -12,6 +12,8 @@
  */
 
 import type {
+  AnyActionType,
+  AutonomyLevel,
   CollectionRule,
   Invoice,
   MessageDraft,
@@ -32,8 +34,8 @@ import {
   USER_JASON,
 } from "@trainos/contract";
 import { AGENT_COLLECTIONS } from "./agents-ids";
-import { ENGAGEMENT_MERIDIAN, ENGAGEMENT_WINDOW_CLOSING } from "./engagements";
-import { ORG_KENANGA, ORG_MERIDIAN } from "./organisations";
+import { ENGAGEMENT_MERIDIAN, ENGAGEMENT_SUTERA, ENGAGEMENT_WINDOW_CLOSING } from "./engagements";
+import { ORG_KENANGA, ORG_MERIDIAN, ORG_SUTERA } from "./organisations";
 import { actorFor } from "./tenant";
 import { entity, myr, sumMoney } from "./_helpers";
 
@@ -44,6 +46,8 @@ export const INVOICE_SYNC_FAILED = "INV-2026-0295";
 export const INVOICE_MERIDIAN_OPEN = "INV-2026-0308";
 export const INVOICE_KENANGA_OPEN = "INV-2026-0305";
 export const INVOICE_KENANGA_RECENT = "INV-2026-0301";
+/** The stale Sutera invoice that carries the ladder past its last rung. */
+export const INVOICE_SUTERA_STALE = "INV-2026-0244";
 
 /** §9 `GET /v1/invoices/{id}`. */
 export const invoices: Invoice[] = [
@@ -253,6 +257,24 @@ export const invoices: Invoice[] = [
     payments: [],
   },
   {
+    ...entity(INVOICE_SUTERA_STALE, "2026-07-20T09:00:00+08:00", "2026-11-14T08:30:00+08:00", actorFor(USER_JASON)),
+    organisationRef: ORG_SUTERA,
+    engagementRef: ENGAGEMENT_SUTERA,
+    status: "OVERDUE",
+    issuedAt: "2026-07-20T09:00:00+08:00",
+    dueAt: "2026-08-28",
+    termsDays: 39,
+    lines: [{ description: "Service recovery pilot · half day", qty: 1, unit: myr(940000), amount: myr(940000) }],
+    subtotal: myr(940000),
+    sst: myr(0),
+    sstReason: "TRAINING_EXEMPT",
+    total: myr(940000),
+    outstanding: myr(940000),
+    sync: { state: "VALIDATED", provider: "ACCOUNTING", uin: "MY-2026-XXXXXXXX-0244", lastAttemptAt: "2026-07-20T09:05:00+08:00" },
+    syncLog: [{ at: "2026-07-20T09:05:00+08:00", state: "VALIDATED", detail: "MyInvois validation returned UIN" }],
+    payments: [],
+  },
+  {
     ...entity(INVOICE_KENANGA_PAID, "2026-05-25T09:00:00+08:00", "2026-06-25T14:00:00+08:00", actorFor(USER_JASON)),
     organisationRef: ORG_KENANGA,
     engagementRef: ENGAGEMENT_WINDOW_CLOSING,
@@ -288,13 +310,38 @@ export const accountingDocuments: Record<string, string> = {
 };
 
 /**
+ * §9 a queue row whose next action may be the ruled `ACCOUNT_TRADING_HOLD`.
+ *
+ * `CollectionNextAction.type` is typed `ActionType`, which is the §3 list only,
+ * so the last rung of the §9 ladder cannot be expressed on the row that needs
+ * it. Widened here to `AnyActionType` and reported as a contract gap.
+ */
+export type FixtureReceivable = Omit<Receivable, "nextAction"> & {
+  nextAction: { type: AnyActionType; status: string; autonomy: AutonomyLevel };
+};
+
+/**
  * §9 `GET /v1/collections/queue`.
  *
  * INV-2026-0279 is the 48-day item: the ladder puts it at reminder 3, which
  * DECISIONS §1 says is always human, so the agent stops and the next action
  * carries OBSERVE rather than a draft.
  */
-export const receivables: Receivable[] = [
+export const receivables: FixtureReceivable[] = [
+  {
+    /**
+     * Seventy-eight days overdue: past the day-75 rung, so the ladder proposes
+     * a trading hold, which §9 makes MD-approved and ruling R3 gives an action
+     * type of its own.
+     */
+    invoiceRef: INVOICE_SUTERA_STALE,
+    organisation: { ref: ORG_SUTERA, name: "Sutera Hospitality Group" },
+    daysOverdue: 78,
+    amount: myr(940000),
+    stage: "TRADING_HOLD",
+    nextAction: { type: "ACCOUNT_TRADING_HOLD", status: "AWAITING_MD", autonomy: "OBSERVE" },
+    nextActionAt: "2026-11-14T17:00:00+08:00",
+  },
   {
     invoiceRef: INVOICE_MERIDIAN_OVERDUE,
     organisation: { ref: ORG_MERIDIAN, name: "Meridian Logistics Sdn Bhd" },
@@ -344,8 +391,8 @@ export const receivablesAging: ReceivablesAging = {
   current: sumMoney([myr(1850000), myr(1920000), myr(2360000)]),
   d1_30: sumMoney([myr(1380000), myr(890000)]),
   d31_60: sumMoney([myr(1240000), myr(2270000)]),
-  d60_plus: myr(0),
-  dsoDays: 38,
+  d60_plus: myr(940000),
+  dsoDays: 41,
 };
 
 /**

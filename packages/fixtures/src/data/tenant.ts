@@ -9,6 +9,7 @@
  */
 
 import type { Actor, AnyActor, Me, PipelineConfig, Role } from "@trainos/contract";
+import { QUOTATION_PERMISSIONS } from "@trainos/contract";
 import {
   CLIENT_NURUL,
   TRAINER_FARAH,
@@ -51,8 +52,8 @@ export const users: Me[] = [
       "enquiry:convert",
       "proposal:write",
       "proposal:submit",
-      "quotation:write",
       "followup:send",
+      ...QUOTATION_PERMISSIONS,
     ],
     dataScope: { clients: "MY_ACCOUNTS", teams: "MY_TEAM" },
     locale: "en-MY",
@@ -63,7 +64,7 @@ export const users: Me[] = [
     id: USER_KELVIN,
     name: "Kelvin Tan",
     role: "SALES_MANAGER",
-    permissions: ["enquiry:read", "proposal:read", "approval:read", "approval:decide"],
+    permissions: ["enquiry:read", "proposal:read", "approval:read", "approval:decide", "quotation:read"],
     dataScope: { clients: "MY_TEAM", teams: "MY_TEAM" },
     locale: "en-MY",
     timezone: "Asia/Kuala_Lumpur",
@@ -73,6 +74,11 @@ export const users: Me[] = [
     id: USER_SITI,
     name: "Siti Nordin",
     role: "OPS",
+    /**
+     * No `quotation:read`: the tenancy design withholds commercial pricing
+     * from OPS, which is also why the OPS projection of an engagement drops
+     * the finance block.
+     */
     permissions: [
       "engagement:read",
       "engagement:write",
@@ -97,6 +103,8 @@ export const users: Me[] = [
       "hrdc:submit",
       "collections:send",
       "compliance:verify",
+      "quotation:read",
+      "quotation:write",
     ],
     dataScope: { clients: "ALL", teams: "ALL" },
     locale: "en-MY",
@@ -113,6 +121,7 @@ export const users: Me[] = [
       "agent:autonomy",
       "budget:raise",
       "report:read",
+      "quotation:read",
     ],
     dataScope: { clients: "ALL", teams: "ALL" },
     locale: "en-MY",
@@ -168,6 +177,10 @@ export const roleFor = (id: string): Role | undefined =>
 
 /** Every user holding a given role — the approval assignment pool (§3 step 5). */
 export const usersWithRole = (role: Role): Me[] => users.filter((user) => user.role === role);
+
+/** §2 permissions come from `/me`, and a gated call also returns the role it needs. */
+export const permissionsFor = (id: string): string[] =>
+  users.find((user) => user.id === id)?.permissions ?? [];
 
 /**
  * §5 / §8 `GET /v1/config/pipelines?object=`.

@@ -45,7 +45,6 @@ import type {
   ProposalsVsWonReport,
   ProviderKey,
   RateCard,
-  Receivable,
   ReceivablesAging,
   RoutingEntry,
   RuleChangeSet,
@@ -61,6 +60,7 @@ import type {
 } from "@trainos/contract";
 import * as data from "../data";
 import type { FixtureApproval } from "../data/approvals";
+import type { FixtureReceivable } from "../data/finance";
 import type { FixtureNotification } from "../data/shell";
 import type { FixtureTrainer, ProgrammeDelivery } from "../data/programmes";
 import type { FixtureTenant } from "../data/tenant";
@@ -116,7 +116,7 @@ export interface FixtureStore {
   complianceChecks: Record<string, ComplianceChecksResponse>;
 
   invoices: Invoice[];
-  receivables: Receivable[];
+  receivables: FixtureReceivable[];
   receivablesAging: ReceivablesAging;
   collectionRules: CollectionRule[];
   collectionDrafts: Record<string, MessageDraft>;

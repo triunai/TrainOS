@@ -13,6 +13,7 @@
  */
 
 import type {
+  Actor,
   ActionDraft,
   ActionRequest,
   ActionResponse,
@@ -50,9 +51,12 @@ import type {
   Quotation,
   QuotationLine,
   QuotationWrite,
+  Rate,
+  DateOnly,
   DiffLine,
   Effect,
   Engagement,
+  EngagementFinance,
   Enquiry,
   EnquiryDetail,
   EnquiryExtractionPatch,
@@ -115,6 +119,7 @@ import type {
   TemplateType,
   Timestamp,
   Tna,
+  TrainerAvailability,
   TnaRecommendationsResponse,
   UsageForecast,
   UsageResponse,
@@ -129,14 +134,15 @@ import type {
 import { IDEMPOTENT_REPLAY_HEADER } from "@trainos/contract";
 
 import type { FixtureApproval } from "../data/approvals";
+import type { FixtureReceivable } from "../data/finance";
 import type { FixtureNotification } from "../data/shell";
 import type { FixtureTrainer, ProgrammeDelivery } from "../data/programmes";
-import { NOW, myr } from "../data/_helpers";
+import { NOW, lineTotal, myr, roundHalfUpSen, sumMoney } from "../data/_helpers";
 import { approvalsSummary } from "../data/approvals";
 import { navigationFor } from "../data/shell";
 import { toEnquiryRow } from "../data/enquiries";
 import { portalTokenOrganisation } from "../data/proposals";
-import { roleFor } from "../data/tenant";
+import { permissionsFor, roleFor } from "../data/tenant";
 
 import { ContractError, forbidden, notFound, validationFailed } from "./errors";
 import { EventBus, resetEventSequence } from "./events";
@@ -150,8 +156,56 @@ import {
   matchPolicy,
   payloadValue,
 } from "./policy";
-import { evaluateFloors, floorPriceBreach, reconcileInvoice } from "./pricing";
+import {
+  evaluateFloors,
+  floorPriceBreach,
+  reconcileInvoice,
+  resultingMarginRate,
+  withFloors,
+} from "./pricing";
+import type { BindingFloor, QuotationWithFloors } from "./pricing";
 import { byIdOrRef, createStore, type FixtureStore } from "./store";
+
+/**
+ * §8 an engagement as a given principal sees it.
+ *
+ * `finance` is required on the contract's `Engagement`, but the OPS projection
+ * has to drop it, so the projection is its own type. Reported as a gap.
+ */
+export type EngagementProjection = Omit<Engagement, "finance"> & { finance?: EngagementFinance };
+
+/**
+ * §6 + §18 the result of pricing a delivery from the catalogue.
+ *
+ * `proposalValue` is deliberately separate from `total`: the §3 gate compares
+ * the ex-SST figure against the APV-01 threshold, and folding tax into the
+ * value would push an RM 14,900 proposal over an RM 15,000 gate on tax alone.
+ */
+export interface ComputedQuotation {
+  programmeRef: string;
+  pax: number;
+  days: number;
+  lines: QuotationLine[];
+  costLines: QuotationLine[];
+  proposalValue: Money;
+  sst: Money;
+  sstReason: string;
+  total: Money;
+  directCost: Money;
+  marginRate: Rate;
+  absoluteFloorPrice: Money;
+  marginFloorPrice: Money;
+  floorPrice: Money;
+  bindingFloorBasis: BindingFloor;
+  belowFloor: boolean;
+  rateCardVersion: string;
+  display: { perPax: Money };
+}
+
+/** §9 the collections queue, carrying the widened next-action type. */
+export type FixtureCollectionsQueueResponse = Omit<CollectionsQueueResponse, "data"> & {
+  data: FixtureReceivable[];
+};
 
 /** Options every state-changing call accepts. */
 export interface RequestOptions {
@@ -176,6 +230,19 @@ export interface FixtureClientConfig {
 
 const sleep = (ms: number): Promise<void> =>
   ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Every calendar day in an inclusive `YYYY-MM-DD` range. */
+const datesBetween = (from: DateOnly, to: DateOnly): DateOnly[] => {
+  const days: DateOnly[] = [];
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end)) return days;
+  for (let cursor = start; cursor <= end; cursor += 86400000) {
+    const iso = new Date(cursor).toISOString().slice(0, 10);
+    days.push(iso);
+  }
+  return days;
+};
 
 const stableStringify = (value: unknown): string => {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -293,6 +360,18 @@ export class FixtureClient {
     this.#store.idempotency.set(key, { bodyHash, response, at: NOW });
     this.#lastMeta = { status, headers: {} };
     return response;
+  }
+
+  /**
+   * §2 permissions come from `/me`, and a gated call returns `403` naming the
+   * role that holds the grant — so the UI can explain rather than just disable.
+   */
+  #requirePermission(permission: string, requiredRole: Role): void {
+    if (permissionsFor(this.#actorId).includes(permission)) return;
+    throw forbidden(
+      `${permission} is not granted to ${roleFor(this.#actorId) ?? "this principal"}.`,
+      { requiredRole, requiredPermission: permission },
+    );
   }
 
   #actor(id = this.#actorId): AnyActor {
@@ -689,10 +768,21 @@ export class FixtureClient {
     });
   }
 
-  async getQuotation(id: string): Promise<Quotation> {
+  /**
+   * §6 `GET /v1/quotations/{id}`.
+   *
+   * Restricted to principals holding `quotation:read`; the tenancy design
+   * withholds it from OPS, who get `403` with the role that does hold it.
+   *
+   * The response carries both floors and the derived `bindingFloorBasis`. The
+   * contract's `Quotation` has neither, so they are computed here and reported
+   * as a gap rather than added to the contract.
+   */
+  async getQuotation(id: string): Promise<QuotationWithFloors> {
+    this.#requirePermission("quotation:read", "SALES");
     const quotation = byIdOrRef(this.#store.quotations, id);
     if (!quotation) throw notFound("Quotation", id);
-    return this.#read(quotation);
+    return this.#read(withFloors(quotation, this.#programmeForQuotation(quotation)));
   }
 
   /**
@@ -700,8 +790,9 @@ export class FixtureClient {
    * price below the binding floor — the higher of the programme's absolute
    * floor and the margin floor derived from direct cost.
    */
-  async putQuotation(id: string, body: QuotationWrite): Promise<Quotation> {
+  async putQuotation(id: string, body: QuotationWrite): Promise<QuotationWithFloors> {
     await sleep(this.#latencyMs);
+    this.#requirePermission("quotation:write", "SALES");
     const quotation = byIdOrRef(this.#store.quotations, id);
     if (!quotation) throw notFound("Quotation", id);
     if (body.lines) {
@@ -723,7 +814,7 @@ export class FixtureClient {
     quotation.commission = myr(Math.round(sellPrice.amount * quotation.commissionRate));
     quotation.updatedAt = NOW;
     this.#lastMeta = { status: 200, headers: {} };
-    return quotation;
+    return withFloors(quotation, programme);
   }
 
   #programmeForQuotation(quotation: Quotation): Programme | undefined {
@@ -946,14 +1037,29 @@ export class FixtureClient {
    * §8 · Engagements, participants, attendance
    * ---------------------------------------------------------------- */
 
-  async listEngagements(page?: PageRequest): Promise<ListResponse<Engagement>> {
-    return this.#read(paginate(this.#store.engagements, page));
+  async listEngagements(page?: PageRequest): Promise<ListResponse<EngagementProjection>> {
+    const result = paginate(this.#store.engagements, page);
+    return this.#read({ ...result, data: result.data.map((row) => this.#projectEngagement(row)) });
   }
 
-  async getEngagement(id: string): Promise<Engagement> {
+  /**
+   * §8 `GET /v1/engagements/{id}`, projected for the caller.
+   *
+   * The tenancy design withholds commercial pricing from OPS, so the OPS
+   * projection drops the `finance` block entirely rather than zeroing it — a
+   * missing field is honest, a zero is a lie. The contract types `finance` as
+   * required, which is why the projection has its own type; reported as a gap.
+   */
+  async getEngagement(id: string): Promise<EngagementProjection> {
     const engagement = byIdOrRef(this.#store.engagements, id);
     if (!engagement) throw notFound("Engagement", id);
-    return this.#read(engagement);
+    return this.#read(this.#projectEngagement(engagement));
+  }
+
+  #projectEngagement(engagement: Engagement): EngagementProjection {
+    if (permissionsFor(this.#actorId).includes("quotation:read")) return engagement;
+    const { finance: _finance, ...withoutFinance } = engagement;
+    return withoutFinance;
   }
 
   async getEngagementParticipants(id: string, page?: PageRequest): Promise<ListResponse<Participant>> {
@@ -1175,11 +1281,17 @@ export class FixtureClient {
     return this.#read(this.#store.receivablesAging);
   }
 
-  async listReceivables(page?: PageRequest): Promise<ListResponse<CollectionsQueueResponse["data"][number]>> {
+  async listReceivables(page?: PageRequest): Promise<ListResponse<FixtureReceivable>> {
     return this.#read(paginate(this.#store.receivables, page ?? { sort: "-daysOverdue" }));
   }
 
-  async getCollectionsQueue(page?: PageRequest): Promise<CollectionsQueueResponse> {
+  /**
+   * §9 `GET /v1/collections/queue`.
+   *
+   * The last rung is the ruled `ACCOUNT_TRADING_HOLD`, which the contract's
+   * `CollectionNextAction.type` cannot hold — see `FixtureReceivable`.
+   */
+  async getCollectionsQueue(page?: PageRequest): Promise<FixtureCollectionsQueueResponse> {
     const result = paginate(this.#store.receivables, page ?? { sort: "-daysOverdue" });
     return this.#read({ data: result.data, aging: this.#store.receivablesAging, page: result.page });
   }
@@ -1807,6 +1919,157 @@ export class FixtureClient {
   }
 
   /* ---------------------------------------------------------------- *
+   * Agent-runtime reads
+   *
+   * The tool surface `packages/agent-runtime` codes against. These are
+   * derivations over the same store the endpoint methods use — an agent and a
+   * screen can never see different numbers.
+   * ---------------------------------------------------------------- */
+
+  /** Organisations matching a name fragment, best match first. */
+  async searchOrganisations(query: string): Promise<Organisation[]> {
+    const needle = query.trim().toLowerCase();
+    const matches = this.#store.organisations.filter(
+      (row) => row.name.toLowerCase().includes(needle) || row.ref.toLowerCase() === needle,
+    );
+    return this.#read(matches);
+  }
+
+  /** Programmes matching a name fragment, optionally narrowed by category. */
+  async searchProgrammes(query: string, tags: readonly string[] = []): Promise<Programme[]> {
+    const needle = query.trim().toLowerCase();
+    const matches = this.#store.programmes.filter((row) => {
+      const nameMatch = needle.length === 0 || row.name.toLowerCase().includes(needle);
+      const tagMatch = tags.length === 0 || tags.some((tag) => row.category === tag.toUpperCase());
+      return nameMatch && tagMatch;
+    });
+    return this.#read(matches);
+  }
+
+  /**
+   * §6 which of a programme's pool is free across a date range.
+   *
+   * Availability is read from the trainer's booked days, so the November window
+   * really does leave Farah Aziz as the only match — the constraint the M02-S02
+   * risk note is standing on.
+   */
+  async listTrainerAvailability(
+    programmeRef: string,
+    from: DateOnly,
+    to: DateOnly,
+  ): Promise<TrainerAvailability[]> {
+    const programme = byIdOrRef(this.#store.programmes, programmeRef);
+    if (!programme) throw notFound("Programme", programmeRef);
+    const days = datesBetween(from, to);
+    const availability = programme.trainerPool.map((entry): TrainerAvailability => {
+      const trainer = this.#store.trainers.find((row) => row.ref === entry.trainerRef);
+      const clash = days.some((day) => trainer?.bookedDates.includes(day) ?? false);
+      return {
+        trainerRef: entry.trainerRef,
+        name: entry.name,
+        available: !clash,
+        dates: `${from}/${to}`,
+      };
+    });
+    return this.#read(availability);
+  }
+
+  /**
+   * §6 + §18 prices a delivery from the catalogue and the rate card.
+   *
+   * `proposalValue` is the ex-SST figure the §3 gate compares against the
+   * APV-01 threshold, kept separate from `total` so tax can never push a
+   * proposal over a commercial threshold on its own. The package price is one
+   * line at `qty: 1`, per DECISIONS §7; materials and travel are direct costs,
+   * not lines on the client's quote.
+   */
+  async computeQuotation(input: {
+    programmeRef: string;
+    pax: number;
+    days?: number;
+    discountRate?: Rate;
+  }): Promise<ComputedQuotation> {
+    const programme = byIdOrRef(this.#store.programmes, input.programmeRef);
+    if (!programme) throw notFound("Programme", input.programmeRef);
+
+    const tier =
+      [...programme.pricingTiers].sort((a, b) => a.maxPax - b.maxPax).find((row) => input.pax <= row.maxPax) ??
+      programme.pricingTiers.at(-1);
+    const listPrice = tier?.price ?? programme.listPrice;
+    const discountRate = input.discountRate ?? 0;
+    const sellPrice = myr(roundHalfUpSen(listPrice.amount * (1 - discountRate)));
+    const days = input.days ?? programme.days;
+
+    const bandRate =
+      this.#store.rateCard.trainerDayRate.find((row) => row.band === "A")?.rate ?? myr(480000);
+    const materialsRate =
+      this.#store.rateCard.materialsPerPax.find((row) => row.programmeType === programme.category)?.rate ??
+      myr(4000);
+    const travelRate =
+      this.#store.rateCard.travel.find((row) => row.region === "KLANG_VALLEY")?.rate ?? myr(30000);
+
+    const costLines: QuotationLine[] = [
+      { item: "TRAINER_FEE", qty: days, unit: "DAY", rate: bandRate, total: lineTotal(bandRate, days) },
+      { item: "VENUE", detail: "Client site", qty: 0, total: myr(0) },
+      { item: "MATERIALS", qty: input.pax, rate: materialsRate, total: lineTotal(materialsRate, input.pax) },
+      { item: "TRAVEL", qty: days, rate: travelRate, total: lineTotal(travelRate, days) },
+    ];
+    const directCost = sumMoney(costLines.map((line) => line.total));
+
+    const draft: Quotation = {
+      id: "quo_computed",
+      ref: "QUO-COMPUTED",
+      createdAt: NOW,
+      updatedAt: NOW,
+      createdBy: this.#actor() as Quotation["createdBy"],
+      proposalRef: "",
+      rateCardVersion: this.#store.rateCard.version,
+      lines: costLines,
+      sellPrice,
+      directCost,
+      marginRate: resultingMarginRate(sellPrice, directCost),
+      floorPrice: programme.floorPrice,
+      floorMarginRate: programme.floorMarginRate,
+      commissionRate: 0.08,
+      commission: myr(roundHalfUpSen(sellPrice.amount * 0.08)),
+      commissionPayableOn: "COLLECTION",
+      display: { perPax: myr(roundHalfUpSen(sellPrice.amount / Math.max(1, input.pax))) },
+    };
+    const evaluation = evaluateFloors(draft, sellPrice, programme);
+
+    return this.#read({
+      programmeRef: programme.ref,
+      pax: input.pax,
+      days,
+      /** One package line at qty 1 — the client's quote, not the cost sheet. */
+      lines: [
+        {
+          item: "PROGRAMME_FEE",
+          detail: `${programme.name} · ${days}-day programme · up to ${input.pax} participants`,
+          qty: 1,
+          rate: sellPrice,
+          total: sellPrice,
+        },
+      ],
+      costLines,
+      /** Ex-SST, and the only figure the policy gate may compare. */
+      proposalValue: sellPrice,
+      sst: myr(0),
+      sstReason: "TRAINING_EXEMPT",
+      total: sellPrice,
+      directCost,
+      marginRate: draft.marginRate,
+      absoluteFloorPrice: evaluation.absoluteFloorPrice,
+      marginFloorPrice: evaluation.marginFloorPrice,
+      floorPrice: evaluation.floorPrice,
+      bindingFloorBasis: evaluation.bindingFloor,
+      belowFloor: evaluation.breached,
+      rateCardVersion: this.#store.rateCard.version,
+      display: { perPax: draft.display?.perPax ?? myr(0) },
+    });
+  }
+
+  /* ---------------------------------------------------------------- *
    * §3 · The action envelope
    * ---------------------------------------------------------------- */
 
@@ -1876,6 +2139,56 @@ export class FixtureClient {
 
       return this.#execute(request);
     });
+  }
+
+  /**
+   * The monetary value the policy gate compares against its threshold.
+   *
+   * Architecture doc 03 decision 2: the value comes from the **record**, never
+   * from the request body, or an agent could understate a proposal to slip
+   * under APV-01. The payload is consulted only where it *is* the value being
+   * proposed — a new sell price, a new budget cap — and never where a stored
+   * record already knows the answer.
+   */
+  #resolveActionValue(request: ActionRequest): Money | undefined {
+    switch (request.type) {
+      case "PROPOSAL_SEND": {
+        const proposal = byIdOrRef(this.#store.proposals, request.targetRef);
+        return proposal?.value;
+      }
+      case "INVOICE_CREATE":
+      case "INVOICE_PUSH": {
+        const invoice = byIdOrRef(this.#store.invoices, request.targetRef);
+        return invoice?.total ?? payloadValue(request);
+      }
+      case "PAYMENT_RECORD":
+      case "REMINDER_SEND": {
+        const invoice = byIdOrRef(this.#store.invoices, request.targetRef);
+        return invoice?.outstanding ?? payloadValue(request);
+      }
+      case "ACCOUNT_TRADING_HOLD": {
+        const organisation = byIdOrRef(this.#store.organisations, request.targetRef);
+        if (!organisation) return payloadValue(request);
+        return myr(
+          this.#store.receivables
+            .filter((row) => row.organisation.ref === organisation.ref)
+            .reduce((total, row) => total + row.amount.amount, 0),
+        );
+      }
+      case "HRDC_PACKET_MARK_SUBMITTED": {
+        const packet = this.#store.claimPackets.find((row) => row.engagementRef === request.targetRef);
+        return packet?.claimValue;
+      }
+      case "TRAINER_BOOK":
+      case "ATTENDANCE_APPROVE":
+      case "ATTENDANCE_UNLOCK":
+      case "RULE_CHANGE_APPROVE":
+        /** These carry no money, and a payload claiming otherwise is ignored. */
+        return undefined;
+      default:
+        /** QUOTATION_APPLY, DISCOUNT_APPROVE and BUDGET_CAP_RAISE propose the value itself. */
+        return payloadValue(request);
+    }
   }
 
   #assertTargetExists(request: ActionRequest): void {
@@ -2001,9 +2314,38 @@ export class FixtureClient {
     policy: Policy,
     context: ReturnType<typeof computeContextFlags>,
   ): ActionResponse {
+    /**
+     * An identical pending approval is the same request, not a second one:
+     * re-proposing PROPOSAL_SEND on PRO-2026-0184 returns APV-2026-0771 rather
+     * than queueing a duplicate behind it.
+     */
+    const existing = this.#store.approvals.find(
+      (row) =>
+        row.status === "PENDING" &&
+        row.actionType === request.type &&
+        row.targetRef === request.targetRef,
+    );
+    if (existing) {
+      this.#lastMeta = { status: 202, headers: {} };
+      return {
+        status: "QUEUED_FOR_APPROVAL",
+        approvalRequest: {
+          id: existing.id,
+          ref: existing.ref,
+          policyId: existing.policyId,
+          approverRole: policy.approverRole,
+          ...(this.#assignedTo(policy, request.requestedBy.id)
+            ? { assignedTo: this.#assignedTo(policy, request.requestedBy.id) }
+            : {}),
+          slaDueAt: existing.slaDueAt,
+          createdAt: existing.createdAt,
+        },
+      };
+    }
+
     const approver = assignApprover(this.#store, policy, request.requestedBy.id);
     const ref = `APV-2026-${String(++this.#store.counters.approval).padStart(4, "0")}`;
-    const value = payloadValue(request);
+    const value = this.#resolveActionValue(request);
     const diff = this.#diffFor(request);
     const approval: FixtureApproval = {
       id: `apv_${ref.slice(-4)}`,
@@ -2080,6 +2422,11 @@ export class FixtureClient {
     };
     this.#lastMeta = { status: 202, headers: {} };
     return { status: "QUEUED_FOR_APPROVAL", approvalRequest };
+  }
+
+  #assignedTo(policy: Policy, requesterId: string): Actor | undefined {
+    const approver = assignApprover(this.#store, policy, requesterId);
+    return approver ? { id: approver.id, name: approver.name, kind: "HUMAN" } : undefined;
   }
 
   /** §3 `202 EXECUTED` — the action ran, and `effects[]` says what changed. */
