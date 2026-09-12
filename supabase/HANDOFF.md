@@ -19,3 +19,6 @@ Spawn a migrations author with docs/research/04-supabase-conventions.md + this f
 
 ## Critic Part 2 (b01d241)
 7 critical / 29 high still open at pause. Top: 001 unchanged (no pg_cron/pg_net/vector); ~25 migration functions use the four-part search_path list and fail 02 §8.7 exact-string sweep; 05 jsonb columns have no shape constraints; 01 rule snapshot model vs 04 bitemporal; circular 2/2026 vs 04/2026 (D-44). Full list in docs/architecture/06-critic-review.md Part 2.
+
+## Update 18:20 — stopped mid-run
+Migrations 001–009 authored, EXECUTED on a local PG 17.11 shim (no Supabase CLI/Docker), committed. Not started: 010 finance, 011 action envelope, 012 events/outbox, 013 ai-ops, 014 RLS, 015 realtime+cron, 016 seed. Six doc defects found by execution are recorded in the catalog. Note: packages/contract/src/enums.ts generates the 69 DB enum types — a change there is a migration. public.user_profiles is an author addition.
