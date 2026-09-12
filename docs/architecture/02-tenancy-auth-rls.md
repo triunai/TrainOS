@@ -619,11 +619,16 @@ set search_path = ''
 as $$
 begin
   -- A caller-supplied tenant on a SECURITY DEFINER function is a cross-tenant read
-  -- waiting to happen. Only service_role may name a tenant other than its own.
-  if current_user <> 'service_role'
-     and p_tenant is distinct from app.current_tenant_id() then
-    raise exception 'CROSS_TENANT_DENIED' using errcode = 'insufficient_privilege';
+  -- waiting to happen. Gate on WHETHER THERE IS AN END USER, not on current_user.
+  if app.jwt() ? 'sub' then
+    -- A real PostgREST request. It must name its own tenant, and must have one.
+    if app.current_tenant_id() is null
+       or p_tenant is distinct from app.current_tenant_id() then
+      raise exception 'CROSS_TENANT_DENIED' using errcode = 'insufficient_privilege';
+    end if;
   end if;
+  -- No 'sub' claim at all => no end user: a worker, a cron job, or a SECURITY
+  -- DEFINER function running server-side. Those may name any tenant.
 
   return query
     select m.user_id, m.role, m.primary_team_id
@@ -647,7 +652,25 @@ Three things about the signature, since it differs from what was asked for.
 **The tenant guard is not optional.** A `SECURITY DEFINER` function that takes a tenant id and reads
 `memberships` will happily enumerate another tenant's users if the caller passes their id. That is
 the single worst bug available in this document, and it would be introduced by a helper written to be
-convenient. `service_role` is exempt because the badge fan-out legitimately iterates tenants.
+convenient. Server-side callers are exempt because the badge fan-out legitimately iterates tenants.
+
+**The guard tests for an end user, not for `current_user`, and my first draft got this wrong.** I
+originally wrote `current_user <> 'service_role'`. That breaks the moment the caller is a
+`SECURITY DEFINER` function, because inside one `current_user` is the function's *owner* — not
+`service_role`, whoever invoked it. `sb-events`' `app.claim_jobs` is exactly that shape, so their
+worker path would have raised `CROSS_TENANT_DENIED` on a call that is entirely legitimate, and the
+fix someone reached for under time pressure would have been to widen the guard.
+
+Testing `app.jwt() ? 'sub'` asks the question that actually matters: *is there an end user behind
+this call?* A PostgREST request always carries a `sub`; a worker, a cron job or a definer function
+running server-side carries no JWT at all. It is also robust to `current_user` changing underfoot,
+which string equality is not.
+
+The `current_tenant_id() is null` branch inside it closes a second hole. An `authenticated` user with
+no active membership has a `sub` but no tenant claim, and under a bare "must match my tenant" test
+`null is distinct from null` is false — so they would have passed the guard and been able to
+enumerate any tenant they named. A user with no membership is precisely the account that should see
+nothing anywhere.
 
 **`p_requires_permission` is the addition.** `approver_role` is a routing value stored on the policy
 row (§4.6), so routing by role is correct. But the role-to-permission matrix is data and can move:
@@ -2582,6 +2605,17 @@ select isnt_empty($$ select * from app.role_holders('T1', array['SALES_MANAGER']
                 'own tenant resolves');
 select is_empty($$ select * from app.role_holders('T1', array['AGENT']::app.app_role[]) $$,
                 'agents are never returned as role holders');
+-- the membership-less user: has a sub, has no tenant claim
+select tests.as_user('u_nomembership','T1','SALES','ALL','ALL','aal1', '{"tenant_id":null}');
+select throws_ok($$ select * from app.role_holders('T1', array['SALES_MANAGER']::app.app_role[]) $$,
+                '42501', 'a user with no tenant claim cannot name any tenant');
+-- the server-side caller: no JWT at all
+select tests.as_worker();   -- clears request.jwt.claims entirely
+select isnt_empty($$ select * from app.role_holders('T2', array['MD']::app.app_role[]) $$,
+                'a caller with no JWT may name any tenant');
+select isnt_empty($$ select * from app.role_holders(
+                      'T1', enum_range(null::app.app_role)::app.app_role[]) $$,
+                'enum_range spells "every role" and returns humans only');
 select is_empty($$ select * from app.role_holders('T1', array['OPS']::app.app_role[], 'approval:decide') $$,
                 'permission filter excludes a role that cannot decide');
 select isnt_empty($$ select * from app.role_holders('T1', array['SALES_MANAGER']::app.app_role[], 'approval:decide') $$,
