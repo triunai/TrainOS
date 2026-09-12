@@ -51,6 +51,7 @@ module.exports = {
         "migration",
         "supabase",
         "scaffold",
+        "design",
         "shell",
         "tokens",
         "nav",

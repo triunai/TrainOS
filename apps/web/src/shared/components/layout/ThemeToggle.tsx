@@ -19,6 +19,7 @@ export function ThemeToggle() {
     <label className="flex items-center gap-2">
       <span className="sr-only">Theme</span>
       <select
+        aria-label="Theme"
         value={mounted ? (theme ?? "system") : "system"}
         onChange={(event) => setTheme(event.target.value)}
         className="rounded-control border border-border bg-card px-2 py-1 text-[13px] text-ink-secondary"

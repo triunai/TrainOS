@@ -30,6 +30,18 @@ their sourced neighbours. Marked DERIVED in `tokens.css`. A designer should
 confirm or replace them before the first dark screenshot is treated as
 canonical.
 
+**OPEN (2026-09-12, scaffold) — 8 npm ADVISORIES, 2 CRITICAL, ALL IN DEV TOOLING.**
+`npm audit` reports critical findings against `vitest` and `@vitest/coverage-v8`
+and high findings against `vite`, plus moderate ones against `react-router`.
+Every one is a dev-server or test-runner exposure, not a shipped-bundle
+vulnerability: the paths are the Vite dev server's file handling, the Vitest UI
+server, and a `@vitest/mocker` redirect. None of that code reaches production.
+Clearing them means Vite 8 and Vitest 5, two major versions past the house stack
+this repo was told to mirror, so the `deps-audit` CI job is advisory on purpose.
+Closing this is a stack-upgrade decision for the whole house, not a TrainOS one.
+Until then: do not expose the dev server or the Vitest UI on an untrusted
+network.
+
 **OPEN (2026-09-12, scaffold) — NO COVERAGE FLOOR YET.** Deliberate: a
 threshold set before there is anything to measure kills test culture before it
 forms. Set the first floor once roughly 5 to 10 tests have landed, then ratchet.
