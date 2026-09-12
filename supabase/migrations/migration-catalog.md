@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 6 · **Applied:** 0 · **Authored, not applied:** 6
+**Migrations:** 7 · **Applied:** 0 · **Authored, not applied:** 7
 **Last snapshot of `tables/`:** never
 
 ---
@@ -12,6 +12,8 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-12 — **007 authored and EXECUTED: money. Three defects in doc 04's specification found by running it, all folded in.** (1) **`floor_price_needs_approval` cannot be a table CHECK.** Doc 04 §1.7 writes it as one. Executed, it makes a quotation impossible to CREATE: in a total-from-lines model the header starts at `sell_price_sen = 0` and is filled by the line trigger, so an immediate CHECK fires against a zero sell price and a non-zero programme floor before a single line can be written. The very first attempt to insert the contract's own fixture failed on it. The rule is real and is now a DEFERRABLE CONSTRAINT TRIGGER, judged at COMMIT — the only instant at which the lines, and therefore the price, exist. Same rule, correct instant. (2) **A deferred constraint trigger's `NEW` predates the line trigger's update of the header**, so both the reconciliation and floor assertions compared the lines against a header from before they were written and failed a correct transaction, reporting a header of 0 sen against lines that summed correctly. Both now RE-READ the current row. (3) **The pin's own T4c was backwards** and had to be corrected: the contract's fixture is COMPLIANT — RM 18,500 against a binding floor of RM 17,538.47 is a 0.38 margin over a 0.35 floor — so asserting `below_floor = true` pinned a fiction. A separate T4b now exercises a genuine breach on the contract's own RM 12,400 example and proves an approval is what permits it. **The arithmetic is pinned on the contract's real numbers**, not round figures that would hide a rounding bug: trainer RM 4,800 × 2, venue 0, materials RM 40 × 30, travel RM 300 × 2 = RM 11,400 against an RM 18,500 sell. **`ceil`, not `round`, on the margin floor** — T3 pins 1,753,847 exactly, because `round` gives 1,753,846 and a price one sen under the floor would then pass as compliant, which is precisely the shape a deliberate underprice takes. **The jsonb NULL-check trap is pinned on the exact payload the naive constraint lets past**: a jury object with no `mode` key at all, where `->>` yields NULL, `NULL IN (...)` yields NULL, and a CHECK evaluating to NULL PASSES. **A catalogue query that cannot rot** asserts no column in `core` ending `_sen`, `_rate` or `_pct` is `float4` or `float8`.
 
 **Last updated:** 2026-09-12 — **006 authored and EXECUTED: the catalogue, and the constraint that stops a trainer being in two places.** `tb_no_double_booking` is an EXCLUSION constraint over `daterange(starts_on, ends_on, '[]')` with `btree_gist` so `trainer_id` can be compared with `=` in the same constraint. It is not a validation rule to be caught in a service layer: two confirmed bookings over overlapping dates is a trainer standing in the wrong city, a client without a facilitator, and an HRD Corp claim that cannot be filed. **T3 exercises the whole matrix** — identical span refused, PARTIAL overlap refused (the case a naive unique index on `(trainer, starts_on)` lets straight through), adjacent-but-not-overlapping ALLOWED (an inclusive bound written exclusive breaks exactly this and looks right either way), a different trainer allowed, another tenant allowed, and **two SOFT_HOLDs over the same dates deliberately allowed**, because holding two options for a client while they decide is the point of a soft hold and a constraint that forbade it would quietly break the sales motion. **`trainer_availability` is written by a trigger, never by hand**, and T4 tests the half that gets forgotten: MOVING a booking must RELEASE the days it no longer covers, or the trainer looks busy on dates nobody booked and the recommender stops offering them. **`floor_price_sen` is an ABSOLUTE floor, not a margin** — doc 01 works the arithmetic and the column carries it as a COMMENT, because deriving the floor would put a different number on the approval screen from the one the salesperson was quoted. **Two defects found by running it:** the rollback's generic dependency guard fired on the three foreign keys 006 itself adds to 002's and 005's tables (the generator now takes an owned-constraint exclusion list), and 006 was not re-runnable because `ADD CONSTRAINT` has no `IF NOT EXISTS` — the same trap 004 hit, now guarded here too. Rate cards are NOT here: `trainers.band` is a JOIN KEY into sb-money's rate card, not a rate.
 
@@ -29,12 +31,13 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 007 | `007_money_proposals_quotations_portal.sql` | **Money: rate cards, provenance, proposals, quotations and the client portal (2026-09-12).** Eighteen tables. Total-from-lines is enforced, not trusted: `quotation_lines.total_sen` is a GENERATED column so a caller cannot supply a total that disagrees with its own unit price and quantity, a trigger recomputes the header from the lines, and a DEFERRABLE constraint trigger refuses to commit a header that disagrees. Deferred because a multi-line edit legitimately passes through states where they do not match. **Two floors, both generated**: an absolute programme floor stamped at pricing time and a margin floor derived with `ceil` (never `round`), with the binding one and `below_floor` derived from the row so the costing screen and the approval screen cannot compute them differently. `floor_margin_rate` and `commission_rate` are STAMPED onto the quotation, so a rate-card edit cannot silently reprice a proposal already sent, and the floor stays reproducible after the card is retired. Portal tokens store only a SHA-256 hash, and `UNIQUE (tenant_id, proposal_id)` on acceptances makes a double-clicked Accept unable to create a second binding acceptance whatever the handler does. Spine untouched. |
 | 006 | `006_catalogue_programmes_and_trainers.sql` | **What the business sells and who delivers it (2026-09-12).** Programmes with modules, pricing tiers and materials; trainers with pool membership, a declared availability calendar and bookings. The catalogue sits in Delivery, not Sales, because `PUT /programmes/{id}` is ADMIN + L&D and returns FORBIDDEN to SALES. Three things it gets right that are easy to get wrong: the tier floor price is an **absolute** commercial-policy figure rather than a derived margin; a trainer **cannot** hold two overlapping CONFIRMED bookings, enforced by an EXCLUSION constraint rather than by application code, while two SOFT_HOLDs may overlap on purpose; and the availability calendar is written by a trigger on bookings so the two can never disagree. Closes the three foreign keys 002 and 005 left open (`memberships.trainer_id`, `organisation_suggestions.programme_id`, `tna_recommendations.programme_id`). Spine untouched. |
 | 005 | `005_sales_organisations_enquiries_tna.sql` | **The sales path: organisations, contacts and consent, enquiries and extraction, opportunities, follow-ups, needs analysis (2026-09-12).** Fourteen tables, all through `app.finalise_table`, all deny-all until 014. Four non-obvious modelling decisions, each with the reason in the file: `contact_consents` is an append-only PDPA ledger rather than a flag, because "did this person consent on 4 March 2024" must stay answerable after they withdraw; `enquiry_extraction_fields` is one row per field because each carries its OWN provenance and edit history, and four columns could hold four values but not four independent provenances; `organisations.proposal_count` is a header CACHE that the policy gate must not read (deviation D2); and the "never auto-archived" rule for low-confidence enquiries is a CHECK constraint rather than a property of a background job. Every FK into a `core` parent is composite `(tenant_id, parent_id)`, so a cross-tenant reference is rejected by the storage engine independently of RLS. Spine untouched. |
 | 004 | `004_shell_config_and_ref_allocation.sql` | **The shell: `app.finalise_table()`, ref allocation, and 14 configuration and reference tables (2026-09-12).** One procedure gives a tenant-scoped table its whole standard posture — composite `(tenant_id, id)` and `(tenant_id, ref)` uniques, tenant index, `updated_at` trigger, frozen `tenant_id`/`ref` plus any extra columns, ref allocation, and **RLS enabled AND FORCED with zero policies**, so no table in this set is ever open, not even for the duration of one migration. Ref allocation is one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per `(tenant, prefix, period)`, serialising per prefix per tenant rather than globally; the year comes from the TENANT's timezone, because a record created at 08:00 MYT on 1 January is a January record and UTC would call it December. `pipeline_steps` is the point of the migration: the contract shows two different lifecycles for the same object (six steps on the relations panel, nine on the engagement detail) and those are two `pipelines` rows, not two hardcoded arrays. `templates` are versioned and never edited, so a five-year-old proposal still renders as sent. `app.action_types` created here as the global catalogue (conflict C4); seeded in 011. Spine: `finalise_table` IS a new spine object and is pinned hardest. |
 | 003 | `003_enum_types.sql` | **69 native enum types in `core`, 271 labels, generated from the contract package (2026-09-12).** Closed catalogues frozen by contract §12/§17 become native enums — four bytes on disk across a model full of status columns, and real union types in the generated TypeScript. Open, config-driven sets (`action_type`, lifecycle step key, compliance check key, `hrdc_document_type`, metric key, tier key, template type, TNA constraint code) deliberately do NOT appear here: they arrive in 004 as reference tables, because the project rule is that stage names and order render from configuration, and a CHECK constraint is code while a reference table is data. 62 types generated from `packages/contract/src/enums.ts`; 7 named by doc 01 alone and listed separately. `app_role` and `actor_kind` are NOT duplicated into `core` — doc 02 owns both and creates them in `app` (conflict C2). Spine untouched: types only, no table, no function, no policy. |
 | 002 | `002_tenancy_identity_and_permissions.sql` | **Multi-tenancy from row zero: five identity tables, 109 permissions as data, and the access-token hook (2026-09-12).** `public.tenants`, `teams`, `team_members`, `memberships` and `user_profiles` (author addition), all RLS-enabled AND **forced** — forced removes the table owner's exemption, so a function running as `postgres` no longer silently sees every tenant. Three enum types in `app` (`app_role`, `actor_kind`, `data_scope`) per doc 02 §1.2. Eighteen claim readers and predicates: `app.current_tenant_id` (the spelling three lanes converged on — `app.tenant_id()` does not exist and must not be created), `app.has_permission`, `app.can_see_owner`, `app.my_team_user_ids`, `app.aal`, and `app.principal_claims` as the SINGLE claim-building body shared by the GoTrue hook and the agent-token minter, because §3.1 notes the hook does not run for a self-minted token and two bodies would drift. `app.role_permissions` seeded with 399 (role, permission) pairs over 109 permissions, parsed from doc 02 §2.3 rather than transcribed. **The escalation stop is a RESTRICTIVE policy**: `memberships_no_self_edit` — without it an ADMIN can UPDATE their own row to any role, scope or tenant, and `memberships_write_admin` permits it because they ARE an admin of that tenant while they do it. ADMIN writes additionally require `aal2`. Spine untouched — the action envelope does not exist yet; 002 is the authorization the spine will rest on. |
-| 001 | `001_foundation_schemas_and_helpers.sql` | **The floor: three schemas, four extensions, five shared helpers (2026-09-12).** Creates `app` (helpers + the action gate, NOT exposed to PostgREST), `core` (the 86-table domain, exposed), and `extensions`. Installs citext (case-insensitive email, so `EXACT_DOMAIN` contact matching does not silently miss on case), btree_gist (the EXCLUDE constraint that stops a trainer being double-booked, 008), pg_trgm (⌘K search) and pgcrypto (share-token hashing — platform-provided on Supabase, so 001 does not own it and the rollback leaves it). Five helpers: `app.set_updated_at`, `app.enforce_immutable_columns` (generic, column names as trigger arguments — one implementation, N attachments, instead of N triggers that drift), `app.round_half_up_minor` (the single definition of DECISIONS §7's rounding rule), and `app.ok`/`app.err`. **The envelope is a FUNCTION, not a convention:** point 2 of the contract check is structural rather than review-dependent because `app.ok(jsonb)` BUILDS the object, so a top-level sibling key is not something a later author can add by accident. Applies doc 02 §4.1's schema baseline to `public` and `core` — and records that two of its four lines do not work. No spine yet; this creates the primitives the spine is built from. |
+| 001 | `001_foundation_schemas_and_helpers.sql` | **The floor: three schemas, four extensions, five shared helpers (2026-09-12).** Creates `app` (helpers + the action gate, NOT exposed to PostgREST), `core` (the 86-table domain, exposed), and `extensions`. Installs citext (case-insensitive email, so `EXACT_DOMAIN` contact matching does not silently miss on case), btree_gist (the EXCLUDE constraint that stops a trainer being double-booked, 008), pg_trgm (⌘K search) and pgcrypto (share-token hashing — platform-provided on Supabase, so 001 does not own it and the rollback leaves it). Five helpers: `app.set_updated_at`, `app.enforce_immutable_columns` (generic, column names as trigger arguments — one implementation, N attachments, instead of N triggers that drift), `app.round_half_up_sen` (the single definition of DECISIONS §7's rounding rule), and `app.ok`/`app.err`. **The envelope is a FUNCTION, not a convention:** point 2 of the contract check is structural rather than review-dependent because `app.ok(jsonb)` BUILDS the object, so a top-level sibling key is not something a later author can add by accident. Applies doc 02 §4.1's schema baseline to `public` and `core` — and records that two of its four lines do not work. No spine yet; this creates the primitives the spine is built from. |
 
 ---
 
@@ -90,7 +93,7 @@ Internal, never client-callable. Every one below is `REVOKE ALL ... FROM PUBLIC,
 #### `app.enforce_immutable_columns()` → trigger — 001
 `BEFORE UPDATE FOR EACH ROW`, frozen column names passed as trigger arguments. A column freezes once it holds a value: `NULL → value` is allowed (several columns in this model are stamped after insert — `ref` by a BEFORE INSERT trigger, `accepted_at` once), `value → other` and `value → NULL` both raise `IMMUTABLE_COLUMN`. A no-op re-save of the same value is not a violation. A column named in the trigger that does not exist on the row raises `undefined_column` rather than silently protecting nothing — that failure mode would leave `ref` freely writable across the whole model with every migration still looking correct, and it is pinned by T9.
 
-#### `app.round_half_up_minor(numeric)` → bigint — 001
+#### `app.round_half_up_sen(numeric)` → bigint — 001
 `IMMUTABLE STRICT PARALLEL SAFE`. The single definition of DECISIONS §7: half-up, away from zero, to whole minor units. `STRICT`, so a NULL amount yields NULL and never a silent zero. Pinned against banker's rounding at 2.5 → 3.
 
 #### `app.ok(jsonb DEFAULT '{}')` → jsonb — 001
@@ -146,7 +149,7 @@ Source docs: `docs/architecture/01` (conventions, `set_updated_at`, `enforce_imm
   `config.toml` carries that with the reason. `public` keeps only identity and tenancy.
 - **Extensions** pgcrypto, citext, btree_gist, pg_trgm — each installed into `extensions`, never
   into `public`, and each with the specific downstream consumer named in the header.
-- **`app.set_updated_at()`**, **`app.enforce_immutable_columns()`**, **`app.round_half_up_minor()`**,
+- **`app.set_updated_at()`**, **`app.enforce_immutable_columns()`**, **`app.round_half_up_sen()`**,
   **`app.ok()`**, **`app.err()`** — see the RPC section above.
 - **Grants:** `USAGE` on `app` to anon + authenticated (an RLS predicate is evaluated in the
   CALLER's context and must be able to resolve `app.<fn>`), `EXECUTE` on nothing.
@@ -204,6 +207,47 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 007 (`007_money_proposals_quotations_portal.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Sources: `docs/architecture/04` (every
+money column and rule), `docs/architecture/01` §3.1, DECISIONS §5 and §7, contract §6 and §11.
+
+### Conflicts recorded here
+
+- **C1 (schema).** Doc 04 qualifies every object `app.` and makes no schema statement. Doc 03 — which
+  outranks it — uses `core.quotations` and `core.invoices` in its own executable SQL, and doc 05
+  resolved the same question to `core` against migration 001. These are `core` tables with `app`
+  helpers, and doc 04's `app.quotation` is what doc 01 calls it: "a verification harness, not a
+  competing table".
+- **C5 (plural).** Doc 04 is singular throughout; doc 05 resolved to plural, doc 03 and doc 01 use
+  plural. Pluralised.
+
+### The 7-point RPC contract check, worked
+
+1/2. No client-callable RPC, no envelope. 3. RpcMap: none. 4. Call sites: 010 invoices from these,
+011 gates them, 016 seeds. 5. **Casts: the generated columns cast `bigint` to `numeric` before
+dividing** — deliberate, and the only place integer division would silently truncate.
+6. Reload/restore: none. 7. Public routes: the portal's read path reaches `public_share_tokens` in
+014 through a SECURITY DEFINER RPC, never through a policy on the table.
+
+### Pin — `tests/test_007_money_proposals_quotations_portal.sql`
+
+Twelve checks, all executed, all PASS. T1 no floating money in `core` · T2 total-from-lines on the
+contract's real costing · T3 `ceil` not `round` · T4 which floor binds, and T4b a genuine breach
+refused then permitted by an approval · T5 a header that disagrees with its lines cannot commit ·
+T6 a package price is one line at qty 1 · T7 the jsonb NULL-check trap plus an unattributed AI row ·
+T8 drafting on the placeholder card is allowed, applying is not · T9 one acceptance per proposal and
+no column that could hold a raw token · T10 a sent proposal's sections are frozen · T11 rate-card
+integrity: one active card at a time, client site free, meals within their ACM ceiling.
+
+### Rollback — `rollbacks/007_money_proposals_quotations_portal_rollback.sql`
+
+Guards on sent proposals, portal acceptances and applied quotations, each with the reason it cannot
+be reconstructed. Reopens `follow_ups.proposal_id`, stated as correct rather than damage.
+Round-tripped and idempotent.
 
 ---
 

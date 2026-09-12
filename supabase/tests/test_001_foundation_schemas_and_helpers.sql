@@ -15,7 +15,7 @@
 -- assertions that matter are BEHAVIOURAL, and three of them are the kind that
 -- pass by inspection and fail in production:
 --
---   T6  round_half_up_minor is HALF-UP, not banker's rounding. Postgres' float
+--   T6  round_half_up_sen is HALF-UP, not banker's rounding. Postgres' float
 --       and numeric round() disagree on 2.5 — numeric gives 3, double precision
 --       gives 2 — and an implicit cast anywhere in a later money expression
 --       silently switches which one you get. The pin fixes the answer.
@@ -69,7 +69,7 @@ BEGIN
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'app'
     AND p.proname IN ('set_updated_at','enforce_immutable_columns',
-                      'round_half_up_minor','ok','err');
+                      'round_half_up_sen','ok','err');
   IF v_cnt <> 5 THEN
     RAISE EXCEPTION
       'test_001 SETUP FAILURE: expected 5 app helpers, found % - 001 is missing or partial.',
@@ -134,7 +134,14 @@ BEGIN
 END;
 $t3$;
 
--- === T4 · no client role holds EXECUTE on anything in `app` =================
+-- === T4 · no client role holds EXECUTE on 001's OWN five helpers ============
+--     Scoped to 001's five by name, NOT to the whole `app` schema. 002
+--     legitimately grants EXECUTE on its claim readers, because an RLS predicate
+--     is evaluated in the caller's context and must be able to run them, so a
+--     schema-wide assertion here would fail the moment 002 lands and would be
+--     "fixed" by deleting the grant that makes RLS work. Corrected after exactly
+--     that failure. The schema-wide sweep, with its allowlist, belongs in
+--     test_014 where the full picture exists.
 DO $t4$
 DECLARE v_bad text;
 BEGIN
@@ -143,10 +150,12 @@ BEGIN
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   CROSS JOIN unnest(ARRAY['anon','authenticated']) AS r(role_name)
   WHERE n.nspname = 'app'
+    AND p.proname IN ('set_updated_at','enforce_immutable_columns',
+                      'round_half_up_sen','ok','err')
     AND has_function_privilege(r.role_name, p.oid, 'EXECUTE');
   ASSERT v_bad IS NULL,
-    format('T4 FAIL: client EXECUTE grant(s) in schema app: %s', v_bad);
-  RAISE NOTICE 'T4 PASS - zero client EXECUTE grants in app.';
+    format('T4 FAIL: client EXECUTE grant(s) on one of 001''s helpers: %s', v_bad);
+  RAISE NOTICE 'T4 PASS - zero client EXECUTE grants on 001''s five helpers.';
 END;
 $t4$;
 
@@ -216,17 +225,17 @@ $t5$;
 -- === T6 · rounding is HALF-UP, away from zero, and not banker's =============
 DO $t6$
 BEGIN
-  ASSERT app.round_half_up_minor(0.5)   = 1,  'T6a FAIL: 0.5 did not round to 1';
-  ASSERT app.round_half_up_minor(1.5)   = 2,  'T6b FAIL: 1.5 did not round to 2';
+  ASSERT app.round_half_up_sen(0.5)   = 1,  'T6a FAIL: 0.5 did not round to 1';
+  ASSERT app.round_half_up_sen(1.5)   = 2,  'T6b FAIL: 1.5 did not round to 2';
   -- The one that separates half-up from banker's rounding. Banker's gives 2.
-  ASSERT app.round_half_up_minor(2.5)   = 3,
+  ASSERT app.round_half_up_sen(2.5)   = 3,
     format('T6c FAIL: 2.5 rounded to %s - that is banker''s rounding, not half-up',
-           app.round_half_up_minor(2.5));
-  ASSERT app.round_half_up_minor(-0.5)  = -1, 'T6d FAIL: -0.5 did not round away from zero';
-  ASSERT app.round_half_up_minor(0.4)   = 0,  'T6e FAIL: 0.4 did not round down';
-  ASSERT app.round_half_up_minor(616.67) = 617, 'T6f FAIL: 616.67 did not round to 617';
+           app.round_half_up_sen(2.5));
+  ASSERT app.round_half_up_sen(-0.5)  = -1, 'T6d FAIL: -0.5 did not round away from zero';
+  ASSERT app.round_half_up_sen(0.4)   = 0,  'T6e FAIL: 0.4 did not round down';
+  ASSERT app.round_half_up_sen(616.67) = 617, 'T6f FAIL: 616.67 did not round to 617';
   -- STRICT: a null amount yields null, never 0. A silent 0 is a free line item.
-  ASSERT app.round_half_up_minor(NULL) IS NULL, 'T6g FAIL: NULL input did not return NULL';
+  ASSERT app.round_half_up_sen(NULL) IS NULL, 'T6g FAIL: NULL input did not return NULL';
   RAISE NOTICE 'T6 PASS - half-up, away from zero, strict on NULL.';
 END;
 $t6$;

@@ -12,7 +12,33 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
-## 2026-09-12 — the catalogue, and a trainer who cannot be in two places
+## 2026-09-12 — money, and three rules the database now enforces instead of trusting
+
+### Added
+
+- **Rate cards, proposals, quotations and the client portal (007).**
+- **A quotation's total cannot disagree with its lines.** Each line's total is derived from its own
+  unit price and quantity, the header is recomputed from the lines, and a transaction that leaves
+  the two disagreeing cannot commit. The check is deferred to the end of the transaction, because a
+  multi-line edit legitimately passes through moments where they do not match.
+- **Two floor prices, and the database decides which one binds.** One is an absolute commercial
+  figure; the other is derived from cost and the margin floor. Both are computed in the database
+  rather than in the application, so the costing screen and the approval screen cannot disagree
+  about the limit. On the contract's own example they differ by about three and a half thousand
+  ringgit.
+- **The client portal never stores a link.** Only a hash of it, so a database copy does not hand
+  anyone a working client link. And a proposal can be accepted once: a double-clicked Accept button
+  cannot create a second binding acceptance, whatever the handler does.
+
+### Fixed
+
+- **Three defects in the money specification, found by executing it.** The floor rule could not be
+  written as a simple column constraint at all: it made a quotation impossible to create, because
+  the total legitimately starts at zero and is filled in from the lines. It is now checked at the
+  end of the transaction instead. Two related checks were reading a stale copy of the row and
+  rejecting correct work. And one of the tests asserted the wrong thing about the contract's own
+  worked example, which was corrected rather than left to pass for the wrong reason.
+ and a trainer who cannot be in two places
 
 ### Added
 

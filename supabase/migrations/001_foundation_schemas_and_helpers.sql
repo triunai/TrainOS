@@ -68,9 +68,20 @@
 --                                   columns are trigger arguments, so there is
 --                                   one implementation and N attachments rather
 --                                   than N hand-written triggers that drift.
---   app.round_half_up_minor()       The single definition of the rounding rule
+--   app.round_half_up_sen()       The single definition of the rounding rule
 --                                   DECISIONS §7 fixes: half-up, away from zero,
 --                                   to the sen. Used by 007 and 010.
+--                                   ⚠ RENAMED IN PLACE, 2026-09-12, before any
+--                                   apply: it was `round_half_up_minor` until
+--                                   doc 04 landed naming it `round_half_up_sen`
+--                                   and using that name inside GENERATED ALWAYS
+--                                   AS expressions. Two spellings of one
+--                                   rounding rule is precisely the divergence
+--                                   this function exists to prevent, so the
+--                                   earlier name is gone rather than aliased.
+--                                   Recorded in the catalog; nothing had been
+--                                   applied, so this is a rename, not a
+--                                   migration.
 --   app.ok() / app.err()            The RPC envelope constructors.
 --
 -- WHY THE ENVELOPE IS A FUNCTION AND NOT A CONVENTION
@@ -290,7 +301,7 @@ COMMENT ON FUNCTION app.enforce_immutable_columns() IS
 -- down, it is what a reconciliation trigger and a test can both point at, and
 -- it is STRICT + IMMUTABLE so it can be used inside a generated column or an
 -- index if a later migration needs one. Do not inline `round()` instead.
-CREATE OR REPLACE FUNCTION app.round_half_up_minor(p_amount numeric)
+CREATE OR REPLACE FUNCTION app.round_half_up_sen(p_amount numeric)
 RETURNS bigint
 LANGUAGE sql
 IMMUTABLE
@@ -301,7 +312,7 @@ AS $fn$
   SELECT round(p_amount)::bigint;
 $fn$;
 
-COMMENT ON FUNCTION app.round_half_up_minor(numeric) IS
+COMMENT ON FUNCTION app.round_half_up_sen(numeric) IS
   'The single definition of the rounding rule (DECISIONS 7): half-up, away from '
   'zero, to whole minor units. Every money line rounds through this and totals '
   'sum the rounded results.';
@@ -359,7 +370,7 @@ COMMENT ON FUNCTION app.err(text, jsonb) IS
 
 REVOKE ALL ON FUNCTION app.set_updated_at()               FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app.enforce_immutable_columns()    FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION app.round_half_up_minor(numeric)   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app.round_half_up_sen(numeric)   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app.ok(jsonb)                      FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app.err(text, jsonb)               FROM PUBLIC, anon, authenticated;
 
@@ -392,7 +403,7 @@ BEGIN
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'app'
     AND p.proname IN ('set_updated_at','enforce_immutable_columns',
-                      'round_half_up_minor','ok','err')
+                      'round_half_up_sen','ok','err')
     AND 'search_path=pg_catalog, public, extensions, pg_temp' = ANY (p.proconfig);
   IF v_cnt <> 5 THEN
     RAISE EXCEPTION

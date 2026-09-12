@@ -70,7 +70,7 @@ BEGIN
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'app'
     AND p.proname NOT IN ('set_updated_at','enforce_immutable_columns',
-                          'round_half_up_minor','ok','err');
+                          'round_half_up_sen','ok','err');
   IF v_extra IS NOT NULL THEN
     RAISE EXCEPTION
       'rollback 001 ABORTED: schema app holds function(s) 001 did not create: %. '
@@ -136,7 +136,7 @@ REVOKE USAGE ON SCHEMA core FROM anon, authenticated, service_role;
 -- own rollback drops it; this file drops only what 001 owns.
 DROP FUNCTION IF EXISTS app.err(text, jsonb);
 DROP FUNCTION IF EXISTS app.ok(jsonb);
-DROP FUNCTION IF EXISTS app.round_half_up_minor(numeric);
+DROP FUNCTION IF EXISTS app.round_half_up_sen(numeric);
 DROP FUNCTION IF EXISTS app.enforce_immutable_columns();
 DROP FUNCTION IF EXISTS app.set_updated_at();
 

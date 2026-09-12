@@ -103,7 +103,7 @@ BEGIN
   WHERE n.nspname = 'app'
     AND p.proname NOT IN (
       -- 001
-      'set_updated_at','enforce_immutable_columns','round_half_up_minor','ok','err',
+      'set_updated_at','enforce_immutable_columns','round_half_up_sen','ok','err',
       -- 002
       'jwt','current_tenant_id','role','actor_kind','client_scope','team_scope','aal',
       'is_agent','agent_id','trainer_id','require_tenant_id','has_role','has_permission',
@@ -282,7 +282,7 @@ BEGIN
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'app'
         AND p.proname IN ('set_updated_at','enforce_immutable_columns',
-                          'round_half_up_minor','ok','err')) <> 5 THEN
+                          'round_half_up_sen','ok','err')) <> 5 THEN
     RAISE EXCEPTION
       'rollback 002: schema app should hold exactly 001''s five helpers afterwards';
   END IF;
