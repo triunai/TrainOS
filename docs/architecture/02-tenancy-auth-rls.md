@@ -1270,13 +1270,24 @@ that wrong on the first attempt and the measurement is the only reason I noticed
 
 ```sql
 select is_empty($$
-  select p.proname
+  select n.nspname || '.' || p.proname
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname in ('app','public','core')
-    and p.prokind = 'f'
-    and (p.proconfig is null or p.proconfig[1] <> 'search_path=""')
-$$, 'every function pins an empty search_path');
+    and p.prokind in ('f','p')                  -- procedures too, not just functions
+    and not exists (                            -- skip anything an extension owns
+      select 1 from pg_depend d
+      where d.objid = p.oid and d.deptype = 'e')
+    and (p.proconfig is null
+         or not (p.proconfig @> array['search_path=""']))
+$$, 'every function and procedure we own pins an empty search_path');
 ```
+
+Three details, because `sb-money` now relies on this single test to cover their lane as well as mine
+and a gap in it is a gap in both. `prokind in ('f','p')` so a procedure is not missed. The
+`pg_depend … deptype = 'e'` exclusion skips extension-owned objects, which would otherwise fail the
+assertion for things we did not write and cannot change. And the containment test `@>` rather than
+`proconfig[1] =` so a function that also pins something else — a `statement_timeout`, say — is
+judged on whether the search-path entry is present rather than on whether it happens to be first.
 
 ### 4.2 The policy templates
 
