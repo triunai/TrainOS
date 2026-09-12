@@ -1170,6 +1170,13 @@ during design; this is the suite that keeps them true.
 81. An invoice or quotation in any currency but MYR → check violation, so no `_sen` column can hold a non-MYR amount while the convention stands.
 82. No column named `*_minor` survives anywhere; a catalogue query, so the two suffixes cannot both come back.
 
+**Schema placement**
+83. Every table in the placement table above is in the schema that table names. A catalogue query, because a table in `app` fails silently at the API rather than loudly in CI, which is the whole reason this test exists.
+84. `provenance_subject` is the only object of this lane's in `app` that is a table.
+85. Every function this lane owns has a non-null `proconfig` pinning `search_path`. Catches a new function added without one.
+86. A `core` table's generated column calling an `app` helper still computes after a schema rebuild.
+87. Each of the client-callable RPCs is reachable in `core` and returns its documented shape.
+
 ---
 
 ## 9 · Open questions
@@ -1225,6 +1232,92 @@ Executive, same meeting as DECISIONS §5.**
 4. ~~**Is `rule_set` global or per tenant?**~~ **Closed.** `sb-tenancy` confirmed the nullable `tenant_id` and supplied the read predicate; national rules stay national, because copying them per tenant means a circular correction is applied N times and the Nth is the one that gets missed. Writes to global rows go through the service-role provisioning path, not a tenant `ADMIN`. See Agreements with 02, A-4 and A-5.
 5. **`human_minutes_spent` granularity.** The hours-saved computation depends on a column owned by **`sb-actions`**. Confirm it is per action, monotonic, and excludes idle time in a background tab.
 6. **FX rate source for BYOK.** `usage_event.fx_myr_per_usd` is stamped per event. Which source, and daily or per-transaction?
+7. **Multi-currency and the `_sen` suffix.** Recorded at team-lead's direction; no rename. `_sen` names the Malaysian minor unit in 95 column names across this lane and sb-erd's, so a second currency makes every one a misnomer, where `_minor` would not. The fleet is consistent on `_sen` and the contract is MYR-only, so it stands. The reservation is sb-erd's and is sound. It is held closed by the `currency = 'MYR'` check constraints in C-6: a second currency fails at the point of change and forces the rename as part of that work, rather than leaving mislabelled columns behind. **Reopen this before any non-MYR work starts, not after.**
+
+---
+
+## Schema placement · correction
+
+**Every `app.` table name in this document is wrong.** They belong in `core`.
+sb-tenancy caught it; sb-actions hit the same thing with `approval_requests`.
+
+`supabase/config.toml` exposes `public`, `core` and `graphql_public`. Migration
+001 is explicit about the division:
+
+> `core` — 'The domain: the 86 tables of the ERD … Exposed to PostgREST alongside public.'
+> `app` — 'Internal helpers: tenant resolution, RLS predicates, trigger functions … NOT exposed to PostgREST. Nothing in here is client-callable.'
+
+A table in `app` is not an error anyone sees. `GET /v1/compliance/rules` simply
+returns nothing, with no message explaining why. That is the worst failure mode
+available, so the rule is stated once and applied everywhere:
+
+**A table or function the Data API serves goes in `core`. Only helpers, trigger
+functions and RLS predicates stay in `app`.**
+
+### Placement for every object in this lane
+
+| Object | Schema | Rendered by |
+|---|---|---|
+| `invoice`, `invoice_line` | **core** | M13-S02 |
+| `quotation`, `quotation_cost_line` | **core** | M07-S03 |
+| `rate_card` and its eight component tables | **core** | M07-S03 label, M20 settings |
+| `compliance_rule`, `rule_set` | **core** | M12-S07 |
+| `rule_change`, `rule_change_set` | **core** | M12-S08 |
+| `compliance_check_results` | **core** | M12-S02, M09-S02 |
+| `knowledge_source`, `knowledge_source_check` | **core** | M16-S05 |
+| `provenance` | **core** | every AI badge popover |
+| `model_tier`, `routing_matrix`, `routing_matrix_version` | **core** | M20-S20 |
+| `ai_provider_key` | **core** | M20-S21 |
+| `usage_rollup`, `budget` | **core** | M20-S16 |
+| `usage_event` (+ partitions) | **core** | drill-through from M20-S16 |
+| `baseline_minutes_version`, `baseline_minutes` | **core** | `/reports/hours-saved` |
+| `aging_bucket`, `collection_cadence` | **core** | M13-S05, `/collections/rules` |
+| `provenance_subject` | `app` | nothing renders it; pure allow-list |
+
+Client-callable functions move with their tables: `invoice_create`,
+`hours_saved`, `receivables_aging`, `evaluate_engagement`, `version_drift`,
+`collection_stage_for`, `provenance_envelope` and `collection_stage_for` are
+`core`. Pure helpers stay in `app`: `round_half_up_sen`, `mask_key`,
+`apply_offset`, `rule_date`, `rule_bool`, `rule_money`, `hours_to_ranges`,
+`ranges_to_hours`, `evaluate_rule`, `resolve_rules`, and every trigger function.
+
+Views follow what they serve: `budget_status`, `model_tier_status`,
+`commission_ledger` and `compliance_facts` are `core`.
+
+A `core` table may use an `app` helper in a generated column. Verified: a `core`
+table whose `total_sen` calls `app.round_half_up_sen` computes correctly, because
+the reference is schema-qualified and resolved at definition time.
+
+### `search_path` was not pinned, and now is
+
+Checking the placement surfaced a second gap. None of this lane's functions
+pinned `search_path`, which matters most for the ones reachable from a generated
+column or a `SECURITY DEFINER` RPC, where an attacker-controlled schema earlier
+in the path could shadow a called function.
+
+```sql
+alter function app.round_half_up_sen(numeric) set search_path = '';
+alter function app.mask_key(text)             set search_path = '';
+alter function app.apply_offset(date,int,app.rule_offset_unit)
+  set search_path = 'app, pg_catalog';
+```
+
+Verified that `proconfig` is populated afterwards and that both the function and
+the generated column still compute. Functions with an empty `search_path` must
+schema-qualify every reference, which the ones above already do. Every function
+this lane owns carries an explicit `search_path`; the migration author should
+treat a missing one as a defect.
+
+### Column visibility, checked against sb-tenancy's finding
+
+sb-tenancy's point that **RLS filters rows and cannot hide a column** applies to
+this lane too, so each table was rechecked. Only `quotation` mixes
+differently-privileged data, holding `sell_price_sen` beside `direct_cost_sen`
+and `margin_rate`. No split is needed, because `quotation:read` is withheld from
+OPS and TRAINER entirely rather than partially: the roles that may read the row
+are the ones that do the costing. The `engagements` case is different only
+because OPS must read the rest of that row, which is why it needs the child-table
+split and this does not.
 
 ---
 
@@ -1546,18 +1639,29 @@ different act from a tenant rotating its own provider key, and conflating them
 destroys BYOK for every tenant at once. sb-tenancy §6.4 holds the runbook; this
 lane's `key_ref` design depends on that runbook being followed.
 
-**A-7. One conflict to resolve, raised back to sb-tenancy.** Its role matrix
-withholds `costing:read` from OPS, which is the control keeping margin off
-delivery screens. `API_CONTRACT` §8 contradicts it: `GET /v1/engagements/{id}` is
-documented for **OPS**, FINANCE and MD, and its payload carries
-`finance.realisedMarginRate` and `finance.trainerPayable`. Either OPS sees
-realised margin on the engagement screen or the contract's role list is wrong.
-Recommendation: keep `costing:read` from OPS and drop the `finance` block from
-the OPS projection of that endpoint, since margin on a delivery screen is the
-leak the control exists to prevent. **Owner: sb-tenancy, with the contract
-author.** This lane assumes nothing else about `discount:approve`, which sits
-with SALES_MANAGER, FINANCE and MD and not ADMIN, matching the
-`discount_approval_id` check in §1.7.
+**A-7. OPS and realised margin — closed.** sb-tenancy decided it and wrote it
+into its §4.5: keep the control, drop the `finance` block from the OPS
+projection. `API_CONTRACT` §8 documents `GET /v1/engagements/{id}` for OPS with
+`finance.realisedMarginRate` and `finance.trainerPayable` in the payload, and
+that payload now needs a role-dependent projection noted against it, which
+belongs to whoever owns the contract.
+
+The part worth carrying here is sb-tenancy's reason, because it generalises:
+**RLS filters rows and cannot hide a column**, and column-level `GRANT` does not
+help either, since all nine application roles are the same Postgres role
+`authenticated`. So the finance block becomes a one-to-one child table gated on
+`quotation:read`, because a row is something a policy can gate. Leaving the
+columns in place and having the API omit them for OPS would put the control in a
+handler, where it fails the moment a second endpoint reads the same table. This
+lane rechecked its own tables against that finding in Schema placement above.
+
+**A-8. `costing:*` is now `quotation:*`.** team-lead ruled the table is
+`quotations`, not `costings`, and sb-tenancy renamed the permissions with it:
+`quotation:read`, `quotation:write`, `quotation:apply`. This document used
+`costing:read` and is corrected. The rename was right: a permission naming a
+different object than the table it guards is what gets "fixed" wrongly later.
+`discount:approve` is unchanged, still SALES_MANAGER, FINANCE and MD and not
+ADMIN, which matches the `discount_approval_id` check in §1.7.
 
 ---
 
@@ -1627,6 +1731,15 @@ originally offered against sb-erd's FK is withdrawn there as too strong. From 02
 "platform admin" was wrong: global compliance rows are service-role writes, since
 a tenant-scoped ADMIN editing national rules would change compliance for every
 other training provider.
+
+**D-12. Schema placement was wrong throughout.** Every table in this document was
+written as `app.*` and belongs in `core`. `app` is not exposed to PostgREST, so
+the endpoints would have returned empty with no error. Caught by sb-tenancy after
+sb-actions hit the same thing. Corrected in Schema placement, which carries the
+per-object table. The `app.` prefixes in the SQL fragments below are left as
+executed rather than rewritten, since they were verified in that form; read the
+placement table as authoritative for schema and the fragments as authoritative
+for everything else.
 
 **D-10. Stub tables.** `app.engagement` and `app.agent_action` appear here as
 minimal stubs so the evaluator and the hours-saved function could be executed.
