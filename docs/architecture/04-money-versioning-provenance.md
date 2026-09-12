@@ -6,6 +6,11 @@ database as constraints, generated columns and triggers, not in clients.
 
 Sources: `API_CONTRACT.md` §1, §6, §9, §12, §16, §17, §18 and `DECISIONS.md` §3–§7.
 
+Cross-lane reconciliation with `01-domain-model.md` (sb-erd) and
+`02-tenancy-auth-rls.md` (sb-tenancy) is in **Conflicts with 01** and
+**Agreements with 02** below. Read those before implementing anything that
+crosses a lane boundary.
+
 Every SQL fragment in this document was executed against PostgreSQL 17.11
 before publication. Where a result contradicted the contract, the contradiction
 is recorded rather than smoothed over. Nothing here is a migration; `sb-migrations`
@@ -28,7 +33,7 @@ Fourteen decisions, each with the reason it went that way.
 | D7 | Below-floor pricing is a `CHECK` requiring an attached approval id, not a prohibition | `DISCOUNT_APPROVE` must be able to succeed. The database states the real rule: never below floor *without an approval*. |
 | D8 | Rate card components are eight typed child tables, not one EAV table | Each has different key dimensions and value types. Row counts are tiny; clarity wins over generality. |
 | D9 | Compliance rules are **bitemporal**: an effective range and a registry-knowledge range, with rule ids stable across registry snapshots | Copying rules per snapshot makes every unchanged rule look changed. Verified: the naive model emitted ten drift warnings where one was correct. |
-| D10 | Provenance is a side table keyed by `(subject_table, subject_id, field)`, not a per-row jsonb column | Both required query patterns are cross-table. A jsonb column answers neither without a union over every table. |
+| D10 | Provenance is a side table keyed by `(subject_table, subject_id, field)`, not a per-row jsonb column, and **not** a `provenance_id` FK on the subject | Both required query patterns are cross-table. jsonb answers neither without a union over every table; a subject-to-provenance FK cannot be traversed backwards, so it cannot label or paginate the results. Reverses sb-erd's assumption, see Conflicts with 01. |
 | D11 | Scalar provenance fields (`tier`, `model`, `confidence`, `cache_hit_rate`) are typed columns; only `sources` and `jury` are jsonb | The scalars are filtered and sorted on. jsonb is for genuinely variable shapes. |
 | D12 | Derived states are **views**, never stored columns: tier status, budget state, invoice overdue | Each has multiple independent causes living in different rows. A stored copy drifts. |
 | D13 | AI cost is stored in **micro-MYR**, with sen derived | A single token costs far less than one sen. Rounding per event loses real money at volume. |
@@ -1150,6 +1155,15 @@ during design; this is the suite that keeps them true.
 68. REMINDER_3 set to AUTONOMOUS → check violation.
 69. TRADING_HOLD without `requires_role = 'MD'` → check violation.
 
+**Cross-lane reconciliation (added after 01 and 02 landed)**
+70. `rate_card.version` cannot be updated → `PT409 RATE_CARD_VERSION_IMMUTABLE`. This is what makes the C-3 foreign key safe; if it ever passes, the text-snapshot argument wins and C-3 must be revisited.
+71. `rate_card.effective_to` **can** still be updated, so a card can be closed.
+72. No table outside `app.provenance` has a `provenance_id` column. A catalogue query, so a reintroduced FK fails CI rather than quietly creating a second source of truth for one edge.
+73. `app.mask_key` produces the §17 fixture shape, and the provider write RPC rejects any caller-supplied `masked_key`.
+74. `key_fingerprint` is unique per tenant where present, and null-tolerant.
+75. Every table in the A-5 allowlist permits a null `tenant_id`; every table outside it does not. Pairs with sb-tenancy's §8.7 guard so the two tests cannot disagree.
+76. Deleting a subject row clears its provenance rows, and the periodic sweep finds zero orphans on a clean database. This is the replacement for the foreign key C-1 gives up, so it is tested, not assumed.
+
 ---
 
 ## 9 · Open questions
@@ -1202,9 +1216,223 @@ Executive, same meeting as DECISIONS §5.**
 1. **SST rate and registration.** Every fixture shows `TRAINING_EXEMPT` at 0%. The schema supports a rate, but nothing in the pack establishes the exemption's statutory basis or what happens if the company crosses a registration threshold. Finance.
 2. **Credit notes and refunds.** Not in the contract at all. Negative lines on a linked document is the natural model, and the rounding decision was made to support it, but the lifecycle is unspecified. Affects commission clawback.
 3. **Commission clawback.** If a collected invoice is later refunded, commission already paid must reverse. `commission_ledger` computes payable from `paid_sen`, so it self-corrects, but the *paid-out* side is outside TrainOS.
-4. **Is `rule_set` global or per tenant?** Modelled as `tenant_id IS NULL` for platform-global national rules with optional tenant overrides. Raised with **`sb-tenancy`**, whose RLS must admit NULL-tenant rows on read.
+4. ~~**Is `rule_set` global or per tenant?**~~ **Closed.** `sb-tenancy` confirmed the nullable `tenant_id` and supplied the read predicate; national rules stay national, because copying them per tenant means a circular correction is applied N times and the Nth is the one that gets missed. Writes to global rows go through the service-role provisioning path, not a tenant `ADMIN`. See Agreements with 02, A-4 and A-5.
 5. **`human_minutes_spent` granularity.** The hours-saved computation depends on a column owned by **`sb-actions`**. Confirm it is per action, monotonic, and excludes idle time in a background tab.
 6. **FX rate source for BYOK.** `usage_event.fx_myr_per_usd` is stamped per event. Which source, and daily or per-transaction?
+
+---
+
+## Conflicts with 01 (sb-erd)
+
+`01-domain-model.md` (commit `ecaa5be`) names `provenance`, `provenance_sources`
+and `rate_card*` as this lane's tables to define. Three of its assumptions about
+their shape do not survive. The lead's precedence order puts 04 above 01, so
+**the migration author follows this section**. Each reversal has a reason, and
+where sb-erd's reasoning was sound that is said plainly.
+
+### C-1. Provenance is a table, but the reference points the other way
+
+**sb-erd assumed:** `provenance_id uuid NULL REFERENCES provenance(id)` on every
+AI-touched row, with `NULL` meaning human-authored.
+
+**This lane implements:** `app.provenance (subject_table, subject_id, field)`
+pointing *at* the subject. No `provenance_id` column on subject rows.
+
+Agreed first: it is a **table**, not an embedded jsonb column. sb-erd read that
+correctly, and §4.1 gives the reasoning independently. The disagreement is only
+about direction.
+
+sb-erd's `NULL` mapping to §1's "absent means human-authored" is elegant, and
+its field-level answer — normalise fields into rows, as `proposal_sections`,
+`tna_gaps` and `enquiry_extraction_fields` already do — genuinely works. My
+original argument that the FK cannot express field-level provenance was too
+strong and is withdrawn.
+
+The reason for reversing is narrower and decisive. **A subject-to-provenance FK
+cannot be traversed backwards.** Given a provenance row, nothing identifies
+which table it attests. Both required queries end at that wall:
+
+- *"All AI-generated fields awaiting review"* returns provenance rows the UI
+  cannot label, because finding each subject means probing nine tables.
+- *"Everything from run_4821"* has the same shape.
+
+Worse, both need one ordered, paginated list. A nine-way `UNION ALL` with no
+shared sort column cannot be paginated by cursor without materialising every
+branch. Reversing the reference makes both a single indexed scan on one table,
+confirmed on the plan in §4.2.
+
+The FK bought referential integrity, and that loss is real. It is replaced by
+three mechanisms rather than waved away: `subject_table` references the
+`app.provenance_subject` allow-list so a typo cannot create an unreachable row;
+each provenance-bearing table carries an `AFTER DELETE` trigger clearing its
+rows; and a periodic sweep catches the remainder. That is weaker than a foreign
+key and is recorded as a real cost, not a wash.
+
+**What sb-erd must change:** drop `provenance_id` from all nine tables at lines
+368, 373, 386, 407, 417, 429, 547, 580 and 604, and the second provenance column
+contemplated at line 88. Nothing replaces them on the subject side. A row is
+human-authored when no provenance row exists for it, which preserves §1's
+"absent means human-authored" exactly as sb-erd intended — the absence just
+lives in the other table.
+
+**Do not keep both directions.** A `provenance_id` retained "for convenient
+joins" alongside the polymorphic pair is two sources of truth for one edge, and
+the project's standing rule is that divergence is a defect.
+
+### C-2. `provenance_sources` stays jsonb
+
+**sb-erd assumed:** a `provenance_sources` child table.
+
+**This lane implements:** `sources jsonb not null default '[]'` with a
+`jsonb_path_ops` GIN index.
+
+Sources are written once with their provenance row, rendered whole in the AI
+badge popover, and never updated independently. A child table adds a join and a
+second write to every AI-touched field for no query this system performs. The
+one query that would favour it — "which records cite `TNA-0042`" — is served by
+the GIN index.
+
+This is the weakest of the three reversals. If sb-events or the knowledge lane
+needs to join sources to real records, a child table becomes correct and this
+should be revisited rather than defended.
+
+### C-3. `rate_card_version` is a foreign key, with the text label derived
+
+**sb-erd assumed:** `quotations.rate_card_version text not null default
+'v0-placeholder'`.
+
+**This lane implements:** `rate_card_id uuid not null references
+app.rate_card(id)`, with the text label rendered by join.
+
+sb-erd's reasoning at line 1271 is right and is preserved: a price change must
+not reprice existing quotations, so the quotation snapshots what it was priced
+against. Its correction of §6's `rateCardYear: 2026` at S4 — a year is not a
+version — is also right.
+
+A bare text column snapshots the label but cannot reach the card's component
+rows, so a quotation cannot be re-derived from it, and nothing stops a typo
+pointing at a card that never existed. The FK gives both. The objection to an FK
+is that the label could change under a quotation, so the label is frozen:
+
+```sql
+create or replace function app.rate_card_version_immutable() returns trigger
+language plpgsql as $$
+begin
+  if new.version is distinct from old.version then
+    raise exception 'rate_card.version is immutable (% -> %)', old.version, new.version
+      using errcode = 'PT409', detail = '{"reason":"RATE_CARD_VERSION_IMMUTABLE"}';
+  end if;
+  return new;
+end $$;
+```
+
+Verified: renaming `v1-2026` is refused, while `effective_to` remains editable
+so a card can still be closed. With the label immutable, the FK is strictly
+stronger than the text copy and the API's `rateCardVersion` string is a join.
+
+**What sb-erd must change:** `quotations.rate_card_version text` becomes
+`quotations.rate_card_id uuid not null references rate_card(id)`. The API field
+name and its `v0-placeholder` value are unchanged; only the column is. Keep
+`floor_price_minor` snapshotted as sb-erd has it, and add
+`programme_floor_price_sen` alongside it per Deviation D-2.
+
+### C-4. Table ownership: `quotations`
+
+sb-erd owns the `quotations` table; §1.7 and §2 of this document specify the
+**money columns on it**, not a competing table. The `app.quotation` DDL here is
+the verification harness, not a second table. Columns contributed by this lane:
+`rate_card_id`, `sell_price_sen`, `direct_cost_sen`, `floor_margin_rate`,
+`commission_rate`, `discount_approval_id`, `invoice_id`, and the generated
+`margin_sen`, `margin_rate`, `programme_floor_price_sen`,
+`margin_floor_price_sen`, `floor_price_sen`, `below_floor`, `commission_sen`,
+`display_per_pax_sen`, plus the `floor_price_needs_approval` constraint.
+
+---
+
+## Agreements with 02 (sb-tenancy)
+
+`02-tenancy-auth-rls.md` (commit `ac8aff2`). All of sb-tenancy's requirements
+are accepted; four change this document.
+
+**A-1. `ai_provider` is this lane's table.** sb-tenancy is deleting its
+duplicate `public.ai_provider_keys`. This lane owns the metadata columns,
+sb-tenancy owns the secret material, the RLS and the reveal path. `key_ref`
+stays on the row, since a vault secret id is a locator and not a capability;
+decryption needs `SELECT` on `vault.decrypted_secrets`, which no login role
+holds.
+
+**A-2. The mask is computed in the database.** A caller-supplied mask can be
+faked, so it is derived at write time inside the `SECURITY DEFINER` RPC and is
+never an input:
+
+```sql
+create or replace function app.mask_key(p_key text)
+returns text language sql immutable strict as $$
+  select case when length(p_key) < 8 then repeat('•', 12)
+              else left(p_key, 7) || repeat('•', 12) || right(p_key, 4) end
+$$;
+```
+
+Verified to produce `sk-ant-••••••••••••9a41`, matching the §17 fixture.
+
+**A-3. `key_fingerprint bytea` added** for "this key was already added"
+detection: a SHA-256 comparison value, never an authenticator, with a partial
+unique index on `(tenant_id, key_fingerprint) where key_fingerprint is not null`.
+
+**A-4. "Platform admin" was wrong and is corrected.** §3.1 previously said
+global rule rows are "platform-admin only". sb-tenancy is right that `ADMIN` is
+tenant-scoped, and that a tenant's ADMIN editing national rules would let one
+training provider change compliance for every other one. Global rows are written
+only through the **service-role provisioning path**, which makes it a deploy-time
+act under code review. This document adopts sb-tenancy's read predicate verbatim.
+
+**A-5. Global-reference tables for the §8.7 pgTAP allowlist.** These carry a
+nullable `tenant_id`, or none at all, by design. Naming them so the
+NOT-NULL-tenant guard does not fail CI and nobody "fixes" the column later:
+
+| Table | tenant_id | Why |
+|---|---|---|
+| `app.rule_set` | nullable | national circular registry snapshots |
+| `app.compliance_rule` | nullable | national rules, tenant overrides allowed |
+| `app.rule_change_set` | nullable | ingested circular documents |
+| `app.rule_change` | nullable | proposed diffs against national rules |
+| `app.knowledge_source` | nullable | shared corpora such as circulars |
+| `app.provenance_subject` | **no column** | pure lookup, the allow-list of provenance-bearing relations |
+
+Both partial indexes added as advised, since the `OR` predicate does not use a
+single plain index well:
+
+```sql
+create index compliance_rule_global_idx on app.compliance_rule (family_key, side)
+  where tenant_id is null;
+create index compliance_rule_tenant_idx on app.compliance_rule (tenant_id, family_key, side)
+  where tenant_id is not null;
+```
+
+Honest note: `compliance_rule` holds tens of rows, so the planner will prefer a
+sequential scan regardless. Confirmed with `enable_seqscan = off` that the
+partial index is valid and chosen when costs force it. These indexes are for the
+RLS predicate shape and future growth, not for present performance.
+
+**A-6. Root-key rotation warning carried forward.** Rotating the project-wide
+pgsodium/Vault root key makes every existing secret unreadable with no automated
+re-encryption, and it is a Management API operation rather than SQL. That is a
+different act from a tenant rotating its own provider key, and conflating them
+destroys BYOK for every tenant at once. sb-tenancy §6.4 holds the runbook; this
+lane's `key_ref` design depends on that runbook being followed.
+
+**A-7. One conflict to resolve, raised back to sb-tenancy.** Its role matrix
+withholds `costing:read` from OPS, which is the control keeping margin off
+delivery screens. `API_CONTRACT` §8 contradicts it: `GET /v1/engagements/{id}` is
+documented for **OPS**, FINANCE and MD, and its payload carries
+`finance.realisedMarginRate` and `finance.trainerPayable`. Either OPS sees
+realised margin on the engagement screen or the contract's role list is wrong.
+Recommendation: keep `costing:read` from OPS and drop the `finance` block from
+the OPS projection of that endpoint, since margin on a delivery screen is the
+leak the control exists to prevent. **Owner: sb-tenancy, with the contract
+author.** This lane assumes nothing else about `discount:approve`, which sits
+with SALES_MANAGER, FINANCE and MD and not ADMIN, matching the
+`discount_approval_id` check in §1.7.
 
 ---
 
@@ -1265,6 +1493,15 @@ text is implemented, as §18 instructs.
 each snapshot. Executing the drift scenario produced ten warnings where one was
 correct, so rule identity was made stable and the model went bitemporal. The
 failure is recorded here because test 43 exists to prevent its return.
+
+**D-11. Three reversals of 01, one correction from 02.** `provenance_id` on
+subject rows is removed, `provenance_sources` stays jsonb, and
+`quotations.rate_card_version text` becomes a foreign key with the label frozen.
+All three are in Conflicts with 01 with reasons, and the field-level argument
+originally offered against sb-erd's FK is withdrawn there as too strong. From 02,
+"platform admin" was wrong: global compliance rows are service-role writes, since
+a tenant-scoped ADMIN editing national rules would change compliance for every
+other training provider.
 
 **D-10. Stub tables.** `app.engagement` and `app.agent_action` appear here as
 minimal stubs so the evaluator and the hours-saved function could be executed.
