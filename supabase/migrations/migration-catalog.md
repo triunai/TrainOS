@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 8 · **Applied:** 0 · **Authored, not applied:** 8
+**Migrations:** 9 · **Applied:** 0 · **Authored, not applied:** 9
 **Last snapshot of `tables/`:** never
 
 ---
@@ -12,6 +12,8 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-12 — **009 authored and EXECUTED: the rule registry is BITEMPORAL, and T3 proves why that is not decoration.** Two independent axes: `validity` is when a rule is IN FORCE, `known` is when WE KNEW it. Conflating them produces wrong answers that look right. T3 runs DECISIONS §3's actual situation — a 3-day public lead time in force from 15 Jun 2026, superseded by a 14-day rule effective 1 Jan 2027 that was only KNOWN from 8 November — and asserts three answers: a check run on 28 October for a 12 November training date resolves 3 days (the 14-day rule did not exist yet); a DECEMBER re-check of the same November date still resolves 3 days (knowing about a January rule does not make it apply in November); and a January training date resolves 14. With one time axis, the October answer comes out wrong and the audit trail calls the original assessment a mistake when it was not. **The EXCLUDE constraint is what makes the registry answerable** — for one family, mode and scheme, no two in-force rules may overlap on BOTH axes — and T4 checks the harder half too: it must PERMIT a different family, a non-overlapping validity, and a tenant override, because a constraint that refused those would make the registry unusable and is the easier mistake to make. **Defect found by running it:** the exclusion constraint could not contain `coalesce(scheme::text, '*')` — casting an enum to text is STABLE, not IMMUTABLE, and Postgres refuses it in an index expression outright. A maintained `scheme_key` column with a CHECK proving the trigger is doing its job replaces it, so a dropped trigger surfaces as a constraint violation rather than as a silently weakened exclusion constraint. Doc 04 avoids the problem with an `ANY` enum member, which would mean adding a value the API contract's own enum does not have. **Conflict C6:** doc 04 keys the rule on `HRD-014` with no `tenant_id`; doc 02 §4.2 Template E models these as national with `tenant_id NULL` plus optional overrides. Implemented as doc 02 describes, because the estate must share a corrected circular — copying a national rule per tenant means a correction is applied N times and the Nth is missed. ⚠ **`knowledge_chunks.embedding` was NOT created**: pgvector is not available in the authoring environment, so the column and its HNSW index are created conditionally and a loud NOTICE records the skip. This is the ONE object in the set not executed in its intended form.
 
 **Last updated:** 2026-09-12 — **008 authored and EXECUTED: delivery, and the attendance lock the product cannot bend.** Contract §8 says approved attendance returns `409 ATTENDANCE_LOCKED` and the lock is one-way; DECISIONS §3 lists attendance immutability as an eTRIS rule. **The lock is enforced on BOTH the day and its entries, and that is the whole design.** A trigger on the parent alone freezes the approval columns and leaves every mark on a locked day freely editable — which looks correct in every diff and protects nothing HRD Corp cares about. T3 exercises insert, update AND delete of a mark on a locked day; the migration's own verify block refuses to commit unless both triggers exist. **Locking closes capture without being asked**: `capture_qr`, `capture_signature` and `capture_manual` are forced false, so the contract's "captureModes are all false while locked" is a property of the row and the UI has nothing to get wrong. **Unlocking is an action, not an update**: it requires a reason, clears the old approval so the day does not still look approved, reopens capture, and increments `unlock_count` ITSELF — T6g proves the caller cannot reset it, because the one hand that unlocks must not be able to erase the evidence that it did. **What this migration deliberately does not claim**: it does not stop a superuser disabling the trigger. That is a platform-access question, not a schema one, and the header says so rather than implying a guarantee it cannot make. Two projections with one writer each: `engagement_trainers` is maintained from sessions in BOTH directions (T7b covers the removal half, without which the trainer policy keeps showing an engagement they left), and `programmes.deliveries_count` moves both ways. **A SENT message must cite the consent row it relied on, by id** — PDPA asks which permission a message went out under, and a foreign key is the only answer that cannot be reconstructed favourably afterwards.
 
@@ -33,6 +35,7 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 009 | `009_compliance_rules_checks_hrdc.sql` | **The bitemporal HRD Corp rule registry, rule-change review, checks with version drift, claim packets, knowledge corpus (2026-09-12).** Twelve tables. Rules carry two time ranges — in force, and known — so re-running a check on an old engagement resolves what the registry said THEN rather than silently re-deciding it against today. A GiST exclusion constraint over both axes makes "which rule applied on this date as known on that date" have exactly one answer. Rules are national by default (`tenant_id NULL`) with optional tenant overrides that win locally and nowhere else; there is deliberately no platform-admin role, so writing a national rule is a provisioning act. A rule cannot go ACTIVE without a named verifier, per DECISIONS §3. A packet cannot be marked SUBMITTED while incomplete — contract §9's 422 expressed where an application cannot route around it — and a required document marked PRESENT must have something behind it. A changed knowledge source is quarantined by constraint. Spine untouched. |
 | 008 | `008_delivery_engagements_sessions_attendance.sql` | **Delivery, and the one-way attendance lock (2026-09-12).** Engagements with a configuration-driven lifecycle, sessions, participants, attendance, certificates, evaluations, message rates and outbound messages. The attendance lock is enforced on the day AND its entries, because the rule is about the day and the writes happen to the entries. Locking forces all three capture modes false so the response cannot contradict the rule. Unlocking requires a reason, clears the approval, reopens capture and increments a counter the caller cannot set. `engagement_step_states` stores no step key and no position — both come from `pipeline_steps`. Participants' identity numbers are stored as a hash plus last four, never the number. A sent message cites the consent row it relied on by foreign key. Closes the two FKs 006 and 007 left open. Spine untouched: `ATTENDANCE_APPROVE` and `ATTENDANCE_UNLOCK` are action types 011 will dispatch; this is what makes the lock real when it does. |
 | 007 | `007_money_proposals_quotations_portal.sql` | **Money: rate cards, provenance, proposals, quotations and the client portal (2026-09-12).** Eighteen tables. Total-from-lines is enforced, not trusted: `quotation_lines.total_sen` is a GENERATED column so a caller cannot supply a total that disagrees with its own unit price and quantity, a trigger recomputes the header from the lines, and a DEFERRABLE constraint trigger refuses to commit a header that disagrees. Deferred because a multi-line edit legitimately passes through states where they do not match. **Two floors, both generated**: an absolute programme floor stamped at pricing time and a margin floor derived with `ceil` (never `round`), with the binding one and `below_floor` derived from the row so the costing screen and the approval screen cannot compute them differently. `floor_margin_rate` and `commission_rate` are STAMPED onto the quotation, so a rate-card edit cannot silently reprice a proposal already sent, and the floor stays reproducible after the card is retired. Portal tokens store only a SHA-256 hash, and `UNIQUE (tenant_id, proposal_id)` on acceptances makes a double-clicked Accept unable to create a second binding acceptance whatever the handler does. Spine untouched. |
 | 006 | `006_catalogue_programmes_and_trainers.sql` | **What the business sells and who delivers it (2026-09-12).** Programmes with modules, pricing tiers and materials; trainers with pool membership, a declared availability calendar and bookings. The catalogue sits in Delivery, not Sales, because `PUT /programmes/{id}` is ADMIN + L&D and returns FORBIDDEN to SALES. Three things it gets right that are easy to get wrong: the tier floor price is an **absolute** commercial-policy figure rather than a derived margin; a trainer **cannot** hold two overlapping CONFIRMED bookings, enforced by an EXCLUSION constraint rather than by application code, while two SOFT_HOLDs may overlap on purpose; and the availability calendar is written by a trigger on bookings so the two can never disagree. Closes the three foreign keys 002 and 005 left open (`memberships.trainer_id`, `organisation_suggestions.programme_id`, `tna_recommendations.programme_id`). Spine untouched. |
@@ -210,6 +213,36 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 009 (`009_compliance_rules_checks_hrdc.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Sources: `docs/architecture/04` §3 (the
+bitemporal registry, the rule grammar, `resolve_rules`), `docs/architecture/01` §3.3,
+`docs/architecture/02` §4.2 Template E, DECISIONS §3 and §6, contract §17 and §18.
+
+### The 7-point RPC contract check, worked
+
+1/2. No client-callable RPC, no envelope. `core.resolve_rules` is an internal `STABLE` function with
+EXECUTE revoked from `anon`. 3. RpcMap: none. 4. Call sites: 011 gates `RULE_CHANGE_APPROVE` and
+`HRDC_PACKET_MARK_SUBMITTED` against these. 5. Casts: one, and it is the finding — see the dated
+entry on `scheme_key`. 6. Reload/restore: none. 7. Public routes: none.
+
+### Pin — `tests/test_009_compliance_rules_checks_hrdc.sql`
+
+Nine checks, all executed, all PASS. T1 both nullable-tenant tables are RLS-forced despite skipping
+`finalise_table` · T2 ACTIVE needs a named verifier · **T3 the bitemporal question, three answers** ·
+**T4 ambiguity refused AND the three non-ambiguous pairs permitted** · T5 a tenant override wins
+locally and does not leak across the estate · T6 an incomplete packet cannot be submitted and a
+PRESENT document needs evidence · T7 a changed source is quarantined · T8 a change below 0.80
+confidence is withheld from the diff · T9 a drift must cite two different versions.
+
+### Rollback — `rollbacks/009_compliance_rules_checks_hrdc_rollback.sql`
+
+Guards on filed claims, ACTIVE verified rules and the assessment history, each with why it is not
+reconstructible — re-extracting rules from circulars produces PROPOSED rows, not verified ones.
+Round-tripped and idempotent.
 
 ---
 

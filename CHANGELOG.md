@@ -12,6 +12,33 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — compliance rules that remember what we knew, and when
+
+### Added
+
+- **The training-grant rule registry, claim packets and the knowledge corpus (009).**
+- **Rules carry two dates, not one: when a rule is in force, and when we learned about it.** A
+  circular published in November can change a rule that takes effect the following January. A claim
+  assessed in October was assessed correctly against what the registry said in October, and
+  re-running that check later must still say so. With a single date, re-checking an old engagement
+  silently re-decides it against today's rules and the audit trail calls the original decision a
+  mistake.
+- **"Which rule applied" has exactly one answer.** The database refuses two rules that could both
+  apply to the same situation, so a compliance check cannot depend on which record happened to be
+  read first.
+- **Rules are national, with local overrides.** One shared set for the whole platform, because a
+  corrected circular has to reach everyone, plus optional stricter rules per customer that apply
+  only to them. No customer's administrator can change compliance for anyone else.
+- **A rule cannot become active without a named person verifying it against the circular.** Rules
+  extracted by a model load as proposals. This is the point at which an extraction would otherwise
+  quietly become policy.
+
+### Note
+
+- One column could not be created in the authoring environment: the vector embedding on knowledge
+  chunks needs an extension that was not available. It is created automatically where the extension
+  exists, and the migration says loudly when it is skipped.
+
 ## 2026-09-12 — delivery, and attendance that genuinely cannot be edited
 
 ### Added
