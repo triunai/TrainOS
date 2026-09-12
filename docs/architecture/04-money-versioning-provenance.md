@@ -1173,7 +1173,7 @@ during design; this is the suite that keeps them true.
 **Schema placement**
 83. Every table in the placement table above is in the schema that table names. A catalogue query, because a table in `app` fails silently at the API rather than loudly in CI, which is the whole reason this test exists.
 84. `provenance_subject` is the only object of this lane's in `app` that is a table.
-85. Every function this lane owns has a non-null `proconfig` pinning `search_path`. Catches a new function added without one.
+85. Every function this lane owns has a non-null `proconfig` pinning `search_path`, and every one of them pins it to the empty string. Catches both a new function added without one and a well-meaning `'app, pg_catalog'` that puts a writable schema ahead of the catalogue.
 86. A `core` table's generated column calling an `app` helper still computes after a schema rebuild.
 87. Each of the client-callable RPCs is reachable in `core` and returns its documented shape.
 
@@ -1295,18 +1295,37 @@ pinned `search_path`, which matters most for the ones reachable from a generated
 column or a `SECURITY DEFINER` RPC, where an attacker-controlled schema earlier
 in the path could shadow a called function.
 
+**Every function this lane owns pins `search_path = ''`.** An earlier version of
+this section pinned `apply_offset` to `'app, pg_catalog'`. sb-tenancy pointed out
+that this puts a writable schema ahead of `pg_catalog`, so a future object in
+`app` could shadow a catalogue name for that function. They are right that the
+ordering is wrong on principle, and the fix costs nothing:
+
 ```sql
 alter function app.round_half_up_sen(numeric) set search_path = '';
 alter function app.mask_key(text)             set search_path = '';
-alter function app.apply_offset(date,int,app.rule_offset_unit)
-  set search_path = 'app, pg_catalog';
+alter function app.apply_offset(date,int,app.rule_offset_unit) set search_path = '';
 ```
 
-Verified that `proconfig` is populated afterwards and that both the function and
-the generated column still compute. Functions with an empty `search_path` must
-schema-qualify every reference, which the ones above already do. Every function
-this lane owns carries an explicit `search_path`; the migration author should
-treat a missing one as a defect.
+An empty path is viable even for `apply_offset`, whose body calls `make_interval`
+and the `date + int` operator, because **`pg_catalog` is implicitly searched
+first when it is not named explicitly**. Verified: with an empty path it still
+returns 2026-11-11 for a 14-day offset and 2027-05-13 for a 6-month one.
+Functions on an empty path must schema-qualify everything outside `pg_catalog`,
+which this lane's already do.
+
+Reported honestly: **I could not reproduce an actual shadowing exploit against
+the `'app, pg_catalog'` ordering.** With an exact-signature `app.round(numeric)`
+shadow present and `app` first, an unqualified call inside a SQL-bodied function
+still resolved to `pg_catalog.round` in fresh sessions. So the concrete risk here
+is unproven, and the setting was changed because a writable schema ahead of
+`pg_catalog` should not require that argument to be settled, not because an
+exploit was demonstrated.
+
+`proconfig` is populated for every function afterwards, and the cross-schema
+generated column still computes — the pair matters, because pinning `search_path`
+is exactly the change that breaks a function relying on an unqualified name. The
+migration author should treat a missing `search_path` as a defect.
 
 ### Column visibility, checked against sb-tenancy's finding
 
