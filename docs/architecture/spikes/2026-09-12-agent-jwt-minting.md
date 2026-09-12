@@ -58,11 +58,24 @@ project**, shared by GoTrue-issued end-user sessions and any custom-minted token
 Rotating in a TrainOS-controlled key means that key becomes the key GoTrue itself
 uses to sign real human user sessions too — it is not a separate "agent-only" key.
 Anyone holding that private key can mint a valid token for **any** `sub`/`role`,
-not just agent principals. This reintroduces the same "leak = impersonate anyone"
-risk profile that the signing-keys system was built to move away from from the
-legacy shared JWT secret, so the private key must be stored with equivalent care
-(e.g., Supabase Vault or an Edge Function secret, never bundled client-side, ideally
-mediated by a small minting service rather than distributed to every caller).
+not just agent principals.
+
+**Sharper framing (added after review with sb-tenancy):** this is not just an
+impersonation risk, it is a **full Row Level Security bypass**. Per
+[Postgres Roles](https://supabase.com/docs/guides/database/postgres/roles),
+`authenticator` is "used to validate a JWT and then 'change into' another role
+determined by the JWT verification," and `service_role` "is used by the API
+(PostgREST) to bypass Row Level Security." PostgREST honors whatever value is in
+the JWT's `role` claim and switches the database session into that Postgres role
+for the request (`jwt-role-claim-key`), provided the connecting `authenticator`
+role has been `GRANT`ed permission to assume it. On every default Supabase
+project, `authenticator` already holds that grant into `service_role` — it's
+required for the platform's own `service_role` API key to function at all. So a
+JWT minted with `role: "service_role"`, signed by whatever key the project
+trusts, does not just impersonate one user — it bypasses **every** RLS policy in
+the database, across all table families, unconditionally. This is strictly worse
+than the impersonation framing above and is the risk that should drive custody
+decisions for the minting key/service, not "someone could pretend to be user X."
 
 Also note a 5-minute throttle on signing-key state changes and up to a ~20-minute
 verifier cache window platform-wide:
@@ -212,20 +225,73 @@ unverified-in-this-session fallback that could fully decouple agent-token signin
 from the human-session signing key — flagged for follow-up, not yet a confirmed
 recommendation.
 
+## Addendum (2026-09-12, after design review with sb-tenancy): does an external OIDC issuer avoid the RLS-bypass risk?
+
+sb-tenancy adopted the fallback (service-user sign-in + Custom Access Token Hook)
+as primary, specifically because of the RLS-bypass risk above, and asked whether
+routing agent tokens through a TrainOS-controlled **external OIDC issuer**
+(third-party auth) instead of the project's own signing-key rotation would remove
+that risk, since it would give agents a separate key from GoTrue's.
+
+**Answer: No, it does not remove the risk, only narrows its blast radius.**
+Third-party auth uses the identical PostgREST role-switching mechanism:
+
+> "Supabase inspects the role claim present in all JWTs sent to it, to assign the
+> correct Postgres role... By default, third-party auth provider JWTs (such as
+> Auth0) do not contain a role claim in them... you need to configure them to
+> include the `role: 'authenticated'` custom claim in their access tokens."
+> — third-party auth role-claim behavior (fetched via WebSearch/docs, 2026-09-12)
+
+The role claim is read the same way regardless of which trusted signer issued the
+token (project signing key or a registered third-party issuer), and the
+`authenticator → service_role` grant that makes this dangerous is a
+project-wide, always-on default — not something tied to which key or issuer
+minted the token. So whoever controls a TrainOS-run OIDC issuer's private key
+could equally set `role: "service_role"` in a token they mint and get the same
+full RLS bypass.
+
+What the OIDC route **does** buy: a compromise of the agent-issuer's key would not
+let an attacker forge tokens trusted as coming from GoTrue's own issuer for real
+human sessions (different `iss`/key entirely), so the blast radius is contained
+to whatever the third-party issuer's audience is trusted for. It does **not**
+buy freedom from the RLS-bypass risk — that requires either never emitting a
+`role` claim other than `authenticated` from any agent-facing minting path (a
+code-discipline/audit guarantee, not a structural one), or not registering an
+agent-controlled issuer as trusted for `role` claims at all. This confirms
+sb-tenancy's design decision (service-user sign-in + hook, no agent-controlled
+minting path in the trust chain) rather than reversing it — the value of the
+OIDC route, if pursued later, is blast-radius containment for a different
+future scenario, not a green light to resume self-minting for agents.
+
+Source: [Postgres Roles](https://supabase.com/docs/guides/database/postgres/roles)
+(fetched 2026-09-12); third-party auth role-claim configuration (WebSearch summary
+of Supabase docs, 2026-09-12) — the underlying third-party-auth provider pages
+(Auth0, Firebase, WorkOS, Clerk) were listed by docs search but not individually
+read for provider-specific role-claim wording; treat the general mechanism as
+confirmed, provider-specific setup details as unverified.
+
 ## What I could NOT verify
 
 - Whether an imported **standby** (not-yet-rotated) signing key is already trusted
-  for PostgREST/Data API *verification* before "Rotate key" is clicked, which would
-  let TrainOS keep a signing key that's never promoted to GoTrue's active
-  session-signing slot.
+  for PostgREST/Data API *verification* before "Rotate key" is clicked. Per
+  sb-tenancy's review this doesn't change the risk calculus either way — a
+  verifying standby key can still carry a `role: "service_role"` claim — so it's
+  noted here as a residual open item, not a mitigation worth chasing.
 - The full mechanics, required claim shape, and `auth.uid()` behavior for
-  **third-party auth** (external OIDC issuer) JWTs — the docs page fetch was
-  truncated/summarized rather than fully read in this session.
+  **third-party auth** (external OIDC issuer) JWTs beyond the role-claim question
+  addressed in the addendum above — the docs page fetch was truncated/summarized
+  rather than fully read in this session, and individual provider pages
+  (Auth0/Firebase/WorkOS/Clerk) were not read.
 - Whether a hosted (non-self-hosted) Supabase project exposes any `pre-request`-style
   hook for PostgREST that would support the `set_config('request.jwt.claims', …)`
   pattern from a `SECURITY DEFINER` function — not found in the Supabase Auth docs
   consulted; this is more likely a self-hosting/PostgREST-config question that
   wasn't directly answered by the sources searched here.
+- Whether it's possible/supported to `REVOKE service_role FROM authenticator` on a
+  hosted Supabase project without breaking the platform's own `service_role` API
+  key feature — if TrainOS's legacy `service_role` key is fully retired in favor
+  of `sb_secret_...` keys, this grant might be revocable as defense in depth, but
+  I have not verified this is possible or supported on hosted Supabase.
 - Exact current-year/version dates of first publication for the JWT Signing Keys
   and Third-Party Auth docs pages — the docs site does not surface a "last updated"
   date; all citations below reflect content as fetched on 2026-09-12.
@@ -239,4 +305,7 @@ recommendation.
 - [Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security) — fetched 2026-09-12.
 - [JWT Claims Reference](https://supabase.com/docs/guides/auth/jwt-fields) — fetched 2026-09-12.
 - [JSON Web Token (JWT)](https://supabase.com/docs/guides/auth/jwts) — fetched 2026-09-12 (for the "using custom or third-party JWTs" section).
+- [Postgres Roles](https://supabase.com/docs/guides/database/postgres/roles) — fetched via MCP `search_docs` 2026-09-12; source for the `authenticator`/`service_role`/RLS-bypass addendum.
+- [PostgREST Authentication reference (v14)](https://docs.postgrest.org/en/v14/references/auth.html) — fetched 2026-09-12; source for `jwt-role-claim-key` and the `GRANT role TO authenticator` precondition.
 - WebSearch results, 2026-09-12: GitHub issues #42244, #42810, #41691 (supabase/supabase) on ES256 verification edge cases in Edge Functions gateway — referenced for context on real-world ES256 rollout friction, not relied on as authoritative.
+- WebSearch results, 2026-09-12, on third-party auth role-claim configuration (Auth0/Firebase third-party docs pages, PostgREST auth reference, GitHub discussion supabase/supabase#614 "Wrong role claim on PostgREST") — used for the addendum; individual provider pages not read in full.
