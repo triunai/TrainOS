@@ -24,7 +24,7 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | # | Conflict | Resolution | Whose call |
 |---|---|---|---|
 | C1 | Gate tables in `app`, which PostgREST does not expose | Read-path tables to the domain schema; only `action_effects`, `idempotency_keys` and `outbox` stay in `app` | `sb-tenancy` raised it, applied here |
-| C2 | Domain schema is `core` or `public` | **`core`**. Closed: `sb-tenancy` retargeted and now writes RLS naming `core.approval_requests`; `sb-events` and migration 001 agree. `sb-erd` is the outlier | settled by weight of committed artefacts |
+| C2 | Domain schema is `core` or `public` | **`core`**, ruling R-C2. All four lanes are there; no outlier remains | lead's ruling |
 | C3 | `app.policies` collides with RLS "policies" | renamed `core.action_policies` | mine |
 | C4 | Tenant helper `app.tenant_id()` or `app.current_tenant_id()` | `app.current_tenant_id()`; the gate calls the raising sibling `app.require_tenant_id()` | lead's ruling |
 | C5 | Tenant claim under `app_metadata` or top level | **top level** on `auth.jwt()` | `sb-tenancy` |
@@ -41,7 +41,10 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | C18 | One `gated_by` cannot express an edge three action types authorise | `gated_by` is `text[]`; the trigger checks membership | `sb-erd` found it, lead ruled R3 |
 | C19 | Collections trading hold had no action type | 22nd type `ACCOUNT_TRADING_HOLD`, MD-gated under `FIN-05` | lead's ruling R3, closes `sb-erd` Q24 |
 | C20 | Where `state_transitions` lives | `app` — it is gate machinery, not domain data | `sb-erd` proposed, taken |
-| C21 | Worker status vocabulary `SETTLED`/`SUCCEEDED` | worker sends `SUCCEEDED`/`FAILED`; the gate stores `SETTLED`/`DEAD_LETTERED` | `sb-events` owns the caller |
+| C21 | Worker status vocabulary | worker sends `SETTLED`/`FAILED`; the gate stores `SETTLED`/`DEAD_LETTERED`; only terminal failures ever call | `sb-events` verified both call sites |
+| C22 | Gate read a stored floor that does not exist | `core.quotations.below_floor` is generated, as is `floor_price_sen`; the gate reads the boolean | lead's ruling, `sb-money` §240–251 |
+| C23 | `app.role_holders` would enumerate any tenant passed to it | raises unless `service_role` or the caller's own tenant | `sb-tenancy` caught it |
+| C24 | Routing by role can outlive the permission matrix | optional `p_requires_permission` intersects the two | `sb-tenancy` |
 | C12 | Jury sampling by event subscription or by cron | cron, 5-minute sweep | `sb-events` conceded |
 | C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_sen`, the one stable money column per gated target | `sb-erd` |
 
@@ -173,13 +176,15 @@ in `config.toml`, because it holds the tenant resolver, the permission lookup an
 gate, "none of which a client may call directly". A table the Data API must read cannot
 live there, or `GET /v1/approvals` has no data source.
 
-The domain schema is **`core`**, and C2 in §0 is now closed. `sb-tenancy` has
-retargeted its whole §4 catalogue to `core` per migration 001's conflict C1 and has
-written RLS policies naming `core.approval_requests`, `core.approval_decisions` and
-`core.action_policies` outright. Policies that name my tables are the strongest possible
-statement of where those tables are, so this document follows them. `sb-events` is on
-`core` and so is the executable migration. `sb-erd` is the remaining outlier and has
-been told.
+The domain schema is **`core`**, settled by ruling R-C2 and closed as C2 in §0. All
+four lanes are there: `sb-tenancy` writes RLS naming `core.approval_requests`,
+`sb-erd` moved 01 to `core`, `sb-events` was never anywhere else, and migration 001
+creates it.
+
+The argument that decided it, before the ruling arrived, is worth keeping because it is
+better than the head-count: policies that name a table are the strongest possible
+statement of where that table lives, and policies in `core` protecting tables in
+`public` is incoherent in a way that four-against-one is not.
 
 | Schema | Tables | Why |
 |---|---|---|
@@ -1338,19 +1343,28 @@ organisation merge, and on every proposal deletion, and it goes stale silently w
 of those paths is missed. A flag that is wrong is worse than a probe that costs
 microseconds.
 
-**`belowFloorPrice`** — a comparison, not a calculation. `sb-money` resolved the §6
-fixture into two independent floors, and `sb-erd` persists all of them on the quotation:
-`absolute_floor_sen` from the pricing tier, `margin_floor_sen` computed from cost,
-`binding_floor` naming which one binds, and `floor_price_sen` holding the binding
-value. The gate reads only the last of those. Which floor binds is a pricing question
-and it is not the gate's to answer.
+**`belowFloorPrice`** — not a comparison either, as it turns out. `sb-money` §240–251
+makes the whole thing generated: `programme_floor_price_sen` is the absolute floor from
+the programme tier, `margin_floor_price_sen` is generated from cost, `floor_price_sen`
+is generated as the greater of the two, and `below_floor` is itself a generated column.
+There is no stored floor to read and nothing for the gate to compute.
 
 ```sql
-select q.sell_price_sen < q.floor_price_sen
-  into v_below_floor
+select q.below_floor, q.floor_price_sen, q.binding_floor_basis
+  into v_below_floor, v_floor_sen, v_floor_basis
 from core.quotations q
 where q.tenant_id = v_tenant and q.id = v_quotation_id;
 ```
+
+The gate reads a boolean the database maintains. `floor_price_sen` and
+`binding_floor_basis` come along for the error payload, because `FLOOR_PRICE_BREACH` in
+§1 returns `details.floorPrice` and a manager deciding `APV-02` needs to know whether
+the margin floor or the programme floor bound — `MARGIN` and `ABSOLUTE`, with equality
+resolving to `ABSOLUTE` per `sb-money` rule 80.
+
+This is the strongest form of the separation this lane has been arguing for throughout.
+The gate does not compute money, does not compare money, and cannot disagree with the
+pricing lane about whether a price is below floor, because the answer is a column.
 
 **`overdueBalanceOnAccount`**
 
@@ -1602,17 +1616,18 @@ because it consumes the same three numbers:
         'selfAuthorised', true, 'policyId', 'GOV-03');
     else
       -- pick an approver who is not the requester
+      -- membership facts from sb-tenancy, ordering and exclusion here
       select u.id, u.name into v_assignee_id, v_assignee_name
-      from app.role_holders(v_tenant, v_policy.approver_role) u
+      from app.role_holders(v_tenant, array[v_policy.approver_role], 'approval:decide') u
       where u.id is distinct from v_actor_id
-      order by u.open_approval_count, u.id                 -- cheapest queue first
+      order by app.open_approval_count(v_tenant, u.id), u.id   -- cheapest queue first
       limit 1;
 
       if v_assignee_id is null and v_policy.escalate_to_role is not null then
         select u.id, u.name into v_assignee_id, v_assignee_name
-        from app.role_holders(v_tenant, v_policy.escalate_to_role) u
+        from app.role_holders(v_tenant, array[v_policy.escalate_to_role], 'approval:decide') u
         where u.id is distinct from v_actor_id
-        order by u.open_approval_count, u.id
+        order by app.open_approval_count(v_tenant, u.id), u.id
         limit 1;
       end if;
 
@@ -1636,14 +1651,50 @@ because it consumes the same three numbers:
 tables, returning each holder with their open approval count so assignment is a crude
 but honest round-robin rather than always landing on the same manager.
 
-**One function, not two.** `sb-events` needs the same lookup for badge fan-out — the set
-of users holding a role — where the gate needs one of them. They asked whose lane should
-hold it. It should be **`sb-tenancy`'s**, because it reads their membership tables and
-neither of us should be joining across into those directly. So: `app.role_holders`
-returns the set and takes an array, `sb-events` calls it as-is, and the gate's
-`app.pick_role_holder(tenant, role, exclude_actor)` becomes a thin wrapper that adds the
-ordering and the exclusion. Two implementations of one membership query would drift the
-first time a role gained a scope condition.
+**One function, not two, and it is `sb-tenancy`'s.** `sb-events` needs the same lookup
+for badge fan-out — the set of users holding a role — where the gate needs one of them.
+It reads their membership tables and neither of us should be joining into those
+directly, so they own it and both of us wrap it. They have written it as their §2.6 and
+changed the signature in two ways, both of which I have taken.
+
+```sql
+app.role_holders(
+  p_tenant              uuid,
+  p_roles               text[],
+  p_requires_permission text default null   -- intersect with the permission matrix
+) returns setof record
+```
+
+**A cross-tenant guard, and it is the more important of the two.** A `SECURITY DEFINER`
+helper that takes a tenant id and then trusts it will happily enumerate another tenant's
+users. `app.role_holders` now raises unless the caller is `service_role` or `p_tenant`
+matches their own claim, with `service_role` exempt because `sb-events`' badge fan-out
+legitimately iterates tenants. `sb-tenancy` flagged the shape rather than quietly fixing
+it, and they are right that it will recur in both lanes: **a `SECURITY DEFINER` function
+taking an id it then trusts is the tell, and the tenant argument is where it bites.**
+Worth re-reading every signature in this document against that, which I have done —
+`app.perform_action`, `app.decide_approval` and `app.report_effect_result` all derive the
+tenant from the claim rather than accepting one.
+
+**An optional permission intersection.** Routing by `approver_role` stays correct and is
+still a data match rather than an authorisation decision. But the role-permission matrix
+is data and can move, and if an MD shifts `approval:decide` off `SALES_MANAGER`, routing
+by role alone keeps assigning approvals to people who can no longer decide them. That
+presents as an inert queue rather than as a misconfiguration, which is the worst way for
+a permission change to fail. So the gate passes `'approval:decide'` and the two cannot
+silently disagree.
+
+`AGENT` memberships are excluded unconditionally, so neither lane has to remember: an
+agent holds no `approval:decide`, and §3's fifth input forbids self-approval, so an agent
+assignee is never right.
+
+**They declined to do the ordering, and the seam argument is right.** `app.role_holders`
+does not read `core.approval_requests` and should not. Ordering an assignment queue is
+this lane's policy and the count is over this lane's table; a helper in `app` reaching
+into a domain table inverts the dependency and couples an identity lookup to a schema
+that will change. So membership facts are theirs, ordering and requester exclusion are
+`app.pick_role_holder`'s. Open approval count is a reasonable first ordering rule and
+obviously not the last one, which is exactly why it should not live in their function.
 
 Self-approval is enforced **twice**: here, so it can never be assigned to the
 requester, and again in `app.decide_approval`, so an assignment written before a role
@@ -2357,7 +2408,8 @@ begin
 
   if not (v_actor.role = a.approver_role
           or (a.escalated_at is not null and v_actor.role = a.escalated_to_role)
-          or v_actor.role in ('MD','ADMIN')) then
+          or v_actor.role = 'MD') then      -- not ADMIN: sb-tenancy's matrix withholds
+                                            -- approval:decide from the administrator
     raise exception using errcode = 'TRNOS',
       message = 'This approval belongs to a different role',
       detail  = jsonb_build_object('code','FORBIDDEN',
@@ -2672,9 +2724,13 @@ chance before the 24-hour clock runs out.
 **Who may decide**: `approver_role`, never `requested_by`. `assigned_to` is a routing
 hint for the inbox, not an authorisation: any holder of the role may pick up any
 approval in their queue, which is what keeps the queue drainable when someone is on
-leave. The `MD` and `ADMIN` override exists because §7 lists both roles on
-`GET /v1/approvals` and because someone must be able to clear a queue whose role has
-no available holder.
+leave. The `MD` override exists because someone must be able to clear a queue whose role has no
+available holder. It is `MD` alone and **not** `ADMIN`, which my first draft had wrong:
+`sb-tenancy`'s matrix withholds `approval:decide` from `ADMIN` deliberately, on the
+reasoning that a system administrator runs the system and does not commit the business.
+§7 lists `ADMIN` nowhere on `GET /v1/approvals` either; I had inferred it from the
+role's general reach, which is exactly the inference a permission matrix exists to
+prevent.
 
 ---
 
@@ -2875,16 +2931,19 @@ to parse. That argument wins, so both lanes are now on:
 ```sql
 app.report_effect_result(
   p_effect_id bigint,     -- app.action_effects.id, carried in app.outbox.effect_id
-  p_status    text,       -- SUCCEEDED | FAILED
+  p_status    text,       -- SETTLED | FAILED
   p_result    jsonb,      -- provider ids, message ids, uin, cost
   p_error     jsonb       -- {code, message, retryable}
 ) returns void
 ```
 
-`p_status` takes `SUCCEEDED` or `FAILED` from the worker, which are `sb-events`'
-vocabulary; the stored effect status is `SETTLED` or `DEAD_LETTERED`, which is the
-gate's. `app.fail_job` calls this only on *terminal* failure, so a retryable attempt
-never reaches the gate at all, which is why there is no `RETRYING` state on this side.
+`p_status` takes `SETTLED` or `FAILED`; the stored effect status is `SETTLED` or
+`DEAD_LETTERED`. The asymmetry is deliberate and `sb-events` verified the call sites:
+`app.complete_job` calls with `SETTLED`, and **only** the dead-letter branch of
+`app.fail_job` calls at all, with `FAILED`. A transient failure that will retry calls
+nothing, because the effect has not settled and stays `DISPATCHED`. So every failure
+that reaches the gate is terminal by construction, which is why the stored value is
+`DEAD_LETTERED` and why there is no `RETRYING` state on this side.
 
 `app.complete_job` calls it on success and the dead-letter branch of `app.fail_job` calls
 it on terminal failure. **The failure path is the one that matters**, and `sb-events` is
@@ -2914,7 +2973,7 @@ function, which is also the only place the action's own lifecycle advances:
 ```sql
 create or replace function app.report_effect_result(
   p_effect_id bigint,
-  p_status    text,                      -- SUCCEEDED | FAILED
+  p_status    text,                      -- SETTLED | FAILED
   p_result    jsonb default '{}'::jsonb,
   p_error     jsonb default null
 ) returns void
@@ -2939,16 +2998,16 @@ begin
   end if;
 
   update app.action_effects
-     set status     = case when p_status = 'SUCCEEDED' then 'SETTLED' else 'DEAD_LETTERED' end,
+     set status     = case when p_status = 'SETTLED' then 'SETTLED' else 'DEAD_LETTERED' end,
          attempts   = attempts + 1,
          last_error = p_error,
          retryable  = coalesce((p_error->>'retryable')::boolean, true),
-         applied_at = case when p_status = 'SUCCEEDED' then now() else applied_at end
+         applied_at = case when p_status = 'SETTLED' then now() else applied_at end
    where id = e.id;
 
   -- the provider's own facts land on the domain row through the type's handler,
   -- the only place a worker's data reaches the domain schema
-  if p_status = 'SUCCEEDED' then
+  if p_status = 'SETTLED' then
     execute format('select app.confirm_%s($1, $2)',
                    lower(app.effect_action_type(e.id)))
       using e.id, p_result;
@@ -3345,18 +3404,24 @@ No conflict.
    compiles in my head and nowhere else. Column types, `plpgsql` control flow, the
    `record` declarations and the `execute format(...)` dispatch all need a real
    `create extension`, a real branch and a real `pgTAP` run before anyone trusts them.
-2. **Domain column names are confirmed for the five context flags and unverified
-   elsewhere.** `sb-erd` has confirmed `proposals.organisation_id`, the
-   `proposals_org_sent` and `invoices_overdue` partial indexes verbatim,
-   `quotations.floor_price_sen`, `attendance_days`, `engagements.starts_on`,
-   `hrdc_packets.deadline_at` and `invoices.due_at`, and the four stable money columns.
-   `core.contact_consents`, `core.messages`, `core.payments` and
-   `core.compliance_rules`, which appear in §3's effect table, are still my guesses.
+2. **The five context flags are confirmed; §3's effect table is not.** `sb-erd`
+   confirmed `proposals.organisation_id`, the `proposals_org_sent` and
+   `invoices_overdue` partial indexes verbatim, `attendance_days`,
+   `engagements.starts_on`, `hrdc_packets.deadline_at`, `invoices.due_at` and the stable
+   money columns; `sb-money` supplies the generated `below_floor`. Still my guesses:
+   `core.contact_consents`, `core.messages`, `core.payments`, `core.compliance_rules`,
+   `core.collections_cases` and `core.organisations.trading_hold_at`, all of which
+   appear in §3's effect table and none of which I have checked against 01.
 3. **`sb-tenancy`'s helpers are now confirmed**, with two corrections applied:
    `app.require_tenant_id()` rather than the nullable `app.current_tenant_id()` inside
    the gate, and `actor_kind` carries four values because portal RPCs produce `CLIENT`.
-   `app.is_service_role()` and `app.role_holders()` are still mine to propose and have
-   not been acknowledged.
+   `app.role_holders()` is now written and committed in their §2.6, and
+   `approval:decide` is confirmed to exist in their catalogue with that exact spelling,
+   alongside `approval:read`, `approval:bulk_decide` and `approval:reassign` — note the
+   matrix deliberately withholds `approval:decide` from `ADMIN`, on the reasoning that a
+   system administrator runs the system and does not commit the business, which this
+   document's `MD`/`ADMIN` override in §4.1 currently contradicts and should be narrowed
+   to `MD`. `app.is_service_role()` is still mine to propose and unacknowledged.
 4. **The `sb-events` seam is now agreed on both sides** and reflected in §6.2a: the
    gate writes `app.outbox` directly with their column names, emits through their
    three-argument `app.emit_event` overload, and the worker reports through their
@@ -3400,9 +3465,11 @@ No conflict.
    `DECISIONS.md` §1 and needs the MD's sign-off in the same session that signs off
    the autonomy matrix. `APV-01`'s own conditions are the only ones quoted verbatim
    from the contract.
-9. **Approval assignment fairness is untested.** `app.role_holders` orders by open
+9. **Approval assignment fairness is untested.** `app.pick_role_holder` orders by open
    approval count, which is a plausible round-robin and not a measured one. Whether it
-   distributes sensibly under a real queue is something only production data answers.
+   distributes sensibly under a real queue is something only production data answers,
+   and `sb-tenancy` is right that it is obviously not the last ordering rule this will
+   have.
 10. **No performance measurement.** The claims that the context-flag probes are
     "one index probe" and that the `ESCALATE` path stays "under 50ms" are reasoning
     about the plans these queries should get, not `EXPLAIN ANALYZE` output. The test
