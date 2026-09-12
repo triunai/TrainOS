@@ -1,0 +1,21 @@
+# Supabase CLI config for TrainOS. Minimal on purpose — unspecified keys fall back
+# to the CLI defaults, and every key below exists because a default is wrong for
+# this project, not because it could be set.
+
+# Not yet linked to a hosted project. The migration set in this repo is AUTHORED,
+# NOT APPLIED; `project_id` is filled in at link time so that a stray
+# `supabase db push` cannot find a target before a human has chosen one.
+# project_id = ""
+
+[db]
+# Pin the engine the migrations were authored and executed against. 17 is what
+# `supabase/tests/` were run on; a lower major would silently reject syntax the
+# set depends on.
+major_version = 17
+
+[db.seed]
+# `supabase/seeds/` holds demo and QA fixtures that are run deliberately by a
+# human against a named database, never swept in by `db reset`. The Aurora
+# Manufacturing story fixture writes real-looking client records; an automatic
+# seed on every reset is how that ends up somewhere it should not be.
+enabled = false
