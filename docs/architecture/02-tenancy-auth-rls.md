@@ -2665,9 +2665,18 @@ select throws_ok($$ select * from app.role_holders('T1', array['SALES_MANAGER']:
 select tests.as_worker();   -- clears request.jwt.claims entirely
 select isnt_empty($$ select * from app.role_holders('T2', array['MD']::app.app_role[]) $$,
                 'a caller with no JWT may name any tenant');
+-- enum_range is sb-events' "every role" spelling. Two assertions, because the
+-- name of the first one alone would overstate what it proves.
 select isnt_empty($$ select * from app.role_holders(
                       'T1', enum_range(null::app.app_role)::app.app_role[]) $$,
-                'enum_range spells "every role" and returns humans only');
+                'enum_range resolves as the every-role array');
+select is_empty($$
+  select h.user_id
+  from app.role_holders('T1', enum_range(null::app.app_role)::app.app_role[]) h
+  join public.memberships m
+    on m.tenant_id = 'T1' and m.user_id = h.user_id
+  where m.actor_kind <> 'HUMAN'
+$$, 'every-role still returns humans only');
 select is_empty($$ select * from app.role_holders('T1', array['OPS']::app.app_role[], 'approval:decide') $$,
                 'permission filter excludes a role that cannot decide');
 select isnt_empty($$ select * from app.role_holders('T1', array['SALES_MANAGER']::app.app_role[], 'approval:decide') $$,
