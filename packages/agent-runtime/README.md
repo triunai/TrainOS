@@ -67,6 +67,70 @@ something already inside it.
 - **The AI badge** renders `provenance` exactly: `origin`, `confidence`,
   `tier`, `model`, `provider`, `cacheHitRate`, `jury`, `sources`.
 
+## Slicing: a run outlives one worker
+
+Architecture doc 05 D13 is binding here. An Edge Function worker is killed at
+the wall clock, 400s on paid plans, and `EdgeRuntime.waitUntil` does not buy a
+longer budget because a background task shares the request's clock. There is no
+fifteen-minute job on this runtime, so **a run that cannot checkpoint cannot
+exceed 400s, full stop.**
+
+So `runAgent` runs a *slice*, not a run:
+
+```ts
+const first = await runAgent({ agent, router, tools, checkpoints: store });
+
+if (first.disposition === 'RESUMABLE') {
+  // re-enqueue; the next worker calls:
+  const next = await runAgent({ agent, router, tools, checkpoints: store,
+                                resumeFrom: first.resumeFrom });
+}
+```
+
+`runAgentToCompletion(opts)` drives that loop in-process, which is what the
+tests and the CLI use.
+
+| Budget | Scope | Default |
+|---|---|---|
+| `slice.wallClockMs` | per slice — a new worker gets a new clock | 300,000 (doc 05 D13) |
+| `slice.tokens` | per slice — a ration on one worker, not the run | unbounded |
+| `tokenLimit` | the run's envelope, reported on the state card | 60,000 |
+
+Both slice budgets are **per slice** on purpose. A cumulative budget cannot be
+satisfied by starting a new worker, which is the one thing a yield is able to
+do, so a resumed slice would start over the limit and yield forever — a
+livelock that looks like a healthy queue. For the same reason a slice always
+gets at least one model call, however small its budget: one call per slice is
+the slowest progress that is still progress.
+
+**A resumed run is the same run.** The checkpoint carries the whole run so far,
+serialised, so the next worker continues rather than starting a second one:
+
+- same `id` and `ref` — doc 05 §8.5 requires the re-enqueued job to carry the
+  same `run_id`, and a `runId` passed to a resuming call is ignored;
+- contiguous node numbering, `n0…nN`, with one root — the resumed slice does
+  not plan again;
+- `steps[]` still sequential from 1 across the boundary;
+- `durationMs` spans every slice;
+- a stage that had already finished is inherited, not re-run.
+
+A stage caught mid-flight is the interesting case. Its conversation — messages,
+tool results, turns spent, the tier it had escalated to — travels in the
+checkpoint, so the next slice picks it up rather than redoing it. A sliced run
+makes exactly the same tool calls as an unsliced one, which is asserted. The
+partial node is left in the trace as `RETRIED` and the slice that finishes the
+stage opens a new node, so the seam is visible rather than hidden.
+
+The 60% context handoff writes the same record with reason `CONTEXT_HANDOFF`
+and is resumable like any other. Both are the same move: throw away the
+conversation, keep the state card, continue.
+
+A yielded run reports `status: RUNNING` and `outcome: RESUMABLE` on the
+`AutomationRun`, because the contract's `RunStatus` has four members and
+`RESUMABLE` is not one of them. `RUNNING` is true — it is still running, just
+not in this worker — and the disposition rides on the result wrapper, the same
+arrangement `haltedBy` uses.
+
 ## What the runtime guarantees
 
 Whatever a model does inside a node:
@@ -81,6 +145,9 @@ Whatever a model does inside a node:
 4. **A node that fills 60% of its context hands off rather than truncating.**
    It rewrites its messages from the state card and restarts, and the trace
    records which nodes were restarted.
+5. **A slice yields before its budget is spent, never after.** A budget found
+   to be spent after the call that spent it cannot stop the worker being killed
+   mid-call.
 
 ## The demo chain
 

@@ -11,11 +11,20 @@
  *     n4  SUB_AGENT      Verifier  ─┘
  *     n5  TOOL           actions.perform → QUEUED_FOR_APPROVAL → HALTED
  *
- * Three properties this file exists to guarantee, whatever the model does:
+ * **The loop is sliced.** Architecture doc 05 D13: an Edge Function worker is
+ * killed at the wall clock and background tasks share it, so a long run cannot
+ * hold — it runs to roughly 300s, writes a checkpoint, and returns
+ * `RESUMABLE`. The next worker calls `runAgent({ resumeFrom: <checkpoint> })`
+ * and continues the *same* `AutomationRun`: same id, node numbering carrying
+ * on from where it stopped. A run that cannot checkpoint cannot exceed 400s,
+ * which is why this is load-bearing rather than a retry convenience.
+ *
+ * Four properties this file exists to guarantee, whatever the model does:
  *
  *   — every write goes through `actions.perform`, so a policy can stop it;
  *   — a node that fills 60% of its context hands off and restarts rather than
- *     truncating, and the trace says which nodes were restarted;
+ *     truncating, writing the same checkpoint record a yield does;
+ *   — a slice yields before its budget is spent, never after;
  *   — being stopped is a successful outcome. `HALTED` with a `haltedBy` is the
  *     demo working, not the demo failing.
  */
@@ -34,6 +43,7 @@ import type {
   Ref,
   RunStatus,
   TierKey,
+  TraceNode,
 } from '@trainos/contract';
 import { toMyt } from '../fixtures/local-client';
 import { usdToMoney, type PriceBook, DEFAULT_PRICE_BOOK } from '../providers/pricing';
@@ -48,7 +58,19 @@ import {
   type ToolResult,
 } from '../tools/adapter';
 import { toolDefsFor } from '../tools/definitions';
-import { ContextMeter, renderStateCard, type Checkpoint } from './context';
+import {
+  checkpointId,
+  SliceMeter,
+  type CheckpointReason,
+  type CheckpointStore,
+  type RunCheckpoint,
+  type PendingStageState,
+  type RunDisposition,
+  type SliceBudget,
+  type SliceExhaustion,
+  type TraceSnapshot,
+} from './checkpoint';
+import { ContextMeter, renderStateCard } from './context';
 import { runJury, type JuryOutcome, type JuryQuestion } from './jury';
 import { TraceBuilder } from './trace';
 
@@ -139,8 +161,20 @@ export interface RunAgentOptions {
   costLimit?: Money;
   priceBook?: PriceBook;
   now?: () => Date;
-  /** Resume from a checkpoint instead of starting at stage zero. */
-  resumeFrom?: Checkpoint;
+  /**
+   * What one slice may spend before yielding. Wall clock defaults to 300s,
+   * which is doc 05 D13's yield point; the token ration is unbounded unless
+   * set. Both are per slice — see the note on `SliceBudget.tokens`.
+   */
+  slice?: SliceBudget;
+  /** Where checkpoints are written. Without one they are returned but not stored. */
+  checkpoints?: CheckpointStore;
+  /**
+   * Continue an existing run. A checkpoint id requires {@link checkpoints};
+   * the object itself works without a store, which is what an in-process
+   * resume uses.
+   */
+  resumeFrom?: RunCheckpoint | string;
   /** Called as nodes open and close. The CLI uses it to stream the tree. */
   onTrace?: (event: { kind: 'node-open' | 'node-close' | 'event'; detail: unknown }) => void;
 }
@@ -148,6 +182,14 @@ export interface RunAgentOptions {
 export interface AgentRunResult {
   /** Exactly the shape `GET /v1/runs/{id}` returns. */
   run: AutomationRun;
+  /**
+   * What the caller should do next. `RESUMABLE` means the slice yielded with
+   * work still owed; re-enqueue and call `runAgent` again with
+   * {@link resumeFrom}.
+   */
+  disposition: RunDisposition;
+  /** The checkpoint to resume from. Present exactly when `RESUMABLE`. */
+  resumeFrom?: string;
   /**
    * First-class, as the brief requires. It is also on the halted node inside
    * `run.nodes`, which is where M18-S04 reads it — this is the convenience
@@ -157,9 +199,33 @@ export interface AgentRunResult {
   approval?: ApprovalRequestRef;
   /** Provenance for whatever the run produced. Attaches to the drafted record. */
   provenance: Provenance;
-  checkpoints: Checkpoint[];
+  /** Checkpoints written during this slice, oldest first. */
+  checkpoints: RunCheckpoint[];
   jury?: JuryOutcome;
   blackboard: Blackboard;
+}
+
+/* ------------------------------------------------------------------ *
+ * Yield
+ * ------------------------------------------------------------------ */
+
+/**
+ * Thrown when a slice must stop. Not an error condition — the run is fine,
+ * this worker is simply out of clock.
+ */
+class SliceYield extends Error {
+  readonly reason: SliceExhaustion;
+  readonly nodeId: string | undefined;
+  /** The stage's conversation, so the next slice continues it rather than redoing it. */
+  readonly pending: PendingStageState | undefined;
+
+  constructor(reason: SliceExhaustion, nodeId?: string, pending?: PendingStageState) {
+    super(`Slice exhausted: ${reason}`);
+    this.name = 'SliceYield';
+    this.reason = reason;
+    this.nodeId = nodeId;
+    this.pending = pending;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -173,9 +239,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const tokenLimit = opts.tokenLimit ?? 60_000;
   const costLimit = opts.costLimit ?? { amount: 12_000, currency: 'MYR' as const };
 
-  const trace = new TraceBuilder({
-    runId: opts.runId ?? `run_${Math.floor(1000 + Math.random() * 9000)}`,
-    runRef: opts.runRef ?? `#${Math.floor(1000 + Math.random() * 9000)}`,
+  const resumed = await resolveCheckpoint(opts);
+
+  const traceOptions = {
+    // A resumed slice keeps the original run's identity. This is doc 05 §8.5's
+    // assertion: the re-enqueued job carries the same `run_id`.
+    runId: resumed?.runId ?? opts.runId ?? `run_${Math.floor(1000 + Math.random() * 9000)}`,
+    runRef: resumed?.runRef ?? opts.runRef ?? `#${Math.floor(1000 + Math.random() * 9000)}`,
     agentId: agent.id,
     orchestrator: agent.orchestrator,
     trigger: agent.trigger,
@@ -185,100 +255,211 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     tokenLimit,
     costLimit,
     now,
+  };
+
+  const trace = resumed
+    ? TraceBuilder.restore(traceOptions, resumed.trace)
+    : new TraceBuilder(traceOptions);
+
+  const meter = new SliceMeter({
+    // No fallback to `tokenLimit`: that is the run's envelope, not one
+    // worker's ration, and using it here would yield at the end of the run
+    // instead of completing it.
+    budget: { wallClockMs: opts.slice?.wallClockMs, tokens: opts.slice?.tokens },
+    carriedTokens: resumed ? tokensOfSnapshot(resumed.trace) : 0,
+    carriedElapsedMs: resumed?.trace.elapsedMs ?? 0,
+    now: () => now().getTime(),
   });
 
-  const blackboard: Blackboard = { facts: {}, toolCalls: [], notes: {} };
-  const checkpoints: Checkpoint[] = [];
-  trace.setPlan([...agent.stages.map((s) => s.planLabel), 'Submit to the policy gate']);
-  trace.pointAt(agent.trigger.ref);
+  const blackboard: Blackboard = resumed
+    ? resumed.blackboard
+    : { facts: {}, toolCalls: [], notes: {} };
+  const checkpoints: RunCheckpoint[] = [];
 
   /* --- n0 · the orchestrator node ---------------------------------- */
 
-  const orchestratorNode = trace.openNode({
-    parentId: null,
-    kind: 'ORCHESTRATOR',
-    name: 'Orchestrator',
-    tier: agent.orchestratorTier,
-    model: router.binding(agent.orchestratorTier)?.model,
-    provider: toContractProvider(router.binding(agent.orchestratorTier)?.provider ?? 'mock'),
-  });
-  opts.onTrace?.({ kind: 'node-open', detail: { id: orchestratorNode, name: 'Orchestrator' } });
+  let orchestratorNode: string;
 
-  let orchestratorTokens = { in: 0, out: 0 };
-  let orchestratorCost: Money = { amount: 0, currency: 'MYR' };
-  let orchestratorCacheRate = 0;
-
-  try {
-    const call = await router.call(agent.orchestratorTier, {
-      system: ORCHESTRATOR_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            `GOAL\n${agent.goal}`,
-            `CONSTRAINTS\n${agent.constraints.map((c) => `- ${c}`).join('\n')}`,
-            `AVAILABLE SUB-AGENTS\n${agent.stages.map((s) => `- ${s.name}: ${s.planLabel}`).join('\n')}`,
-            'Confirm the plan and note anything you are uncertain about.',
-          ].join('\n\n'),
-        },
-      ],
-      maxTokens: 800,
+  if (resumed) {
+    // Do not plan again. The plan is in the state card, the node is in the
+    // snapshot, and a second planning call would cost money to produce a
+    // second ORCHESTRATOR node in a tree that may have only one root.
+    orchestratorNode = resumed.orchestratorNodeId;
+    trace.event('CHECKPOINT', {
+      step: resumed.step,
+      replayable: true,
+      resumedFrom: resumed.id,
+      reason: resumed.reason,
     });
+  } else {
+    trace.setPlan([...agent.stages.map((s) => s.planLabel), 'Submit to the policy gate']);
+    trace.pointAt(agent.trigger.ref);
 
-    // Always retag with what actually answered, not what the tier binding
-    // says would have. A trace that names `claude-sonnet-5` on a run served by
-    // a mock is a trace that lies, and this is the one file that can prevent it.
-    trace.retagNode(orchestratorNode, {
-      tier: call.tier,
-      model: call.result.model,
-      provider: toContractProvider(call.result.provider),
+    orchestratorNode = trace.openNode({
+      parentId: null,
+      kind: 'ORCHESTRATOR',
+      name: 'Orchestrator',
+      tier: agent.orchestratorTier,
+      model: router.binding(agent.orchestratorTier)?.model,
+      provider: toContractProvider(router.binding(agent.orchestratorTier)?.provider ?? 'mock'),
     });
-    orchestratorTokens = { in: call.result.usage.in, out: call.result.usage.out };
-    orchestratorCost = usdToMoney(call.result.costUsd, priceBook);
-    orchestratorCacheRate = call.result.cacheHitRate;
+    opts.onTrace?.({ kind: 'node-open', detail: { id: orchestratorNode, name: 'Orchestrator' } });
 
-    if (call.degraded) {
-      trace.event('ESCALATION', {
-        from: call.requestedTier,
-        to: call.tier,
-        node: orchestratorNode,
-        reason: call.attempts[0]?.reason,
+    try {
+      const call = await router.call(agent.orchestratorTier, {
+        system: ORCHESTRATOR_SYSTEM,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              `GOAL\n${agent.goal}`,
+              `CONSTRAINTS\n${agent.constraints.map((c) => `- ${c}`).join('\n')}`,
+              `AVAILABLE SUB-AGENTS\n${agent.stages.map((s) => `- ${s.name}: ${s.planLabel}`).join('\n')}`,
+              'Confirm the plan and note anything you are uncertain about.',
+            ].join('\n\n'),
+          },
+        ],
+        maxTokens: 800,
       });
+
+      // Always retag with what actually answered, not what the tier binding
+      // says would have. A trace that names `claude-sonnet-5` on a run served
+      // by a mock is a trace that lies, and this is the one file that can
+      // prevent it.
+      trace.retagNode(orchestratorNode, {
+        tier: call.tier,
+        model: call.result.model,
+        provider: toContractProvider(call.result.provider),
+      });
+
+      if (call.degraded) {
+        trace.event('ESCALATION', {
+          from: call.requestedTier,
+          to: call.tier,
+          node: orchestratorNode,
+          reason: call.attempts[0]?.reason,
+        });
+      }
+      for (const question of extractOpenQuestions(call.result.text)) trace.openQuestion(question);
+      blackboard.notes['Orchestrator'] = call.result.text;
+
+      meter.noteTokens(call.result.usage.in + call.result.usage.out);
+
+      // Closed here rather than at the end of the run: the orchestrator's own
+      // work is done, and §17's example node tree closes n0 `OK` while the
+      // tool node carries the halt. It also means a yielded slice snapshots a
+      // complete n0 instead of a half-open one.
+      trace.closeNode(orchestratorNode, {
+        status: 'OK',
+        tokens: { in: call.result.usage.in, out: call.result.usage.out },
+        cost: usdToMoney(call.result.costUsd, priceBook),
+        cacheHitRate: call.result.cacheHitRate,
+      });
+    } catch (cause) {
+      trace.closeNode(orchestratorNode, { status: 'FAILED' });
+      return failRun(trace, blackboard, checkpoints, cause);
     }
-    for (const question of extractOpenQuestions(call.result.text)) trace.openQuestion(question);
-    blackboard.notes['Orchestrator'] = call.result.text;
-  } catch (cause) {
-    return failRun(trace, blackboard, checkpoints, orchestratorNode, cause);
   }
+
+  /* --- the yield helper -------------------------------------------- */
+
+  const yieldSlice = async (
+    reason: CheckpointReason,
+    stageIndex: number,
+    pendingNodeId?: string,
+    pendingStage?: PendingStageState,
+  ): Promise<AgentRunResult> => {
+    const checkpoint = await writeCheckpoint({
+      trace,
+      blackboard,
+      agent,
+      orchestratorNode,
+      reason,
+      stageIndex,
+      pendingNodeId,
+      pendingStage,
+      store: opts.checkpoints,
+      now,
+      emitEvent: true,
+    });
+    checkpoints.push(checkpoint);
+
+    return {
+      // `RUNNING` is the truthful contract status: the run is still running,
+      // just not in this worker. `RESUMABLE` rides on the wrapper because the
+      // contract's `RunStatus` has no such member.
+      run: trace.build({ status: 'RUNNING', outcome: 'RESUMABLE' }),
+      disposition: 'RESUMABLE',
+      resumeFrom: checkpoint.id,
+      provenance: buildProvenance(trace, agent, blackboard, 0, undefined),
+      checkpoints,
+      blackboard,
+    };
+  };
 
   /* --- n1..nN · the sub-agents ------------------------------------- */
 
-  const startIndex = opts.resumeFrom?.stageIndex ?? 0;
-  if (opts.resumeFrom) {
-    trace.event('CHECKPOINT', { step: opts.resumeFrom.step, replayable: true, resumed: true });
-    for (let i = 0; i < startIndex; i += 1) trace.markPlanStep(i + 1, 'SKIPPED');
-  }
+  const startIndex = resumed?.stageIndex ?? 0;
+  // Consumed by the stage it belongs to and then dropped: a later stage must
+  // not inherit an earlier one's half-finished conversation.
+  let pendingStage =
+    resumed?.pendingStage && resumed.pendingStage.stageIndex === startIndex
+      ? resumed.pendingStage
+      : undefined;
 
   for (let index = startIndex; index < agent.stages.length; index += 1) {
     const stage = agent.stages[index];
     if (!stage) continue;
 
+    // Checked before the stage starts, never after it finishes. A budget found
+    // to be spent afterwards cannot stop the worker being killed mid-call.
+    const exhausted = meter.exhausted(now().getTime());
+    if (exhausted) return yieldSlice(exhausted, index);
+
     trace.markPlanStep(index + 1, 'RUNNING');
     try {
+      const resumeState = pendingStage;
+      pendingStage = undefined;
+
       await runStage({
         stage,
         stageIndex: index,
+        resume: resumeState,
         parentId: orchestratorNode,
         trace,
         blackboard,
         router,
         tools,
         priceBook,
+        meter,
+        now,
         input: opts.input ?? {},
         onTrace: opts.onTrace,
+        onHandoff: async (nodeId, pending) => {
+          const checkpoint = await writeCheckpoint({
+            trace,
+            blackboard,
+            agent,
+            orchestratorNode,
+            reason: 'CONTEXT_HANDOFF',
+            stageIndex: index,
+            pendingNodeId: nodeId,
+            pendingStage: pending,
+            store: opts.checkpoints,
+            now,
+            emitEvent: false,
+          });
+          checkpoints.push(checkpoint);
+        },
       });
       trace.markPlanStep(index + 1, 'DONE');
     } catch (cause) {
+      if (cause instanceof SliceYield) {
+        // Mid-stage. The next slice picks the conversation up where this one
+        // dropped it, so no model call is paid for twice.
+        trace.markPlanStep(index + 1, 'PENDING');
+        return yieldSlice(cause.reason, index, cause.nodeId, cause.pending);
+      }
       if (cause instanceof BudgetExceededError) {
         trace.event('BUDGET_EXCEEDED', {
           scope: cause.status.scope,
@@ -288,34 +469,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           pausedActionTypes: stage.actionType ? [stage.actionType] : [],
         });
         trace.markPlanStep(index + 1, 'HALTED');
-        trace.closeNode(orchestratorNode, {
-          status: 'HALTED',
-          tokens: orchestratorTokens,
-          cost: orchestratorCost,
-          cacheHitRate: orchestratorCacheRate,
-        });
         return {
           run: trace.build({ status: 'HALTED', outcome: 'BUDGET_CAP' }),
+          disposition: 'COMPLETE',
           provenance: buildProvenance(trace, agent, blackboard, 0, undefined),
           checkpoints,
           blackboard,
         };
       }
       trace.markPlanStep(index + 1, 'FAILED');
-      return failRun(trace, blackboard, checkpoints, orchestratorNode, cause);
+      return failRun(trace, blackboard, checkpoints, cause);
     }
 
     // §17: a checkpoint after each sub-agent completes.
-    const checkpoint: Checkpoint = {
-      step: index + 1,
-      nodeId: `after:${stage.name}`,
+    const checkpoint = await writeCheckpoint({
+      trace,
+      blackboard,
+      agent,
+      orchestratorNode,
+      reason: 'STAGE_COMPLETE',
       stageIndex: index + 1,
-      stateCard: trace.stateCard(),
-      at: toMyt(now()),
-      replayable: true,
-    };
+      store: opts.checkpoints,
+      now,
+      emitEvent: true,
+    });
     checkpoints.push(checkpoint);
-    trace.event('CHECKPOINT', { step: checkpoint.step, replayable: true });
   }
 
   /* --- the jury, only when a trigger fires ------------------------- */
@@ -329,7 +507,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   if (routingEntry?.jury) {
     const question: JuryQuestion = {
       proposition: `${plan.type} on ${plan.targetRef}. ${plan.reasoning}`,
-      evidence: plan.evidence.map((e) => `- ${e.type} ${e.ref}${e.excerpt ? `: ${e.excerpt}` : ''}`).join('\n'),
+      evidence: plan.evidence
+        .map((e) => `- ${e.type} ${e.ref}${e.excerpt ? `: ${e.excerpt}` : ''}`)
+        .join('\n'),
       confidence: plan.confidence,
       value: plan.value,
       firstOfKind: plan.firstOfKind,
@@ -348,6 +528,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           model: vote.model,
         });
         trace.closeNode(jurorNode, { status: 'OK', tokens });
+        meter.noteTokens(tokens.in + tokens.out);
       },
     });
 
@@ -378,7 +559,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     }
   }
 
-  /* --- n5 · the gate ----------------------------------------------- */
+  /* --- the gate ---------------------------------------------------- */
 
   const submitNode = trace.openNode({
     parentId: orchestratorNode,
@@ -414,7 +595,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       args: submitArgs,
       status: 'FAILED',
       durationMs: 0,
-      error: { attempt: 1, code: submitResult.error?.code ?? 'UNKNOWN', message: submitResult.error?.message },
+      error: {
+        attempt: 1,
+        code: submitResult.error?.code ?? 'UNKNOWN',
+        message: submitResult.error?.message,
+      },
     });
   } else if (response.status === 'QUEUED_FOR_APPROVAL') {
     const queued = response as ActionQueuedResponse;
@@ -434,14 +619,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       approvalRequestRef: queued.approvalRequest.ref,
       reason: haltedBy.reason,
     });
-    trace.step({
-      tool: 'actions.perform',
-      args: submitArgs,
-      status: 'HALTED',
-      durationMs: 0,
-      haltedBy,
-    });
-    trace.decide(`Stopped at ${queued.approvalRequest.policyId}; ${queued.approvalRequest.ref} raised for a human`);
+    trace.step({ tool: 'actions.perform', args: submitArgs, status: 'HALTED', durationMs: 0, haltedBy });
+    trace.decide(
+      `Stopped at ${queued.approvalRequest.policyId}; ${queued.approvalRequest.ref} raised for a human`,
+    );
   } else {
     trace.closeNode(submitNode, { status: 'OK' });
     trace.markPlanStep(agent.stages.length + 1, 'DONE');
@@ -455,18 +636,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     outcome = response.status;
   }
 
-  // The orchestrator's own work succeeded even when the gate stopped the
-  // submission — §17's example node tree closes n0 `OK` and hangs `HALTED` on
-  // the tool node. Marking n0 halted would blame the planner for the policy.
-  trace.closeNode(orchestratorNode, {
-    status: status === 'FAILED' ? 'FAILED' : 'OK',
-    tokens: orchestratorTokens,
-    cost: orchestratorCost,
-    cacheHitRate: orchestratorCacheRate,
-  });
-
   return {
     run: trace.build({ status, outcome }),
+    disposition: status === 'FAILED' ? 'FAILED' : 'COMPLETE',
     haltedBy,
     approval,
     provenance: buildProvenance(trace, agent, blackboard, plan.confidence, jury),
@@ -483,27 +655,36 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 interface RunStageOptions {
   stage: AgentStage;
   stageIndex: number;
+  /** A conversation from an earlier slice to continue rather than restart. */
+  resume?: PendingStageState;
   parentId: string;
   trace: TraceBuilder;
   blackboard: Blackboard;
   router: Router;
   tools: ToolAdapter;
   priceBook: PriceBook;
+  meter: SliceMeter;
+  now: () => Date;
   input: Record<string, unknown>;
   onTrace: RunAgentOptions['onTrace'];
+  onHandoff: (nodeId: string, pending: PendingStageState) => Promise<void>;
 }
 
 async function runStage(opts: RunStageOptions): Promise<void> {
-  const { stage, trace, blackboard, router, tools, priceBook } = opts;
+  const { stage, trace, blackboard, router, tools, priceBook, meter } = opts;
 
   const requestedTier = stage.tier ?? router.tierFor(stage.actionType);
-  const ladder = entryFor(router.config, stage.actionType as GovernedActionType)?.escalationLadder ?? [
-    requestedTier,
-  ];
+  const ladder = entryFor(router.config, stage.actionType as GovernedActionType)
+    ?.escalationLadder ?? [requestedTier];
 
-  let tier = requestedTier;
-  let attemptsAtStage = 0;
-  let escalated = false;
+  // A resumed stage keeps the tier it had climbed to and the passes it had
+  // already spent, so neither the escalation nor the turn budget refills.
+  let tier = opts.resume?.tier ?? requestedTier;
+  let attemptsAtStage = opts.resume?.attemptsAtStage ?? 0;
+  let escalated = opts.resume?.escalated ?? false;
+  let carriedMessages = opts.resume?.messages;
+  let carriedTurns = opts.resume?.turnsUsed ?? 0;
+  let carriedRetries = opts.resume?.retries ?? 0;
 
   // Up to two passes: the first at the routed tier, a second one rung up the
   // ladder if the stage came back unsure of itself.
@@ -520,22 +701,64 @@ async function runStage(opts: RunStageOptions): Promise<void> {
     });
     opts.onTrace?.({ kind: 'node-open', detail: { id: nodeId, name: stage.name, tier } });
 
-    const meter = new ContextMeter({ contextWindow: binding?.contextWindow ?? 128_000 });
+    const contextMeter = new ContextMeter({ contextWindow: binding?.contextWindow ?? 128_000 });
     const toolDefs = toolDefsFor(stage.tools);
 
-    let messages: LLMMessage[] = [
-      { role: 'user', content: stage.prompt({ blackboard, stateCard: renderStateCard(trace.stateCard()), input: opts.input }) },
+    let messages: LLMMessage[] = carriedMessages ?? [
+      {
+        role: 'user',
+        content: stage.prompt({
+          blackboard,
+          stateCard: renderStateCard(trace.stateCard()),
+          input: opts.input,
+        }),
+      },
     ];
+    const turnsAlreadySpent = carriedTurns;
+    // Consumed once. A second pass up the escalation ladder starts fresh.
+    carriedMessages = undefined;
+    carriedTurns = 0;
 
     let tokensIn = 0;
     let tokensOut = 0;
     let cost: Money = { amount: 0, currency: 'MYR' };
     let cacheWeighted = 0;
-    let retries = 0;
+    let retries = carriedRetries;
+    carriedRetries = 0;
     let finalText = '';
     let degradedTo: TierKey | undefined;
 
-    for (let turn = 0; turn < stage.maxTurns; turn += 1) {
+    /** Close the node with whatever it managed before stopping. */
+    const closeWith = (status: 'OK' | 'RETRIED'): void => {
+      trace.closeNode(nodeId, {
+        status,
+        tokens: { in: tokensIn, out: tokensOut },
+        cost,
+        cacheHitRate: tokensIn > 0 ? cacheWeighted / tokensIn : 0,
+        retries: retries || undefined,
+      });
+    };
+
+    for (let turn = turnsAlreadySpent; turn < stage.maxTurns; turn += 1) {
+      // Before the call, not after it. The point of a yield is to stop before
+      // the worker is killed, and a check after a 40-second model call is a
+      // check that has already lost.
+      const exhausted = meter.exhausted(opts.now().getTime());
+      if (exhausted) {
+        // Record the partial work honestly: this node did real turns, and the
+        // next slice opens a fresh node continuing the same conversation.
+        closeWith('RETRIED');
+        throw new SliceYield(exhausted, nodeId, {
+          stageIndex: opts.stageIndex,
+          tier,
+          messages,
+          turnsUsed: turn,
+          retries,
+          attemptsAtStage,
+          escalated,
+        });
+      }
+
       const call = await router.call(
         tier,
         { system: stage.system, messages, tools: toolDefs },
@@ -560,9 +783,13 @@ async function runStage(opts: RunStageOptions): Promise<void> {
 
       tokensIn += call.result.usage.in;
       tokensOut += call.result.usage.out;
-      cost = { amount: cost.amount + usdToMoney(call.result.costUsd, priceBook).amount, currency: 'MYR' };
+      cost = {
+        amount: cost.amount + usdToMoney(call.result.costUsd, priceBook).amount,
+        currency: 'MYR',
+      };
       cacheWeighted += call.result.usage.in * call.result.cacheHitRate;
-      meter.add(call.result.usage.in);
+      contextMeter.add(call.result.usage.in);
+      meter.noteTokens(call.result.usage.in + call.result.usage.out);
 
       if (call.result.text.trim() !== '') finalText = call.result.text;
 
@@ -580,13 +807,18 @@ async function runStage(opts: RunStageOptions): Promise<void> {
 
       // §17 handoff: restart the node with the state card rather than
       // truncating the middle of its reasoning away.
-      if (meter.shouldHandoff) {
+      if (contextMeter.shouldHandoff) {
         trace.event('HANDOFF', {
-          atContextPct: Math.round(meter.fraction * 100) / 100,
+          atContextPct: Math.round(contextMeter.fraction * 100) / 100,
           restartedNodes: [nodeId],
           node: nodeId,
+          reason: 'CONTEXT_HANDOFF',
         });
-        messages = [
+        // The same checkpoint record a yield writes. Both throw away the
+        // conversation and keep the state card; only the trigger differs.
+        // The state card *is* the continuation here, so that is what the
+        // pending conversation becomes.
+        const handedOff: LLMMessage[] = [
           {
             role: 'user',
             content: [
@@ -597,12 +829,27 @@ async function runStage(opts: RunStageOptions): Promise<void> {
               '',
               summariseToolCalls(blackboard),
               '',
-              stage.prompt({ blackboard, stateCard: renderStateCard(trace.stateCard()), input: opts.input }),
+              stage.prompt({
+                blackboard,
+                stateCard: renderStateCard(trace.stateCard()),
+                input: opts.input,
+              }),
             ].join('\n'),
           },
         ];
-        meter.reset();
+        contextMeter.reset();
         retries += 1;
+        messages = handedOff;
+
+        await opts.onHandoff(nodeId, {
+          stageIndex: opts.stageIndex,
+          tier,
+          messages,
+          turnsUsed: turn + 1,
+          retries,
+          attemptsAtStage,
+          escalated,
+        });
       }
     }
 
@@ -614,13 +861,7 @@ async function runStage(opts: RunStageOptions): Promise<void> {
     for (const question of asStringArray(facts['openQuestions'])) trace.openQuestion(question);
     for (const ref of asStringArray(facts['recordPointers'])) trace.pointAt(ref);
 
-    trace.closeNode(nodeId, {
-      status: retries > 0 ? 'RETRIED' : 'OK',
-      tokens: { in: tokensIn, out: tokensOut },
-      cost,
-      cacheHitRate: tokensIn > 0 ? cacheWeighted / tokensIn : 0,
-      retries: retries || undefined,
-    });
+    closeWith(retries > 0 ? 'RETRIED' : 'OK');
     opts.onTrace?.({ kind: 'node-close', detail: { id: nodeId, name: stage.name } });
 
     // Confidence escalation: one rung up the ladder, once.
@@ -671,8 +912,20 @@ async function executeToolCall(opts: ExecuteToolOptions): Promise<LLMMessage> {
 
   if (!op || !tools.supports(op)) {
     const message = `No such tool: ${toolCall.name}`;
-    trace.step({ tool: toolCall.name, args: toolCall.input, status: 'FAILED', durationMs: 0, error: { attempt: 1, code: 'NO_SUCH_TOOL', message } });
-    return { role: 'tool', toolCallId: toolCall.id, name: toolCall.name, content: message, isError: true };
+    trace.step({
+      tool: toolCall.name,
+      args: toolCall.input,
+      status: 'FAILED',
+      durationMs: 0,
+      error: { attempt: 1, code: 'NO_SUCH_TOOL', message },
+    });
+    return {
+      role: 'tool',
+      toolCallId: toolCall.id,
+      name: toolCall.name,
+      content: message,
+      isError: true,
+    };
   }
 
   const toolNode = trace.openNode({ parentId: opts.nodeId, kind: 'TOOL', name: op });
@@ -697,7 +950,9 @@ async function executeToolCall(opts: ExecuteToolOptions): Promise<LLMMessage> {
     result: result.ok ? asRecord(result.data) : undefined,
     status: result.ok ? 'OK' : 'FAILED',
     durationMs,
-    error: result.ok ? undefined : { attempt: 1, code: result.error?.code ?? 'TOOL_ERROR', message: result.error?.message },
+    error: result.ok
+      ? undefined
+      : { attempt: 1, code: result.error?.code ?? 'TOOL_ERROR', message: result.error?.message },
   });
 
   return {
@@ -710,21 +965,129 @@ async function executeToolCall(opts: ExecuteToolOptions): Promise<LLMMessage> {
 }
 
 /* ------------------------------------------------------------------ *
- * Resume
+ * Checkpoints
  * ------------------------------------------------------------------ */
+
+interface WriteCheckpointOptions {
+  trace: TraceBuilder;
+  blackboard: Blackboard;
+  agent: AgentDefinition;
+  orchestratorNode: string;
+  reason: CheckpointReason;
+  stageIndex: number;
+  pendingNodeId?: string;
+  pendingStage?: PendingStageState;
+  store?: CheckpointStore;
+  now: () => Date;
+  /** Emit the `HANDOFF` event too. A context handoff emits its own. */
+  emitEvent: boolean;
+}
+
+async function writeCheckpoint(opts: WriteCheckpointOptions): Promise<RunCheckpoint> {
+  const { trace, reason, stageIndex } = opts;
+  const id = checkpointId(trace.runId, stageIndex, reason, trace.nodeCount);
+
+  // The event goes in before the snapshot, so the checkpoint contains the
+  // record of its own creation and a resumed run's event log is continuous.
+  if (opts.emitEvent) {
+    if (reason === 'STAGE_COMPLETE') {
+      trace.event('CHECKPOINT', { step: stageIndex, replayable: true, checkpointId: id });
+    } else {
+      trace.event('HANDOFF', {
+        reason,
+        checkpointId: id,
+        node: opts.pendingNodeId,
+        restartedNodes: opts.pendingNodeId ? [opts.pendingNodeId] : [],
+        step: stageIndex,
+      });
+      trace.event('CHECKPOINT', { step: stageIndex, replayable: true, checkpointId: id });
+    }
+  }
+
+  const checkpoint: RunCheckpoint = {
+    id,
+    runId: trace.runId,
+    runRef: trace.runRef,
+    agentId: opts.agent.id,
+    step: stageIndex,
+    stageIndex,
+    reason,
+    at: toMyt(opts.now()),
+    replayable: true,
+    stateCard: trace.stateCard(),
+    trace: trace.snapshot(),
+    blackboard: opts.blackboard,
+    orchestratorNodeId: opts.orchestratorNode,
+    pendingNodeId: opts.pendingNodeId,
+    pendingStage: opts.pendingStage,
+  };
+
+  await opts.store?.save(checkpoint);
+  return checkpoint;
+}
+
+/** Accept a checkpoint object or an id, and require a store for the latter. */
+async function resolveCheckpoint(opts: RunAgentOptions): Promise<RunCheckpoint | undefined> {
+  if (!opts.resumeFrom) return undefined;
+  if (typeof opts.resumeFrom !== 'string') return opts.resumeFrom;
+
+  if (!opts.checkpoints) {
+    throw new Error(
+      `runAgent was asked to resume from checkpoint ${opts.resumeFrom} but no checkpoint store was supplied`,
+    );
+  }
+  const loaded = await opts.checkpoints.load(opts.resumeFrom);
+  if (!loaded) throw new Error(`No checkpoint ${opts.resumeFrom}`);
+  return loaded;
+}
+
+function tokensOfSnapshot(snapshot: TraceSnapshot): number {
+  return snapshot.nodes.reduce(
+    (acc: number, node: TraceNode) => acc + (node.tokens?.in ?? 0) + (node.tokens?.out ?? 0),
+    0,
+  );
+}
 
 /**
  * `POST /v1/runs/{id}/retry?from=checkpoint`.
  *
- * The stages before the checkpoint are marked `SKIPPED` rather than replayed,
- * and the resumed run carries the stored state card in, which is exactly what
- * §17 says the checkpoint is for.
+ * The same call a worker makes on the next tick; nothing about resuming is
+ * special-cased for the retry endpoint.
  */
 export async function retryFromCheckpoint(
-  checkpoint: Checkpoint,
+  checkpoint: RunCheckpoint | string,
   opts: RunAgentOptions,
 ): Promise<AgentRunResult> {
   return runAgent({ ...opts, resumeFrom: checkpoint });
+}
+
+/**
+ * Drive a run to completion across as many slices as it needs.
+ *
+ * What the queue does, in one function: run, and if the result says
+ * `RESUMABLE`, run again from the checkpoint. In production each iteration is
+ * a separate worker; here they are sequential calls, which is the same thing
+ * with less waiting.
+ */
+export async function runAgentToCompletion(
+  opts: RunAgentOptions,
+  limits: { maxSlices?: number } = {},
+): Promise<{ result: AgentRunResult; slices: number }> {
+  const maxSlices = limits.maxSlices ?? 20;
+  let result = await runAgent(opts);
+  let slices = 1;
+
+  while (result.disposition === 'RESUMABLE' && result.resumeFrom && slices < maxSlices) {
+    const checkpoint =
+      opts.checkpoints === undefined
+        ? result.checkpoints.find((c) => c.id === result.resumeFrom)
+        : result.resumeFrom;
+    if (!checkpoint) break;
+    result = await runAgent({ ...opts, resumeFrom: checkpoint });
+    slices += 1;
+  }
+
+  return { result, slices };
 }
 
 /* ------------------------------------------------------------------ *
@@ -781,7 +1144,9 @@ export function extractJson(text: string): Record<string, unknown> | undefined {
       if (depth === 0) {
         try {
           const parsed: unknown = JSON.parse(text.slice(start, i + 1));
-          return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined;
+          return parsed && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)
+            : undefined;
         } catch {
           return undefined;
         }
@@ -818,12 +1183,10 @@ function buildProvenance(
   confidence: number,
   jury: JuryOutcome | undefined,
 ): Provenance {
-  const strongest = [...(trace.nodeById('n0') ? [trace.nodeById('n0')!] : [])];
   const nodes = agent.stages
-    .map((s) => s.name)
-    .map((name) => trace.nodeById(nodeIdForName(trace, name)))
+    .map((s) => trace.nodeById(nodeIdForName(trace, s.name)))
     .filter((n): n is NonNullable<typeof n> => Boolean(n));
-  const authoring = nodes[nodes.length - 1] ?? strongest[0];
+  const authoring = nodes[nodes.length - 1] ?? trace.nodeById('n0');
 
   const sources: ProvenanceSource[] = blackboard.toolCalls
     .filter((call) => call.op !== 'actions.perform' && call.result.ok)
@@ -849,7 +1212,9 @@ function buildProvenance(
 }
 
 function nodeIdForName(trace: TraceBuilder, name: string): string {
-  for (let i = 0; i < trace.nodeCount; i += 1) {
+  // Latest wins: a stage that was restarted after a handoff or a resume has
+  // more than one node, and the last one is the one that finished the work.
+  for (let i = trace.nodeCount - 1; i >= 0; i -= 1) {
     if (trace.nodeById(`n${i}`)?.name === name) return `n${i}`;
   }
   return 'n0';
@@ -877,8 +1242,7 @@ function evidenceTypeFor(op: ToolOperation): EvidenceType {
 function failRun(
   trace: TraceBuilder,
   blackboard: Blackboard,
-  checkpoints: Checkpoint[],
-  orchestratorNode: string,
+  checkpoints: RunCheckpoint[],
   cause: unknown,
 ): AgentRunResult {
   const code =
@@ -889,13 +1253,13 @@ function failRun(
         : 'RUN_FAILED';
   const message = cause instanceof Error ? cause.message : String(cause);
 
-  trace.closeNode(orchestratorNode, { status: 'FAILED' });
   return {
     run: trace.build({
       status: 'FAILED',
       outcome: code,
       failure: { code, message, attempts: 1, retryable: code !== 'BUDGET_CAP', deadLettered: false },
     }),
+    disposition: 'FAILED',
     provenance: { origin: 'AI_GENERATED', runId: trace.runId },
     checkpoints,
     blackboard,

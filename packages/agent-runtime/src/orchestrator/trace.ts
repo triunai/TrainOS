@@ -32,6 +32,7 @@ import type {
 } from '@trainos/contract';
 import { sumMoney } from '../providers/pricing';
 import { toMyt } from '../fixtures/local-client';
+import type { TraceSnapshot } from './checkpoint';
 
 /** What opening a node needs to know. */
 export interface OpenNodeInput {
@@ -82,6 +83,10 @@ export class TraceBuilder {
   private readonly opts: TraceBuilderOptions;
   private readonly now: () => Date;
   private readonly startedAt: Date;
+  /** Wall clock spent in earlier slices. Zero for a run starting fresh. */
+  private readonly carriedElapsedMs: number;
+  /** When this slice began, so `durationMs` can span every slice. */
+  private readonly sliceStartedAt: Date;
 
   private readonly nodes: TraceNode[] = [];
   private readonly events: RunEvent[] = [];
@@ -97,12 +102,67 @@ export class TraceBuilder {
   private openQuestions: string[] = [];
   private recordPointers: Ref[] = [];
 
-  constructor(opts: TraceBuilderOptions) {
+  constructor(opts: TraceBuilderOptions, snapshot?: TraceSnapshot) {
     this.opts = opts;
     this.runId = opts.runId;
     this.runRef = opts.runRef;
     this.now = opts.now ?? (() => new Date());
-    this.startedAt = this.now();
+    this.sliceStartedAt = this.now();
+
+    if (snapshot) {
+      // Resume: carry on numbering, keep the original start time, and keep
+      // every node the earlier slices produced. A resumed run that renumbered
+      // from `n0` would render as two runs in one trace.
+      this.startedAt = new Date(snapshot.startedAt);
+      this.carriedElapsedMs = snapshot.elapsedMs;
+      this.nodeSeq = snapshot.nodeSeq;
+      this.stepSeq = snapshot.stepSeq;
+      this.nodes.push(...snapshot.nodes);
+      this.events.push(...snapshot.events);
+      this.steps.push(...snapshot.steps);
+      this.plan = snapshot.plan.map((step) => ({ ...step }));
+      this.decisions = [...snapshot.decisions];
+      this.openQuestions = [...snapshot.openQuestions];
+      this.recordPointers = [...snapshot.recordPointers];
+      for (const tier of snapshot.tiers) this.tiers.add(tier);
+    } else {
+      this.startedAt = this.sliceStartedAt;
+      this.carriedElapsedMs = 0;
+    }
+  }
+
+  /** Rebuild a builder from a checkpoint's snapshot. */
+  static restore(opts: TraceBuilderOptions, snapshot: TraceSnapshot): TraceBuilder {
+    return new TraceBuilder(opts, snapshot);
+  }
+
+  /**
+   * Freeze the run so far.
+   *
+   * Deep-copied, because the caller serialises this into a checkpoint while
+   * the builder keeps mutating — handing out live arrays would let a later
+   * node appear inside an earlier checkpoint.
+   */
+  snapshot(): TraceSnapshot {
+    return {
+      startedAt: toMyt(this.startedAt),
+      elapsedMs: this.elapsedMs,
+      nodeSeq: this.nodeSeq,
+      stepSeq: this.stepSeq,
+      nodes: this.nodes.map((n) => ({ ...n })),
+      events: this.events.map((e) => ({ ...e, detail: { ...e.detail } })),
+      steps: this.steps.map((s) => ({ ...s })),
+      plan: this.plan.map((s) => ({ ...s })),
+      decisions: [...this.decisions],
+      openQuestions: [...this.openQuestions],
+      recordPointers: [...this.recordPointers],
+      tiers: [...this.tiers],
+    };
+  }
+
+  /** Wall clock across every slice of this run. */
+  get elapsedMs(): number {
+    return this.carriedElapsedMs + Math.max(0, this.now().getTime() - this.sliceStartedAt.getTime());
   }
 
   /* ---------------------------------------------------------------- *
@@ -183,7 +243,12 @@ export class TraceBuilder {
     this.plan = labels.map((label, index) => ({ n: index + 1, label, status: 'PENDING' }));
   }
 
-  markPlanStep(n: number, status: 'DONE' | 'RUNNING' | 'HALTED' | 'SKIPPED' | 'FAILED'): void {
+  markPlanStep(
+    n: number,
+    // `PENDING` is where a plan step goes back to when its slice yielded
+    // mid-stage: the work is owed, not done and not skipped.
+    status: 'PENDING' | 'DONE' | 'RUNNING' | 'HALTED' | 'SKIPPED' | 'FAILED',
+  ): void {
     const step = this.plan.find((s) => s.n === n);
     if (step) step.status = status;
   }
@@ -270,7 +335,7 @@ export class TraceBuilder {
       trigger: this.opts.trigger,
       model: modelsUsed[0],
       startedAt: toMyt(this.startedAt),
-      durationMs: Math.max(0, this.now().getTime() - this.startedAt.getTime()),
+      durationMs: this.elapsedMs,
       cost: this.cost,
       tokens: this.tokens,
       status: input.status,

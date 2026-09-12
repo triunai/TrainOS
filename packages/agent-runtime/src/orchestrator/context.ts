@@ -63,31 +63,6 @@ export class ContextMeter {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * Checkpoints
- * ------------------------------------------------------------------ */
-
-/**
- * A resumable point in the run.
- *
- * §17: `POST /v1/runs/{id}/retry?from=checkpoint` resumes from the last
- * checkpoint "using the stored state card". So a checkpoint is the state card
- * plus where in the plan it was taken, and nothing else — anything a resume
- * would need that is not in here is a bug in the state card, not a missing
- * checkpoint field.
- */
-export interface Checkpoint {
-  /** Plan step number this checkpoint follows. */
-  step: number;
-  /** The node that had just completed. */
-  nodeId: string;
-  /** Index into the agent's stage list — where a resume restarts. */
-  stageIndex: number;
-  stateCard: RunStateCard;
-  at: string;
-  replayable: boolean;
-}
-
 /**
  * What a restarted node is told about what already happened.
  *

@@ -252,6 +252,9 @@ describe('budget pause stops a run', () => {
       input: LEAD_TO_PROPOSAL_INPUT,
       runId: 'run_budget',
       runRef: '#budget',
+      // Generous slice budget: this test is about the monetary cap halting the
+      // run, not about a slice running out of clock and yielding.
+      slice: { wallClockMs: 600_000 },
     });
 
     expect(result.run.status).toBe('HALTED');
@@ -354,11 +357,11 @@ describe('jury', () => {
 });
 
 describe('retry from checkpoint', () => {
-  it('resumes at the stored stage and marks the earlier ones skipped', async () => {
+  it('continues the same run rather than starting a second one', async () => {
     const first = await runDemo();
-    const checkpoint = first.checkpoints[1];
+    const checkpoint = first.checkpoints.find((c) => c.stageIndex === 2);
     expect(checkpoint).toBeDefined();
-    expect(checkpoint?.stageIndex).toBe(2);
+    expect(checkpoint?.reason).toBe('STAGE_COMPLETE');
 
     const provider = createDemoMockProvider();
     const router = new Router({ config: DEFAULT_ROUTING_CONFIG, registry: registryOf(provider) });
@@ -367,21 +370,35 @@ describe('retry from checkpoint', () => {
       router,
       tools: createFixtureToolAdapter({ agentId: leadToProposalAgent.id, context: createLocalFixtureClient() }),
       input: LEAD_TO_PROPOSAL_INPUT,
-      runId: 'run_4821_retry',
-      runRef: '#4821r',
+      // Deliberately different, and deliberately ignored: the checkpoint's
+      // run id wins, because doc 05 §8.5 requires the re-enqueued job to
+      // carry the same `run_id`.
+      runId: 'run_should_be_ignored',
+      runRef: '#ignored',
     });
 
+    expect(resumed.run.id).toBe('run_4821');
+    expect(resumed.run.ref).toBe('#4821');
+
+    // The stages before the checkpoint were done, not skipped — the resumed
+    // run inherits their nodes rather than pretending they never happened.
     const plan = resumed.run.stateCard?.plan ?? [];
-    expect(plan[0]?.status).toBe('SKIPPED');
-    expect(plan[1]?.status).toBe('SKIPPED');
+    expect(plan[0]?.status).toBe('DONE');
+    expect(plan[1]?.status).toBe('DONE');
     expect(plan[2]?.status).toBe('DONE');
 
     const names = (resumed.run.nodes ?? []).filter((n) => n.kind === 'SUB_AGENT').map((n) => n.name);
-    expect(names).not.toContain('Reader');
-    expect(names).toContain('Drafter');
+    expect(names).toContain('Reader');   // inherited from the first slice
+    expect(names).toContain('Drafter');  // run by the second
 
-    // A resumed run still reaches the gate and still halts.
+    // Exactly one Reader node: the resumed slice did not redo completed work.
+    expect(names.filter((n) => n === 'Reader')).toHaveLength(1);
+
+    // One root, and it is the original orchestrator — not a second planner.
+    expect((resumed.run.nodes ?? []).filter((n) => n.parentId === null)).toHaveLength(1);
+
     expect(resumed.run.status).toBe('HALTED');
+    expect(resumed.disposition).toBe('COMPLETE');
   });
 });
 
