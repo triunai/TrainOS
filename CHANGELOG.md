@@ -12,6 +12,49 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — multi-tenancy: the tenant registry, 109 permissions as data, and the escalation stop
+
+### Added
+
+- **Tenancy exists from row zero (002).** Five identity tables, every one with row-level security
+  enabled *and forced*. Forcing is the part usually skipped and the part that matters: it removes
+  the table owner's exemption, so a database function running as the owner no longer silently sees
+  every tenant's data.
+- **The role-to-permission matrix is data, not code.** 399 grants over 109 permissions, so a
+  managing director can move `discount:approve` between roles without a migration. It is seeded by
+  parsing the architecture doc's own table rather than transcribing it — a 74-row by 7-column grid
+  copied by hand is a typo generator, and a missing tick is a silent authorisation hole that no test
+  for a different permission would catch.
+- **One body builds the login claims.** The access-token hook and the agent-token minter both call
+  `app.principal_claims()`, because the hook does not run for a self-minted agent token and two
+  copies of that logic would drift apart exactly when it mattered.
+
+### Security
+
+- **An administrator cannot edit their own membership row.** This is the escalation that would end
+  the product: write yourself any role, any data scope, any tenant. The ordinary admin-write policy
+  permits it, because you *are* an admin of that tenant while you do it. A restrictive policy is
+  what stops it, and restrictive is deliberate — a permissive policy of the same name reads
+  identically in a diff and does the opposite. Bootstrapping a tenant's first administrator is
+  therefore a provisioning act, which is what it always should have been.
+- **Multi-factor authentication is enforced in the database, not in a route guard.** An admin
+  membership write at `aal1` is refused by the policy itself.
+- **`anon` is refused before a policy is ever consulted.** It holds no table grant at all, so the
+  denial happens at the grant layer. The test asserts that specifically rather than accepting an
+  empty result — a future grant to `anon` would still return zero rows under RLS and would look
+  identical to a test that only counted.
+
+### Fixed
+
+- **Three defects in the architecture docs' own SQL, found by executing it.** The owner-scope helper
+  did not compile: `= ANY ((SELECT …))` is the subquery form of `ANY` and the function returns an
+  array, so Postgres rejected it. The corrected cast also preserves the performance property the doc
+  was after — the lookup now runs once per statement rather than once per row, confirmed in the
+  query plan. The doc's permission count was stale (94 claimed, 109 actual in both its own
+  catalogue and its own matrix). And this migration's rollback crashed on a second run, because a
+  Postgres `::regclass` cast raises on a missing table instead of returning nothing; it is now safe
+  to re-run and says so.
+
 ## 2026-09-12 — the database floor: three schemas, five shared helpers, and two baseline lines that do not work
 
 ### Added
