@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { AutomationRun, RunStep } from "@trainos/contract";
-import { AgentRunCard, formatDuration } from "@/shared/components/kit/AgentRunCard";
+import { AgentRunCard } from "@/shared/components/kit/AgentRunCard";
 import { RunStepRow } from "@/shared/components/kit/RunStepRow";
+import { formatDuration } from "@/shared/components/kit/format";
 
 const SUCCEEDED: AutomationRun = {
   id: "run-1",

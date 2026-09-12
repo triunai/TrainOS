@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { AutomationRun } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { formatDuration } from "./format";
 import { MoneyText } from "./Money";
 import { StatusChip } from "./StatusChip";
 import { RUN_TONE } from "./statusTone";
@@ -31,14 +32,6 @@ export interface AgentRunCardProps {
   /** Render the tool-call log. Off in a dense failures queue. */
   withSteps?: boolean;
   className?: string;
-}
-
-/** `1900` → `1.9s`, `620` → `620ms`. The pack writes durations this way. */
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  return `${minutes}m ${Math.round((ms % 60_000) / 1000)}s`;
 }
 
 export function AgentRunCard({

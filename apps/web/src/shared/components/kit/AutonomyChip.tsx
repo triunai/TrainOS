@@ -1,5 +1,6 @@
 import type { AutonomyLevel } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { AUTONOMY_RUNGS } from "./adapters";
 
 /**
  * The autonomy ladder. Kit.dc.html §02 "Autonomy chip — the ladder".
@@ -20,42 +21,6 @@ import { cn } from "@/shared/lib/utils";
  * rung is unavailable rather than silently omitting it.
  */
 
-const RUNG: Record<AutonomyLevel, { label: string; caption: string; className: string }> = {
-  OBSERVE: {
-    label: "Observe",
-    caption: "logs only",
-    className: "bg-surface text-ink-secondary border border-border",
-  },
-  SUGGEST: {
-    label: "Suggest",
-    caption: "drafts, human sends",
-    className: "bg-ai-tint text-primary-hover border border-primary-border",
-  },
-  ACT_WITH_APPROVAL: {
-    label: "Act w/ approval",
-    caption: "queued to Approvals",
-    className: "bg-ai-tint text-primary-hover border border-primary-border",
-  },
-  AUTONOMOUS: {
-    label: "Autonomous",
-    caption: "acts, notifies after",
-    className: "bg-ai-tint text-primary-hover border-[1.5px] border-primary font-semibold",
-  },
-};
-
-/** The ladder in order, lowest rung first. Drives the matrix and the showcase. */
-export const AUTONOMY_LADDER: AutonomyLevel[] = [
-  "OBSERVE",
-  "SUGGEST",
-  "ACT_WITH_APPROVAL",
-  "AUTONOMOUS",
-];
-
-/** The wording each rung uses. Exported so a screen's copy cannot drift from the chip's. */
-export function autonomyCaption(level: AutonomyLevel): string {
-  return RUNG[level].caption;
-}
-
 export interface AutonomyChipProps {
   level: AutonomyLevel;
   /** Render the trailing explanation, e.g. "queued to Approvals". */
@@ -66,7 +31,7 @@ export interface AutonomyChipProps {
 }
 
 export function AutonomyChip({ level, withCaption, fluid, className }: AutonomyChipProps) {
-  const rung = RUNG[level];
+  const rung = AUTONOMY_RUNGS[level];
 
   const chip = (
     <span

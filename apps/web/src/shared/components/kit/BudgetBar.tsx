@@ -1,7 +1,7 @@
 import type { Budget, BudgetState, Money } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MiniBar, type BarState } from "./Bar";
-import { formatMoney } from "./Money";
+import { formatMoney } from "./format";
 
 /**
  * The budget bar. Kit.dc.html §10, and its rule verbatim: "Budget bars stay ink
@@ -14,10 +14,11 @@ import { formatMoney } from "./Money";
  * the routing entry and returns `409 AGENT_PAUSED` with `reason: BUDGET_CAP`.
  */
 
+/** Contract `BudgetState` → bar fill. The server decides; the bar renders. */
 const STATE: Record<BudgetState, BarState> = {
-  WITHIN: "within",
-  NEAR: "near",
-  PAUSED: "over",
+  WITHIN: "neutral",
+  NEAR: "warning",
+  PAUSED: "danger",
 };
 
 export interface BudgetBarProps {

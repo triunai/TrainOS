@@ -1,5 +1,6 @@
 import type { Money } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { formatMoney } from "./format";
 
 /**
  * Money, rendered. Contract §1: `Money` is integer sen and a currency code,
@@ -23,25 +24,6 @@ export interface MoneyTextProps {
   /** Render `—` instead of `RM 0.00` when the amount is zero. */
   dashWhenZero?: boolean;
   className?: string;
-}
-
-const SYMBOL: Record<string, string> = { MYR: "RM" };
-
-/**
- * Format a `Money` to its display string, e.g. `RM 18,500.00`.
- *
- * Exported because table sorting, CSV export and `title` attributes need the
- * string without a React element around it. `en-MY` grouping, always.
- */
-export function formatMoney(value: Money, compact = false): string {
-  const symbol = SYMBOL[value.currency] ?? value.currency;
-  const major = value.amount / 100;
-  const digits = compact ? 0 : 2;
-  const formatted = new Intl.NumberFormat("en-MY", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(major);
-  return `${symbol} ${formatted}`;
 }
 
 export function MoneyText({ value, compact, dashWhenZero, className }: MoneyTextProps) {

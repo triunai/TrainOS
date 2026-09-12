@@ -6,13 +6,9 @@
  * visual — if the kit lacks something a screen needs, the kit gains it first and
  * the screen uses it second.
  *
- * Importing this module also pulls in `kit.css`, which supplies the three design
- * tokens the artboards use that the scaffold's `tokens.css` does not define yet.
- *
+
  * Sections below follow the Kit.dc.html catalogue order.
  */
-
-import "./kit.css";
 
 /* ---- Foundations (Kit §01) ------------------------------------------ */
 export {
@@ -30,6 +26,43 @@ export {
   resetPrimaries,
 } from "./useSinglePrimary";
 
+/* ---- Pure helpers. These moved out of their component files so the kit has
+       no import cycles and every component file can hot-reload; the names the
+       barrel exports have not changed. ---------------------------------- */
+export {
+  formatMoney,
+  formatDate,
+  formatTime,
+  formatPeriod,
+  formatDuration,
+  toSen,
+  toEditable,
+  tierLabel,
+  initials,
+  humanise,
+  stepLabel,
+  describeSteps,
+} from "./format";
+export {
+  aiVariantOf,
+  /**
+   * `variantOf` was this function's name when the kit first shipped and a
+   * screen already imports it. The barrel's names are additive-only now that
+   * screens build against them, so the old name stays as an alias rather than
+   * becoming a rename every screen has to chase. Prefer `aiVariantOf`.
+   */
+  aiVariantOf as variantOf,
+  AUTONOMY_LADDER,
+  AUTONOMY_RUNGS,
+  autonomyCaption,
+  chipsFromFilters,
+  tabsFromViews,
+  TYPE_TAG,
+  type AIChipVariant,
+  type FilterChipModel,
+  type PillTab,
+} from "./adapters";
+
 /* ---- Controls (Kit §03) --------------------------------------------- */
 export {
   KitButton,
@@ -42,8 +75,8 @@ export {
   type ButtonProps,
   type IconButtonProps,
 } from "./Button";
-export { MoneyText, formatMoney, type MoneyTextProps } from "./Money";
-export { DateText, formatDate, formatTime, type DateTextProps } from "./DateText";
+export { MoneyText, type MoneyTextProps } from "./Money";
+export { DateText, type DateTextProps } from "./DateText";
 export { KeyboardShortcut, type KeyboardShortcutProps } from "./KeyboardShortcut";
 export { MiniBar, type BarState, type MiniBarProps } from "./Bar";
 export {
@@ -53,7 +86,7 @@ export {
   SkeletonMetrics,
   type SkeletonProps,
 } from "./Skeleton";
-export { MoneyInput, toSen, toEditable, type MoneyInputProps } from "./MoneyInput";
+export { MoneyInput, type MoneyInputProps } from "./MoneyInput";
 export { RelationPicker, type RelationOption, type RelationPickerProps } from "./RelationPicker";
 export { WhatsAppCostStrip, type WhatsAppCostStripProps } from "./WhatsAppCostStrip";
 export {
@@ -79,25 +112,18 @@ export {
   RUN_TONE,
   SYNC_TONE,
   TIER_STATUS_TONE,
-  humanise,
 } from "./statusTone";
-export { AIChip, AIBadge, variantOf, type AIChipProps, type AIChipVariant } from "./AIChip";
+export { AIChip, AIBadge, type AIChipProps } from "./AIChip";
 export { ProvenanceBlock, ProvenancePanel, type ProvenanceBlockProps } from "./ProvenanceBlock";
-export {
-  AutonomyChip,
-  AUTONOMY_LADDER,
-  autonomyCaption,
-  type AutonomyChipProps,
-} from "./AutonomyChip";
-export { TierChip, tierLabel, type TierChipProps } from "./TierChip";
+export { AutonomyChip, type AutonomyChipProps } from "./AutonomyChip";
+export { TierChip, type TierChipProps } from "./TierChip";
 export { JuryChip, type JuryChipProps } from "./JuryChip";
 export { CitationChip, type CitationChipProps } from "./CitationChip";
-export { RefChip, TYPE_TAG, type RefChipProps } from "./RefChip";
+export { RefChip, type RefChipProps } from "./RefChip";
 
 /* ---- Workflow steppers (Kit §04) ------------------------------------ */
 export {
   LifecycleStepper,
-  describeSteps,
   type LifecycleStepperProps,
   type StepperVariant,
 } from "./LifecycleStepper";
@@ -112,7 +138,7 @@ export {
   type ProposedActionCardProps,
   type ProposedMetric,
 } from "./ProposedActionCard";
-export { AgentRunCard, formatDuration, type AgentRunCardProps } from "./AgentRunCard";
+export { AgentRunCard, type AgentRunCardProps } from "./AgentRunCard";
 export { RunStepRow, type RunStepRowProps } from "./RunStepRow";
 export { CommandPalette, type CommandPaletteProps } from "./CommandPalette";
 export { Drawer, type DrawerProps } from "./Drawer";
@@ -125,7 +151,6 @@ export {
   SearchTrigger,
   NotificationBell,
   Avatar,
-  initials,
   type AvatarProps,
   type NotificationBellProps,
   type SearchTriggerProps,
@@ -150,13 +175,11 @@ export {
 export {
   FilterBar,
   DensityToggle,
-  chipsFromFilters,
   type Density,
   type DensityToggleProps,
   type FilterBarProps,
-  type FilterChipModel,
 } from "./FilterBar";
-export { PillTabGroup, tabsFromViews, type PillTab, type PillTabGroupProps } from "./PillTabGroup";
+export { PillTabGroup, type PillTabGroupProps } from "./PillTabGroup";
 
 /* ---- RecordHeader & MetricStrip (Kit §09) --------------------------- */
 export {

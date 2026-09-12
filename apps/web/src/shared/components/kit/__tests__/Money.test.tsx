@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { Money } from "@trainos/contract";
-import { MoneyText, formatMoney } from "@/shared/components/kit/Money";
+import { MoneyText } from "@/shared/components/kit/Money";
+import { formatMoney } from "@/shared/components/kit/format";
 
 const AMOUNT: Money = { amount: 1850000, currency: "MYR" };
 

@@ -1,11 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import {
-  SearchTrigger,
-  NotificationBell,
-  Avatar,
-  initials,
-} from "@/shared/components/kit/TopbarPieces";
+import { SearchTrigger, NotificationBell, Avatar } from "@/shared/components/kit/TopbarPieces";
+import { initials } from "@/shared/components/kit/format";
 
 describe("TopbarPieces", () => {
   it("SearchTrigger is a button showing the command-K hint and calls onOpen", () => {

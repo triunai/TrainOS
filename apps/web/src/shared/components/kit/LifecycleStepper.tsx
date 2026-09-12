@@ -1,6 +1,7 @@
 import type { LifecycleState, LifecycleStep, PipelineStage } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { DateText } from "./DateText";
+import { describeSteps, stepLabel } from "./format";
 import { FOCUS_RING } from "./tokens";
 
 /**
@@ -82,27 +83,6 @@ function StepDot({ state, size }: { state: LifecycleState; size: number }) {
   }
 }
 
-const STATE_WORD: Record<LifecycleState, string> = {
-  DONE: "done",
-  CURRENT: "current",
-  PENDING: "pending",
-  BLOCKED: "blocked",
-  SKIPPED: "skipped",
-  FAILED: "failed",
-};
-
-/** The label a step shows: its own, else the pipeline's, else its key. */
-function labelOf(step: LifecycleStep, stages?: PipelineStage[]): string {
-  if (step.label) return step.label;
-  const stage = stages?.find((candidate) => candidate.key === step.key);
-  return stage?.label ?? step.key;
-}
-
-/** One sentence naming every stage and its state. The tooltip and the a11y name. */
-export function describeSteps(steps: LifecycleStep[], stages?: PipelineStage[]): string {
-  return steps.map((step) => `${labelOf(step, stages)}: ${STATE_WORD[step.state]}`).join(" · ");
-}
-
 export interface LifecycleStepperProps {
   /** Server-ordered. Rendered as given — this component never sorts. */
   steps: LifecycleStep[];
@@ -171,7 +151,7 @@ export function LifecycleStepper({
               step.state === "BLOCKED" && "text-warning",
             )}
           >
-            {labelOf(step, stages)}
+            {stepLabel(step, stages)}
           </li>
         ))}
       </ol>
@@ -224,7 +204,7 @@ export function LifecycleStepper({
                   step.state === "SKIPPED" && "text-ink-muted",
                 )}
               >
-                {labelOf(step, stages)}
+                {stepLabel(step, stages)}
               </span>
               {step.at ? (
                 <DateText value={step.at} className="text-[11px] text-ink-muted" />

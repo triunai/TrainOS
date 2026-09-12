@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { AppliedFilter } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import type { FilterChipModel } from "./adapters";
 import { FOCUS_RING } from "./tokens";
 
 /**
@@ -16,29 +16,6 @@ import { FOCUS_RING } from "./tokens";
  * user. The two dismiss differently — removing a view's filter means leaving
  * the view — so a `VIEW` chip renders without an ✕ and says where it came from.
  */
-
-export interface FilterChipModel {
-  /** Stable id for dismissal. Usually `${field}:${op}`. */
-  id: string;
-  /** The field's display name, e.g. "Stage". */
-  label: string;
-  /** The value as a user would read it, e.g. "Proposal sent". */
-  value: string;
-  /** A `VIEW` filter belongs to the saved view and cannot be dismissed alone. */
-  locked?: boolean;
-}
-
-/** Map contract filters onto chips. `format` turns an opaque value into words. */
-export function chipsFromFilters(
-  filters: AppliedFilter[],
-  format: (filter: AppliedFilter) => { label: string; value: string },
-): FilterChipModel[] {
-  return filters.map((filter) => ({
-    id: `${filter.field}:${filter.op}`,
-    locked: filter.source === "VIEW",
-    ...format(filter),
-  }));
-}
 
 export interface FilterBarProps {
   filters: FilterChipModel[];

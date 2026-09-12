@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { SavedView } from "@trainos/contract";
-import { PillTabGroup, tabsFromViews, type PillTab } from "@/shared/components/kit/PillTabGroup";
+import { PillTabGroup } from "@/shared/components/kit/PillTabGroup";
+import { tabsFromViews, type PillTab } from "@/shared/components/kit/adapters";
 
 const tabs: PillTab[] = [
   { id: "a", label: "All", count: 12 },

@@ -1,6 +1,7 @@
 import type { MessageCategory, Money } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
-import { MoneyText, formatMoney } from "./Money";
+import { formatMoney } from "./format";
+import { MoneyText } from "./Money";
 import { MONO_LABEL } from "./tokens";
 
 /**

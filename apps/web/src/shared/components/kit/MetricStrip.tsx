@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import type { Money, ReceivablesAging } from "@trainos/contract";
+import type { MetricDelta, Money, ReceivablesAging, Severity } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MiniBar, type BarState } from "./Bar";
+import { formatPeriod } from "./format";
 import { MoneyText } from "./Money";
 import { FOCUS_RING, MONO_LABEL } from "./tokens";
 
@@ -43,12 +44,57 @@ export interface MetricCellProps {
    */
   onDrill?: () => void;
   /**
-   * Marks the number as an estimate. Contract §10 and DECISIONS: the
-   * admin-hours-saved tile must say "illustrative · baseline not yet measured"
-   * rather than imply a measured figure.
+   * Period-over-period movement, straight from the contract's `MetricValue`.
+   * Rendered under the value as `▲ 18% vs Oct`; `severity` picks the ink.
    */
-  estimate?: boolean;
+  delta?: MetricDelta;
+  /**
+   * Marks the number as an estimate. Contract §10 and DECISIONS: the
+   * admin-hours-saved tile must say it is illustrative rather than imply a
+   * measured figure.
+   *
+   * Pass `true` for the kit's own sentence, or a string to say it your way —
+   * `EmptyState` already holds the line that copy is a prop, and a metric whose
+   * caveat is hardcoded here cannot be reworded without a kit release.
+   */
+  estimate?: boolean | string;
 }
+
+const ESTIMATE_DEFAULT = "illustrative · baseline not yet measured";
+
+const DELTA_ARROW: Record<MetricDelta["direction"], string> = {
+  UP: "▲",
+  DOWN: "▼",
+  FLAT: "–",
+};
+
+const DELTA_WORD: Record<MetricDelta["direction"], string> = {
+  UP: "up",
+  DOWN: "down",
+  FLAT: "flat",
+};
+
+/**
+ * A delta's ink.
+ *
+ * This is the one place in the kit where status colour lands on text rather
+ * than inside a chip, and it is a considered exception rather than an
+ * oversight. The artboard colours the AR-overdue delta on M01-S01, and a chip
+ * here would be wrong twice over: it would read as the metric's status when it
+ * is only the movement, and a row of five chipped metrics would spend more
+ * accent than the whole rest of the dashboard.
+ *
+ * The exception is kept narrow. Colour arrives only when the SERVER sends a
+ * severity — a rise is not bad news by itself, and `UP` on revenue and `UP` on
+ * overdue receivables are opposite facts that only the server can tell apart.
+ * Without a severity the delta is muted like any other secondary line.
+ */
+const DELTA_INK: Record<Severity, string> = {
+  INFO: "text-ink-muted",
+  WARN: "text-warning",
+  DANGER: "text-danger",
+  ALERT: "text-danger",
+};
 
 function isMoney(value: unknown): value is Money {
   return typeof value === "object" && value !== null && "amount" in value && "currency" in value;
@@ -61,6 +107,7 @@ export function MetricCell({
   bar,
   barState,
   onDrill,
+  delta,
   estimate,
 }: MetricCellProps) {
   const body = (
@@ -87,9 +134,23 @@ export function MetricCell({
         ) : null}
       </span>
 
+      {delta ? (
+        <span className={cn("whitespace-nowrap text-[12px]", DELTA_INK[delta.severity ?? "INFO"])}>
+          {/* The arrow is decoration; the direction is a word in the accessible
+              text. An arrow glyph on its own is not a reading. */}
+          <span aria-hidden="true">{DELTA_ARROW[delta.direction]} </span>
+          <span className="sr-only">{DELTA_WORD[delta.direction]} </span>
+          {Math.abs(Math.round(delta.rate * 100))}%
+          {delta.comparedTo ? ` vs ${formatPeriod(delta.comparedTo)}` : ""}
+        </span>
+      ) : null}
+
       {sub ? <span className="whitespace-nowrap text-[12px] text-ink-muted">{sub}</span> : null}
+
       {estimate ? (
-        <span className="text-[11px] text-ink-muted">illustrative · baseline not yet measured</span>
+        <span className="text-[11px] text-ink-muted">
+          {typeof estimate === "string" ? estimate : ESTIMATE_DEFAULT}
+        </span>
       ) : null}
     </>
   );

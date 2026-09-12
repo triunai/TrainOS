@@ -1,5 +1,6 @@
 import type { TierKey } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { tierLabel } from "./format";
 
 /**
  * The tier chip. Kit.dc.html §10, verbatim: "Neutral by design. A tier is a
@@ -13,11 +14,6 @@ import { cn } from "@/shared/lib/utils";
  * `STRONG_1` renders as `STRONG-1` and `DEEP_THINK` as `DEEP THINK`, matching
  * the artboard: underscores are a wire format, not a label.
  */
-
-/** Contract `TierKey` → the label the artboards print. */
-export function tierLabel(key: TierKey): string {
-  return key.replace(/_(\d)$/, "-$1").replace(/_/g, " ");
-}
 
 export interface TierChipProps {
   tier: TierKey;

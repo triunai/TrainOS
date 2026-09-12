@@ -3,7 +3,7 @@ import type { RequiredDocument } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MiniBar } from "./Bar";
 import { StatusChip } from "./StatusChip";
-import { humanise } from "./statusTone";
+import { humanise } from "./format";
 import { FOCUS_RING } from "./tokens";
 
 /**

@@ -2,7 +2,8 @@ import type { ComplianceCheck } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { CitationChip } from "./CitationChip";
 import { StatusChip } from "./StatusChip";
-import { CHECK_TONE, humanise } from "./statusTone";
+import { humanise } from "./format";
+import { CHECK_TONE } from "./statusTone";
 
 /**
  * The rule-check row. Kit.dc.html §10, whose rule is the interesting part:

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { Provenance } from "@trainos/contract";
-import { AIChip, variantOf } from "@/shared/components/kit/AIChip";
+import { AIChip } from "@/shared/components/kit/AIChip";
+import { aiVariantOf as variantOf } from "@/shared/components/kit/adapters";
 
 const SUGGESTED_PROVENANCE: Provenance = {
   origin: "AI_SUGGESTED",

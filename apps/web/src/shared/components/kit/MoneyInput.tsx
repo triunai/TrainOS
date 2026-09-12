@@ -1,6 +1,7 @@
 import { useId, type ChangeEvent } from "react";
 import type { Money } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { toEditable, toSen } from "./format";
 import { FOCUS_RING } from "./tokens";
 
 /**
@@ -33,21 +34,6 @@ export interface MoneyInputProps {
   hint?: string;
   disabled?: boolean;
   className?: string;
-}
-
-/** `"18500.50"` → 1850050 sen. Rounds half-up at the sen, per §18. */
-export function toSen(input: string): number | null {
-  const cleaned = input.replace(/[^0-9.-]/g, "");
-  if (cleaned === "" || cleaned === "-") return null;
-  const parsed = Number(cleaned);
-  if (Number.isNaN(parsed)) return null;
-  return Math.round(parsed * 100);
-}
-
-/** 1850050 sen → `"18500.50"`, the editable form: no separators to fight the caret. */
-export function toEditable(value: Money | null): string {
-  if (!value) return "";
-  return (value.amount / 100).toFixed(2);
 }
 
 export function MoneyInput({

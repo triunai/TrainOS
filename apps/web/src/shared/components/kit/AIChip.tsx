@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { Provenance, ProvenanceOrigin } from "@trainos/contract";
+import type { Provenance } from "@trainos/contract";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
+import { aiVariantOf, type AIChipVariant } from "./adapters";
 import { cn } from "@/shared/lib/utils";
 import { AI_GLYPH, AI_POPOVER_BG, FOCUS_RING, WARNING_ACCENT_BG } from "./tokens";
 import { ProvenanceBlock } from "./ProvenanceBlock";
@@ -25,9 +26,6 @@ import { ProvenanceBlock } from "./ProvenanceBlock";
  * value renders NO badge at all. That is `variant="human"`, which returns null.
  */
 
-export type AIChipVariant =
-  "human" | "system" | "suggested" | "executed" | "awaiting" | "low-confidence" | "failed";
-
 /** Tint + border + text, one per variant. No entry here is a solid fill. */
 const VARIANT: Record<Exclude<AIChipVariant, "human">, string> = {
   system: "bg-surface text-ink-secondary border-border",
@@ -39,32 +37,6 @@ const VARIANT: Record<Exclude<AIChipVariant, "human">, string> = {
   "low-confidence": "bg-ai-tint text-primary-hover border-primary-border",
   failed: "bg-danger-fill text-danger border-danger-border",
 };
-
-/**
- * Pick the badge variant from a contract `Provenance`.
- *
- * One place decides, so a low-confidence value looks the same on the enquiry
- * screen and in the approval queue. `lowConfidenceBelow` is the threshold at
- * which a normal AI badge becomes the amber-dotted one; the pack's example is
- * 41% against an unstated bar, and REPORT.md is explicit that low confidence
- * WARNS and never blocks.
- */
-export function variantOf(
-  provenance: Provenance | undefined,
-  lowConfidenceBelow = 0.6,
-): AIChipVariant {
-  if (!provenance) return "human";
-
-  const origin: ProvenanceOrigin = provenance.origin;
-  if (origin === "HUMAN") return "human";
-  if (origin === "SYSTEM") return "system";
-
-  if (typeof provenance.confidence === "number" && provenance.confidence < lowConfidenceBelow) {
-    return "low-confidence";
-  }
-
-  return origin === "AI_EXECUTED" ? "executed" : "suggested";
-}
 
 const DEFAULT_LABEL: Record<Exclude<AIChipVariant, "human">, string> = {
   system: "System",
@@ -108,7 +80,7 @@ export function AIChip({
   popoverFooter,
   className,
 }: AIChipProps) {
-  const resolved = variant ?? variantOf(provenance);
+  const resolved = variant ?? aiVariantOf(provenance);
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout>>();
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
-import { DateText, formatDate, formatTime } from "@/shared/components/kit/DateText";
+import { DateText } from "@/shared/components/kit/DateText";
+import { formatDate, formatTime } from "@/shared/components/kit/format";
 
 describe("DateText", () => {
   it("formats a DateOnly as dd MMM yyyy", () => {

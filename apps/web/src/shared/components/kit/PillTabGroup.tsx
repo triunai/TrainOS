@@ -1,5 +1,5 @@
-import type { SavedView } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import type { PillTab } from "./adapters";
 import { FOCUS_RING } from "./tokens";
 
 /**
@@ -14,13 +14,6 @@ import { FOCUS_RING } from "./tokens";
  * these switch what is shown in place rather than navigating anywhere.
  */
 
-export interface PillTab {
-  id: string;
-  label: string;
-  /** Rendered as a muted suffix. Omit when the count is unknown, not when it is zero. */
-  count?: number;
-}
-
 export interface PillTabGroupProps {
   tabs: PillTab[];
   activeId: string;
@@ -28,11 +21,6 @@ export interface PillTabGroupProps {
   /** What the group switches between, for the accessible name. */
   label?: string;
   className?: string;
-}
-
-/** Map contract saved views onto tabs. One conversion, so no screen writes its own. */
-export function tabsFromViews(views: SavedView[]): PillTab[] {
-  return views.map((view) => ({ id: view.id, label: view.label, count: view.count }));
 }
 
 export function PillTabGroup({

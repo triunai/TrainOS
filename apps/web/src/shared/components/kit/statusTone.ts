@@ -126,12 +126,3 @@ export const TIER_STATUS_TONE: Record<TierStatus, StatusTone> = {
   PAUSED_BY_CAP: "danger",
   DISABLED: "neutral",
 };
-
-/**
- * `UPPER_SNAKE` → `Sentence case`. The contract speaks in enums and users do
- * not; every chip label passes through here unless the screen has better copy.
- */
-export function humanise(value: string): string {
-  const spaced = value.replace(/_/g, " ").toLowerCase();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}

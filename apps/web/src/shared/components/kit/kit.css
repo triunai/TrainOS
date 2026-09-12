@@ -1,4 +1,0 @@
-/* The kit's only stylesheet: it exists to pull in the token supplement so that
-   importing the kit is the only thing a screen has to do. No rules live here —
-   every kit component styles itself with Tailwind token classes. */
-@import "../../../styles/kit-tokens.css";

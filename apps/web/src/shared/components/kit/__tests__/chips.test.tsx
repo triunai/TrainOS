@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { ProvenanceJury } from "@trainos/contract";
-import { TierChip, tierLabel } from "@/shared/components/kit/TierChip";
+import { TierChip } from "@/shared/components/kit/TierChip";
 import { JuryChip } from "@/shared/components/kit/JuryChip";
 import { CitationChip } from "@/shared/components/kit/CitationChip";
 import { RefChip } from "@/shared/components/kit/RefChip";
+import { tierLabel } from "@/shared/components/kit/format";
 
 describe("TierChip", () => {
   it("renders the tier label", () => {

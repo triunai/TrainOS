@@ -1,5 +1,6 @@
 import type { EvidenceType, Ref } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { TYPE_TAG } from "./adapters";
 
 /**
  * The typed record tag. Kit.dc.html §03 "Relation picker" and §05 command
@@ -10,26 +11,6 @@ import { cn } from "@/shared/lib/utils";
  * list scannable, and three characters is the width that keeps a column of them
  * aligned.
  */
-
-/** Contract `EvidenceType` → the artboards' three-letter tag. */
-export const TYPE_TAG: Record<EvidenceType, string> = {
-  EMAIL: "EML",
-  TNA: "TNA",
-  PROGRAMME: "PRG",
-  TRAINER: "TRN",
-  TRAINER_AVAILABILITY: "AVL",
-  QUOTATION: "QUO",
-  QUESTIONNAIRE: "QNR",
-  HISTORY: "HIS",
-  CATALOGUE: "CAT",
-  HRDC_STATEMENT: "HRD",
-  PARTICIPANT_QUERY: "PTQ",
-  ORGANISATION: "ORG",
-  CONTACT: "CON",
-  INVOICE: "INV",
-  PROPOSAL: "PRO",
-  ACTION: "ACT",
-};
 
 export interface RefChipProps {
   /** The record's business reference, e.g. `ORG-0114`. Rendered when no `type` tag is wanted. */

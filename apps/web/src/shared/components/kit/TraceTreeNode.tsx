@@ -1,8 +1,8 @@
 import type { TraceNode, TraceNodeKind } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { formatDuration } from "./format";
 import { MoneyText } from "./Money";
 import { FOCUS_RING } from "./tokens";
-import { formatDuration } from "./AgentRunCard";
 
 /**
  * One node of the orchestrator execution tree. Kit.dc.html §10 "Trace tree

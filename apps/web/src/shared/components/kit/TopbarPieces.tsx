@@ -1,4 +1,5 @@
 import { cn } from "@/shared/lib/utils";
+import { initials } from "./format";
 import { IconButton } from "./Button";
 import { KeyboardShortcut } from "./KeyboardShortcut";
 import { FOCUS_RING } from "./tokens";
@@ -74,16 +75,6 @@ export function NotificationBell({ unread = 0, onOpen, className }: Notification
       ) : null}
     </span>
   );
-}
-
-/** Initials from a display name: "Amirah Yusof" → "AY", "Kelvin" → "K". */
-export function initials(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
 }
 
 export interface AvatarProps {

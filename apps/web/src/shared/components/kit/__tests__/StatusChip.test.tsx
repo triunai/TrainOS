@@ -1,12 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StatusChip } from "@/shared/components/kit/StatusChip";
-import {
-  PROPOSAL_TONE,
-  APPROVAL_TONE,
-  humanise,
-  TIER_STATUS_TONE,
-} from "@/shared/components/kit/statusTone";
+import { PROPOSAL_TONE, APPROVAL_TONE, TIER_STATUS_TONE } from "@/shared/components/kit/statusTone";
+import { humanise } from "@/shared/components/kit/format";
 
 describe("StatusChip", () => {
   it("renders the label text", () => {

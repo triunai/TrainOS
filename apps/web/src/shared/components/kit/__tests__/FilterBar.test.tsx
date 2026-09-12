@@ -1,12 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { AppliedFilter } from "@trainos/contract";
-import {
-  FilterBar,
-  DensityToggle,
-  chipsFromFilters,
-  type FilterChipModel,
-} from "@/shared/components/kit/FilterBar";
+import { FilterBar, DensityToggle } from "@/shared/components/kit/FilterBar";
+import { chipsFromFilters, type FilterChipModel } from "@/shared/components/kit/adapters";
 
 describe("FilterBar", () => {
   it("a normal chip has a remove button naming the filter, and clicking it calls onRemove with the id", () => {

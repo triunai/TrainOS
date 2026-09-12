@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { RunStep, RunStepStatus } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { formatDuration } from "./format";
 import { MoneyText } from "./Money";
 import { FOCUS_RING, MONO_LABEL } from "./tokens";
-import { formatDuration } from "./AgentRunCard";
 
 /**
  * One tool call in a run's log. Kit.dc.html §05 (inside the agent-run card) and

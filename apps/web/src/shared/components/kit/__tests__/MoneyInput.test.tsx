@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { MoneyInput, toSen, toEditable } from "@/shared/components/kit/MoneyInput";
+import { MoneyInput } from "@/shared/components/kit/MoneyInput";
+import { toEditable, toSen } from "@/shared/components/kit/format";
 
 describe("toSen / toEditable", () => {
   it("toSen converts a decimal string to integer sen", () => {

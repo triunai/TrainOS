@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import {
-  AutonomyChip,
-  AUTONOMY_LADDER,
-  autonomyCaption,
-} from "@/shared/components/kit/AutonomyChip";
+import { AutonomyChip } from "@/shared/components/kit/AutonomyChip";
+import { AUTONOMY_LADDER, autonomyCaption } from "@/shared/components/kit/adapters";
 
 describe("AutonomyChip", () => {
   it("renders the OBSERVE rung as neutral, with no AI tint", () => {
