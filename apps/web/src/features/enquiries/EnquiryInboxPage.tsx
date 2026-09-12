@@ -130,9 +130,20 @@ export function EnquiryInboxPage() {
       {
         type: "OPPORTUNITY_CONVERT",
         targetRef: detail.data.ref,
-        /* With no suggestion there is no agent payload, so the convert carries
+        /* Spelled out rather than passed through. The contract's payloads are
+           named interfaces with no index signature, and `ActionRequest` wants a
+           record — an object literal satisfies it and keeps every field the
+           server will read visible at the call site.
+
+           With no suggestion there is no agent payload, so the convert carries
            the enquiry's own estimated value and nothing invented. */
-        payload: suggestion?.payload,
+        payload: suggestion?.payload
+          ? {
+              value: suggestion.payload.value,
+              questionnaireTemplateId: suggestion.payload.questionnaireTemplateId,
+              programmeId: suggestion.payload.programmeId,
+            }
+          : undefined,
         requestedBy: actor,
       },
       {

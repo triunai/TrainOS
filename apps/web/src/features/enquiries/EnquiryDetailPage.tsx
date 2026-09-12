@@ -123,7 +123,14 @@ export function EnquiryDetailPage() {
       {
         type: "OPPORTUNITY_CONVERT",
         targetRef: detail.ref,
-        payload: suggestion?.payload,
+        /* Spelled out, not passed through — see the note in the inbox. */
+        payload: suggestion?.payload
+          ? {
+              value: suggestion.payload.value,
+              questionnaireTemplateId: suggestion.payload.questionnaireTemplateId,
+              programmeId: suggestion.payload.programmeId,
+            }
+          : undefined,
         requestedBy: actor,
       },
       {

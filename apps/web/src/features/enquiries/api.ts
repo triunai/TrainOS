@@ -158,15 +158,6 @@ export function useFollowUpDraft(id: string | undefined, channel: "EMAIL" | "WHA
 /* ---- §3 the action envelope ---------------------------------------- */
 
 /**
- * Any action request, whatever the concrete shape of its payload.
- *
- * The contract's payloads are named interfaces, not index-signature records, so
- * a screen passing `OpportunityConvertPayload` needs this rather than a cast at
- * the call site.
- */
-export type AnyActionRequest = Omit<ActionRequest, "payload"> & { payload?: object };
-
-/**
  * Every primary button on these screens goes through here, and every caller
  * renders all three outcomes. An approval is a success, not an error — R2.
  */
@@ -174,16 +165,11 @@ export function useAction() {
   const client = useApi();
   const queryClient = useQueryClient();
 
-  return useMutation<ActionResponse, unknown, AnyActionRequest>({
+  return useMutation<ActionResponse, unknown, ActionRequest>({
     mutationFn: (request) =>
-      client.performAction(
-        /* `ActionRequest<P>` defaults its payload to an index-signature record,
-           which a named contract payload such as `OpportunityConvertPayload`
-           does not structurally satisfy. Widening happens once, here, rather
-           than at every call site. */
-        { ...request, payload: request.payload as Record<string, unknown> | undefined },
-        { idempotencyKey: `${request.type}:${request.targetRef}:${Date.now()}` },
-      ),
+      client.performAction(request, {
+        idempotencyKey: `${request.type}:${request.targetRef}:${Date.now()}`,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.enquiries.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.followUps.all });
