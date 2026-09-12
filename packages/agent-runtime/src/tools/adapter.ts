@@ -140,6 +140,14 @@ export interface QuotationResult {
   net: Money;
   sst: Money;
   total: Money;
+  /**
+   * The figure the proposal states and HRD Corp claims against — net of SST.
+   *
+   * This, not `total`, is what the policy gate compares to a threshold. SST is
+   * a pass-through the client does not approve, and folding it into the value
+   * would push a RM 14,900 proposal over a RM 15,000 gate on tax alone.
+   */
+  proposalValue: Money;
   cost: Money;
   marginRate: number;
   floorMarginRate: number;

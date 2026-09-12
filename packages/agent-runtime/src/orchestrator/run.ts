@@ -225,6 +225,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       maxTokens: 800,
     });
 
+    // Always retag with what actually answered, not what the tier binding
+    // says would have. A trace that names `claude-sonnet-5` on a run served by
+    // a mock is a trace that lies, and this is the one file that can prevent it.
     trace.retagNode(orchestratorNode, {
       tier: call.tier,
       model: call.result.model,
@@ -419,7 +422,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     haltedBy = {
       policyId: queued.approvalRequest.policyId,
       approvalRequestRef: queued.approvalRequest.ref,
-      reason: haltReason(plan),
+      reason: haltReason(plan, queued.approvalRequest.policyId),
     };
     status = 'HALTED';
     outcome = 'QUEUED_FOR_APPROVAL';
@@ -452,8 +455,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     outcome = response.status;
   }
 
+  // The orchestrator's own work succeeded even when the gate stopped the
+  // submission — §17's example node tree closes n0 `OK` and hangs `HALTED` on
+  // the tool node. Marking n0 halted would blame the planner for the policy.
   trace.closeNode(orchestratorNode, {
-    status: status === 'HALTED' ? 'HALTED' : status === 'FAILED' ? 'FAILED' : 'OK',
+    status: status === 'FAILED' ? 'FAILED' : 'OK',
     tokens: orchestratorTokens,
     cost: orchestratorCost,
     cacheHitRate: orchestratorCacheRate,
@@ -536,13 +542,14 @@ async function runStage(opts: RunStageOptions): Promise<void> {
         { actionType: stage.actionType },
       );
 
+      trace.retagNode(nodeId, {
+        tier: call.tier,
+        model: call.result.model,
+        provider: toContractProvider(call.result.provider),
+      });
+
       if (call.degraded) {
         degradedTo = call.tier;
-        trace.retagNode(nodeId, {
-          tier: call.tier,
-          model: call.result.model,
-          provider: toContractProvider(call.result.provider),
-        });
         trace.event('ESCALATION', {
           from: call.requestedTier,
           to: call.tier,
@@ -793,11 +800,15 @@ function summariseToolCalls(blackboard: Blackboard): string {
   return ['TOOL RESULTS SO FAR:', ...lines].join('\n');
 }
 
-function haltReason(plan: SubmitPlan): string {
-  if (plan.value) {
-    return `Value RM ${(plan.value.amount / 100).toLocaleString('en-MY')} requires approval`;
+function haltReason(plan: SubmitPlan, policyId: string): string {
+  if (plan.value && plan.value.amount > 0) {
+    const major = (plan.value.amount / 100).toLocaleString('en-MY', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+    return `Value RM ${major} requires approval under ${policyId}`;
   }
-  return `${plan.type} is policy-gated`;
+  return `${plan.type} is gated by ${policyId}`;
 }
 
 function buildProvenance(

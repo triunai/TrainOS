@@ -131,6 +131,20 @@ export class ProviderRegistry {
     return this;
   }
 
+  /**
+   * Register one provider under another provider's id.
+   *
+   * How a mock stands in for every vendor at once: the tier bindings still name
+   * `anthropic` and `deepseek`, the router still walks the same chains, and the
+   * run that comes out is shaped exactly like a live one. Without this, a
+   * no-key demo would have to use a different routing config from the real
+   * thing and would stop proving anything about it.
+   */
+  registerAs(id: ProviderId, provider: LLMProvider): this {
+    this.providers.set(id, provider);
+    return this;
+  }
+
   get(id: ProviderId): LLMProvider | undefined {
     return this.providers.get(id);
   }
