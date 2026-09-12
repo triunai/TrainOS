@@ -1,0 +1,324 @@
+name: CI
+
+# Typecheck and hook-order are deployment gates as well as CI jobs. Broad
+# lint/format/dependency debt stays advisory until its baseline is clean.
+#
+# BRANCH PROTECTION IS NOT SET UP BY THIS FILE. Until someone requires these
+# checks on the default branch in the host's settings, a green pipeline is
+# decoration, not custody.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect optional surfaces
+    runs-on: ubuntu-latest
+    outputs:
+      has_supabase: ${{ steps.probe.outputs.has_supabase }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: probe
+        run: |
+          if [ -d supabase ]; then
+            echo "has_supabase=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_supabase=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  install:
+    name: Install (cached)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+
+  lint:
+    name: React Hook Order
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run lint:hooks
+
+  lint-full:
+    name: ESLint (full, advisory)
+    needs: install
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run lint
+
+  format:
+    name: Prettier (drift check)
+    needs: install
+    runs-on: ubuntu-latest
+    continue-on-error: true # observe-only — drift heals via lint-staged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run format:check
+
+  typecheck:
+    name: TypeScript (loose, base config)
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run typecheck
+
+  typecheck-strict:
+    name: TypeScript (strict allowlist)
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run typecheck:strict
+
+  build:
+    name: Vite build
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - name: Build
+        # VITE_ env vars are inlined into the bundle at build time. They are
+        # public-by-design. Storing them as repository secrets is hygiene, not
+        # security.
+        run: npm run build
+        env:
+          VITE_SITE_URL: ${{ secrets.VITE_SITE_URL }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+      - name: Report bundle sizes
+        run: |
+          echo "## Bundle sizes" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          du -sh apps/web/dist/assets/*.js apps/web/dist/assets/*.css 2>/dev/null | sort -h >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: apps/web/dist/, retention-days: 7 }
+
+  test:
+    name: Vitest (unit)
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Coverage report (advisory until the first threshold lands)
+        run: npm run test:coverage
+        continue-on-error: true
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: coverage-report, path: apps/web/coverage/, retention-days: 7 }
+
+  arch:
+    name: Architecture boundaries
+    needs: install
+    runs-on: ubuntu-latest
+    continue-on-error: true # advisory until the boundary baseline has real features to guard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run arch:graph
+
+  sql-parse:
+    # BLOCKING. A migration or test pin that does not parse is not a migration
+    # or a pin. Gates like the typechecks — not advisory tier.
+    name: SQL Parse (migrations, rollbacks, tests)
+    needs: [install, detect]
+    if: needs.detect.outputs.has_supabase == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run lint:sql
+
+  rpc-contract:
+    name: RPC Contract Drift
+    needs: [install, detect]
+    if: needs.detect.outputs.has_supabase == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run check:rpc
+
+  grant-hygiene:
+    name: Grant Hygiene
+    needs: [install, detect]
+    if: needs.detect.outputs.has_supabase == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run check:grants
+
+  secrets-scan:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  deps-audit:
+    name: npm audit (high+)
+    needs: install
+    runs-on: ubuntu-latest
+    continue-on-error: true # advisory — keep main green when transitive vulns appear
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  sast-semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install Semgrep
+        run: pip install semgrep
+      - name: Custom rules — ERROR severity (blocking)
+        run: semgrep scan --config .semgrep/rules.yml --severity ERROR --error
+      - name: Custom rules — WARNING/INFO (advisory)
+        run: semgrep scan --config .semgrep/rules.yml --severity WARNING --severity INFO
+        continue-on-error: true
+      - name: Registry rulesets — OWASP / React / TS (advisory)
+        run: >-
+          semgrep scan
+          --config p/typescript
+          --config p/react
+          --config p/owasp-top-ten
+          --config p/javascript
+        continue-on-error: true
+
+  summary:
+    name: CI Summary
+    needs:
+      [
+        detect,
+        lint,
+        lint-full,
+        format,
+        typecheck,
+        typecheck-strict,
+        build,
+        test,
+        arch,
+        rpc-contract,
+        grant-hygiene,
+        sql-parse,
+        sast-semgrep,
+        secrets-scan,
+        deps-audit,
+      ]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Aggregate
+        run: |
+          echo "## CI Result Matrix" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| React hook order | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Full lint | ${{ needs.lint-full.result }} (advisory) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Format | ${{ needs.format.result }} (advisory) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Typecheck (loose) | ${{ needs.typecheck.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Typecheck (strict) | ${{ needs.typecheck-strict.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Vitest (unit) | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Architecture boundaries | ${{ needs.arch.result }} (advisory) |" >> $GITHUB_STEP_SUMMARY
+          echo "| RPC contract | ${{ needs.rpc-contract.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Grant hygiene | ${{ needs.grant-hygiene.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SQL parse | ${{ needs.sql-parse.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Semgrep SAST | ${{ needs.sast-semgrep.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets scan | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deps audit | ${{ needs.deps-audit.result }} (advisory) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "supabase surface present: ${{ needs.detect.outputs.has_supabase }}" >> $GITHUB_STEP_SUMMARY
+
+      # THE AGGREGATE MUST FAIL, NOT JUST NARRATE. `if: always()` makes this job
+      # run after failures — and with only `echo` steps it then SUCCEEDS, so a
+      # green "CI Summary" sits on top of a red matrix. Anyone using it as the
+      # required check is reading a status that cannot say no. Blocking jobs are
+      # listed explicitly; the advisory ones are deliberately absent.
+      - name: Fail when a blocking job failed
+        # "skipped" IS A FAILURE HERE. Every blocking job `needs: install`, so
+        # if install fails they are all SKIPPED, not failed — and a list of just
+        # failure/cancelled passes green having run nothing at all. That is the
+        # worst possible green: the cascade that breaks everything is the one
+        # the gate cannot see.
+        #
+        # The three Supabase jobs are the ONE legitimate skip: they are gated on
+        # supabase/ existing, so their skip only counts as a failure when the
+        # detect job said the directory is there.
+        if: >-
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.lint.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.typecheck.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.typecheck-strict.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.build.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.test.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.secrets-scan.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.sast-semgrep.result) ||
+          contains(fromJSON('["failure","cancelled"]'), needs.detect.result) ||
+          (needs.detect.outputs.has_supabase == 'true' &&
+            (contains(fromJSON('["failure","cancelled","skipped"]'), needs.sql-parse.result) ||
+             contains(fromJSON('["failure","cancelled","skipped"]'), needs.rpc-contract.result) ||
+             contains(fromJSON('["failure","cancelled","skipped"]'), needs.grant-hygiene.result)))
+        run: |
+          echo "::error::A blocking CI job failed, was cancelled, or was skipped — see the matrix above."
+          exit 1

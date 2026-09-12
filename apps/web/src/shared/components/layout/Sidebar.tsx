@@ -28,8 +28,7 @@ export function Sidebar({ role }: { role: Role }) {
 
   const [openKeys, setOpenKeys] = useState<ReadonlySet<string>>(new Set());
 
-  const isOpen = (parent: NavParent) =>
-    parent.key === activeParentKey || openKeys.has(parent.key);
+  const isOpen = (parent: NavParent) => parent.key === activeParentKey || openKeys.has(parent.key);
 
   const toggle = (key: string) =>
     setOpenKeys((previous) => {

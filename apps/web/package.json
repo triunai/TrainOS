@@ -15,7 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "bundle:analyze": "vite-bundle-visualizer"
+    "bundle:analyze": "vite-bundle-visualizer",
+    "arch:graph": "depcruise src --config ../../.dependency-cruiser.cjs --ignore-known ../../.dependency-cruiser-known-violations.json --cache ../../node_modules/.cache/dependency-cruiser",
+    "arch:baseline": "depcruise src --config ../../.dependency-cruiser.cjs --output-type baseline > ../../.dependency-cruiser-known-violations.json"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

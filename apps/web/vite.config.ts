@@ -5,8 +5,11 @@ import path from "path";
 export default defineConfig(({ mode }) => ({
   base: "/",
   server: {
+    // 8080 is the house default and is already owned by a sibling app on a
+    // developer machine running both. TrainOS owns 5180 so the two can run at
+    // once and the bundle-budget dev-server probe cannot confuse them.
     host: "::",
-    port: 8080,
+    port: 5180,
   },
   plugins: [react()],
   resolve: {

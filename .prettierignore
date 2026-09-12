@@ -16,11 +16,11 @@ supabase/tables
 supabase/seeds
 apps/web/public
 
-docs/design
-docs/research
-docs/architecture
-packages/contract
-packages/fixtures
-packages/agent-runtime
+# Other agents' and other tools' trees. Formatting a file this repo does not
+# own rewrites someone else's work and manufactures merge conflicts.
+docs/
+packages/
+supabase/
+.claude/
 
 CHANGELOG.md

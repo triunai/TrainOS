@@ -39,9 +39,7 @@ export function EmptyState({ title, description, action, glyph, className }: Emp
         </div>
       ) : null}
       <p className="text-[15px] font-medium text-ink">{title}</p>
-      {description ? (
-        <p className="max-w-prose text-[13px] text-ink-muted">{description}</p>
-      ) : null}
+      {description ? <p className="max-w-prose text-[13px] text-ink-muted">{description}</p> : null}
       {action ? <div className="pt-1">{action}</div> : null}
     </div>
   );

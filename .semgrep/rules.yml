@@ -1,0 +1,171 @@
+# ===========================================================================
+# .semgrep/rules.yml — trainos custom static-analysis rules
+# ---------------------------------------------------------------------------
+# The project's domain-specific analyzers. This is the SAST equivalent of a
+# custom `no-restricted-syntax` selector in eslint.config.js — but Semgrep can
+# express multi-construct / metavariable-flow patterns ESLint cannot.
+#
+# Every rule here transcribes an EXPLICIT rule from CLAUDE.md. When CLAUDE.md's
+# rules change, update these in lockstep: this file is the enforcement copy of
+# that institutional knowledge, and a divergence between them is a defect.
+#
+# Run locally:  npm run sast        (needs `semgrep` on PATH)
+#       Docker: docker run --rm -v "${PWD}:/src" -w /src semgrep/semgrep \
+#                 semgrep scan --config .semgrep/rules.yml
+# Run in CI:    .github/workflows/ci.yml -> sast-semgrep job
+#               ERROR rules block; WARNING/INFO are advisory.
+# ===========================================================================
+rules:
+  # =========================================================================
+  # 1. XSS — dangerouslySetInnerHTML is categorically banned.
+  # =========================================================================
+  - id: no-dangerously-set-inner-html
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      dangerouslySetInnerHTML is forbidden. It is the primary React XSS vector.
+      If you must render rich text, sanitize through a vetted library (e.g.
+      DOMPurify) and document the trust boundary inline.
+    pattern: dangerouslySetInnerHTML={$HTML}
+    paths:
+      include:
+        - apps/web/src
+    metadata:
+      category: security
+      cwe: "CWE-79: Improper Neutralization of Input During Web Page Generation (XSS)"
+      owasp: "A03:2021 - Injection"
+      confidence: HIGH
+
+  # =========================================================================
+  # 2. Security model — one data boundary. No ad hoc network calls.
+  #
+  #    Re-targeted from the reference stack's `supabase.from()` rule: TrainOS
+  #    talks to a REST API at /v1, not to PostgREST. The failure is the same
+  #    shape — a call that skips the typed boundary gets no contract types, no
+  #    domain/transport error split, and no single place to change when the API
+  #    moves.
+  # =========================================================================
+  - id: no-raw-network-outside-api-layer
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Raw network access outside apps/web/src/shared/api. Every read and write
+      goes through the typed TrainOsClient, which is the ONLY place that knows
+      the base URL, carries the contract's response types, and splits domain
+      refusals from transport failures. Add a method to the client interface
+      instead.
+    pattern-either:
+      - pattern: fetch(...)
+      - pattern: new XMLHttpRequest(...)
+      - pattern: axios.$METHOD(...)
+    paths:
+      include:
+        - apps/web/src
+      exclude:
+        - "apps/web/src/shared/api/**"
+        - "*.test.ts"
+        - "*.test.tsx"
+    metadata:
+      category: security
+      cwe: "CWE-284: Improper Access Control"
+      owasp: "A01:2021 - Broken Access Control"
+      confidence: HIGH
+
+  # =========================================================================
+  # 3. ABI fragility — `as unknown as T` double-cast.
+  #    WARNING, not ERROR: legitimate sites exist. The goal is to stop NEW
+  #    unguarded ones from landing.
+  # =========================================================================
+  - id: as-unknown-as-double-cast
+    languages: [typescript]
+    severity: WARNING
+    message: >-
+      `as unknown as <Type>` bypasses the type-checker at exactly the layer
+      where the server-to-client ABI is most fragile. A real envelope-drift
+      incident was invisible at compile time BECAUSE of this cast. If
+      unavoidable: pair it with a runtime guard (Zod .parse(), explicit shape
+      check) on the same value and comment the trust assumption.
+    pattern: $EXPR as unknown as $TYPE
+    paths:
+      include:
+        - apps/web/src
+    metadata:
+      category: correctness
+      confidence: MEDIUM
+
+  # =========================================================================
+  # 4. console.log in shipped code.
+  # =========================================================================
+  - id: no-console-log-in-src
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      console.log leaks internal state to the browser console. The production
+      build strips it via esbuild `drop`, but a build-config change would ship
+      it verbatim. Remove before merge, or route through a logger that no-ops
+      in production. console.warn / console.error are acceptable for genuine
+      error paths.
+    pattern: console.log(...)
+    paths:
+      include:
+        - apps/web/src
+      exclude:
+        - "*.test.ts"
+        - "*.test.tsx"
+    metadata:
+      category: best-practice
+      confidence: HIGH
+
+  # =========================================================================
+  # 5. Keyset pagination only — no offset/range pagination.
+  #    The contract's own PageRequest is cursor-shaped (`page[cursor]`), so an
+  #    offset here is also a contract violation, not only a performance one.
+  # =========================================================================
+  - id: no-offset-pagination
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      Use keyset (cursor) pagination, never offset. The contract's PageRequest
+      carries `page.cursor` for exactly this reason. Offset pagination
+      table-scans on large offsets and silently double-counts or skips rows
+      under concurrent inserts.
+    pattern-either:
+      - pattern: $Q.range($FROM, $TO)
+      - pattern: $Q.offset($N)
+    paths:
+      include:
+        - apps/web/src
+    metadata:
+      category: correctness
+      confidence: LOW
+
+  # =========================================================================
+  # 6. Design system — no raw colour literal in a component.
+  #
+  #    CLAUDE.md: one design system, three colours, and every colour resolves
+  #    to a token in src/styles/tokens.css. A hex literal in a component is the
+  #    start of the second visual language the design rules exist to prevent,
+  #    and it does not follow the theme swap: it stays light-mode in dark.
+  # =========================================================================
+  - id: no-raw-colour-literal-in-component
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      A raw colour literal in a component. Every colour lives in
+      src/styles/tokens.css and is reached through a Tailwind token class
+      (text-ink, bg-ai-tint, border-border). A hex or rgb() literal here does
+      not follow the light-to-dark token swap and becomes the second visual
+      language the design rules forbid.
+    patterns:
+      - pattern-regex: '#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b|rgba?\([0-9]'
+    paths:
+      include:
+        - apps/web/src/shared/components
+        - apps/web/src/features
+        - apps/web/src/pages
+      exclude:
+        - "*.test.ts"
+        - "*.test.tsx"
+    metadata:
+      category: best-practice
+      confidence: MEDIUM

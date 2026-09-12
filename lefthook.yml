@@ -1,0 +1,40 @@
+# lefthook.yml — git hook orchestrator.
+#
+# TWO CLASSES OF COMMAND:
+#   tag `baseline`  — proven, always-on guards. NOT silenced by the guardrails
+#                     toggle. These block.
+#   tag `guardrail` — the advisory layer. Routed through scripts/guard.mjs,
+#                     which (a) no-ops when the `.guardrails-off` sentinel is
+#                     present and (b) makes every check advisory by exiting 0.
+#                     Lefthook has NO `continue_on_error` flag, so a wrapper
+#                     that exits 0 is the ONLY way to make a command
+#                     non-blocking.
+#
+# TWO WAYS TO PAUSE THE ADVISORY LAYER:
+#   global, persistent:    npm run guardrails:off            (sentinel file)
+#   one-shot, per-invoke:  LEFTHOOK_EXCLUDE=guardrail git push
+#
+# NOTE: lefthook does NOT auto-`git add` files a command fixed (unlike
+# lint-staged). Staged-file handling is delegated to lint-staged itself, so
+# this is a non-issue here.
+
+pre-commit:
+  commands:
+    lint-staged:
+      tags: baseline
+      run: npx lint-staged
+
+commit-msg:
+  commands:
+    commitlint:
+      tags: baseline
+      # {1} = the commit-message file path git passes to the commit-msg hook.
+      run: npx --no -- commitlint --edit {1}
+
+pre-push:
+  parallel: true
+  commands:
+    guardrails:
+      tags: guardrail
+      # The advisory layer. Toggle-aware via guard.mjs (always exits 0).
+      run: node scripts/guard.mjs all

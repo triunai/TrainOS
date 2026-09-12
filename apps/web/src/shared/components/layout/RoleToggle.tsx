@@ -15,9 +15,7 @@ export function RoleToggle() {
 
   return (
     <label className="flex items-center gap-2">
-      <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-        Role
-      </span>
+      <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">Role</span>
       <select
         aria-label="Role (development only)"
         value={me.role}

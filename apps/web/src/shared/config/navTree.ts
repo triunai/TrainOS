@@ -15,7 +15,11 @@ export type NavGroupCaption = "MAIN" | "OPERATIONS" | "KNOWLEDGE" | "SYSTEM";
 export type RawChild = readonly [label: string] | readonly [label: string, badge: number];
 
 /** `[label, icon, children | null]` — the source's own parent shape. */
-export type RawParent = readonly [label: string, icon: string, children: readonly RawChild[] | null];
+export type RawParent = readonly [
+  label: string,
+  icon: string,
+  children: readonly RawChild[] | null,
+];
 
 /** `[caption, parents]` — the source's own group shape. */
 export type RawGroup = readonly [caption: NavGroupCaption, parents: readonly RawParent[]];
@@ -82,14 +86,7 @@ export const TREE: readonly RawGroup[] = [
       [
         "Settings",
         "⚙",
-        [
-          ["Organisation"],
-          ["AI Models"],
-          ["Providers"],
-          ["Usage"],
-          ["Templates"],
-          ["Policies"],
-        ],
+        [["Organisation"], ["AI Models"], ["Providers"], ["Usage"], ["Templates"], ["Policies"]],
       ],
     ],
   ],

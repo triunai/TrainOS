@@ -1,0 +1,9 @@
+{
+  "entry": "index",
+  "chunks": {
+    "NotFoundPage": 620,
+    "PlaceholderPage": 568,
+    "index": 83111
+  },
+  "totalGzipJs": 84299
+}

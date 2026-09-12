@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  ALL_NAV_GROUPS,
-  ALL_NAV_ROUTES,
-  DEFAULT_ROUTE_PATH,
-  getNavGroups,
-  navPath,
-} from "../nav";
+import { ALL_NAV_GROUPS, ALL_NAV_ROUTES, DEFAULT_ROUTE_PATH, getNavGroups, navPath } from "../nav";
 
 const captionsOf = (role: Parameters<typeof getNavGroups>[0]) =>
   getNavGroups(role).map((group) => group.caption);

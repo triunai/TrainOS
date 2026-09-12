@@ -11,10 +11,7 @@ import { FIXTURE_ME, MeContext, type MeContextValue } from "./useMe";
 export function MeProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role>(FIXTURE_ME.role);
 
-  const value = useMemo<MeContextValue>(
-    () => ({ me: { ...FIXTURE_ME, role }, setRole }),
-    [role],
-  );
+  const value = useMemo<MeContextValue>(() => ({ me: { ...FIXTURE_ME, role }, setRole }), [role]);
 
   return <MeContext.Provider value={value}>{children}</MeContext.Provider>;
 }

@@ -1,8 +1,50 @@
+# Dependencies and build output
 node_modules/
 dist/
+dist-ssr/
+coverage/
+*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment — .env.example is COMMITTED and is the canonical variable list
 .env
 .env.local
 .env.*.local
+!.env.example
+
+# Agent harness state — machine-specific, regenerated each run
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+.claude/worktrees/
+
+# Guardrail stack
+# .guardrails-off is the pause sentinel: a committed pause would silence the
+# advisory layer for everyone, so it stays machine-local.
+.guardrails-off
+# Scratch build target for the bundle budget. The BASELINE at the repo root
+# (.bundle-size-baseline.json) is committed; only the scratch output is ignored.
+apps/web/.bundle-check/
+.bundle-check/
+.codex-reviews/
+.dependency-cruiser-cache
+.cache/
+
+# OMC operational state. `.omc/skills/**` is the intentional committable
+# exception if project-scoped skills ever land there.
 .omc/
 .remember/
-.DS_Store

@@ -171,7 +171,8 @@ export interface ReportsApi {
  * app wires the full surface once.
  */
 export interface TrainOsClient
-  extends ShellApi,
+  extends
+    ShellApi,
     ActionsApi,
     EnquiriesApi,
     OrganisationsApi,

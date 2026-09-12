@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "TrainOS — training-operations console. npm workspaces monorepo.",
+  "description": "TrainOS \u2014 training-operations console. npm workspaces monorepo.",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -30,8 +30,8 @@
     "guardrails:on": "node scripts/guard.mjs on",
     "guardrails:off": "node scripts/guard.mjs off",
     "guardrails:status": "node scripts/guard.mjs status",
-    "arch:graph": "depcruise apps/web/src --validate .dependency-cruiser.cjs --ignore-known --cache",
-    "arch:baseline": "depcruise apps/web/src --validate .dependency-cruiser.cjs --output-type baseline > .dependency-cruiser-known-violations.json",
+    "arch:graph": "npm run arch:graph -w apps/web",
+    "arch:baseline": "npm run arch:baseline -w apps/web",
     "bundle:check": "node scripts/bundle-budget-check.mjs",
     "bundle:baseline": "node scripts/bundle-budget-check.mjs --baseline",
     "bundle:analyze": "npm run bundle:analyze -w apps/web",

@@ -64,6 +64,25 @@
   --info-fill: 239 243 247; /* #EFF3F7 */
   --info-border: 203 215 227; /* #CBD7E3 */
 
+  /* ---- Kit supplements (adopted from the kit's token report) ---------- *
+   * Three values the Kit.dc.html artboards use that §1.1 does not name.
+   * They live here, with every other colour, so there is one token file. */
+
+  /* AI badge hover popover surface. Kit §02: #FCFAFF on a bblue border. NOT
+     --ai-tint — the popover is a half-step warmer than the chip it belongs to,
+     which is what separates the two planes without a shadow. */
+  --ai-popover: 252 250 255; /* #FCFAFF */
+
+  /* The low-confidence dot on an AI badge. Kit §02 draws it amber at #B67422.
+     A non-text affordance, deliberately NOT --warning (#966119), which is a
+     text colour and would darken the dot below the artboard. */
+  --warning-accent: 182 116 34; /* #B67422 */
+
+  /* Allowed-hours peak band. Kit §10 shades a peak hour #F3E3C6 against
+     --ai-tint-2 for an allowed one. A band, not a status: it says "expensive
+     window", which is a routing fact. */
+  --peak: 243 227 198; /* #F3E3C6 */
+
   /* ---- Identity ------------------------------------------------------- */
   --avatar-surface: 24 26 31; /* #181A1F  charcoal circle, light initials */
 
@@ -129,6 +148,13 @@
   --info: 157 190 228; /* #9DBEE4 */
   --info-fill: 22 32 43; /* #16202B */
   --info-border: 36 55 74; /* DERIVED */
+
+  /* Kit supplements. All three DERIVED — the pack's dark map covers none of
+     them. Each sits at the same lightness step from its dark neighbour as the
+     light value sits from its light neighbour. */
+  --ai-popover: 28 34 52; /* one step warmer than --ai-tint */
+  --warning-accent: 232 180 92; /* tracks --warning on dark, already a lifted amber */
+  --peak: 74 58 24; /* the amber band at dark-surface lightness */
 
   --avatar-surface: 42 50 62; /* #2A323E  raised graphite chip, light initials */
 
