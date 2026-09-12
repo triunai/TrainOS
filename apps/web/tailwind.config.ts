@@ -36,7 +36,10 @@ export default {
         /* Surfaces */
         canvas: token("canvas"),
         sidebar: token("sidebar"),
-        card: token("card"),
+        card: {
+          DEFAULT: token("card"),
+          foreground: token("ink"),
+        },
         surface: {
           DEFAULT: token("surface"),
           hover: token("surface-hover"),
@@ -61,6 +64,10 @@ export default {
           DEFAULT: token("primary"),
           hover: token("primary-hover"),
           border: token("primary-border"),
+          // shadcn primitives say `text-primary-foreground`; TrainOS code says
+          // `text-on-primary`. Same token, so a CLI-generated primitive is
+          // correct with no edit and no second colour enters the repo.
+          foreground: token("on-primary"),
         },
         "on-primary": token("on-primary"),
 

@@ -180,6 +180,33 @@ that adds it.
 The same principle applies locally: `guard.mjs` treats a spawn failure as a tool
 error, not a pass, so a missing binary cannot certify a check as clean.
 
+### R11 — A control a reviewer must remember to check gets a CI assertion
+
+If a rule can only be enforced by someone noticing it during review, it is not
+enforced. Any control of that shape gets a machine assertion **in the same pass
+that introduces the control**, not in a follow-up.
+
+The database work found this the expensive way: three separate lanes caught
+silent failures that every human read of the SQL had passed. The failures were
+invisible because the SQL was _valid_ — it just did not do what its author
+believed.
+
+Controls of this shape, each of which now has or needs a test:
+
+| Control              | What a test asserts                                          |
+| -------------------- | ------------------------------------------------------------ |
+| Schema placement     | the object is in `core`/`app`, not `public`                  |
+| Pinned `search_path` | `proconfig` actually carries it, on every function           |
+| A restrictive deny   | it still denies after a permissive policy is added beside it |
+| Policy plan shape    | the policy does not produce a sequential scan                |
+| `FORCE RLS`          | it is present, so the table owner is not exempt              |
+
+The same standard applies outside SQL. `lint:sql`, `check:grants` and
+`check:rpc` exist because "a reviewer will notice" had already failed for a
+migration that could not run, a grant that reached `anon`, and an envelope that
+gained a sibling key. When you add a rule to this file, ask what would catch a
+violation, and write that.
+
 ---
 
 ## Documentation system
@@ -226,6 +253,12 @@ old claim needs to see the correction, not silence.
   They are marked in place.
 - **The design pack's `compliance` nav-role key is unreachable.** No role in the
   contract's `Role` union maps to it. The key is kept verbatim; the gap is real.
+- **Two toast implementations exist; only one is mounted.** `sonner` is the
+  app's toast surface and the centralised `MutationCache` calls it. The shadcn
+  CLI also wrote `ui/toast.tsx`, `ui/toaster.tsx` and `hooks/use-toast.ts` as
+  part of the base primitive set. Those are **unmounted and unused on purpose** —
+  mounting them would put two toast systems side by side, which is debt, not a
+  pattern. Delete them if the primitive set is ever pruned.
 - **Branch protection is not on.** Until the blocking checks are required on
   `main` in the host's settings, CI is decoration rather than custody.
 
