@@ -29,7 +29,7 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | C4 | Tenant helper `app.tenant_id()` or `app.current_tenant_id()` | `app.current_tenant_id()`; the gate calls the raising sibling `app.require_tenant_id()` | lead's ruling |
 | C5 | Tenant claim under `app_metadata` or top level | **top level** on `auth.jwt()` | `sb-tenancy` |
 | C6 | Outbox columns `topic`/`job_key`/`available_at` | `job_type`/`job_key`/`run_after`, plus `effect_id`, `correlation_id` and `action_request_id`. `sb-events` first asked for `idempotency_key`, then kept my `job_key` and reserved `idempotency_key` on `core.events` for the caller-supplied header from §1 | `sb-events` owns the table |
-| C7 | `job_type` is a rename of `topic` | it is **not**: `topic` was `'effect.proposal_send'`, `job_type` is a handler key like `'SEND_EMAIL'`, mapped by `app.job_type_for` | `sb-events` |
+| C7 | `job_type` is a rename of `topic` | it is **not**: `topic` was `'effect.proposal_send'`, `job_type` is a handler key like `'SEND_EMAIL'`. Moot for this lane as of C26: the gate no longer passes either | `sb-events` |
 | C8 | Worker write-back signature | `app.report_effect_result(effect_id, status, payload, error)`. We each conceded to the other's proposal and swapped; their argument for `effect_id` is the better one, so both lanes are now on it | settled on the merits |
 | C9 | An action read `EXECUTED` while an effect was still outstanding | `EXECUTING` → `EXECUTED` or `PARTIALLY_FAILED`; `partial_failure` boolean removed | lead's ruling |
 | C10 | `CREATE` vs `ADD` in the effect op union | one union `ADD·UPDATE·REMOVE`; `CREATE` normalises to `ADD` at plan time | ruling R1 |
@@ -46,6 +46,8 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | C23 | `app.role_holders` would enumerate any tenant passed to it | raises unless `service_role` or the caller's own tenant | `sb-tenancy` caught it |
 | C24 | Routing by role can outlive the permission matrix | optional `p_requires_permission` intersects the two | `sb-tenancy` |
 | C25 | Functions pinned `search_path` to a named list including `pg_catalog` | `set search_path = ''` on all 13, everything qualified | `sb-money` retraction, `sb-tenancy` warning |
+| C26 | Gate inserted into `app.outbox` directly | the gate calls `app.enqueue_effect_jobs(action_request_id)` and never learns that handler keys exist | `sb-events` asked me to choose; I chose theirs |
+| C27 | Success value on the worker callback | `SUCCEEDED`, not `SETTLED`. Their doc briefly said `SETTLED`, which my `case` would have recorded as dead-lettered | `sb-events` re-checked and corrected |
 | C12 | Jury sampling by event subscription or by cron | cron, 5-minute sweep | `sb-events` conceded |
 | C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_sen`, the one stable money column per gated target | `sb-erd` |
 
@@ -1674,8 +1676,17 @@ legitimately iterates tenants. `sb-tenancy` flagged the shape rather than quietl
 it, and they are right that it will recur in both lanes: **a `SECURITY DEFINER` function
 taking an id it then trusts is the tell, and the tenant argument is where it bites.**
 Worth re-reading every signature in this document against that, which I have done —
-`app.perform_action`, `app.decide_approval` and `app.report_effect_result` all derive the
-tenant from the claim rather than accepting one.
+`app.perform_action`, `app.decide_approval`, `app.report_effect_result` and
+`app.open_approval_count` all derive the tenant from the claim rather than accepting one.
+
+`sb-tenancy` then broke and fixed the guard itself, and the failure is instructive. Their
+first version tested `current_user <> 'service_role'`. **Inside a `SECURITY DEFINER`
+function `current_user` is the function's owner, not the invoker**, so every call from
+inside one of the gate functions here would have raised a cross-tenant denial on a
+completely legitimate call. It now tests `app.jwt() ? 'sub'` — is there an end user
+behind this call — which is robust to `current_user` changing underfoot. `perform_action`
+and `decide_approval` would never have tripped it because they never pass a tenant, but
+`app.pick_role_holder` calls `role_holders` and would have, had it been definer-owned.
 
 **An optional permission intersection.** Routing by `approver_role` stays correct and is
 still a data match rather than an authorisation decision. But the role-permission matrix
@@ -1689,7 +1700,35 @@ silently disagree.
 agent holds no `approval:decide`, and §3's fifth input forbids self-approval, so an agent
 assignee is never right.
 
-**They declined to do the ordering, and the seam argument is right.** `app.role_holders`
+**The ordering function, which is mine.** `app.role_holders` returns membership facts;
+this counts over this lane's table and applies this lane's ordering rule.
+
+```sql
+create or replace function app.open_approval_count(p_user_id text)
+returns int
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select count(*)::int
+  from core.approval_requests a
+  where a.tenant_id     = app.require_tenant_id()
+    and a.assigned_to_id = p_user_id
+    and a.status        = 'PENDING';
+$$;
+```
+
+Three things about that signature are deliberate. It takes **no tenant argument**: the
+tenant comes from `app.require_tenant_id()`, so this is not another `SECURITY DEFINER`
+function accepting an id it then trusts — the shape `sb-tenancy` flagged and which I went
+back through every signature here to check for. It is `stable` rather than `volatile`, so
+the planner may call it once per candidate row in the assignment query rather than once
+per reference. And it is covered by the existing partial index
+`approval_requests_assigned on (tenant_id, assigned_to_id, sla_due_at) where status =
+'PENDING'`, so each call is an index-only count over a small set rather than a scan.
+
+**`sb-tenancy` declined to do the ordering, and the seam argument is right.** `app.role_holders`
 does not read `core.approval_requests` and should not. Ordering an assignment queue is
 this lane's policy and the count is over this lane's table; a helper in `app` reaching
 into a domain table inverts the dependency and couples an identity lookup to a schema
@@ -2352,22 +2391,10 @@ begin
   -- apply_effects after a crash emits no second event.
   perform app.emit_event(r.tenant_id, app.event_name_for(r.action_type), r.id);
 
-  -- external effects become outbox rows. sb-events owns app.outbox and its
-  -- columns; the gate supplies the deterministic key that makes redelivery safe.
-  insert into app.outbox (tenant_id, job_type, job_key, effect_id,
-                          action_request_id, correlation_id, payload, run_after)
-  select r.tenant_id,
-         app.job_type_for(r.action_type, ae.entity),   -- 'SEND_EMAIL', sb-events owns it
-         ae.job_key,                                   -- '<action_request_id>:<seq>'
-         ae.id,                                        -- what report_effect_result keys on
-         r.id,
-         r.id,
-         jsonb_build_object('actionRequestId', r.id, 'effectId', ae.id,
-                            'seq', ae.seq, 'payload', r.payload),
-         now()
-  from app.action_effects ae
-  where ae.action_request_id = r.id and ae.kind = 'EXTERNAL'
-  on conflict (tenant_id, job_key) do nothing;
+  -- external effects become outbox rows. sb-events owns app.outbox, its columns,
+  -- the job_key construction and the handler-key mapping, so the gate hands over
+  -- an action id and knows nothing about any of it.
+  perform app.enqueue_effect_jobs(r.id);
 
   update app.action_effects
      set status = 'DISPATCHED'
@@ -2769,6 +2796,14 @@ reasoning that a system administrator runs the system and does not commit the bu
 role's general reach, which is exactly the inference a permission matrix exists to
 prevent.
 
+One line worth adding, because `sb-tenancy` is right that a reader will make the same
+inference again: **it is the correct inference from everything except the matrix.**
+`ADMIN` genuinely does have broad reach. Only the specific decision to separate running
+the system from committing the business makes the override wrong, and that decision
+lives in one sentence of `sb-tenancy` §2.3. A bare permission grid would not have caught
+this, because a grid cannot say *why* a role is absent from a row — which is the argument
+for publishing the reasoning next to the table rather than the table alone.
+
 ---
 
 ## 5 · Jury — gate, sample, escalate
@@ -2968,19 +3003,31 @@ to parse. That argument wins, so both lanes are now on:
 ```sql
 app.report_effect_result(
   p_effect_id bigint,     -- app.action_effects.id, carried in app.outbox.effect_id
-  p_status    text,       -- SETTLED | FAILED
+  p_status    text,       -- SUCCEEDED | FAILED
   p_result    jsonb,      -- provider ids, message ids, uin, cost
   p_error     jsonb       -- {code, message, retryable}
 ) returns void
 ```
 
-`p_status` takes `SETTLED` or `FAILED`; the stored effect status is `SETTLED` or
-`DEAD_LETTERED`. The asymmetry is deliberate and `sb-events` verified the call sites:
-`app.complete_job` calls with `SETTLED`, and **only** the dead-letter branch of
+`p_status` takes `SUCCEEDED` or `FAILED`; the stored effect status is `SETTLED` or
+`DEAD_LETTERED`. Two vocabularies meeting at a boundary, and the mapping is worth
+getting exactly right because an earlier round had it wrong in a way that would have
+shipped: `sb-events`' document briefly said `app.complete_job` passes `SETTLED`, and the
+`case` expression below treats anything that is not the success value as terminal
+failure, so **a successfully delivered email would have been recorded as
+dead-lettered**. They found it on re-checking their own file after I asked. The verified
+answer is `SUCCEEDED` on success.
+
+`app.complete_job` calls with `SUCCEEDED`, and **only** the dead-letter branch of
 `app.fail_job` calls at all, with `FAILED`. A transient failure that will retry calls
 nothing, because the effect has not settled and stays `DISPATCHED`. So every failure
 that reaches the gate is terminal by construction, which is why the stored value is
 `DEAD_LETTERED` and why there is no `RETRYING` state on this side.
+
+The lesson generalises past this one value: **a two-branch `case` over a foreign
+vocabulary fails silently toward whichever branch is the `else`.** Writing it as an
+explicit three-way with a raise on the unrecognised value would have turned a wrong
+constant into an error instead of a wrong row, and that is how it is written below.
 
 `app.complete_job` calls it on success and the dead-letter branch of `app.fail_job` calls
 it on terminal failure. **The failure path is the one that matters**, and `sb-events` is
@@ -3010,7 +3057,7 @@ function, which is also the only place the action's own lifecycle advances:
 ```sql
 create or replace function app.report_effect_result(
   p_effect_id bigint,
-  p_status    text,                      -- SETTLED | FAILED
+  p_status    text,                      -- SUCCEEDED | FAILED
   p_result    jsonb default '{}'::jsonb,
   p_error     jsonb default null
 ) returns void
@@ -3034,17 +3081,21 @@ begin
     return;                                        -- late duplicate report, ignore
   end if;
 
+  if p_status not in ('SUCCEEDED','FAILED') then     -- never silently pick a branch
+    raise exception 'unrecognised effect status %L', p_status;
+  end if;
+
   update app.action_effects
-     set status     = case when p_status = 'SETTLED' then 'SETTLED' else 'DEAD_LETTERED' end,
+     set status     = case when p_status = 'SUCCEEDED' then 'SETTLED' else 'DEAD_LETTERED' end,
          attempts   = attempts + 1,
          last_error = p_error,
          retryable  = coalesce((p_error->>'retryable')::boolean, true),
-         applied_at = case when p_status = 'SETTLED' then now() else applied_at end
+         applied_at = case when p_status = 'SUCCEEDED' then now() else applied_at end
    where id = e.id;
 
   -- the provider's own facts land on the domain row through the type's handler,
   -- the only place a worker's data reaches the domain schema
-  if p_status = 'SETTLED' then
+  if p_status = 'SUCCEEDED' then
     execute format('select app.confirm_%s($1, $2)',
                    lower(app.effect_action_type(e.id)))
       using e.id, p_result;
@@ -3316,6 +3367,9 @@ is **element-for-element identical** to the refreshed `diff[]`.
 | No external effect | `ENQUIRY_ARCHIVE` executes → `EXECUTED` directly, never passes through `EXECUTING` |
 | `report_effect_result` idempotence | call it twice for the same effect → the second returns without changing attempts or re-running the confirm handler |
 | Outbox key collision | run `apply_effects` twice for one action → one outbox row per effect, `on conflict` absorbs the second |
+| `open_approval_count` is tenant-scoped | `u_kelvin` holds 3 pending in T1 and 5 in T2; called with T1's claim it returns 3, and there is no argument by which a caller can ask for T2's |
+| `open_approval_count` ordering | two `SALES_MANAGER`s with 2 and 7 open approvals → the next `APV-01` assigns to the one holding 2 |
+| Unrecognised effect status | `report_effect_result(id, 'SETTLED', …)` → raises, rather than silently recording the effect as dead-lettered |
 
 That last one is the row-lock test and it is the one most worth writing first: it is
 the failure that would send a proposal twice.
@@ -3464,7 +3518,8 @@ No conflict.
    three-argument `app.emit_event` overload, and the worker reports through their
    `app.report_effect_result(effect_id, …)`. What is unverified is that the two
    documents' SQL actually compiles against each other, since neither has been run.
-   `app.job_type_for(action_type, entity)` is theirs to write and does not exist yet.
+   `app.job_type_for` is written (their §2.3a) and is no longer called from here
+   anyway, since `app.enqueue_effect_jobs` resolves the handler key internally.
 5. **`sb-money` must persist `floor_price_sen` on the quotation.** The
    `belowFloorPrice` flag is a comparison of two stored columns. If the floor is
    computed on read instead of stored, the gate would have to call into money
