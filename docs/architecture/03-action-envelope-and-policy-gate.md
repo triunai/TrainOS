@@ -47,7 +47,7 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | C24 | Routing by role can outlive the permission matrix | optional `p_requires_permission` intersects the two | `sb-tenancy` |
 | C25 | Functions pinned `search_path` to a named list including `pg_catalog` | `set search_path = ''` on all 13, everything qualified | `sb-money` retraction, `sb-tenancy` warning |
 | C26 | Gate inserted into `app.outbox` directly | the gate calls `app.enqueue_effect_jobs(action_request_id)` and never learns that handler keys exist | `sb-events` asked me to choose; I chose theirs |
-| C27 | Success value on the worker callback | `SUCCEEDED`, not `SETTLED`. Their doc briefly said `SETTLED`, which my `case` would have recorded as dead-lettered | `sb-events` re-checked and corrected |
+| C27 | Success value on the worker callback | `SUCCEEDED`, not `SETTLED`. The pair moved four times in both directions and was live-wrong in a committed file; now pinned as a table in §6.2a and duplicated in `sb-events` §2.7 | both lanes, after `sb-events` pinned it |
 | C12 | Jury sampling by event subscription or by cron | cron, 5-minute sweep | `sb-events` conceded |
 | C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_sen`, the one stable money column per gated target | `sb-erd` |
 
@@ -3009,25 +3009,42 @@ app.report_effect_result(
 ) returns void
 ```
 
-`p_status` takes `SUCCEEDED` or `FAILED`; the stored effect status is `SETTLED` or
-`DEAD_LETTERED`. Two vocabularies meeting at a boundary, and the mapping is worth
-getting exactly right because an earlier round had it wrong in a way that would have
-shipped: `sb-events`' document briefly said `app.complete_job` passes `SETTLED`, and the
-`case` expression below treats anything that is not the success value as terminal
-failure, so **a successfully delivered email would have been recorded as
-dead-lettered**. They found it on re-checking their own file after I asked. The verified
-answer is `SUCCEEDED` on success.
+Two vocabularies meet at this boundary. **This table is the contract**, and it is
+duplicated verbatim in `sb-events` §2.7 so that neither lane has to infer it from the
+other's prose:
 
-`app.complete_job` calls with `SUCCEEDED`, and **only** the dead-letter branch of
-`app.fail_job` calls at all, with `FAILED`. A transient failure that will retry calls
-nothing, because the effect has not settled and stays `DISPATCHED`. So every failure
-that reaches the gate is terminal by construction, which is why the stored value is
-`DEAD_LETTERED` and why there is no `RETRYING` state on this side.
+| Caller and branch | `sb-events` passes | the gate stores |
+|---|---|---|
+| `app.complete_job`, success | `SUCCEEDED` | `SETTLED` |
+| `app.fail_job`, dead-letter branch | `FAILED` | `DEAD_LETTERED` |
+| `app.fail_job`, retryable branch | **no call at all** | stays `DISPATCHED` |
 
-The lesson generalises past this one value: **a two-branch `case` over a foreign
-vocabulary fails silently toward whichever branch is the `else`.** Writing it as an
-explicit three-way with a raise on the unrecognised value would have turned a wrong
-constant into an error instead of a wrong row, and that is how it is written below.
+Every failure that reaches the gate is therefore terminal by construction, which is why
+the stored value is `DEAD_LETTERED` and why there is no `RETRYING` state on this side.
+
+**Why a table and not a sentence.** These two constants moved four times across as many
+messages between the two lanes, in both directions, and were live-wrong in a committed
+file at least once. Prose reads plausibly whichever way round it is written — "the worker
+sends settled" and "the worker sends succeeded" are equally fluent — which is exactly how
+it drifted. A three-row table does not have that property. `sb-events` pinned it first
+and they are right: if these values ever change again, the table is the thing to send,
+not a paragraph.
+
+**And why the callback raises.** The `case` below is two-branch, so anything that is not
+the success value maps to terminal failure. With `SETTLED` passed on success, a
+successfully delivered email would have been recorded as dead-lettered: right row count,
+wrong meaning, and actions that fully succeeded reading `PARTIALLY_FAILED`. The general
+form is worth stating because it is not specific to this pair — **a two-branch `case`
+over a foreign vocabulary fails silently toward whichever branch is the `else`, so a
+wrong constant becomes a wrong row rather than an error.** Rejecting the unrecognised
+value turns it back into an error, which is how it is written below. `sb-events` reached
+the same conclusion one round earlier and in the opposite direction, making their
+handler-key lookup a raising table rather than a `case`.
+
+One honest note on the fix's limits. A raise is better than a silent wrong row, but it is
+not free: under the corrected callback a wrong constant would have raised *inside*
+`complete_job`, failing the completion transaction and leaving the job redelivering until
+someone looked. Louder, and still an incident. Only the shared table prevents it.
 
 `app.complete_job` calls it on success and the dead-letter branch of `app.fail_job` calls
 it on terminal failure. **The failure path is the one that matters**, and `sb-events` is
