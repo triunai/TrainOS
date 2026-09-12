@@ -30,4 +30,23 @@ export interface DevRoute {
   label: string;
 }
 
-export const devRoutes: DevRoute[] = [kitDevRoute];
+/**
+ * M22-S04, the demo script, rendered as a live index rather than a printed
+ * one: each of the nineteen steps links to the running screen. Lazy, so the
+ * step table and its copy stay out of every other chunk.
+ */
+const DemoIndex = lazy(() =>
+  import("@/features/dashboard").then((module) => ({ default: module.DemoIndex })),
+);
+
+const demoDevRoute: DevRoute = {
+  path: DEMO_INDEX_PATH,
+  label: "Demo script",
+  element: (
+    <Suspense fallback={<LoadingState label="Loading the demo script" />}>
+      <DemoIndex />
+    </Suspense>
+  ),
+};
+
+export const devRoutes: DevRoute[] = [kitDevRoute, demoDevRoute];
