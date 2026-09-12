@@ -190,7 +190,8 @@ Two formats in the contract:
 
 Strategy: a `ref_formats` table (prefix, `dated bool`, `width`) and a `ref_sequences` counter table keyed
 `(tenant_id, prefix, period)` where `period` is the four-digit year for dated prefixes and `'-'` otherwise.
-Allocation is a `SECURITY DEFINER` function `next_ref(prefix text)` doing a single
+Allocation is a `SECURITY DEFINER` function `next_ref(prefix text)`, pinned per "Function security"
+below, doing a single
 `INSERT … ON CONFLICT (tenant_id, prefix, period) DO UPDATE SET next_value = ref_sequences.next_value + 1 RETURNING`.
 That serialises per prefix per tenant, not globally, and holds the row lock for microseconds.
 
@@ -206,6 +207,37 @@ HRD-014, HRD-015, HRD-022 in §17) and is not available for anything else. sb-ac
 compliance **policy** ids, which are a different thing in a different table. `ref_formats` is the registry
 that keeps the two apart, and a prefix collision is a unique-constraint violation rather than a
 conversation.
+
+### Function security and `search_path`
+
+Every function this document calls for is written `SET search_path = ''` with every reference
+schema-qualified. That covers the one `SECURITY DEFINER` function here, `next_ref(prefix text)`, and the
+trigger functions: `set_updated_at`, `enforce_immutable_columns`, `enforce_frozen_row`,
+`enforce_append_only`, the `attendance_days` unlock trigger, the `compliance_check_results` companion
+trigger from sb-money's C-5, and the maintainers behind `engagements.starts_on`, `engagement_trainers`,
+`programmes.deliveries_count`, `invoices.outstanding_sen`, `hrdc_packets.completeness` and the two
+total-from-lines reconciliations.
+
+`next_ref` was specified above without a pinned path, which was an omission rather than a decision. A
+`SECURITY DEFINER` function with an unpinned path runs the caller's path as the owner, and this one writes
+a sequence every insert in the system depends on.
+
+**The quoting trap, because it fails silently.** sb-actions found this on thirteen of their functions and
+sb-money retracted a finding that a broken test had made look clean:
+
+```sql
+set search_path = 'app, pg_catalog'   -- ONE schema literally named "app, pg_catalog"
+set search_path =  app, pg_catalog    -- two schemas
+```
+
+The quoted form names a schema that does not exist, so **nothing** is on the path. A test asserting only
+that `proconfig` is not null passes for it, which is exactly how an exploit test came back clean. Any test
+of this has to assert the value, not its presence.
+
+Two consequences worth stating rather than leaving to taste. `pg_temp` is **absent**, not last: last is
+the usual advice, but absent is strictly safer and an empty path makes it moot. And `pg_catalog` is not
+named at all. Naming it is what buys the ability to put it somewhere other than first, and that ability is
+the whole exposure; unnamed, it is implicitly first and cannot be shadowed.
 
 ### Timestamps and dates
 
