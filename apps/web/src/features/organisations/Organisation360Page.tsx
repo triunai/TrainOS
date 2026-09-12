@@ -9,7 +9,6 @@ import type {
 } from "@trainos/contract";
 import {
   AIChip,
-  Breadcrumb,
   CitationChip,
   DataTable,
   ErrorState,
@@ -26,9 +25,11 @@ import {
   SecondaryButton,
   StatusChip,
   formatDate,
+  formatDateRange,
   humanise,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import {
   errorMessageOf,
   useDealChainStages,
@@ -59,6 +60,12 @@ export function Organisation360Page() {
   const { organisationId } = useParams<{ organisationId: string }>();
   const navigate = useNavigate();
   const [tab, setTab] = useState(TAB_OVERVIEW);
+
+  useBreadcrumb([
+    { label: "Sales" },
+    { label: "Organisations" },
+    { label: organisationId ?? "Organisation" },
+  ]);
 
   const organisation = useOrganisation(organisationId);
   const relations = useOrganisationRelations(organisationId);
@@ -126,7 +133,7 @@ export function Organisation360Page() {
       key: "dates",
       label: "Dates",
       width: "160px",
-      accessor: (row) => <span className="text-ink-secondary">{readableRange(row.dates)}</span>,
+      accessor: (row) => <span className="text-ink-secondary">{formatDateRange(row.dates)}</span>,
     },
     {
       key: "value",
@@ -139,10 +146,6 @@ export function Organisation360Page() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Sales" }, { label: "Organisations" }, { label: org.ref }]} />
-      </div>
-
       <RecordHeaderBlock
         org={org}
         currentEngagement={currentEngagement}
@@ -411,31 +414,6 @@ function RecordHeaderBlock({
       }
     />
   );
-}
-
-/**
- * "2026-11-12/2026-11-13" -> "12–13 Nov 2026".
- *
- * TEMPORARY SHAPE — a range formatter belongs beside `formatDate` in the kit
- * and has been requested there. The contract hands back a rendered ISO range,
- * which is unambiguous and unreadable; same month collapses to one month name,
- * anything else keeps both dates in full rather than guessing at a shorter
- * form. `features/tna` carries the same copy until the kit export lands.
- */
-function readableRange(range: string): string {
-  const [from, to] = range.split("/");
-  if (!from) return range;
-  if (!to || from === to) return formatDate(from);
-
-  const start = formatDate(from);
-  const end = formatDate(to);
-  const startParts = start.split(" ");
-  const endParts = end.split(" ");
-
-  if (startParts[1] === endParts[1] && startParts[2] === endParts[2]) {
-    return `${startParts[0]}–${end}`;
-  }
-  return `${start} – ${end}`;
 }
 
 function ContactRow({ contact }: { contact: ContactSummary }) {

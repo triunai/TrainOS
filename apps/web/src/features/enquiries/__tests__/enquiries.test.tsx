@@ -46,7 +46,7 @@ describe("M03-S01 · enquiry inbox", () => {
 
     /* EXECUTED, and the effects are the content of the confirmation — a bare
        "done" would not tell anyone what changed. */
-    expect(await screen.findByText(/changes recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/· done$/)).toBeInTheDocument();
     expect(screen.getByText(/Created from the enquiry/)).toBeInTheDocument();
   });
 
@@ -74,7 +74,7 @@ describe("M03-S01 · enquiry inbox", () => {
     await waitFor(() => expect(currentPrimaries()).toEqual(["Convert to lead"]));
 
     await user.click(primary);
-    expect(await screen.findByText(/changes recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/· done$/)).toBeInTheDocument();
   });
 
   it("narrows the queue when a saved view is chosen", async () => {
@@ -153,7 +153,7 @@ describe("M03-S02 · enquiry detail", () => {
 
     await user.click(buttons[0] as HTMLElement);
 
-    expect(await screen.findByText(/changes recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/· done$/)).toBeInTheDocument();
     expect(screen.getByText(/Questionnaire sent to the client contact/)).toBeInTheDocument();
   });
 });
@@ -197,7 +197,7 @@ describe("M03-S06 · follow-up queue", () => {
 
     await user.click(send);
 
-    expect(await screen.findByText(/change recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/· done$/)).toBeInTheDocument();
     expect(screen.getByText(/Follow-up sent/)).toBeInTheDocument();
   });
 

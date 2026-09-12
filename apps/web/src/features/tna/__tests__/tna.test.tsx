@@ -71,7 +71,7 @@ describe("M05-S02 · TNA detail", () => {
 
     await user.click(buttons[0] as HTMLElement);
 
-    expect(await screen.findByText(/change recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/· done$/)).toBeInTheDocument();
     expect(screen.getByText(/Drafted from the accepted recommendation/)).toBeInTheDocument();
   });
 

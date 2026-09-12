@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { GapPriority, Money, TnaGap, TnaRecommendation } from "@trainos/contract";
+import type {
+  ActionResponse,
+  GapPriority,
+  Money,
+  TnaGap,
+  TnaRecommendation,
+} from "@trainos/contract";
 import {
+  ActionOutcome,
   AIChip,
   Breadcrumb,
   CitationChip,
@@ -16,12 +23,14 @@ import {
   RefChip,
   SecondaryButton,
   StatusChip,
+  describeActionError,
   formatDate,
+  formatDateRange,
   formatTime,
   humanise,
+  type ActionError,
   type Column,
 } from "@/shared/components/kit";
-import { ActionOutcome, type Outcome } from "./ActionOutcome";
 import {
   errorMessageOf,
   useAction,
@@ -66,7 +75,13 @@ export function TnaDetailPage() {
   const action = useAction();
   const actor = useActor();
 
-  const [outcome, setOutcome] = useState<Outcome>(null);
+  const [response, setResponse] = useState<ActionResponse | undefined>(undefined);
+  const [failure, setFailure] = useState<ActionError | undefined>(undefined);
+
+  const clearOutcome = () => {
+    setResponse(undefined);
+    setFailure(undefined);
+  };
 
   if (tna.isPending) return <LoadingState rows={8} label="Loading the TNA" />;
 
@@ -88,7 +103,7 @@ export function TnaDetailPage() {
   );
 
   const accept = (programmeId: string) => {
-    setOutcome(null);
+    clearOutcome();
     action.mutate(
       {
         type: "TNA_RECOMMENDATION_ACCEPT",
@@ -97,8 +112,8 @@ export function TnaDetailPage() {
         requestedBy: actor,
       },
       {
-        onSuccess: (response) => setOutcome({ kind: "response", response }),
-        onError: (error) => setOutcome({ kind: "error", message: errorMessageOf(error) }),
+        onSuccess: setResponse,
+        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
       },
     );
   };
@@ -294,7 +309,12 @@ export function TnaDetailPage() {
             </section>
           )}
 
-          <ActionOutcome outcome={outcome} />
+          <ActionOutcome
+            response={response}
+            error={failure}
+            subject={`Use recommendation · ${record.ref}`}
+            onDismiss={clearOutcome}
+          />
 
           <section className="flex flex-col gap-2.5">
             <h2 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
@@ -318,30 +338,6 @@ export function TnaDetailPage() {
       <Fab />
     </div>
   );
-}
-
-/**
- * "2026-11-12/2026-11-13" -> "12–13 Nov 2026".
- *
- * TEMPORARY SHAPE — a range formatter belongs beside `formatDate` in the kit
- * and has been requested there. The contract returns a rendered ISO range,
- * which is unambiguous and unreadable; two screens should not each decide how
- * to soften it.
- */
-function readableRange(range: string): string {
-  const [from, to] = range.split("/");
-  if (!from) return range;
-  if (!to || from === to) return formatDate(from);
-
-  const start = formatDate(from);
-  const end = formatDate(to);
-  const startParts = start.split(" ");
-  const endParts = end.split(" ");
-
-  if (startParts[1] === endParts[1] && startParts[2] === endParts[2]) {
-    return `${startParts[0]}–${end}`;
-  }
-  return `${start} – ${end}`;
 }
 
 function Cell({ label, value }: { label: string; value: string }) {
@@ -419,7 +415,7 @@ function RecommendationCard({
         <p className="text-[12px] text-ink-muted">
           {available
             .map((trainer) =>
-              trainer.dates ? `${trainer.name} ${readableRange(trainer.dates)}` : trainer.name,
+              trainer.dates ? `${trainer.name} ${formatDateRange(trainer.dates)}` : trainer.name,
             )
             .join(" · ")}
         </p>

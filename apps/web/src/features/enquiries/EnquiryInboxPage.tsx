@@ -1,9 +1,15 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { Enquiry, EnquiryChannel, PageRequest, SavedView } from "@trainos/contract";
+import type {
+  ActionResponse,
+  Enquiry,
+  EnquiryChannel,
+  PageRequest,
+  SavedView,
+} from "@trainos/contract";
 import {
+  ActionOutcome,
   AIChip,
-  Breadcrumb,
   DateText,
   EmptyState,
   ErrorState,
@@ -17,11 +23,14 @@ import {
   RefChip,
   SecondaryButton,
   StatusChip,
+  describeActionError,
   humanise,
   tabsFromViews,
   variantOf,
+  type ActionError,
   type FilterChipModel,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { cn } from "@/shared/lib/utils";
 import {
   errorMessageOf,
@@ -31,7 +40,6 @@ import {
   useEnquiry,
   useEnquiryViews,
 } from "./api";
-import { ActionOutcome, type Outcome } from "./ActionOutcome";
 
 /**
  * M03-S01 · Unified enquiry inbox (Kit.dc.html `proof-m03s01`).
@@ -63,10 +71,18 @@ function pageFor(views: SavedView[], activeId: string): PageRequest | undefined 
 }
 
 export function EnquiryInboxPage() {
+  useBreadcrumb([{ label: "Sales" }, { label: "Enquiries" }]);
+
   const navigate = useNavigate();
   const [activeView, setActiveView] = useState<string>(ALL_TAB);
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<Outcome>(null);
+  const [response, setResponse] = useState<ActionResponse | undefined>(undefined);
+  const [failure, setFailure] = useState<ActionError | undefined>(undefined);
+
+  const clearOutcome = () => {
+    setResponse(undefined);
+    setFailure(undefined);
+  };
 
   const views = useEnquiryViews();
   const viewList = useMemo(() => views.data?.data ?? [], [views.data]);
@@ -109,7 +125,7 @@ export function EnquiryInboxPage() {
 
   const convert = () => {
     if (!detail.data) return;
-    setOutcome(null);
+    clearOutcome();
     action.mutate(
       {
         type: "OPPORTUNITY_CONVERT",
@@ -120,18 +136,14 @@ export function EnquiryInboxPage() {
         requestedBy: actor,
       },
       {
-        onSuccess: (response) => setOutcome({ kind: "response", response }),
-        onError: (error) => setOutcome({ kind: "error", message: errorMessageOf(error) }),
+        onSuccess: setResponse,
+        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
       },
     );
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Sales" }, { label: "Enquiries" }]} />
-      </div>
-
       <div className="flex flex-col gap-3 border-b border-border px-5 pb-3 pt-3">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[20px] font-semibold tracking-[-0.01em]">Enquiry inbox</h1>
@@ -193,7 +205,7 @@ export function EnquiryInboxPage() {
                     selected={enquiry.ref === current}
                     onSelect={() => {
                       setSelectedRef(enquiry.ref);
-                      setOutcome(null);
+                      clearOutcome();
                     }}
                   />
                 ))}
@@ -318,7 +330,12 @@ export function EnquiryInboxPage() {
                       </PrimaryButton>
                       <SecondaryButton>Archive</SecondaryButton>
                     </div>
-                    <ActionOutcome outcome={outcome} />
+                    <ActionOutcome
+                      response={response}
+                      error={failure}
+                      subject={`Convert ${detail.data.ref}`}
+                      onDismiss={clearOutcome}
+                    />
                   </section>
                 ) : (
                   <section className="flex flex-col gap-2.5 border-t border-divider pt-4">
@@ -347,7 +364,12 @@ export function EnquiryInboxPage() {
                       </SecondaryButton>
                       <GhostButton>Dismiss</GhostButton>
                     </div>
-                    <ActionOutcome outcome={outcome} />
+                    <ActionOutcome
+                      response={response}
+                      error={failure}
+                      subject={`Convert ${detail.data.ref}`}
+                      onDismiss={clearOutcome}
+                    />
                   </section>
                 )}
               </div>

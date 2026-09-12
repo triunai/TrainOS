@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type {
+  ActionResponse,
   EnquiryDetail,
   EnquiryExtraction,
   Money,
@@ -8,8 +9,8 @@ import type {
   RelatedRecord,
 } from "@trainos/contract";
 import {
+  ActionOutcome,
   AIChip,
-  Breadcrumb,
   CitationChip,
   DateText,
   ErrorState,
@@ -25,9 +26,12 @@ import {
   RefChip,
   SecondaryButton,
   StatusChip,
+  describeActionError,
+  ENQUIRY_TONE,
   humanise,
+  type ActionError,
 } from "@/shared/components/kit";
-import { ActionOutcome, type Outcome } from "./ActionOutcome";
+import { useBreadcrumb } from "@/shared/components/layout";
 import {
   errorMessageOf,
   useAction,
@@ -53,22 +57,6 @@ import {
 
 type FieldKey = keyof EnquiryExtraction;
 
-/**
- * Enquiry status -> chip tone.
- *
- * TEMPORARY SHAPE — this belongs beside the other enum maps in the kit's
- * `statusTone.ts`, and has been requested there. A screen deciding for itself
- * which states are worth a colour is exactly the drift that file prevents.
- * Unworked is the only state that asks for a hand, so it is the only warning.
- */
-const ENQUIRY_TONE: Record<string, "neutral" | "success" | "warning"> = {
-  OPEN: "warning",
-  ASSIGNED: "neutral",
-  CONVERTED: "success",
-  ARCHIVED: "neutral",
-  NOT_AN_ENQUIRY: "neutral",
-};
-
 const FIELD_LABEL: Record<FieldKey, string> = {
   topic: "Topic",
   audience: "Audience",
@@ -80,13 +68,20 @@ export function EnquiryDetailPage() {
   const { enquiryId } = useParams<{ enquiryId: string }>();
   const navigate = useNavigate();
 
+  useBreadcrumb([
+    { label: "Sales" },
+    { label: "Enquiries", href: "/sales/enquiries" },
+    { label: enquiryId ?? "Enquiry" },
+  ]);
+
   const enquiry = useEnquiry(enquiryId);
   const organisation = useOrganisation(enquiry.data?.matchedOrganisation?.ref);
   const patch = usePatchExtraction(enquiryId);
   const action = useAction();
   const actor = useActor();
 
-  const [outcome, setOutcome] = useState<Outcome>(null);
+  const [response, setResponse] = useState<ActionResponse | undefined>(undefined);
+  const [failure, setFailure] = useState<ActionError | undefined>(undefined);
   const [editing, setEditing] = useState<FieldKey | null>(null);
   const [primed, setPrimed] = useState(false);
 
@@ -122,7 +117,8 @@ export function EnquiryDetailPage() {
   const levy = organisation.data?.metrics.hrdcLevyAvailable;
 
   const convert = () => {
-    setOutcome(null);
+    setResponse(undefined);
+    setFailure(undefined);
     action.mutate(
       {
         type: "OPPORTUNITY_CONVERT",
@@ -131,24 +127,14 @@ export function EnquiryDetailPage() {
         requestedBy: actor,
       },
       {
-        onSuccess: (response) => setOutcome({ kind: "response", response }),
-        onError: (error) => setOutcome({ kind: "error", message: errorMessageOf(error) }),
+        onSuccess: setResponse,
+        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
       },
     );
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[
-            { label: "Sales" },
-            { label: "Enquiries", href: "/sales/enquiries" },
-            { label: detail.ref },
-          ]}
-        />
-      </div>
-
       <RecordHeader
         title={detail.subject}
         recordRef={detail.ref}
@@ -159,7 +145,7 @@ export function EnquiryDetailPage() {
         ]}
         chips={
           <>
-            <StatusChip tone={ENQUIRY_TONE[detail.status] ?? "neutral"} live>
+            <StatusChip tone={ENQUIRY_TONE[detail.status]} live>
               {humanise(detail.status)}
             </StatusChip>
             <StatusChip>{humanise(detail.channel)}</StatusChip>
@@ -271,7 +257,15 @@ export function EnquiryDetailPage() {
                 <SecondaryButton onClick={() => setEditing("timing")}>Edit first</SecondaryButton>
                 <GhostButton>Dismiss</GhostButton>
               </div>
-              <ActionOutcome outcome={outcome} />
+              <ActionOutcome
+                response={response}
+                error={failure}
+                subject={`Convert ${detail.ref}`}
+                onDismiss={() => {
+                  setResponse(undefined);
+                  setFailure(undefined);
+                }}
+              />
             </section>
           ) : null}
         </div>

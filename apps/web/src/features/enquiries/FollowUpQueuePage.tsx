@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import type { FollowUp, FollowUpStatus, PageRequest } from "@trainos/contract";
+import type { ActionResponse, FollowUp, FollowUpStatus, PageRequest } from "@trainos/contract";
 import {
+  ActionOutcome,
   AIChip,
   AutonomyChip,
-  Breadcrumb,
   DataTable,
   DateText,
   EmptyState,
@@ -16,9 +16,12 @@ import {
   SecondaryButton,
   StatusChip,
   WhatsAppCostStrip,
+  describeActionError,
+  FOLLOW_UP_TONE,
+  type ActionError,
   type Column,
 } from "@/shared/components/kit";
-import { ActionOutcome, type Outcome } from "./ActionOutcome";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { errorMessageOf, useAction, useActor, useFollowUpDraft, useFollowUps } from "./api";
 
 /**
@@ -42,23 +45,28 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "SENT", label: "Sent" },
 ];
 
-const STATUS_TONE: Record<FollowUpStatus, "neutral" | "danger" | "success"> = {
-  DUE: "neutral",
-  OVERDUE: "danger",
-  SENT: "success",
-  DISMISSED: "neutral",
-};
-
 function pageFor(tab: TabId): PageRequest | undefined {
   if (tab === "ALL") return undefined;
   return { filter: [{ field: "status", op: "eq", value: tab }] };
 }
 
 export function FollowUpQueuePage() {
+  useBreadcrumb([
+    { label: "Sales" },
+    { label: "Enquiries", href: "/sales/enquiries" },
+    { label: "Follow-up queue" },
+  ]);
+
   const [tab, setTab] = useState<TabId>("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("WHATSAPP");
-  const [outcome, setOutcome] = useState<Outcome>(null);
+  const [response, setResponse] = useState<ActionResponse | undefined>(undefined);
+  const [failure, setFailure] = useState<ActionError | undefined>(undefined);
+
+  const clearOutcome = () => {
+    setResponse(undefined);
+    setFailure(undefined);
+  };
 
   const queue = useFollowUps(pageFor(tab));
   const all = useFollowUps();
@@ -98,7 +106,7 @@ export function FollowUpQueuePage() {
       label: "Status",
       width: "108px",
       accessor: (row) => (
-        <StatusChip tone={STATUS_TONE[row.status]}>{TITLE[row.status]}</StatusChip>
+        <StatusChip tone={FOLLOW_UP_TONE[row.status]}>{TITLE[row.status]}</StatusChip>
       ),
     },
     {
@@ -123,7 +131,7 @@ export function FollowUpQueuePage() {
 
   const send = () => {
     if (!selected || !draft.data) return;
-    setOutcome(null);
+    clearOutcome();
     action.mutate(
       {
         type: "FOLLOWUP_SEND",
@@ -132,24 +140,14 @@ export function FollowUpQueuePage() {
         requestedBy: actor,
       },
       {
-        onSuccess: (response) => setOutcome({ kind: "response", response }),
-        onError: (error) => setOutcome({ kind: "error", message: errorMessageOf(error) }),
+        onSuccess: setResponse,
+        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
       },
     );
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[
-            { label: "Sales" },
-            { label: "Enquiries", href: "/sales/enquiries" },
-            { label: "Follow-up queue" },
-          ]}
-        />
-      </div>
-
       <div className="flex flex-wrap items-center gap-2.5 px-5 pb-3 pt-3">
         <h1 className="text-[22px] font-semibold tracking-[-0.015em]">Follow-up queue</h1>
         <StatusChip tone="info">{`My accounts · ${counts.ALL}`}</StatusChip>
@@ -166,7 +164,7 @@ export function FollowUpQueuePage() {
           onSelect={(id) => {
             setTab(id as TabId);
             setSelectedId(null);
-            setOutcome(null);
+            clearOutcome();
           }}
           label="Queue filters"
         />
@@ -193,7 +191,7 @@ export function FollowUpQueuePage() {
               rowKey={(row) => row.id}
               onRowClick={(row) => {
                 setSelectedId(row.id);
-                setOutcome(null);
+                clearOutcome();
               }}
               /* Highlight only — no checkbox column. `onSelectionChange` is
                  deliberately absent, which is what keeps the table unselectable
@@ -221,7 +219,7 @@ export function FollowUpQueuePage() {
                 <h2 className="text-[16px] font-semibold">
                   {selected.contact.name} · {selected.organisation.name}
                 </h2>
-                <StatusChip tone={STATUS_TONE[selected.status]}>
+                <StatusChip tone={FOLLOW_UP_TONE[selected.status]}>
                   Due <DateText value={selected.dueDate} />
                 </StatusChip>
                 <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -308,7 +306,12 @@ export function FollowUpQueuePage() {
                     </div>
                   </div>
 
-                  <ActionOutcome outcome={outcome} />
+                  <ActionOutcome
+                    response={response}
+                    error={failure}
+                    subject={`Follow-up · ${selected.contact.name}`}
+                    onDismiss={clearOutcome}
+                  />
 
                   <section className="flex flex-col gap-2.5">
                     <h3 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
