@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; background:#FAFBFC; font-family:Inter, system-ui, sans-serif; color:#181A1F; -webkit-font-smoothing:antialiased; }
+  a { color:#1F5BFF; text-decoration:none; }
+  a:hover { color:#1849D6; text-decoration:underline; }
+  details > summary { list-style:none; cursor:pointer; }
+  details > summary::-webkit-details-marker { display:none; }
+</style>
+</helmet>
+<div style="padding:48px 40px 96px; display:flex; flex-direction:column; gap:48px; align-items:flex-start">
+  <div style="display:flex; flex-direction:column; gap:8px; max-width:760px">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#69717C">TrainOS · demo pack</div>
+    <div style="font-size:26px; font-weight:600; letter-spacing:-0.02em">M22 · Demo script &amp; index</div>
+    <div style="font-size:14px; color:#50565F; line-height:1.55">Run the demo top to bottom. Every screen links out; every number belongs to the Aurora story.</div>
+  </div>
+<div style="display:flex; flex-direction:column; gap:8px; width:1440px">
+  <div style="font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#69717C">Golden path · in demo order</div>
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px">
+  <a href="M01 Dashboards.dc.html#m01s01" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M01-S01</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Executive dashboard</div>
+    <div style="font-size:12px; color:#50565F">MD · November</div></a><a href="Kit.dc.html#proof-m03s01" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M03-S01</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Enquiry inbox</div>
+    <div style="font-size:12px; color:#50565F">Amirah · four channels</div></a><a href="M03 Leads.dc.html#m03s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M03-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Enquiry detail</div>
+    <div style="font-size:12px; color:#50565F">Amirah · ENQ-2026-0912</div></a><a href="M05 TNA.dc.html#m05s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M05-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">TNA detail</div>
+    <div style="font-size:12px; color:#50565F">Amirah · TNA-0042</div></a><a href="M06 Programmes.dc.html#m06s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M06-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Programme detail</div>
+    <div style="font-size:12px; color:#50565F">Leading Through Change</div></a><a href="M07 Proposals.dc.html#m07s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M07-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Proposal builder</div>
+    <div style="font-size:12px; color:#50565F">PRO-2026-0184</div></a><a href="M07 Proposals.dc.html#m07s03" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M07-S03</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Costing worksheet</div>
+    <div style="font-size:12px; color:#50565F">QUO-2026-0184</div></a><a href="M02 Approvals.dc.html#m02s01" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M02-S01</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Approval inbox</div>
+    <div style="font-size:12px; color:#50565F">Kelvin · 7 pending</div></a><a href="Kit.dc.html#proof-m02s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M02-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Approval detail</div>
+    <div style="font-size:12px; color:#50565F">Kelvin · APV-2026-0771</div></a><a href="M07 Proposals.dc.html#m07s07" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M07-S07</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Client proposal page</div>
+    <div style="font-size:12px; color:#50565F">Nurul · accepted</div></a><a href="Kit.dc.html#proof-m04s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M04-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Organisation 360</div>
+    <div style="font-size:12px; color:#50565F">Aurora Manufacturing</div></a><a href="M09 Operations.dc.html#m09s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M09-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Engagement detail</div>
+    <div style="font-size:12px; color:#50565F">Siti · ENG-0231</div></a><a href="M10 Participants.dc.html#m10s06" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M10-S06</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Attendance capture</div>
+    <div style="font-size:12px; color:#50565F">Siti · locked</div></a><a href="M12 HRD Corp.dc.html#m12s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M12-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">HRDC claim packet</div>
+    <div style="font-size:12px; color:#50565F">Jason · 62%</div></a><a href="M13 Finance.dc.html#m13s02" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M13-S02</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Invoice detail</div>
+    <div style="font-size:12px; color:#50565F">Jason · INV-2026-0311</div></a><a href="M13 Finance.dc.html#m13s05" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M13-S05</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Collections queue</div>
+    <div style="font-size:12px; color:#50565F">Jason · reminder 2</div></a><a href="M18 Agents.dc.html#m18s01" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M18-S01</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Agent registry</div>
+    <div style="font-size:12px; color:#50565F">Admin · 8 agents</div></a><a href="M18 Agents.dc.html#m18s04" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">M18-S04</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Run trace #4821</div>
+    <div style="font-size:12px; color:#50565F">Admin · Proposal Agent</div></a><a href="Kit.dc.html" style="border:1px solid #E3E7EC; border-radius:10px; padding:12px 14px; background:#fff; display:flex; flex-direction:column; gap:3px; text-decoration:none">
+    <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#69717C">Kit</div>
+    <div style="font-size:14px; font-weight:600; color:#181A1F">Design system &amp; kit</div>
+    <div style="font-size:12px; color:#50565F">tokens, shell, components</div></a>
+  </div></div>
+
+<div id="m22s04" style="display:flex; flex-direction:column; gap:10px">
+  <div style="display:flex; align-items:baseline; gap:10px">
+    <span style="font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.06em; color:#fff; background:#181A1F; padding:3px 8px; border-radius:4px">M22-S04</span>
+    <span style="font-size:15px; font-weight:600">Demo script</span>
+    <span style="font-size:13px; color:#69717C">19 steps · about 12 minutes · one continuous story</span>
+  </div>
+  <div style="width:1440px; background:#fff; border:1px solid #E3E7EC; border-radius:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px 28px; display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; align-items:baseline; gap:12px; border-bottom:1px solid #ECEFF3; padding-bottom:12px">
+      <div style="font-size:20px; font-weight:600; letter-spacing:-0.01em">Aurora Manufacturing, September to November 2026</div>
+      <div style="font-size:13px; color:#50565F">One enquiry followed end to end. Every figure on every screen belongs to this story.</div>
+    </div>
+    <div style="display:flex; flex-direction:column">
+      <div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">01</div>
+        <div style="width:210px; flex-shrink:0"><a href="M01 Dashboards.dc.html#m01s01" style="font-size:13px; font-weight:600">Executive dashboard</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“This is November. RM 214k in play, six trainings, three claims pending, and the agents saved 41 admin hours.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The admin-hours-saved metric — it is the reason the system exists.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">02</div>
+        <div style="width:210px; flex-shrink:0"><a href="Kit.dc.html#proof-m03s01" style="font-size:13px; font-weight:600">Enquiry inbox</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Everything inbound lands in one queue — email, WhatsApp, web form, phone.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The WhatsApp row at 41% confidence flagged for human classification.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">03</div>
+        <div style="width:210px; flex-shrink:0"><a href="M03 Leads.dc.html#m03s02" style="font-size:13px; font-weight:600">Enquiry detail</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Nurul emails at 08:52. A minute later the agent has the topic, the audience, the timing and the account.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The four numbered source citations under the extraction.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">04</div>
+        <div style="width:210px; flex-shrink:0"><a href="M05 TNA.dc.html#m05s02" style="font-size:13px; font-weight:600">TNA detail</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“The questionnaire comes back and the gaps are evidence-linked, not guessed.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Fit scores: 91%, 78%, 22% — the ranking is honest about the bad match.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">05</div>
+        <div style="width:210px; flex-shrink:0"><a href="M06 Programmes.dc.html#m06s02" style="font-size:13px; font-weight:600">Programme detail</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“This is the programme it lands on, and the trainer pool behind it.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Daniel Wong is booked 10–14 Nov — that single fact drives the risk rating later.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">06</div>
+        <div style="width:210px; flex-shrink:0"><a href="M07 Proposals.dc.html#m07s02" style="font-size:13px; font-weight:600">Proposal builder</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“The agent drafts each section from the template; every section says who wrote it.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Section 5 at 41% confidence, flagged before anyone sends it.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">07</div>
+        <div style="width:210px; flex-shrink:0"><a href="M07 Proposals.dc.html#m07s03" style="font-size:13px; font-weight:600">Costing worksheet</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Behind the number: trainer, materials, travel, commission, 41% margin.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Type a discount below the floor and the field goes red with the reason.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">08</div>
+        <div style="width:210px; flex-shrink:0"><a href="M02 Approvals.dc.html#m02s01" style="font-size:13px; font-weight:600">Approval inbox</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Every human decision in one queue, ordered by urgency, not by module.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Bulk approve is unavailable while a money action is selected.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">09</div>
+        <div style="width:210px; flex-shrink:0"><a href="Kit.dc.html#proof-m02s02" style="font-size:13px; font-weight:600">Approval detail</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Kelvin gets why he is here, the recommendation, the evidence, the risk, and exactly what changes if he clicks.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> “If you approve, this happens” — five changes, listed before the click.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">10</div>
+        <div style="width:210px; flex-shrink:0"><a href="M07 Proposals.dc.html#m07s07" style="font-size:13px; font-weight:600">Client proposal page</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Nurul reads it, asks two questions, accepts on 15 September.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The reply that explains who files the HRDC claim — the client never sees margin.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">11</div>
+        <div style="width:210px; flex-shrink:0"><a href="Kit.dc.html#proof-m04s02" style="font-size:13px; font-weight:600">Organisation 360</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“One page for the whole relationship: pipeline, delivery, compliance, money.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The engagements table micro-steppers — one blocked, one lost.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">12</div>
+        <div style="width:210px; flex-shrink:0"><a href="M09 Operations.dc.html#m09s02" style="font-size:13px; font-weight:600">Engagement detail</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Won becomes delivery: trainer, sessions, 30 participants, logistics.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The lifecycle stepper: attendance locked, HRDC claim blocked.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">13</div>
+        <div style="width:210px; flex-shrink:0"><a href="M10 Participants.dc.html#m10s06" style="font-size:13px; font-weight:600">Attendance capture</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Attendance is captured per session, approved, and then frozen.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Capture buttons are disabled — HRD Corp requires immutability after approval.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">14</div>
+        <div style="width:210px; flex-shrink:0"><a href="M12 HRD Corp.dc.html#m12s02" style="font-size:13px; font-weight:600">HRDC claim packet</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“The packet assembles itself to 62%, and tells Jason exactly what is missing and how long he has.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> No submit button. A human files on eTRIS and records the reference here.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">15</div>
+        <div style="width:210px; flex-shrink:0"><a href="M13 Finance.dc.html#m13s02" style="font-size:13px; font-weight:600">Invoice detail</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“The invoice is pushed to the client’s accounting package, which handles MyInvois.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The collapsed failed sync attempt and how it was fixed.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">16</div>
+        <div style="width:210px; flex-shrink:0"><a href="M13 Finance.dc.html#m13s05" style="font-size:13px; font-weight:600">Collections queue</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“The overdue invoice from July is being chased on a fixed ladder.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Where autonomy stops: at 60 days a human picks up the phone.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">17</div>
+        <div style="width:210px; flex-shrink:0"><a href="M18 Agents.dc.html#m18s01" style="font-size:13px; font-weight:600">Agent registry</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Eight agents, each with autonomy per action type and a kill switch.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> The paused agent, with the eval score that paused it.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">18</div>
+        <div style="width:210px; flex-shrink:0"><a href="M18 Agents.dc.html#m18s04" style="font-size:13px; font-weight:600">Run trace #4821</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“Here is the run that wrote the Aurora proposal: six tool calls, one retry, RM 0.38.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> Step 6 halted by policy — the agent never sent anything.</div>
+      </div><div style="display:flex; gap:16px; padding:11px 0; border-bottom:1px solid #ECEFF3">
+        <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#69717C; width:24px; flex-shrink:0; padding-top:2px">19</div>
+        <div style="width:210px; flex-shrink:0"><a href="M01 Dashboards.dc.html#m01s01" style="font-size:13px; font-weight:600">Back to the dashboard</a></div>
+        <div style="flex:1; min-width:0; font-size:13px; color:#181A1F; line-height:1.55">“That whole path took eight minutes of human attention instead of a morning.”</div>
+        <div style="width:330px; flex-shrink:0; font-size:12px; color:#50565F; line-height:1.5"><b style="color:#181A1F; font-weight:600">Point at:</b> 41 hours saved, and every one of those decisions is in the audit log.</div>
+      </div>
+    </div>
+    <div style="border:1px solid #E3E7EC; border-radius:12px; overflow:hidden">
+      <div style="padding:10px 14px; background:#FAFBFC; border-bottom:1px solid #E3E7EC; font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:#69717C">If asked</div>
+      <div style="padding:12px 14px;  display:flex; gap:16px">
+        <div style="width:280px; flex-shrink:0; font-size:13px; font-weight:600">“What if the agent approves something wrong?”</div>
+        <div style="flex:1; font-size:13px; color:#50565F; line-height:1.55">It cannot. Money, sending and compliance actions are capped at Act-with-approval, and every agent has a per-action kill switch.</div>
+        <div style="width:260px; flex-shrink:0; font-size:12px; color:#1849D6">M18-S01 registry + M02-S02 evidence panel</div>
+      </div><div style="padding:12px 14px; border-top:1px solid #ECEFF3; display:flex; gap:16px">
+        <div style="width:280px; flex-shrink:0; font-size:13px; font-weight:600">“Does this file our HRD Corp claims?”</div>
+        <div style="flex:1; font-size:13px; color:#50565F; line-height:1.55">No, and nothing claims to. TrainOS assembles the packet, tracks the deadline and stores the reference a human enters after filing on eTRIS.</div>
+        <div style="width:260px; flex-shrink:0; font-size:12px; color:#1849D6">M12-S02 packet builder</div>
+      </div><div style="padding:12px 14px; border-top:1px solid #ECEFF3; display:flex; gap:16px">
+        <div style="width:280px; flex-shrink:0; font-size:13px; font-weight:600">“Is this e-invoicing?”</div>
+        <div style="flex:1; font-size:13px; color:#50565F; line-height:1.55">No. The invoice is pushed to your accounting package, which handles LHDN MyInvois validation. TrainOS shows sync status.</div>
+        <div style="width:260px; flex-shrink:0; font-size:12px; color:#1849D6">M13-S02 sync log</div>
+      </div><div style="padding:12px 14px; border-top:1px solid #ECEFF3; display:flex; gap:16px">
+        <div style="width:280px; flex-shrink:0; font-size:13px; font-weight:600">“Where does our data go?”</div>
+        <div style="flex:1; font-size:13px; color:#50565F; line-height:1.55">PDPA consent is tracked per contact and channel, participant PII is redacted from prompts, traces keep metadata after 30 days.</div>
+        <div style="width:260px; flex-shrink:0; font-size:12px; color:#1849D6">M20 settings · reference only in this pack</div>
+      </div>
+    </div>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; font-size:12px; color:#50565F; border-top:1px solid #ECEFF3; padding-top:14px">
+      <div><b style="color:#181A1F">Open with</b><br>the dashboard, not the login</div>
+      <div><b style="color:#181A1F">Close with</b><br>step 19 — hours saved, fully audited</div>
+      <div><b style="color:#181A1F">Do not demo</b><br>settings, templates, imports; say they exist</div>
+      <div><b style="color:#181A1F">Timing</b><br>90 seconds on step 09, 60 on step 14, 30 elsewhere</div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+</body>
+</html>
