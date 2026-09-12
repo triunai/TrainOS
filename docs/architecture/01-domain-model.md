@@ -2220,11 +2220,15 @@ current_setting('app.effect_applier', true)   -- the action_request id, transact
 ```
 
 set by `app.apply_effects` and by nothing else. sb-actions is right that a second key would be a second
-vocabulary for a problem the first already solves, and right that theirs is strictly stronger: a key
-holding an id proves only that somebody set a variable, whereas `app.enforce_state_transition` resolves
-the id against `action_requests` and refuses unless that request's `action_type` is the one gating this
-specific edge **in this tenant**. Forging the unlock would mean producing an `ATTENDANCE_UNLOCK` action
-request, and the only way to produce one is through the policy gate.
+vocabulary for a problem the first already solves, and right that theirs is strictly stronger.
+
+The framing is sb-tenancy's and all three documents now use it: **ground a claim in a row somebody else
+wrote, rather than trusting what the caller presents.** A boolean in a session variable is the caller's
+assertion. An action request id resolved against a table the caller cannot write is evidence.
+`app.enforce_state_transition` resolves the id against `action_requests` and refuses unless that request's
+`action_type` is the one gating this specific edge **in this tenant**, so forging the unlock would mean
+producing an `ATTENDANCE_UNLOCK` action request, and the only way to produce one is through the policy
+gate. sb-tenancy's `app.aal2_verified()` makes the same move for a different reason.
 
 So the lock is enforced twice over, by two mechanisms with different jobs. GOV-07 authorises the
 `LOCKED → OPEN` edge on `attendance_days.status` (§5.3). Rule I1's own trigger then refuses any write to
