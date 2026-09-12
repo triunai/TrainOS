@@ -2162,7 +2162,8 @@ Each: `id uuid` PK with a **unique** natural key `(tenant_id, <key>)`, plus `lab
 ceiling check reads those columns instead of hardcoding a list of action types.
 
 `action_types` seeds §3's nineteen action types plus `PROPOSAL_DRAFT`, `OPPORTUNITY_CREATE`,
-`SUGGESTION_DISMISS`, `BUDGET_CAP_RAISE` and `RULE_CHANGE_APPROVE` from §17.
+`SUGGESTION_DISMISS`, `BUDGET_CAP_RAISE` and `RULE_CHANGE_APPROVE` from §17, and
+`ACCOUNT_TRADING_HOLD`, added to the contract as R3 after §5.3 of this document found it missing.
 
 ---
 
@@ -2276,17 +2277,20 @@ create trigger <table>_state_gate
 `INSERT` needs no column revoke, because the registry carries `from_status = null` rows and an insert
 naming a status with no such row is refused by the trigger. That is sb-actions' "insert bypass" test.
 
-### 5.2 One defect in the registry's shape
+### 5.2 The registry defect this enumeration found, and its fix
 
-`state_transitions` is keyed `(entity, column_name, from_status, to_status)` with a single `gated_by`.
-One edge in this model is authorised by **three** different action types: `outbound_messages`
+`state_transitions` was keyed `(entity, column_name, from_status, to_status)` with a **single** `gated_by`.
+One edge in this model is authorised by three different action types: `outbound_messages`
 `DRAFT → QUEUED` is gated by `FOLLOWUP_SEND`, `REMINDER_SEND` or `BROADCAST_SEND` depending on why the
-message exists. That cannot be expressed, and the fail-closed default means the wrong one of the three
-would be rejected at send time.
+message exists. With one gate and a fail-closed default, two of the three sends are rejected at send time,
+and the failure surfaces on whichever flow somebody tests second.
 
-Two ways out, and the second is better: add a discriminator to the key, or make `gated_by` a `text[]` and
-require the running action's type to be a member. I have added `outbound_messages.purpose` either way,
-since the message needs to know what it is for. **Raised to sb-actions; the registry change is theirs.**
+**Fixed in `d896b07`:** `gated_by` is `text[]` and the trigger checks membership. That was the right fix
+over a discriminator in the key, because the key is already four columns wide and the array reads as what
+it is — any of these action types authorises this edge.
+
+`outbound_messages.purpose` stays, because the row needs to know what it is for on its own account. It is
+not load-bearing for the gate.
 
 ### 5.3 The legal-transition set
 
@@ -2449,11 +2453,13 @@ transition; immutability rule I1 and its unlock trigger do the rest.
 | `REMINDER_1` | `REMINDER_2` | `REMINDER_SEND` |
 | `REMINDER_2` | `REMINDER_3` | `REMINDER_SEND` |
 | `REMINDER_3` | `HUMAN_CALL` | |
-| `HUMAN_CALL` | `TRADING_HOLD` | `DISCOUNT_APPROVE` |
+| `HUMAN_CALL` | `TRADING_HOLD` | `ACCOUNT_TRADING_HOLD` |
 
-`TRADING_HOLD` needs MD approval (§9) and has no action type of its own in §3. Gating it on
-`DISCOUNT_APPROVE` is wrong and is a placeholder; the contract needs a `TRADING_HOLD_APPLY` action type.
-**Raised as Q24.**
+`TRADING_HOLD` needs MD approval (§9) and had no action type of its own in §3. This enumeration is what
+found the gap: the placeholder gate here was `DISCOUNT_APPROVE`, marked wrong in the doc rather than left
+plausible. The lead has since added `ACCOUNT_TRADING_HOLD` to the contract as R3, MD-gated, and sb-actions
+has repointed policy FIN-05 to it. The old shape gated `REMINDER_SEND` with `payload.stage = TRADING_HOLD`,
+which made the most consequential step of the collections ladder a variant of sending a message.
 
 **`trainer_bookings.state`**
 
@@ -2516,7 +2522,7 @@ MD-gated (§17).
 | from | to | gated_by |
 |---|---|---|
 | (new) | `DRAFT` | |
-| `DRAFT` | `QUEUED` | see 5.2 — three action types |
+| `DRAFT` | `QUEUED` | `{FOLLOWUP_SEND, REMINDER_SEND, BROADCAST_SEND}` |
 | `QUEUED` | `SENT` | |
 | `SENT` | `DELIVERED` | |
 | `DELIVERED` | `READ` | |
@@ -2620,8 +2626,8 @@ so none of these blocks the migration author — every one has a default in the 
 | Q21 | Should key reveal exist at all, or only rotate-and-replace? | §17 Q4 | `ai_provider_keys.revealed_count` and the reveal endpoint | Reveal exists and is audited |
 | Q22 | Pass-through billing: a TrainOS invoice line, or a report the client reconciles? | §17 Q5 | An `invoice_lines` item code versus a report over `ai_usage_entries` | Report only. No invoice line |
 | Q23 | Is `pgvector` available and at what dimension? | New | `knowledge_chunks.embedding vector(1536)` | 1536 assumed |
-| Q24 | `TRADING_HOLD` needs MD approval but §3 has no action type for it | New, via GOV-07 | A new `TRADING_HOLD_APPLY` action type, or the edge stays ungated | Gated on `DISCOUNT_APPROVE` as a placeholder, which is wrong and marked so |
-| Q25 | Can one status edge be authorised by more than one action type? | New, via GOV-07 §5.2 | `state_transitions.gated_by` becomes `text[]`, or the key gains a discriminator | `outbound_messages.purpose` added here; the registry change is sb-actions' |
+| Q24 | `TRADING_HOLD` needs MD approval but §3 had no action type for it | New, via GOV-07 | A new action type | **Closed.** The lead added `ACCOUNT_TRADING_HOLD` to the contract as R3, MD-gated; sb-actions repointed FIN-05 to it |
+| Q25 | Can one status edge be authorised by more than one action type? | New, via GOV-07 §5.2 | `state_transitions.gated_by` becomes `text[]` | **Closed.** sb-actions made it `text[]` with membership checking in `d896b07` |
 
 ---
 
@@ -2739,11 +2745,13 @@ Places where this model does not mirror the contract's JSON, and why.
     keeps unexposed internals. `saved_views` stays in `public` because sb-tenancy's committed policies name
     it there, and it is the one exception in this document.
 
-24. **The transition registry cannot express one of this model's edges.** GOV-07 keys `state_transitions`
-    on `(entity, column, from, to)` with a single `gated_by`, but `outbound_messages` `DRAFT → QUEUED` is
-    authorised by `FOLLOWUP_SEND`, `REMINDER_SEND` or `BROADCAST_SEND` depending on the message's purpose.
-    Fail-closed means the wrong two of the three are rejected at send time. Recorded in §5.2 and raised to
-    sb-actions.
+24. **Enumerating the edges found two defects outside this model, both now fixed.** The transition
+    registry allowed one gating action type per edge, but `outbound_messages` `DRAFT → QUEUED` is
+    authorised by any of three send actions, so fail-closed would have rejected two of them at send time;
+    `gated_by` is now `text[]`. And the collections ladder's trading hold had no action type to gate it,
+    which surfaced because the placeholder announced itself as wrong instead of looking plausible;
+    `ACCOUNT_TRADING_HOLD` is now in the contract. Neither was a defect in this document, and neither
+    would have been found without enumerating all 121 edges rather than estimating them.
 
 25. **`trainos.unlock_action_id` is withdrawn.** Earlier revisions of this document proposed a dedicated
     transaction-local key so the attendance-lock trigger could recognise an approved unlock. Ruling R-GOV
@@ -2780,40 +2788,36 @@ Places where this model does not mirror the contract's JSON, and why.
    sb-tenancy, sb-actions, sb-money and sb-events may choose differently; every FK naming them is a
    placeholder to be reconciled before the migration is written.
 
-4. **sb-actions' doc reads a column name that no longer exists.** Their reconciliation adopted
-   "`floor_price_minor` as the binding value". Under R-PROV the suffix is `_sen` and under sb-money's C-4
-   there is no stored floor at all: `floor_price_sen` is generated. Their gate reads the right concept from
-   the wrong name. Not mine to edit, and flagged to the lead rather than re-opened.
+4. **Both cross-lane naming conflicts are now closed, and neither was mine to fix.** sb-actions had
+   adopted "`floor_price_minor` as the binding value" and has swept sixteen columns to `_sen` in `d896b07`.
+   sb-money's C-3 said to keep a stored `floor_price_minor` while its C-4 contributed a generated
+   `floor_price_sen`; they confirmed C-4 is authoritative and marked the C-3 sentence as a correction
+   rather than editing it away, and `binding_floor_basis` came back as a generated column. Kept here as a
+   record of what was checked, not as an outstanding item. The only surviving `floor_price_minor` strings
+   in this document are the two quotations above.
 
-5. **Two contradictions inside sb-money's own document, which I could not resolve from outside it.**
-   Their C-3 says to keep `floor_price_minor` as this document had it, while their C-4 contributes a
-   generated `floor_price_sen`. I followed C-4, because it is the authoritative column list and is
-   internally consistent. Separately, the lead asked for a `binding_floor` indicator on quotations and
-   C-4's list has none. Which of the two floors binds is derivable by comparing the generated columns, but
-   it is not a column. Both raised to sb-money.
-
-6. **Rate card values.** Trainer bands A/B/C and their day rates, materials per pax, commission tiers,
+5. **Rate card values.** Trainer bands A/B/C and their day rates, materials per pax, commission tiers,
    margin floors and discount authority are all unknown (DECISIONS §5). `rate_card.version` still reads
    `v0-placeholder` and `quotations` snapshots the floor price rather than reading it live.
 
-7. **Baseline minutes for hours-saved.** Requires time-and-motion sampling that has not happened
+6. **Baseline minutes for hours-saved.** Requires time-and-motion sampling that has not happened
    (DECISIONS §4). The tables exist and are empty; `basis` is `ILLUSTRATIVE` until they are filled.
 
-8. **Whether the HRD Corp rules are correct.** DECISIONS §3 states plainly that the demo's rule set was
+7. **Whether the HRD Corp rules are correct.** DECISIONS §3 states plainly that the demo's rule set was
    wrong once already. Every seeded rule is `PROPOSED` and the schema forbids `ACTIVE` without
    `verified_at`, but nobody has verified anything yet.
 
-9. **Supabase project capabilities.** `pgvector` (for `knowledge_chunks.embedding`), `citext`, `btree_gist`
+8. **Supabase project capabilities.** `pgvector` (for `knowledge_chunks.embedding`), `citext`, `btree_gist`
    (for the `trainer_bookings` exclusion constraint) and `pg_trgm` (for search) are all assumed available.
    `btree_gist` in particular is required for the double-booking constraint and is not enabled by default.
 
-10. **Volume and partitioning.** No figures exist for enquiries per month, runs per day or ledger rows per
+9. **Volume and partitioning.** No figures exist for enquiries per month, runs per day or ledger rows per
    month, so the partitioning suggestion in §5 is a shape, not a recommendation.
 
-11. **Whether two `pipelines` rows or one covers the engagement lifecycle.** §5 shows a six-step lifecycle on
+10. **Whether two `pipelines` rows or one covers the engagement lifecycle.** §5 shows a six-step lifecycle on
    the organisation relations panel and §8 shows a nine-step one on the engagement detail, both for an
    engagement. This model assumes two `pipelines` rows for the same object with one marked default, but it
    is equally readable as one nine-step pipeline rendered in two densities.
 
-12. **`GET /v1/organisations/{id}/health`.** The endpoint is referenced by a `drillTo` and never specified.
+11. **`GET /v1/organisations/{id}/health`.** The endpoint is referenced by a `drillTo` and never specified.
     `organisation_health_snapshots` is a guess at its shape.
