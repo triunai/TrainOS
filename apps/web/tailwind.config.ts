@@ -74,6 +74,9 @@ export default {
         /* AI surfaces — tint only, never a solid fill */
         "ai-tint": token("ai-tint"),
         "ai-tint-2": token("ai-tint-2"),
+        /* The AI badge's hover popover: a half-step warmer than the chip it
+           belongs to, which separates the two planes without a shadow. */
+        "ai-popover": token("ai-popover"),
 
         /* Status — chips only */
         success: {
@@ -81,6 +84,12 @@ export default {
           fill: token("success-fill"),
           border: token("success-border"),
         },
+        /* The low-confidence dot. A non-text affordance, deliberately NOT the
+           warning text colour, which would darken it below the artboard. */
+        "warning-accent": token("warning-accent"),
+        /* The allowed-hours peak band. A band, not a status: it says
+           "expensive window", which is a routing fact. */
+        peak: token("peak"),
         warning: {
           DEFAULT: token("warning"),
           fill: token("warning-fill"),

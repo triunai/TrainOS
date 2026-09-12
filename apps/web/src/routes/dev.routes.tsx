@@ -1,4 +1,6 @@
-import type { ReactElement } from "react";
+import { lazy, Suspense, type ReactElement } from "react";
+import { LoadingState } from "@/shared/components/states";
+import { DEMO_INDEX_PATH } from "@/features/dashboard";
 import { kitDevRoute } from "./kit.routes";
 
 /**
@@ -8,9 +10,16 @@ import { kitDevRoute } from "./kit.routes";
  * (`/dev/kit`) by adding an entry to this array, so kit work never has to touch
  * the shared route table and a merge between the two cannot conflict.
  *
- * These routes exist ONLY in a development build. `routes.tsx` mounts them
- * behind `import.meta.env.DEV`, so nothing here reaches a production bundle and
- * nothing here needs to be role-gated.
+ * These routes exist ONLY in a development build, in two senses that are worth
+ * keeping apart. `routes.tsx` mounts them behind `import.meta.env.DEV`, so the
+ * ROUTE does not exist in production. That alone does not remove the CODE:
+ * Rollup emits a chunk at every `import()` it can resolve statically, dead
+ * branch or not, and a dev gallery shipped as its own 175 kB chunk until this
+ * was caught. `vite.config.ts` therefore aliases this whole module to
+ * `dev.routes.prod.ts` in a production build, which cuts the import graph here
+ * and removes everything registered below.
+ *
+ * Nothing here needs to be role-gated.
  */
 export interface DevRoute {
   /** Path relative to the app root, e.g. "/dev/kit". */

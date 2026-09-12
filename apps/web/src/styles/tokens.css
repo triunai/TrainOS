@@ -20,7 +20,17 @@
  * that document except the six marked DERIVED.
  */
 
-:root {
+/*
+ * `:root` carries light so an unstamped document is light by default, and
+ * `[data-theme="light"]` carries the same values so a light ISLAND can be
+ * stamped inside a dark page. Without the second selector, pinning a subtree to
+ * light is impossible: nothing would re-assert the light values against the
+ * dark ones inherited from the root. The kit showcase renders every component
+ * twice, one panel following the app theme and one pinned, and needs both
+ * directions to work.
+ */
+:root,
+[data-theme="light"] {
   /* ---- Surfaces ------------------------------------------------------- */
   --canvas: 247 248 250; /* #F7F8FA  app background behind the card */
   --sidebar: 243 245 247; /* #F3F5F7  sidebar surface, one step off canvas */
