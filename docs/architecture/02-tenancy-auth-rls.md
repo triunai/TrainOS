@@ -914,19 +914,51 @@ revoke all on schema public from public;
 grant usage on schema public to anon, authenticated, service_role;
 alter default privileges in schema public revoke all on tables from public;   -- vacuous, see below
 
--- 2. Per table:
-alter table public.<t> enable row level security;
-alter table public.<t> force  row level security;   -- the owner role loses its exemption too
+-- 2. Per table (<s> is `core` for the domain, `public` for the five identity tables):
+alter table <s>.<t> enable row level security;
+alter table <s>.<t> force  row level security;   -- the owner role loses its exemption too
 
 -- 3. tenant_id is never supplied by the client.
-alter table public.<t>
+alter table <s>.<t>
   alter column tenant_id set default (select app.current_tenant_id()),
   alter column tenant_id set not null;
 
 -- 4. Indexes. Every column a policy reads.
-create index <t>_tenant_id_idx on public.<t> (tenant_id);
-create index <t>_tenant_owner_idx on public.<t> (tenant_id, owner_id);   -- where owner_id exists
+create index <t>_tenant_id_idx on <s>.<t> (tenant_id);
+create index <t>_tenant_owner_idx on <s>.<t> (tenant_id, owner_id);   -- where owner_id exists
 ```
+
+> **`FORCE` and `SECURITY DEFINER` interact, and I had not said so. Settle it before applying.**
+> Migration 002 enables RLS on the five identity tables but does not force it, and I do not think
+> that is simply an omission — there is a real question underneath that my §4.1 glossed.
+>
+> `app.custom_access_token_hook` is `SECURITY DEFINER`, so it executes as its owner. If that owner
+> also owns `public.memberships` and the table is `FORCE`d, the owner's exemption is gone and the
+> hook's `select` is subject to policy. No policy admits that role — they are written
+> `TO authenticated` and `TO supabase_auth_admin` — so the hook would return zero rows, issue a
+> tokenless-tenant claim for everyone, and **break every login**, while looking like a permissions
+> bug. The one thing that saves it is if the owning role carries `BYPASSRLS`, which beats `FORCE`.
+>
+> **I do not know whether Supabase's `postgres` role has `BYPASSRLS`, and I am not going to assert
+> it.** The test that settles it, on a branch, before this reaches anything hosted:
+>
+> ```sql
+> select rolname, rolsuper, rolbypassrls from pg_roles
+>  where rolname in ('postgres','supabase_auth_admin','authenticator','service_role');
+> alter table public.memberships force row level security;
+> -- then sign in as a real user and assert the token carries a tenant_id
+> ```
+>
+> If `postgres` has `BYPASSRLS`, force everything as §8.7 requires and nothing changes. If it does
+> not, there are two clean resolutions and the second is better: either add a policy admitting the
+> hook's owner, or make the hook `SECURITY INVOKER` so it genuinely runs as `supabase_auth_admin` —
+> at which point the `SELECT` grant and the `supabase_auth_admin` policy that 002 already creates
+> become load-bearing rather than belt-and-braces, and `FORCE` is irrelevant to it. Today 002 has
+> both the definer mode *and* those grants, which means one of the two is dead code and nobody knows
+> which.
+>
+> The same question applies to `app.my_team_user_ids()` over `team_members` and to every portal RPC
+> in §5. They are all `SECURITY DEFINER` over forced tables by design.
 
 > **Correction, found by executing rather than reading.** The migrations author ran this baseline on
 > PostgreSQL 17.11 and measured that `alter default privileges … revoke all on tables from public`
@@ -2645,6 +2677,12 @@ explicitly and validate it, exactly as §4.9 requires of every other `service_ro
   auth uses the same PostgREST role-claim mechanism, `role` is free-form there too, and the
   `authenticator → service_role` grant ships on every project by default. A decoupled signer narrows
   the blast radius without touching the RLS bypass.
+- **Whether Supabase's `postgres` role carries `BYPASSRLS`.** §4.1's warning box turns on it: if it
+  does not, forcing RLS on `public.memberships` breaks the `SECURITY DEFINER` access-token hook and
+  therefore every login. Migration 002 enables RLS without forcing it, so the question is live right
+  now rather than theoretical. One query settles it; it is written out in §4.1. **This is the single
+  highest-priority verification in my lane** — it gates whether §8.7's force-everything guard can
+  ship at all.
 - **Whether `revoke service_role from authenticator` is possible and supported on hosted Supabase**
   once the project is fully on `sb_secret_…` keys. Flagged by `spike-jwt` and not chased. This is
   the one open item in my lane that would materially improve the security posture regardless of any
