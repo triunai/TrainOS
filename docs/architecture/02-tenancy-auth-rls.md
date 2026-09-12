@@ -1187,6 +1187,33 @@ the caller.
 there is no privilege to escalate — the self-check the skill requires is structural here rather than
 written out.
 
+**Why every one of these carries `set search_path = ''`, stated precisely.** `sb-money` tried to
+demonstrate the risk by shadowing a built-in and could not, and their negative result is the correct
+one for that experiment: PostgreSQL searches `pg_catalog` implicitly *first* whenever the path does
+not name it, so built-ins like `round()` are not shadowable that way. That is not where the exposure
+is. Three places it is real, in rising order of how much it would matter here:
+
+1. **Anything not in `pg_catalog`.** The implicit-first rule protects built-ins only. Extension
+   functions, types, operators and tables all resolve through the stated path in order. This is the
+   case that reaches us: §5.2 hashes a portal token with `extensions.digest(p_token, 'sha256')`.
+   Written unqualified as `digest(…)` under a path of `app, extensions, pg_catalog`, anyone able to
+   create `app.digest(text, text)` gets the raw client token passed to a function they control, in a
+   `SECURITY DEFINER` context. That is a live credential, not a sentinel.
+2. **Unqualified table references.** `select … from memberships` resolves through the path, and no
+   implicit rule protects it.
+3. **Naming `pg_catalog` explicitly changes the rule.** A path of `app, pg_catalog` places the
+   catalog in the *stated* order rather than implicitly first, so under that setting built-ins
+   genuinely are shadowable. If `sb-money`'s experiment used that path and still resolved to
+   `pg_catalog.round`, the likeliest explanation is a new-style `BEGIN ATOMIC` body, which resolves
+   references at definition time rather than at call time and so pins whatever was visible when the
+   function was created.
+
+The rule that follows: `set search_path = ''` and schema-qualify everything, which makes all three
+moot. Empty is viable even in bodies calling built-ins, because the implicit-first rule still
+applies — `sb-money` verified that against real date arithmetic. A path of `'app, pg_catalog'` is
+worse than either empty or omitted, because it is the one spelling that disables the protection
+while looking careful.
+
 ### 4.2 The policy templates
 
 Four shapes cover nearly everything. Every helper is wrapped in `(select …)` so the planner hoists
@@ -1515,6 +1542,15 @@ that payload — lifecycle, sessions, checklist, attendance counts — to do the
 keeps them from `OPS` while still letting `OPS` read the row. Column-level `GRANT` does not help
 either, because grants are per Postgres role and every one of our nine application roles is the same
 `authenticated`.
+
+**The rule this case establishes, so the next one does not need rederiving: a table needs splitting
+when a role must read SOME of a row, and not when it must read NONE of it.** RLS filters rows, so
+"none" is already expressible and needs nothing. "Some" is not expressible at all, and column-level
+`GRANT` cannot supply it either, because grants are per Postgres role and all nine application roles
+share `authenticated`. `quotations` mixes sell price with direct cost and margin but needs no split,
+because `quotation:read` is withheld from `OPS` and `TRAINER` entirely. `engagements` differs only
+because `OPS` must read the rest of that row. Applied by `sb-money` across their tables; the only
+hit was the one already known.
 
 **Ruled by the team lead: the API owns the projection.** I had proposed moving the finance block to a
 one-to-one child table so RLS could gate it as a row. The ruling is that role-specific projections
