@@ -2199,6 +2199,18 @@ role rides in the claim. Three mechanisms, in the order they should be reached f
 Agent revocation is separate and simpler: set `agent_api_keys.revoked_at`, and the next exchange
 fails. No session to kill, because there is no refresh token.
 
+**An open Realtime socket is not bounded by the token expiry, and mechanism 2 is the only thing that
+closes it.** `sb-events` supplied this and it makes the paragraph above incomplete as it stood.
+Realtime evaluates its policies **per connection**, at connect time. A revoked membership therefore
+does not bite on a socket that is already open: the subscriber keeps receiving approvals and badge
+traffic for their old role until a new JWT is presented, and a new JWT is only presented on
+reconnect. So the 1800-second bound I claimed holds for the Data API and does **not** hold here.
+
+`auth.admin.signOut` is what forces the reconnect, which makes it load-bearing rather than merely the
+fastest option. `sb-events` carries `AUTH_SIGN_OUT` as a priority-1 job type for that reason, and has
+written the link into their file so nobody later demotes it as routine cleanup. Recorded here too,
+because a reader of this section alone would otherwise draw the wrong bound.
+
 ---
 
 ## 8 · Test plan
