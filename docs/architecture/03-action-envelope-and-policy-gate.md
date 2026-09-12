@@ -45,6 +45,7 @@ lane. Each row is a name or a rule that two documents spelled differently.
 | C22 | Gate read a stored floor that does not exist | `core.quotations.below_floor` is generated, as is `floor_price_sen`; the gate reads the boolean | lead's ruling, `sb-money` §240–251 |
 | C23 | `app.role_holders` would enumerate any tenant passed to it | raises unless `service_role` or the caller's own tenant | `sb-tenancy` caught it |
 | C24 | Routing by role can outlive the permission matrix | optional `p_requires_permission` intersects the two | `sb-tenancy` |
+| C25 | Functions pinned `search_path` to a named list including `pg_catalog` | `set search_path = ''` on all 13, everything qualified | `sb-money` retraction, `sb-tenancy` warning |
 | C12 | Jury sampling by event subscription or by cron | cron, 5-minute sweep | `sb-events` conceded |
 | C13 | `PROPOSAL_SEND` value read from the quotation or the proposal | `proposals.value_sen`, the one stable money column per gated target | `sb-erd` |
 
@@ -316,7 +317,7 @@ The ceiling is enforced by trigger because it spans two tables:
 create or replace function app.enforce_autonomy_ceiling()
 returns trigger
 language plpgsql
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare
   v_ceiling text;
@@ -985,7 +986,7 @@ create or replace function app.perform_action(
 returns jsonb
 language plpgsql
 security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 set statement_timeout = '10s'
 as $$
 ```
@@ -1242,7 +1243,7 @@ create or replace function app.action_value(
   p_type text, p_tenant uuid, p_target_id uuid, p_payload jsonb
 ) returns jsonb
 language plpgsql stable
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare v_amount bigint; v_currency char(3) := 'MYR';
 begin
@@ -1845,7 +1846,7 @@ and the only trace is a row in the gate's own tables.
       tenant_id, ref, action_request_id, action_type, target_ref,
       body, payload, planned_effects, provenance, expires_at
     ) values (
-      v_tenant, 'drf_' || encode(gen_random_bytes(6), 'hex'), v_req.id, p_type, p_target_ref,
+      v_tenant, 'drf_' || encode(extensions.gen_random_bytes(6), 'hex'), v_req.id, p_type, p_target_ref,
       p_payload->>'body', p_payload, v_effects,
       jsonb_build_object('origin','AI_SUGGESTED','confidence', p_confidence,
                          'agentId', v_actor_id, 'runId', p_payload->>'runId',
@@ -1894,9 +1895,45 @@ when the function returns. Three consequences worth stating plainly:
    executors touch. The advisory lock is transaction-scoped, so it releases on commit
    or rollback without a cleanup path.
 
-`SECURITY DEFINER` with `set search_path = pg_catalog, app, core, public, extensions, pg_temp` on every function in
-this document. `pg_temp` last is deliberate: putting it first would let a caller create
-a temporary function that shadows one of ours and have the definer execute it.
+**`SECURITY DEFINER` with `set search_path = ''` on every function in this document**,
+and everything outside `pg_catalog` schema-qualified.
+
+This is a correction. Earlier drafts pinned
+`search_path = pg_catalog, app, core, public, extensions, pg_temp`, which is safe as
+written but weaker than it looks, and `sb-money` has since retracted the same ordering
+after finding that the test which cleared it was itself broken.
+
+The reasoning is worth stating because it is not obvious. **`pg_catalog` is searched
+implicitly, and first, whenever it is not named.** The moment you name it you gain the
+ability to put it somewhere other than first, and then built-ins become shadowable by
+whatever precedes it. Naming it and placing it first is correct today and one careless
+reorder away from wrong tomorrow, with nothing in CI to catch the reorder. The empty
+string is the only spelling with no ordering to get wrong: `pg_catalog` stays implicitly
+first, nothing writable is on the path at all, and every reference to a table or a
+non-catalog function must be qualified or it fails loudly at creation time rather than
+resolving somewhere unintended at call time.
+
+`pg_temp` is likewise absent rather than last. Last was already safe; absent means a
+caller cannot create a temporary object that a definer function will ever consider.
+
+Two consequences for the SQL above. Every table reference is already qualified, which is
+why the switch costs nothing. And `extensions.gen_random_bytes()` in the draft-ref
+generator now carries its schema, because `pgcrypto` is installed into `extensions` by
+migration 001 and it is the one call here that is not a built-in. `sha256()`,
+`hashtext()` and `gen_random_uuid()` are all `pg_catalog` on the pinned Postgres 17 and
+need nothing.
+
+**A related defect worth carrying across lanes**, found by `sb-money`: a *quoted*
+multi-schema path is silently a one-schema path.
+
+```
+set search_path = 'app, pg_catalog';   -- one schema literally named "app, pg_catalog"
+set search_path =  app, pg_catalog;    -- two schemas
+```
+
+The first names a schema that does not exist, so nothing is on the path and a test
+asserting only `proconfig is not null` still passes. A catalogue test has to assert the
+stored string equals `search_path=""`, not merely that a setting is present.
 
 Grants follow least privilege:
 
@@ -2006,7 +2043,7 @@ create table app.state_transitions (
 -- seed row silently produces an edge nothing can ever cross.
 create or replace function app.assert_gates_exist()
 returns trigger language plpgsql
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare v_bad text;
 begin
@@ -2080,7 +2117,7 @@ create or replace function app.enforce_state_transition()
 returns trigger
 language plpgsql
 security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare
   v_from     text;
@@ -2279,7 +2316,7 @@ create or replace function app.apply_effects(p_action_request_id uuid)
 returns void
 language plpgsql
 security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare
   r        core.action_requests%rowtype;
@@ -2359,7 +2396,7 @@ create or replace function app.decide_approval(
 ) returns jsonb
 language plpgsql
 security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 set statement_timeout = '10s'
 as $$
 declare
@@ -2572,7 +2609,7 @@ create or replace function app.bulk_decide(
   p_idempotency_key text default null
 ) returns jsonb
 language plpgsql security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare v_blocked jsonb; v_results jsonb := '[]'::jsonb; v_id uuid;
 begin
@@ -2683,7 +2720,7 @@ Expiry itself:
 create or replace function app.expire_approvals(p_limit int default 500)
 returns int
 language plpgsql security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare v_count int;
 begin
@@ -2769,7 +2806,7 @@ create or replace function app.enqueue_jury(
   p_action_request_id uuid, p_approval_id uuid, p_mode text, p_reason text
 ) returns uuid
 language plpgsql security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare v_id uuid; v_cfg core.jury_configs%rowtype; v_tenant uuid;
 begin
@@ -2804,7 +2841,7 @@ them:
 create or replace function app.enqueue_jury_samples()
 returns int
 language plpgsql security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare v_count int;
 begin
@@ -2978,7 +3015,7 @@ create or replace function app.report_effect_result(
   p_error     jsonb default null
 ) returns void
 language plpgsql security definer
-set search_path = pg_catalog, app, core, public, extensions, pg_temp
+set search_path = ''
 as $$
 declare
   e         app.action_effects%rowtype;
