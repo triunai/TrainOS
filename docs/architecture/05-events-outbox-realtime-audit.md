@@ -615,6 +615,138 @@ permissive policy.
 | `JURY_EVALUATE` | `app.apply_effects`, topic `jury.evaluate` (§18 `ESCALATE` mode) | 1 | 2 | Blocking jury; the action waits on it |
 | `AUTH_SIGN_OUT` | membership or role change (`sb-tenancy` §7.4) | 1 | 5 | Calls `auth.admin.signOut` for the affected user. The application role rides in the JWT claim, so a revoked membership is not revoked until the token is. Priority 1 is a security property, not a nicety. |
 
+### 2.3a `app.job_type_for` — action type to handler
+
+`sb-actions`' `apply_effects` needs to turn an action type and an effect entity into the
+`job_type` the worker dispatches on. Doing that with a `CASE` would be wrong in a specific
+way: a `CASE` without a matching branch returns `null` silently, so a new action type would
+enqueue a job with a null handler key that no worker ever claims. It would sit at `QUEUED`
+until somebody noticed the badge. A reference table with a raising lookup **fails closed**
+instead — adding an action type without deciding its handler becomes an error at enqueue
+time, in the transaction that tried it.
+
+```sql
+create table app.job_type_map (
+  action_type  text not null,
+  entity       text not null default '*',   -- '*' = any entity for this action type
+  job_type     text not null,
+  priority     smallint not null default 5 check (priority between 1 and 9),
+  note         text,
+  primary key (action_type, entity)
+);
+```
+
+The mapping is data, not code, so adding a handler is an insert rather than a deploy — the
+same rule as `app.event_subscriptions` (§1.4), and for the same reason.
+
+**The full mapping.** All 21 action types from §3 and §17, plus `RULE_CHANGE_APPROVE`.
+Rows whose `job_type` is `null` are *deliberately absent from the table*: those action
+types have no external effect, so `apply_effects` never enqueues for them and the lookup is
+never called.
+
+| `action_type` | `entity` | `job_type` | Pri | Note |
+|---|---|---|---|---|
+| `PROPOSAL_SEND` | `EMAIL` | `SEND_EMAIL` | 1 | Channel comes from the effect entity, not the action |
+| `PROPOSAL_SEND` | `WHATSAPP` | `SEND_WHATSAPP` | 1 | |
+| `PROPOSAL_SEND` | `PDF` | `PROPOSAL_PDF_RENDER` | 1 | One action, two effects, two handlers — the case that makes `entity` necessary |
+| `FOLLOWUP_SEND` | `EMAIL` | `SEND_EMAIL` | 1 | |
+| `FOLLOWUP_SEND` | `WHATSAPP` | `SEND_WHATSAPP` | 1 | |
+| `REMINDER_SEND` | `EMAIL` | `SEND_EMAIL` | 1 | Collections stages 1–3 |
+| `REMINDER_SEND` | `WHATSAPP` | `SEND_WHATSAPP` | 1 | |
+| `BROADCAST_SEND` | `EMAIL` | `SEND_EMAIL` | 9 | Batch: many recipients, no one waiting |
+| `BROADCAST_SEND` | `WHATSAPP` | `SEND_WHATSAPP` | 9 | |
+| `INVOICE_CREATE` | `*` | `PUSH_INVOICE` | 1 | Creates the draft in the accounting package |
+| `INVOICE_PUSH` | `*` | `PUSH_INVOICE` | 1 | Same handler, different action; the payload carries which |
+| `PAYMENT_RECORD` | `*` | `PUSH_INVOICE` | 1 | Payment application is a push to the same provider |
+| `HRDC_PACKET_MARK_SUBMITTED` | `*` | `HRDC_PACKET_ASSEMBLE` | 5 | Re-assembles and exports the packet |
+| `ATTENDANCE_APPROVE` | `*` | `HRDC_PACKET_ASSEMBLE` | 5 | Locking attendance completes a packet document |
+| `ATTENDANCE_UNLOCK` | `*` | `HRDC_PACKET_ASSEMBLE` | 1 | Voids and re-assembles; priority 1 because a claim is at stake |
+| `ENGAGEMENT_CLOSE_OUT` | `*` | `COMPLIANCE_CHECK_EVALUATE` | 5 | Final stage transition re-evaluates |
+| `TRAINER_BOOK` | `*` | `SEND_EMAIL` | 1 | The trainer confirmation is the external effect |
+| `RULE_CHANGE_APPROVE` | `*` | `COMPLIANCE_CHECK_EVALUATE` | 5 | Re-evaluates every affected engagement |
+| `BUDGET_CAP_RAISE` | `*` | `USAGE_ROLLUP` | 9 | Recomputes budget state after the cap moves |
+| `AGENT_PAUSE` | `*` | `USAGE_ROLLUP` | 9 | |
+| *(jury, not an action type)* | `JURY` | `JURY_EVALUATE` | 1 | `apply_effects` writes a `JURY` effect row; `ESCALATE` mode blocks on it |
+
+Six action types are **absent by design** and the lookup is never reached for them,
+because every one of their effects is in-database: `ENQUIRY_ARCHIVE`,
+`OPPORTUNITY_CONVERT`, `TNA_RECOMMENDATION_ACCEPT`, `QUOTATION_APPLY`, `DISCOUNT_APPROVE`
+and `AGENT_AUTONOMY_CHANGE`. Fifteen mapped plus six absent is the full 21 — 19 from §3 and
+two from §17. If one of the six later grows an external effect, the lookup raises and the
+fix is an insert. That is the intended behaviour, not a bug to route around.
+
+**The lookup.**
+
+```sql
+create or replace function app.job_type_for(p_action_type text, p_entity text default null)
+returns text
+language plpgsql stable security definer set search_path = ''
+as $$
+declare v_job_type text;
+begin
+  -- exact entity match first, then the '*' fallback
+  select m.job_type into v_job_type
+    from app.job_type_map m
+   where m.action_type = p_action_type
+     and m.entity = coalesce(p_entity, '*')
+   limit 1;
+
+  if v_job_type is null then
+    select m.job_type into v_job_type
+      from app.job_type_map m
+     where m.action_type = p_action_type
+       and m.entity = '*'
+     limit 1;
+  end if;
+
+  if v_job_type is null then
+    raise exception
+      'no job_type mapped for action_type=% entity=%; add a row to app.job_type_map',
+      p_action_type, coalesce(p_entity, '*')
+      using errcode = 'P0002',
+            hint = 'An action type with an external effect must have a handler.';
+  end if;
+
+  return v_job_type;
+end $$;
+
+create or replace function app.job_priority_for(p_action_type text, p_entity text default null)
+returns smallint
+language sql stable security definer set search_path = ''
+as $$
+  select coalesce(
+    (select m.priority from app.job_type_map m
+      where m.action_type = p_action_type and m.entity = coalesce(p_entity, '*')),
+    (select m.priority from app.job_type_map m
+      where m.action_type = p_action_type and m.entity = '*'),
+    5::smallint);
+$$;
+```
+
+`job_type_for` raises; `job_priority_for` defaults to 5. The asymmetry is deliberate. A
+missing handler is unrecoverable — the job would never run — so it must stop the
+transaction. A missing priority is a scheduling preference, and refusing to enqueue a real
+effect over it would be worse than running it at normal priority.
+
+Both are `stable`, not `immutable`: the table can change between transactions.
+
+**Test.**
+
+- **Every mapped `job_type` has a handler.** Assert `app.job_type_map.job_type` is a subset
+  of the registered handler keys in §2.3. This is the check that catches a typo, which is
+  otherwise invisible until a job sits unclaimed.
+- **Entity precedence.** With both `('PROPOSAL_SEND','EMAIL')` and `('PROPOSAL_SEND','*')`
+  present, assert the exact entity wins.
+- **Fallback.** `job_type_for('INVOICE_PUSH', 'ANYTHING')` returns `PUSH_INVOICE` via `'*'`.
+- **Fails closed.** `job_type_for('NEW_UNMAPPED_ACTION')` raises `P0002`, and the message
+  names the action type. Assert it raises rather than returning null — a test that only
+  asserts "not equal to SEND_EMAIL" would pass on a null.
+- **Priority does not fail closed.** `job_priority_for('NEW_UNMAPPED_ACTION')` returns 5.
+- **Coverage against the contract.** For every action type in
+  `packages/contract`'s enum that `apply_effects` can produce an `EXTERNAL` effect for,
+  assert a row exists. This is the test that fails when someone adds action type 22 — which
+  is the entire point of the table.
+
 ### 2.4 State machine
 
 ```
@@ -739,7 +871,7 @@ begin
 
   if j.effect_id is not null then
     -- owned by sb-actions (§2.7); workers never write core tables directly
-    perform app.report_effect_result(j.effect_id, 'SETTLED', p_result, null);
+    perform app.report_effect_result(j.effect_id, 'SUCCEEDED', p_result, null);
   end if;
 end $$;
 ```
@@ -936,7 +1068,7 @@ response table is unlogged, so it must never carry the guarantee.
 
 ```
 core.action_requests ──► app.emit_event(tenant, event_name, action_request_id)   [mine]
-                    └──► insert into app.outbox …                          [sb-actions]
+                    └──► app.enqueue_effect_jobs(action_request_id)              [mine]
                                                      │
                                                job-worker
                                                      │
@@ -976,8 +1108,9 @@ So by construction the only failure that reaches them is terminal, which is why 
 stored value is `DEAD_LETTERED`. Confirming explicitly, since they asked: **`fail_job`
 passes `FAILED`, never `DEAD_LETTERED`.**
 
-**Column list, which they flagged as unverified against my committed §2.2.** Their insert
-is:
+**Column list, which they flagged as unverified against my committed §2.2.** This is the
+insert they committed in `2357080`, and it is the one `app.enqueue_effect_jobs` replaces.
+I checked it anyway, because until their two-line change lands it is what runs:
 
 ```sql
 insert into app.outbox (tenant_id, job_type, job_key, effect_id,
@@ -990,7 +1123,8 @@ Every one of those eight is in §2.2 with that spelling and these types: `tenant
 `job_type text`, `job_key text`, `effect_id bigint`, `action_request_id uuid`,
 `correlation_id uuid not null`, `payload jsonb`, `run_after timestamptz`. The unique index
 is `(tenant_id, job_key) where job_key is not null`, so their `on conflict` target
-resolves. **This compiles.**
+resolves. **This compiles**, so nothing is broken in the interim while the insert moves
+behind `app.enqueue_effect_jobs`.
 
 `correlation_id` is `not null` on every row on every path. `action_request_id` and
 `effect_id` are nullable on the table, because event fan-out jobs have neither; the effect
@@ -1024,11 +1158,33 @@ Three enqueue paths, one table, one uniqueness rule:
 retry-safety story for external effects: a redelivered job cannot send a second proposal
 email or push a second invoice.
 
-**`app.job_type_for(action_type, entity)` is mine and does not exist yet.** `sb-actions`
-flagged that without it they would have mapped their `topic` onto `job_type` mechanically
-and shipped `'effect.proposal_send'` into a column the worker dispatches on. That would not
-fail loudly — it would produce jobs no handler claims, sitting at `QUEUED` until somebody
-noticed the badge. It is listed among the unwritten helpers.
+**`app.job_type_for(action_type, entity)` is written** — §2.3a, a reference table plus a
+raising lookup. `sb-actions` flagged that without it they would have mapped their `topic`
+onto `job_type` mechanically and shipped `'effect.proposal_send'` into a column the worker
+dispatches on. That would not fail loudly; it would produce jobs no handler claims, sitting
+at `QUEUED` until somebody noticed the badge. The table fails closed instead.
+
+**`app.enqueue_effect_jobs` — accepted, and it makes the mapping invisible to them.**
+`sb-actions` offered to drop their direct insert and call one function, and asked me to
+decide. **Yes, take it.** Their commit `2357080` still carries the insert because our
+messages crossed; the change is theirs to make and is two lines.
+
+```sql
+app.enqueue_effect_jobs(p_action_request_id uuid) returns int
+```
+
+It reads `app.action_effects` where `kind = 'EXTERNAL'`, constructs
+`job_key = '<action_request_id>:<seq>'`, resolves `job_type` and `priority` through §2.3a,
+and inserts with `on conflict (tenant_id, job_key) do nothing`. Three things follow, and the
+third is the one that decided it:
+
+- The `job_key` shape is built in one place rather than trusted to a caller, so there is one
+  thing that can get it wrong instead of two.
+- `sb-actions` stops passing `job_type` at all, so §2.3a's mapping becomes an internal
+  detail of my lane. They no longer need to know that handler keys exist.
+- It removes the cross-lane dependency that prompted this: their committed SQL no longer
+  references an unwritten function of mine, because it no longer references my functions at
+  all beyond the two named calls.
 
 **The lifecycle hole is closed, and the fix is theirs.** I had said the write-back should
 advance `action_requests.status`. They objected that rolling a proposal back from `SENT`
@@ -1056,7 +1212,8 @@ and 30 days for raw bodies (§5.5). Two tables, one rule, stated in both places.
 
 Ownership, restated:
 
-- `sb-actions` calls `app.emit_event` and writes its own `app.outbox` rows.
+- `sb-actions` calls `app.emit_event` and `app.enqueue_effect_jobs`. It writes no
+  `app.outbox` row itself once its two-line change lands.
 - **Workers never write `core` tables directly.** Every write-back goes through
   `app.report_effect_result`, which runs a per-type confirm handler on success only — the
   sole place a worker's data reaches `core`. A worker holds the service role and bypasses
@@ -1571,7 +1728,7 @@ create table core.runs (
   cache_hit_rate    numeric(4,3),
   tokens_in         bigint not null default 0,
   tokens_out        bigint not null default 0,
-  cost_minor        bigint not null default 0,
+  cost_sen          bigint not null default 0,
   currency          text not null default 'MYR',
   guardrails        text[],
 
@@ -1601,7 +1758,8 @@ create index runs_failed_idx on core.runs (tenant_id, finished_at desc)
 `agentFailures`, and without an acknowledgement the count can only ever grow. It is
 proposed as an addition.
 
-`cost_minor` is integer minor units per §1. `duration_ms` is stored rather than generated
+`cost_sen` is integer sen per §1 and ruling R-PROV — the suffix is `_sen`, not `_minor`.
+`duration_ms` is stored rather than generated
 because `finished_at` is null while the run is in flight and the trace viewer shows
 elapsed time from the client.
 
@@ -1628,7 +1786,7 @@ create table core.run_nodes (
   tokens_in       int,
   tokens_out      int,
   cache_hit_rate  numeric(4,3),
-  cost_minor      bigint not null default 0,
+  cost_sen        bigint not null default 0,
 
   status          text not null check (status in ('RUNNING','OK','RETRIED','FAILED','HALTED')),
   retries         int not null default 0,
@@ -2195,7 +2353,7 @@ state, not on logs.
 - **Run I/O is deleted at 30 days, metadata is not.** Insert a run finished 31 days ago
   with I/O and snapshots; run `app.redact_run_io()`; assert `run_node_io` and
   `run_snapshots` rows are gone, `run_nodes.args`/`result` are null, `runs.redacted_at` is
-  set, and `tokens_in`, `cost_minor`, `status`, `tier` are unchanged.
+  set, and `tokens_in`, `cost_sen`, `status`, `tier` are unchanged.
 - **29 days is untouched.** The same fixture at 29 days survives entirely. This is the
   off-by-one that silently destroys evidence.
 - **The job is idempotent.** Run it twice; assert the second run deletes zero rows and
@@ -2325,14 +2483,13 @@ state, not on logs.
   because the constraint that drove it — one action, N independently failing effects — is
   the kind of thing a future reader re-litigates from scratch otherwise.
 
-- **Six helper functions are named but not written**, and they are the largest piece of
-  unwritten work this document implies: `app.aggregate_type_for`, `app.event_payload_for`,
-  `app.event_summary_for`, `app.event_name_for` (shared with `sb-actions`),
-  `app.job_type_for` and `app.job_priority_for`. They are mechanical, but
-  `app.event_payload_for` and `app.event_summary_for` are where the §14 payload shapes are
-  actually enforced, so "mechanical" does not mean "trivial". `app.job_type_for` is the
-  urgent one: `sb-actions`' committed `apply_effects` already calls it, so the dependency
-  runs from their shipped SQL into my missing function.
+- **Four helper functions are named but not written**: `app.aggregate_type_for`,
+  `app.event_payload_for`, `app.event_summary_for` and `app.event_name_for` (shared with
+  `sb-actions`). They are mechanical, but `app.event_payload_for` and
+  `app.event_summary_for` are where the §14 payload shapes are actually enforced, so
+  "mechanical" does not mean "trivial". `app.job_type_for` and `app.job_priority_for` were
+  on this list and are now written (§2.3a); they came off it because `sb-actions`' committed
+  SQL referenced them, which made them a cross-lane blocker rather than a local gap.
 
 - **The badge fan-out no longer touches `public.memberships`.** It calls `sb-tenancy`'s
   `app.role_holders` (committed, `84c64fb`), which removes the `app_role`-vs-`role` column
