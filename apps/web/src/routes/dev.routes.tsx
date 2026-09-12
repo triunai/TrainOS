@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { kitDevRoute } from "./kit.routes";
 
 /**
  * Dev-only route registrations.
@@ -20,4 +21,4 @@ export interface DevRoute {
   label: string;
 }
 
-export const devRoutes: DevRoute[] = [];
+export const devRoutes: DevRoute[] = [kitDevRoute];

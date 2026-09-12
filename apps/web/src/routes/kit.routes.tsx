@@ -1,44 +1,42 @@
 import { lazy, Suspense } from "react";
-import { Route } from "react-router-dom";
 import { LoadingState } from "@/shared/components/states";
+import type { DevRoute } from "./dev.routes";
 
 /**
- * The kit showcase route, `/dev/kit`.
+ * The kit showcase's registration, `/dev/kit`.
  *
- * A separate file from `routes/routes.tsx` so the kit owns its own route and the
- * scaffold's generated route table stays generated. To mount it, spread
- * `kitRoutes()` inside the app's `<Routes>`:
+ * The scaffold's `dev.routes.tsx` is a mount point whose whole purpose is for
+ * the kit to add an entry, so the route lives here and `dev.routes.tsx` gains
+ * one import and one array element. Kit work never touches the shared route
+ * table and the two cannot conflict in a merge.
  *
- *   import { kitRoutes } from "@/routes/kit.routes";
- *   …
- *   <Routes>
- *     <Route element={<AppShell />}>
- *       …
- *     </Route>
- *     {kitRoutes()}
- *   </Routes>
+ * It renders inside the real `AppShell`, which is the right place for it: a kit
+ * component that only looks correct outside the app's own sidebar, top bar and
+ * content card is not finished.
  *
- * It sits OUTSIDE the `<Route element={<AppShell />}>` wrapper on purpose: the
- * showcase renders shell pieces of its own, and nesting it inside the real shell
- * would put two sidebars on one page.
- *
- * Lazy, so the showcase and its sample values never enter the app bundle.
+ * KNOWN GAP, and it belongs to the build config rather than to this file.
+ * `routes.tsx` mounts dev routes behind `import.meta.env.DEV`, so the ROUTE
+ * does not exist in production and the chunk is unreachable there. The chunk is
+ * still EMITTED — about 175 kB raw, 55 kB gzipped, in its own file that nothing
+ * ever fetches. Rollup creates a chunk at every `import()` site it can resolve
+ * statically, and wrapping the reference in a dead `import.meta.env.DEV` branch
+ * does not change that; it was tried and measured. Removing it needs
+ * `vite.config.ts` to alias `@/pages/KitShowcase` to an empty module in a
+ * production build, and that file is the scaffold's. Reported to them. The cost
+ * today is dist size only: the main bundle is unchanged and no user downloads
+ * this.
  */
 
 const KitShowcase = lazy(() => import("@/pages/KitShowcase"));
 
 export const KIT_SHOWCASE_PATH = "/dev/kit";
 
-export function kitRoutes() {
-  return (
-    <Route
-      key={KIT_SHOWCASE_PATH}
-      path={KIT_SHOWCASE_PATH}
-      element={
-        <Suspense fallback={<LoadingState label="Loading the kit showcase" />}>
-          <KitShowcase />
-        </Suspense>
-      }
-    />
-  );
-}
+export const kitDevRoute: DevRoute = {
+  path: KIT_SHOWCASE_PATH,
+  label: "Component kit",
+  element: (
+    <Suspense fallback={<LoadingState label="Loading the kit showcase" />}>
+      <KitShowcase />
+    </Suspense>
+  ),
+};
