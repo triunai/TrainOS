@@ -12,6 +12,31 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — one procedure gives every table the same posture
+
+### Added
+
+- **A single table finaliser (004).** Composite tenant-safe keys, the tenant index, the timestamp
+  trigger, frozen identity columns, reference allocation, and row-level security enabled *and
+  forced* with no policy at all. Eighty tables will go through it. Written out per table it would be
+  six hundred lines of copy-paste in which exactly one table ends up missing the "forced" flag, and
+  nothing notices until that table is the one that leaks.
+- **Human references allocate per tenant.** Two customers creating their first template both get
+  `TPL-0001`. A shared counter would let each customer read every other customer's record volume
+  straight off a reference, and no access-control test would ever catch it because no row is
+  exposed. The year in a dated reference comes from the tenant's own timezone, so a record created
+  at eight in the morning in Kuala Lumpur on 1 January is a January record.
+- **Stage names and their order are configuration.** The contract shows two different lifecycles for
+  the same object, six steps in one place and nine in another. Those are two configuration rows, not
+  two hardcoded lists in two components.
+
+### Security
+
+- **No table is ever open, not even briefly.** Row-level security is switched on and forced at the
+  moment a table is created, with zero policies, so the default is deny-all and the policies added
+  later can only widen it. The alternative — create now, secure in a later migration — leaves a
+  window that is only closed if that later migration remembers every table.
+
 ## 2026-09-12 — the status vocabulary, generated from the contract instead of copied
 
 ### Added
@@ -75,6 +100,65 @@ record of a migration, an entry here is the human-facing summary of the same eve
   catalogue and its own matrix). And this migration's rollback crashed on a second run, because a
   Postgres `::regclass` cast raises on a missing table instead of returning nothing; it is now safe
   to re-run and says so.
+
+## 2026-09-12 — the repo floor: one workspace, one token file, and gates that can say no
+
+### Added
+
+- **An npm workspaces monorepo.** `apps/web` is the console and depends on
+  `@trainos/contract` by name, so the shared type surface reaches the app as a
+  package rather than a relative path. Vite 5, React 18, TypeScript 5.8,
+  Tailwind 3, shadcn.
+- **The strict-TypeScript ratchet, on day one with an empty allowlist.**
+  `tsconfig.strict.json` turns the full strict family on for the files listed in
+  its `include`, and CI enforces it. Files graduate one at a time. This is
+  cheap now and a project later.
+- **One token file.** `apps/web/src/styles/tokens.css` carries every light token
+  from the design pack and the complete light-to-dark map, stored as RGB
+  triplets so Tailwind composes them with an alpha modifier. Dark is a straight
+  token swap: no component, layout or geometry changes between themes. Six dark
+  chip values are marked DERIVED because the pack gives only the text colour for
+  warning and danger.
+- **The app shell, with navigation generated rather than restated.** The design
+  pack's TREE and ROLE map are transcribed verbatim; every route path is derived
+  from them by one rule, and the route table is generated from the same tree, so
+  there is no second list of paths that can drift.
+- **The typed data boundary.** One `TrainOsClient` interface grouped by contract
+  section, 41 methods, every one returning a `{ data, error }` tuple typed from
+  `@trainos/contract`. Domain refusals and transport failures are different
+  types, so a `FORBIDDEN` is never retried and never rendered as "something went
+  wrong". The fixture client declares every method and refuses each one by name,
+  so an unbuilt screen fails loudly instead of looking empty.
+- **A shared empty/loading/error kit**, built before the second screen needed
+  one, with every sentence taken as a prop.
+- **Two git-hook tiers and a 17-job CI pipeline.** The baseline tier always
+  blocks; the advisory tier is pausable and can never silence the baseline or
+  the safety guard. The summary job fails on `failure`, `cancelled` **and
+  `skipped`** — an install failure marks every blocking job skipped, and a gate
+  that ignores that passes a run which executed nothing.
+- **Three Supabase-coupled checks**, written from the documented patterns: SQL
+  parse over every migration, rollback and test through the real Postgres
+  grammar; static grant hygiene with per-function revocation tracking; and a
+  contract-drift check on the envelope seam. All three run clean against the
+  migrations landed so far.
+
+### Changed
+
+- **The dev server binds 5180, not the house default 8080.** A sibling app owns
+  8080 on at least one developer machine, which also made the bundle-budget
+  dev-server probe refuse to build. Recorded as D-101 in `ai/state.md`.
+- **The kit's three supplementary tokens were folded into `tokens.css`.** They
+  had been parked in a second file because the scaffold owned the first. Two
+  token files is exactly the divergence the design principles call a defect.
+  Recorded as D-100.
+
+### Note
+
+The `arch:graph` script from the house reference could not have worked as
+written: `dependency-cruiser` 16 renamed `--validate` to `--config`, and running
+it from the repo root made TypeScript resolve the app tsconfig's `include`
+against a directory that does not exist. Both surfaced only because the command
+was run rather than assumed good.
 
 ## 2026-09-12 — the database floor: three schemas, five shared helpers, and two baseline lines that do not work
 

@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 3 · **Applied:** 0 · **Authored, not applied:** 3
+**Migrations:** 4 · **Applied:** 0 · **Authored, not applied:** 4
 **Last snapshot of `tables/`:** never
 
 ---
@@ -12,6 +12,8 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-12 — **004 authored and EXECUTED. The important object in it is not a table: it is `app.finalise_table()`.** Doc 01's Conventions say every table carries the same eight columns, the same `UNIQUE (tenant_id, id)` and `(tenant_id, ref)`, the same `updated_at` trigger and a frozen `ref`; doc 02 §4.1 says every one is RLS-enabled AND FORCED with a tenant index. That is eight facts across roughly eighty tables. Written per table it is six hundred lines of copy-paste in which exactly one table ends up missing FORCE and nothing notices until that table is the one that leaks. Written once, a single pin proves it for all of them — and the pin tests the FUNCTION on a throwaway table rather than the fourteen tables it happened to be applied to, because otherwise it would not prove the fifteenth table gets the same treatment. This is the project's own consolidation rule applied to SQL. **`finalise_table` refuses a table with no `tenant_id`**, which is the check that matters: a table reaching 014 without one gets no tenant predicate, and a policy that cannot filter by tenant does not isolate. **Two defects found by running it.** (1) The composite FKs failed on first apply — `(tenant_id, attachment_id) → attachments (tenant_id, id)` needs the parent's composite unique to exist first, so the finaliser calls had to be interleaved with the CREATEs in dependency order rather than batched at the end. (2) Re-running 004 failed with `relation "ref_formats_tenant_id_key" already exists`: Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, which the Supabase schema guidance names explicitly as a migration trap. The finaliser now guards each ADD CONSTRAINT with a `pg_constraint` lookup and 004 is re-runnable. **Ref allocation is per tenant and T4 exists to keep it that way**: two tenants creating their first template must BOTH get `TPL-0001`. A global counter would let every customer read every other customer's record volume off a ref, and no access-control test would ever catch it because no row is exposed. **Conflict C4 resolved:** doc 01 wants `action_types` tenant-scoped in `core`; doc 03 §1.1 defines `app.action_types` as global, "the product's vocabulary... Tenants customise policies and grants, never the catalogue". 03 outranks 01 and is right — an action type is a capability the software has, not a per-customer setting.
 
 **Last updated:** 2026-09-12 — **003 authored and EXECUTED: 69 enum types, 271 labels, GENERATED from `packages/contract/src/enums.ts` rather than transcribed.** Sixty-two of the sixty-nine are emitted by reading the contract package's `as const` arrays, one `CREATE TYPE` per array, so the database and the TypeScript contract are the same list by construction rather than by review. Each carries a COMMENT naming the constant it came from, so provenance survives into `\dT+`. The reason is that a misspelt enum label is perfectly valid SQL: `ACT_WITH_APROVAL` creates cleanly, matches nothing at run time, and first shows up as a row that will not insert in staging weeks later. The pin is generated from the migration and asserts every label **in declaration order**, because ORDER is semantic for a Postgres enum — comparisons and ORDER BY use declaration order, so a type recreated alphabetically would pass every membership test and silently sort BREACHING approvals last. T4 demonstrates that rather than asserting it abstractly. **Seven types are NOT in the contract package** and are listed separately with the doc section each came from; `travel_region` is the weakest of them — doc 01 names the type but gives no values, so `KLANG_VALLEY · PENINSULAR · EAST_MALAYSIA` are taken from DECISIONS §5's rate-card travel bands and are flagged. **Conflict C3 recorded, not resolved by precedence:** doc 03 §1 states "check constraints in place of enum types" for its own `app.*` gate tables and doc 01 chooses native enums for the domain, with reasons. These are not in conflict — each document describes the tables it owns — so the gate uses `text` + CHECK and the domain uses enums, and the asymmetry is recorded so nobody "unifies" it in one direction and breaks the other lane's design. **The rollback refuses rather than cascading:** `DROP TYPE ... CASCADE` does not fail on a dependent column, it DROPS THE COLUMN, which on `engagements.status` is silent irreversible data loss dressed as a successful rollback. The guard names every dependent column in one message instead of failing sixty-nine times.
 
@@ -23,6 +25,7 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 004 | `004_shell_config_and_ref_allocation.sql` | **The shell: `app.finalise_table()`, ref allocation, and 14 configuration and reference tables (2026-09-12).** One procedure gives a tenant-scoped table its whole standard posture — composite `(tenant_id, id)` and `(tenant_id, ref)` uniques, tenant index, `updated_at` trigger, frozen `tenant_id`/`ref` plus any extra columns, ref allocation, and **RLS enabled AND FORCED with zero policies**, so no table in this set is ever open, not even for the duration of one migration. Ref allocation is one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per `(tenant, prefix, period)`, serialising per prefix per tenant rather than globally; the year comes from the TENANT's timezone, because a record created at 08:00 MYT on 1 January is a January record and UTC would call it December. `pipeline_steps` is the point of the migration: the contract shows two different lifecycles for the same object (six steps on the relations panel, nine on the engagement detail) and those are two `pipelines` rows, not two hardcoded arrays. `templates` are versioned and never edited, so a five-year-old proposal still renders as sent. `app.action_types` created here as the global catalogue (conflict C4); seeded in 011. Spine: `finalise_table` IS a new spine object and is pinned hardest. |
 | 003 | `003_enum_types.sql` | **69 native enum types in `core`, 271 labels, generated from the contract package (2026-09-12).** Closed catalogues frozen by contract §12/§17 become native enums — four bytes on disk across a model full of status columns, and real union types in the generated TypeScript. Open, config-driven sets (`action_type`, lifecycle step key, compliance check key, `hrdc_document_type`, metric key, tier key, template type, TNA constraint code) deliberately do NOT appear here: they arrive in 004 as reference tables, because the project rule is that stage names and order render from configuration, and a CHECK constraint is code while a reference table is data. 62 types generated from `packages/contract/src/enums.ts`; 7 named by doc 01 alone and listed separately. `app_role` and `actor_kind` are NOT duplicated into `core` — doc 02 owns both and creates them in `app` (conflict C2). Spine untouched: types only, no table, no function, no policy. |
 | 002 | `002_tenancy_identity_and_permissions.sql` | **Multi-tenancy from row zero: five identity tables, 109 permissions as data, and the access-token hook (2026-09-12).** `public.tenants`, `teams`, `team_members`, `memberships` and `user_profiles` (author addition), all RLS-enabled AND **forced** — forced removes the table owner's exemption, so a function running as `postgres` no longer silently sees every tenant. Three enum types in `app` (`app_role`, `actor_kind`, `data_scope`) per doc 02 §1.2. Eighteen claim readers and predicates: `app.current_tenant_id` (the spelling three lanes converged on — `app.tenant_id()` does not exist and must not be created), `app.has_permission`, `app.can_see_owner`, `app.my_team_user_ids`, `app.aal`, and `app.principal_claims` as the SINGLE claim-building body shared by the GoTrue hook and the agent-token minter, because §3.1 notes the hook does not run for a self-minted token and two bodies would drift. `app.role_permissions` seeded with 399 (role, permission) pairs over 109 permissions, parsed from doc 02 §2.3 rather than transcribed. **The escalation stop is a RESTRICTIVE policy**: `memberships_no_self_edit` — without it an ADMIN can UPDATE their own row to any role, scope or tenant, and `memberships_write_admin` permits it because they ARE an admin of that tenant while they do it. ADMIN writes additionally require `aal2`. Spine untouched — the action envelope does not exist yet; 002 is the authorization the spine will rest on. |
 | 001 | `001_foundation_schemas_and_helpers.sql` | **The floor: three schemas, four extensions, five shared helpers (2026-09-12).** Creates `app` (helpers + the action gate, NOT exposed to PostgREST), `core` (the 86-table domain, exposed), and `extensions`. Installs citext (case-insensitive email, so `EXACT_DOMAIN` contact matching does not silently miss on case), btree_gist (the EXCLUDE constraint that stops a trainer being double-booked, 008), pg_trgm (⌘K search) and pgcrypto (share-token hashing — platform-provided on Supabase, so 001 does not own it and the rollback leaves it). Five helpers: `app.set_updated_at`, `app.enforce_immutable_columns` (generic, column names as trigger arguments — one implementation, N attachments, instead of N triggers that drift), `app.round_half_up_minor` (the single definition of DECISIONS §7's rounding rule), and `app.ok`/`app.err`. **The envelope is a FUNCTION, not a convention:** point 2 of the contract check is structural rather than review-dependent because `app.ok(jsonb)` BUILDS the object, so a top-level sibling key is not something a later author can add by accident. Applies doc 02 §4.1's schema baseline to `public` and `core` — and records that two of its four lines do not work. No spine yet; this creates the primitives the spine is built from. |
@@ -195,6 +198,62 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 004 (`004_shell_config_and_ref_allocation.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Sources: `docs/architecture/01` §3.6 and
+Conventions, `docs/architecture/02` §4.1, `docs/architecture/03` §1.1, DECISIONS §4.
+
+### What it does
+
+Fourteen `core` tables plus global `app.action_types`, `app.finalise_table()`, `core.next_ref()` and
+`core.assign_ref()`. See the Tables and RPC sections. Three design points carry the weight:
+
+- **The finaliser is a spine object.** Every table migration from 005 on goes through it, so a
+  defect is a defect in eighty tables at once and will not look like one.
+- **It refuses an untenanted table.** `RAISE ... undefined_column` rather than silently finalising
+  something no policy can isolate.
+- **It is migration-role only.** It runs `EXECUTE format(...)` on its arguments. Every identifier is
+  quoted with `%I` AND `EXECUTE` is revoked from every client role, because either alone would be
+  insufficient — a client-reachable function of this shape is an arbitrary-DDL primitive.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — no client-callable RPC. 2. **Unwrap** — no envelope crosses the boundary.
+3. **RpcMap** — none; these are tables the Data API reads directly once 014 grants them.
+4. **Call sites** — `finalise_table` is called by 005–013; `assign_ref` fires on every table with a
+   `ref`. 5. **Casts** — none. 6. **Reload/restore** — no client behaviour yet.
+7. **Public routes** — none; `anon` receives nothing.
+
+### Pin — `tests/test_004_shell_config_and_ref_allocation.sql`
+
+Eight checks, all executed, all PASS. T1 every `core` table RLS-forced with **zero** policies ·
+T2 undated and dated refs match the contract's `TPL-0001` / `ENQ-2026-0001` shapes · T3 an explicit
+ref is honoured then frozen, and a row cannot be transplanted between tenants · **T4 counters are
+per tenant** (a global counter leaks record volume across customers and no access-control test would
+catch it) · **T5 the FINALISER itself**, on a throwaway table, all eight properties asserted
+including behaviour: allocation, `updated_at` override, and the extra frozen column · T6 it refuses
+an untenanted table and a missing one · T7 neither `finalise_table` nor `next_ref` is client-callable
+· T8 the two constraints that encode a business rule — a non-WhatsApp template may not carry a
+per-message rate, and a `MEASURED` hours-saved basis may not exist without a sign-off, because that
+is how an illustrative number becomes a published ROI claim.
+
+**RLS four-way: deliberately deferred to test_014.** These tables have RLS forced and no policies, so
+every impersonated read returns nothing and would prove nothing.
+
+### Rollback — `rollbacks/004_shell_config_and_ref_allocation_rollback.sql`
+
+Header carries the export commands and states what is not derivable: pipelines and steps are the only
+definition of stage names and order; templates are the only copy a sent proposal renders from.
+**`attachments` and `signatures` get their own guard**: dropping `attachments` destroys the index
+into object storage while the objects survive unreferenced and unfindable, and a `signatures` row IS
+the evidence — signer, timestamp, IP, method — with no copy in the bucket. Four guards (G0 already
+rolled back, G1 a `core` table 004 did not create, G2 any attachment or signature row, G3 any
+`app.action_types` row). CASCADE is used here and explicitly justified as safe only because G1 has
+already proved nothing outside 004 exists in `core` — with a pointer to rollback 003's header for
+the case where CASCADE would have silently dropped a column. Round-tripped, idempotent.
 
 ---
 
