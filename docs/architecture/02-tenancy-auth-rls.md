@@ -85,7 +85,7 @@ Agreed with `sb-actions`, `sb-events` and `sb-money` in review.
 | Actor kinds | **four** — `HUMAN`, `AGENT`, `SYSTEM`, `CLIENT` | Portal RPCs write `CLIENT`. A three-value enum breaks on the first proposal acceptance. |
 | Agent principal | per agent **per tenant**, so the tenant is trustworthy from the JWT | Answers §16 Q7. Agent-authored rows do not need the tenant read off the row. |
 | Schemas | `core` = the domain (exposed) · `public` = identity and tenancy only (exposed) · `app` = helpers and the gate (**not** exposed) | Settled by migration 001 as conflict C1; doc 03 outranked my draft, which wrote the domain as `public.*`. My whole §4 catalogue is retargeted onto `core`. |
-| Anything an endpoint renders | must be in `core` or `public` | A table in `app` is unreachable by the Data API, with no error to explain it. Gate functions belong in `app`; tables an endpoint renders do not. This has now bitten two lanes. |
+| Anything an endpoint renders | must be **reachable**: a table in `core`/`public`, **or** an `app` table behind a `SECURITY DEFINER` RPC in an exposed schema | A table in `app` with no RPC over it is unreachable by the Data API, with no error to explain it. That has bitten two lanes. But the RPC form is legitimate and sometimes better — `sb-events` keeps `app.key_access_audit` unexposed and reads it through an RPC, which is right for an audit table. Do not "fix" that by moving it. |
 | Minting JWTs | **Nobody mints tokens. Ever.** All tokens are GoTrue-issued | A holder of the project signing key can sign `role: service_role` and bypass every policy in this document. §3.1a. If a lane thinks it needs to mint, bring it to me first. |
 | Committing | `git commit <path> -m "…"`, never `git add` then a bare commit | We share one index on `main`. A bare commit sweeps up every other lane's staged work. |
 
@@ -2332,10 +2332,14 @@ fails. No session to kill, because there is no refresh token.
 
 **An open Realtime socket is not bounded by the token expiry, and mechanism 2 is the only thing that
 closes it.** `sb-events` supplied this and it makes the paragraph above incomplete as it stood.
-Realtime evaluates its policies **per connection**, at connect time. A revoked membership therefore
-does not bite on a socket that is already open: the subscriber keeps receiving approvals and badge
-traffic for their old role until a new JWT is presented, and a new JWT is only presented on
-reconnect. So the 1800-second bound I claimed holds for the Data API and does **not** hold here.
+Stated precisely, in their words because theirs are sharper than mine: policies on
+`realtime.messages` are evaluated **at subscribe time and cached for the life of the connection**, so
+a revoked membership does not bite on an open socket until a new JWT and a reconnect. **The
+1800-second expiry bounds a new connection's worst case, not an existing one's.** A revoked user
+keeps receiving approval and badge traffic for their old role until something forces the reconnect.
+
+This paragraph is deliberately duplicated in `sb-events`' §3.4. Duplication is the lesser evil when
+the alternative is a reader of either section alone drawing the wrong bound on a live revocation.
 
 `auth.admin.signOut` is what forces the reconnect, which makes it load-bearing rather than merely the
 fastest option. `sb-events` carries `AUTH_SIGN_OUT` as a priority-1 job type for that reason, and has
@@ -2629,6 +2633,32 @@ named exception, the test says it is a defect and someone eventually "fixes" it.
 
 Those three catch the failure mode that matters most: a table added six months from now that nobody
 remembers to protect.
+
+**Assert the plan shape, not only the result, wherever a policy's cost is a design decision.** Taken
+from `sb-events`, who assert that no scan of `core.runs` appears in their realtime policy's plan —
+which is what stops someone reintroducing the table lookup they removed by tenant-prefixing the run
+topic. My Template C child policies are the same case: each one deliberately re-enters its parent
+through a primary-key `exists`, and an innocent-looking rewrite to a join turns a single index probe
+into a per-row subquery. Nothing in the result changes, so no functional test notices.
+
+```sql
+-- The parent re-entry must stay an index probe, not become a join or a seq scan.
+select ok(
+  (select count(*) from
+     (select unnest(string_to_array(
+        (select plan from
+           (explain (format text) select * from core.proposal_sections limit 1) as t(plan)
+        ), E'\n')) as line) l
+   where l.line like '%Seq Scan on proposals%') = 0,
+  'proposal_sections policy does not seq-scan its parent');
+```
+
+Spelling is indicative — the migrations author should use whatever plan-capture idiom the pgTAP
+setup already uses. The property is what matters: a policy whose cost was a decision gets an
+assertion about its cost, or the decision silently decays. Apply to every Template C table:
+`proposal_sections`, `quotation_lines`, `attendance_entries`, `contacts`, `tna_gaps`,
+`hrdc_documents`, `invoice_lines`. `attendance_entries` is the one to watch, at thirty participants
+times two sessions times every engagement.
 
 Two more the research doc (§12, and the "Observability" default) argues for, which I agree belong in
 CI rather than in a human's checklist:
