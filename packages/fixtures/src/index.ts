@@ -24,6 +24,7 @@ export type {
   EngagementProjection,
   FixtureClientConfig,
   FixtureCollectionsQueueResponse,
+  ProposalDraftResult,
   RequestOptions,
   ResponseMeta,
 } from "./client/FixtureClient";

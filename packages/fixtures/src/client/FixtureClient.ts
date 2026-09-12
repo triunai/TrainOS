@@ -202,6 +202,14 @@ export interface ComputedQuotation {
   display: { perPax: Money };
 }
 
+/** §6 what `draftProposal` resolved on the caller's behalf, alongside the draft. */
+export interface ProposalDraftResult {
+  proposal: Proposal;
+  opportunityRef: string;
+  organisationRef: string;
+  quotationRef?: string;
+}
+
 /** §9 the collections queue, carrying the widened next-action type. */
 export type FixtureCollectionsQueueResponse = Omit<CollectionsQueueResponse, "data"> & {
   data: FixtureReceivable[];
@@ -1972,6 +1980,74 @@ export class FixtureClient {
       };
     });
     return this.#read(availability);
+  }
+
+  /**
+   * §6 drafts a proposal for an organisation, resolving the opportunity itself.
+   *
+   * `ProposalCreateRequest` needs an `opportunityRef`, but a caller holding an
+   * organisation has to walk organisation → opportunity to get one. That walk
+   * is domain knowledge, not caller convenience: if every consumer does it in
+   * its own adapter, each one picks a slightly different opportunity. It lives
+   * here so there is one answer — the open opportunity if there is one, the
+   * most recently updated otherwise.
+   *
+   * Passing `quotationRef` binds that quotation to the new proposal, which is
+   * the direction the contract models the link (`Quotation.proposalRef`).
+   */
+  async draftProposal(
+    input: {
+      organisationRef: string;
+      programmeRef: string;
+      quotationRef?: string;
+      templateId?: string;
+      sections?: readonly { key?: string; heading: string; body: string }[];
+    },
+    options: RequestOptions = {},
+  ): Promise<ProposalDraftResult> {
+    const organisation = byIdOrRef(this.#store.organisations, input.organisationRef);
+    if (!organisation) throw notFound("Organisation", input.organisationRef);
+
+    const OPEN_STAGES = new Set(["NEW", "QUALIFYING", "TNA_SENT", "PROPOSAL_SENT", "NEGOTIATION"]);
+    const candidates = this.#store.opportunities
+      .filter((row) => row.organisationRef === organisation.ref)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    const opportunity = candidates.find((row) => OPEN_STAGES.has(row.stage)) ?? candidates[0];
+    if (!opportunity) {
+      throw notFound("Open opportunity for organisation", organisation.ref);
+    }
+
+    const proposal = await this.createProposal(
+      {
+        opportunityRef: opportunity.ref,
+        templateId: input.templateId ?? "tpl_proposal_std_v7",
+        programmeId: input.programmeRef,
+      },
+      options,
+    );
+
+    if (input.sections && input.sections.length > 0) {
+      proposal.sections = input.sections.map((section, index) => ({
+        n: index + 1,
+        title: section.heading,
+        body: section.body,
+      }));
+      proposal.updatedAt = NOW;
+    }
+
+    if (input.quotationRef) {
+      const quotation = byIdOrRef(this.#store.quotations, input.quotationRef);
+      if (!quotation) throw notFound("Quotation", input.quotationRef);
+      quotation.proposalRef = proposal.ref;
+      quotation.updatedAt = NOW;
+    }
+
+    return {
+      proposal,
+      opportunityRef: opportunity.ref,
+      organisationRef: organisation.ref,
+      ...(input.quotationRef ? { quotationRef: input.quotationRef } : {}),
+    };
   }
 
   /**

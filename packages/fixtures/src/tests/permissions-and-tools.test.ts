@@ -21,6 +21,7 @@ import {
   USER_SITI,
 } from "@trainos/contract";
 import { QUOTATION_SUTERA } from "../data/proposals";
+import { ORG_KENANGA } from "../data/organisations";
 import { createFixtureClient } from "../index";
 import type { FixtureClient } from "../client/FixtureClient";
 
@@ -170,6 +171,41 @@ describe("agent-runtime tool reads", () => {
       "2027-01-15",
     );
     expect(january.find((row) => row.trainerRef === TRAINER_FARAH_REF)?.available).toBe(true);
+  });
+
+  it("resolves the organisation to its opportunity when drafting a proposal", async () => {
+    const result = await api.draftProposal({
+      organisationRef: ORG_KENANGA,
+      programmeRef: PROGRAMME_LEADING_CHANGE,
+      sections: [{ heading: "Understanding your needs", body: "Your 48 store managers…" }],
+    });
+
+    /** OPP-0498 is Kenanga's open opportunity; the caller never had to know that. */
+    expect(result.opportunityRef).toBe("OPP-0498");
+    expect(result.organisationRef).toBe(ORG_KENANGA);
+    expect(result.proposal.opportunityRef).toBe("OPP-0498");
+    expect(result.proposal.status).toBe("DRAFT");
+    expect(result.proposal.sections[0]?.title).toBe("Understanding your needs");
+
+    /** The draft is a real record, reachable by the ref it came back with. */
+    const stored = await api.getProposal(result.proposal.ref);
+    expect(stored.ref).toBe(result.proposal.ref);
+  });
+
+  it("binds a quotation to the proposal it was drafted for", async () => {
+    const result = await api.draftProposal({
+      organisationRef: ORG_KENANGA,
+      programmeRef: PROGRAMME_LEADING_CHANGE,
+      quotationRef: QUOTATION_SUTERA,
+    });
+    const quotation = await api.getQuotation(QUOTATION_SUTERA);
+    expect(quotation.proposalRef).toBe(result.proposal.ref);
+  });
+
+  it("404s an organisation with nothing to propose against", async () => {
+    await expect(
+      api.draftProposal({ organisationRef: "ORG-0115", programmeRef: PROGRAMME_LEADING_CHANGE }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND", http: 404 });
   });
 
   it("searches organisations and programmes by name", async () => {

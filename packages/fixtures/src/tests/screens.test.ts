@@ -162,3 +162,54 @@ describe("screen coverage", () => {
     expect(rateCard.version).toBe("v0-placeholder");
   });
 });
+
+/**
+ * The run-trace shape M18-S04 can rely on.
+ *
+ * The agent runtime emits its own `run_4821`, and since it now resumes across
+ * workers the node count and event list are a function of how the run was
+ * sliced. So these assert what is stable about a trace — the id, a single
+ * root, every parent resolving inside the run, and the APV-01 halt — and
+ * deliberately never assert how many nodes there are.
+ */
+describe("run trace shape", () => {
+  it("has one root and resolves every parent inside the run", async () => {
+    const run = await api.getRun(RUN_PROPOSAL);
+    const nodes = run.nodes ?? [];
+    expect(nodes.length).toBeGreaterThan(0);
+
+    const roots = nodes.filter((node) => node.parentId === null);
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.kind).toBe("ORCHESTRATOR");
+
+    const ids = new Set(nodes.map((node) => node.id));
+    for (const node of nodes) {
+      if (node.parentId === null) continue;
+      expect(ids.has(node.parentId)).toBe(true);
+    }
+  });
+
+  it("proves the agent never sent anything, by naming what halted it", async () => {
+    const run = await api.getRun(RUN_PROPOSAL);
+    expect(run.status).toBe("HALTED");
+    expect(run.outcome).toBe("QUEUED_FOR_APPROVAL");
+
+    const halted = (run.nodes ?? []).find((node) => node.status === "HALTED");
+    expect(halted?.haltedBy?.policyId).toBe("APV-01");
+    expect(halted?.haltedBy?.approvalRequestRef).toBe(APPROVAL_AURORA);
+
+    /** The halt is on the event log too, so the trace and the log agree. */
+    expect((run.events ?? []).some((event) => event.type === "POLICY_HALT")).toBe(true);
+  });
+
+  it("carries a state card a checkpoint retry could resume from", async () => {
+    const run = await api.getRun(RUN_PROPOSAL);
+    expect(run.stateCard?.goal).toBeTruthy();
+    expect(run.stateCard?.plan.length).toBeGreaterThan(0);
+    expect(run.stateCard?.budgets.tokens.used).toBeLessThan(run.stateCard?.budgets.tokens.limit ?? 0);
+
+    const resumed = await api.retryRun(RUN_PROPOSAL, "checkpoint");
+    expect(resumed.id).not.toBe(RUN_PROPOSAL);
+    expect(resumed.outcome).toBe("RESUMED_FROM_CHECKPOINT");
+  });
+});

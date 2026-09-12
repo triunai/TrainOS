@@ -239,11 +239,24 @@ Derivations over the same store the endpoint methods use, so an agent and a
 screen can never see different numbers.
 
 ```ts
+draftProposal(input: {
+  organisationRef: string;
+  programmeRef: string;
+  quotationRef?: string;
+  templateId?: string;
+  sections?: readonly { key?: string; heading: string; body: string }[];
+}, opts?: RequestOptions): ProposalDraftResult
 searchOrganisations(query: string): Organisation[]
 searchProgrammes(query: string, tags?: readonly string[]): Programme[]
 listTrainerAvailability(programmeRef: string, from: DateOnly, to: DateOnly): TrainerAvailability[]
 computeQuotation(input: { programmeRef: string; pax: number; days?: number; discountRate?: Rate }): ComputedQuotation
 ```
+
+`draftProposal` resolves the organisation to its opportunity itself — the open
+one if there is one, the most recently updated otherwise — because
+`ProposalCreateRequest` needs an `opportunityRef` and that walk is domain
+knowledge. If every consumer did it in its own adapter, each would pick a
+slightly different opportunity.
 
 `ComputedQuotation.proposalValue` is deliberately separate from `total`: the §3
 gate compares the ex-SST figure against the APV-01 threshold, and folding tax
@@ -266,6 +279,12 @@ different body throws `IDEMPOTENT_REPLAY`.
 **Permissions are enforced, not advisory.** OPS holds no `quotation:read`, so
 `getQuotation` throws `403` for an OPS principal and `getEngagement` returns no
 `finance` block for them. Check the projection; do not assume `finance` exists.
+
+**A run trace guarantees its shape, not its size.** `run_4821` has one root,
+every `parentId` resolving inside the run, and the APV-01 halt naming the
+approval. It does **not** guarantee a node count: the agent runtime resumes
+across workers, so how many nodes a trace has is a function of how the run was
+sliced. Assert on the halt and the parentage, never on `nodes.length`.
 
 **The gate reads the record, not the request.** An action's gated value comes
 from the stored record, so understating a value in a payload changes nothing.
