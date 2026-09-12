@@ -718,13 +718,32 @@ places — the hook for humans, the mint service for agents — and nothing enfo
 Sign-in keeps one implementation and deletes that whole class of bug, along with the
 `app.principal_claims()` shim I had proposed to paper over it.
 
-**What would change my mind:** the spike's second, unverified fallback — registering an external
-third-party OIDC issuer as a decoupled signer. That would give agents their own key rather than the
-project's, which removes the blast radius entirely and makes self-minting strictly better than
-sign-in. Worth the follow-up spike; not something to build on today. The spike also could not verify
-whether a *standby* key is trusted for verification before rotation, which if true would be a
-partial mitigation — the agent key would never become GoTrue's active session key — but it does not
-help, because a standby key that verifies can still sign `role: service_role`.
+**What would have changed my mind, and why it no longer does.** I said an external OIDC issuer as a
+decoupled signer would reverse this, because agents would hold their own key rather than the
+project's. `spike-jwt` ran that follow-up (commit `f5cc811`) and the answer is no.
+
+The reason is that the exposure does not come from *which key signed the token*. It comes from
+PostgREST's role-claim mechanism plus a grant that already exists. Supabase's Postgres Roles doc
+describes `authenticator` as the role *"used to validate a JWT and then 'change into' another role
+determined by the JWT verification"*, and `service_role` as the one *"used by the API (PostgREST) to
+bypass Row Level Security"*. The `authenticator → service_role` grant is therefore present by
+default on every Supabase project — it is what makes the platform's own service-role key work at
+all. It is not a safeguard someone forgot to enable.
+
+Third-party auth uses that identical mechanism. A third-party JWT with no `role` claim gets `anon`;
+you configure the provider to emit `role: 'authenticated'` to get anything more. Nothing structurally
+stops whoever controls that issuer's signing key from emitting `role: 'service_role'` instead. So
+`role` is free-form there too, and a TrainOS-run issuer would buy something real — a compromise could
+no longer forge tokens GoTrue itself trusts for human sessions — without touching the RLS-bypass
+exposure at all.
+
+**There is now no known architectural change that makes agent-side minting safe.** The property we
+need is "never trust a `role` claim arriving from an agent-facing path", and that is a discipline of
+whatever mints the token, not something the choice of signer can buy. Which is the argument for
+having no minting path in the trust chain at all, which is the design.
+
+The standby-key question is moot for the same reason: a standby key that verifies can still sign
+`role: service_role`.
 
 **Consequence for token lifetime.** Agent tokens now live 1800 seconds like everyone else's, not
 15 minutes. Compensating controls: the orchestrator signs out at run end, so the practical lifetime
@@ -1370,12 +1389,26 @@ keeps them from `OPS` while still letting `OPS` read the row. Column-level `GRAN
 either, because grants are per Postgres role and every one of our nine application roles is the same
 `authenticated`.
 
-So this needs a schema change, and I am asking `sb-erd` for it: **move the finance block to a child
-table `core.engagement_finance`** keyed one-to-one on `engagement_id`, carrying
-`realised_margin_rate`, `trainer_payable` and anything else commercially sensitive. Then it is a row,
-and a row is something RLS can gate:
+**Ruled by the team lead: the API owns the projection.** I had proposed moving the finance block to a
+one-to-one child table so RLS could gate it as a row. The ruling is that role-specific projections
+are the API layer's job, and it is recorded as a contract deviation in §10 for the contract author.
+That is the decision and it is implemented as such.
+
+The residual risk, stated once and not relitigated: this control now lives in a handler rather than
+in the database, so it is the one place in this document where a coding mistake leaks data that RLS
+would otherwise have caught. Two consequences the API author should carry:
+
+- The projection must be applied at **every** endpoint that reads `core.engagements`, not only
+  `GET /v1/engagements/{id}`. A second reader — a report, an export, a `select=*` from the ⌘K search
+  — reintroduces the leak silently.
+- It needs its own test, because §8.7's schema sweep cannot see it. Assert that an `OPS` principal's
+  response body carries no `finance` key.
+
+If a second endpoint over that table ever appears, revisit the child table. For reference, the shape
+that would make the control structural rather than procedural:
 
 ```sql
+-- NOT the chosen design. Kept as the fallback if the API-side control proves fragile.
 create policy engagement_finance_select on core.engagement_finance
   for select to authenticated
   using (
@@ -1386,12 +1419,6 @@ create policy engagement_finance_select on core.engagement_finance
                   and e.tenant_id = (select app.current_tenant_id()))
   );
 ```
-
-The alternative — leaving the columns in place and having the API layer omit them for `OPS` — puts
-the control in a handler rather than the database, which is the thing this document exists not to do.
-It also fails the moment anyone writes a second endpoint over the same table. Flagged to `sb-erd` as
-a blocking schema request, and to whoever owns the contract that §8's payload needs a role-dependent
-projection noted against it.
 
 ### 4.6 Approvals
 
@@ -2515,11 +2542,24 @@ database rather than of any handler's correctness, and a key that mints arbitrar
 it back in a handler. Rejecting `service_role` for agents in §3.1 and then holding a key that mints
 `service_role` would be incoherent.
 
-**What would flip me:** the spike's unverified third option, an external OIDC issuer as a decoupled
-signer. That gives agents their own key rather than the project's, the blast radius disappears, and
-self-minting becomes strictly better than sign-in. Worth a follow-up spike. The other unverified item
-— whether a standby key verifies before rotation — does **not** help, because a standby key that
-verifies can still sign `role: service_role`.
+**Nothing now flips it, and that is a finding rather than an assertion.** I named the external OIDC
+issuer as the thing that would reverse me. `spike-jwt` ran it (commit `f5cc811`): third-party auth
+uses the same PostgREST role-claim mechanism, `role` is free-form there too, and the
+`authenticator → service_role` grant is present by default on every project because it is what makes
+the platform's own service-role key work. A decoupled signer narrows the blast radius — a compromise
+could not forge tokens GoTrue trusts for human sessions — but leaves the RLS bypass untouched, since
+that comes from the grant and the claim, not from the signature. Detail in §3.1a.
+
+So the position is no longer "sign-in beats minting on balance". It is that no signer arrangement
+currently known makes agent-side minting safe, because the property required — never trust a `role`
+claim from an agent-facing path — is a discipline of the minting code, not a property the
+architecture can supply. A critic who wants to overturn this needs to produce that missing
+mechanism, not a better-guarded mint service.
+
+**The one remaining lead, unverified:** whether `revoke service_role from authenticator` is possible
+and supported on hosted Supabase once the project is fully on `sb_secret_…` keys. If it is, it is
+real defence in depth and worth having regardless of this decision, because it would blunt the
+consequence of *any* signing-key compromise, not only an agent's. Carried in §11.
 
 **Kept against, or added to, the research.**
 
@@ -2537,6 +2577,26 @@ verifies can still sign `role: service_role`.
    (§3.3) also stops an agent that has bypassed the envelope.
 10. **`ADMIN` is denied every commercial approval.** Nothing in the contract or the research says
     so; §2.3 argues it.
+
+### Contract deviations — for the contract author
+
+Two places where this design does not match API_CONTRACT as written. Both are decided; both need the
+contract amending rather than the design changing.
+
+**CD-1 · §8 · `GET /v1/engagements/{id}` needs a role-dependent projection.** The contract documents
+the endpoint for `OPS`, `FINANCE` and `MD`, and its payload carries
+`finance.realisedMarginRate: 0.41` and `finance.trainerPayable`. `OPS` does not hold `quotation:read`
+(§2.3), because margin on a delivery screen is the leak that permission exists to prevent. Ruled by
+the team lead: keep the control, and the API omits the `finance` block for `OPS`. The contract should
+say so against that payload, since a reader of §8 today would build the leak. See §4.5 for the
+residual risk and the two tests it needs.
+
+**CD-2 · §6 · the endpoint is `/v1/costings`, the table is `quotations`.** The team lead ruled the
+entity is a Quotation (ref prefix `QUO-`, §18, and both sibling designs already used it), so the
+table, the policies and the permission strings are all `quotation:*`. The contract's §6 path
+`GET /v1/costings/{id}` now names something no longer in the schema. Either §6 follows §18 or the
+mismatch is documented deliberately; not my call, but it should be a decision rather than a
+leftover.
 
 **Noted, not adopted, because it is another lane's call.** The research's §3 hybrid for the action
 envelope — Edge Function for orchestration, one `SECURITY DEFINER` RPC in a non-exposed schema for
@@ -2580,9 +2640,18 @@ explicitly and validate it, exactly as §4.9 requires of every other `service_ro
   Supabase version. `app.aal2_verified()` in §7.2a depends on it and is marked [assumed]. Check the
   `auth` schema before writing that function; a wrong column name makes it raise rather than fail
   open, which is the safe direction but is still a broken deploy.
-- **Whether an external OIDC issuer can act as a decoupled signer for agent tokens.** The spike
-  flagged this as unverified and it is the one finding that would reverse §3.1a. Worth a follow-up
-  spike; nothing in the current design waits on it.
+- ~~Whether an external OIDC issuer can act as a decoupled signer for agent tokens.~~ **Resolved**
+  by `spike-jwt`'s follow-up (commit `f5cc811`): it can, but it does not reverse §3.1a. Third-party
+  auth uses the same PostgREST role-claim mechanism, `role` is free-form there too, and the
+  `authenticator → service_role` grant ships on every project by default. A decoupled signer narrows
+  the blast radius without touching the RLS bypass.
+- **Whether `revoke service_role from authenticator` is possible and supported on hosted Supabase**
+  once the project is fully on `sb_secret_…` keys. Flagged by `spike-jwt` and not chased. This is
+  the one open item in my lane that would materially improve the security posture regardless of any
+  other decision here, because it blunts the consequence of *any* signing-key compromise rather than
+  only an agent's. Worth a spike. **Do not assume it works**: the platform's own service-role key
+  depends on that grant, so revoking it may break Supabase-managed functionality in ways that only
+  surface later.
 - **The exact Realtime `realtime.topic()` helper name and signature** in §4.10. The research notes
   the Realtime schema has been locked against direct DDL since July 2026, so the policy must be
   written against whatever the current helper is, not against an older tutorial's
