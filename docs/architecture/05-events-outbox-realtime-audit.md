@@ -19,7 +19,7 @@ design, frontend.
 |---|---|---|---|---|
 | D1 | Event log shape | One append-only `core.events` table, plus `core.event_subjects` link rows | Per-aggregate event tables | One catalogue (§14), one audit query, one retention policy. Link rows let an event appear in more than one record's drawer without an `OR` that defeats the index. |
 | D2 | Partitioning | **None at launch.** Documented trigger to partition `events` by month | Monthly range partitioning from day one | The skill's threshold is >100M rows; realistic TrainOS volume is ~10⁵–10⁶ events/yr. Partitioning also forbids a global unique index, which is exactly what the idempotency key needs. See [Deviations](#deviations). |
-| D3 | Queue transport | **Own `app.outbox` table**, claimed with `FOR UPDATE … SKIP LOCKED` | `pgmq` / Supabase Queues | The job ledger is a UI-visible entity here (dead letters, agent-failure badge, retry-from-checkpoint). `pgmq` queue tables are not tenant-indexed and expose no typed state, so every UI query becomes a jsonb expression scan across N queue tables. See [§2.1](#21-pgmq-vs-a-job-table). |
+| D3 | Queue transport | **Own `app.outbox` table**, claimed with `FOR UPDATE … SKIP LOCKED` | `pgmq` / Supabase Queues, as recommended by research doc §4 | The job ledger is a UI-visible entity here (dead letters, agent-failure badge, retry-from-checkpoint). `pgmq` queue tables are not tenant-indexed and expose no typed state, so every UI query becomes a jsonb expression scan across N queue tables. See [§2.1](#21-pgmq-vs-a-job-table). |
 | D4 | Enqueue mechanism | Same transaction as the state change, inside `app.emit_event()` | Separate outbox relay process | Both the event and the job are rows in the same database; a relay would only add a failure mode. This is the transactional outbox with the transport collapsed. |
 | D5 | Worker trigger | `pg_cron` tick every 10s → `pg_net` → `job-worker` edge function, plus an optional per-row `pg_net` nudge for `priority = 1` jobs | Trigger-per-job only; long-lived polling worker | The cron tick is the reliability floor and cannot be starved. The nudge is a latency optimisation and is never the delivery guarantee. `pg_net` requests do not start until the transaction commits, so a nudge can never fire for a rolled-back job. |
 | D6 | Realtime mechanism | **Broadcast from database triggers** (`realtime.send`) on private channels | `postgres_changes` | §11 payloads are reshaped (`urgencyGroup`, `slaBreached`, `syncState`), which `postgres_changes` cannot produce. Broadcast also scales per-topic instead of replaying RLS per subscriber per row change. |
@@ -28,7 +28,10 @@ design, frontend.
 | D9 | Sandbox replay (§16 Q8) | **Snapshot pinned to the run.** Every tool read is captured in `run_snapshots`; replay serves reads from the snapshot, refuses writes, and hard-errors on a miss | Live reads during replay | Live reads make replay non-deterministic, which destroys its only purpose. A miss must fail loudly rather than silently diverge. |
 | D10 | Run PII | Redact in the worker **before** storage; full prompt/completion in `run_node_io` for 30 days, then the row is deleted; metadata (tokens, cost, tier, status) kept indefinitely | Storing raw and redacting later; deleting whole runs | The database should never hold the raw text. Keeping the row and nulling the columns bloats the hot trace table; deleting the side table is instant. |
 | D11 | Enum storage | `text` + `check` constraint | Postgres `enum` types | Job types, event types and run event types all grow. `ALTER TYPE … ADD VALUE` is awkward inside a migration transaction; a `check` constraint is a one-line change. |
-| D12 | Idempotency | Unique partial index on `events (tenant_id, idempotency_key)`; a richer `app.webhook_deliveries` ledger for inbound sources | A single global key table | Inbound webhook keys need the raw body and signature verdict for debugging; action keys need 24h TTL per §1. Different lifetimes, different tables. |
+| D12 | Idempotency | Unique partial index on `events (tenant_id, idempotency_key)` and on `app.outbox (tenant_id, job_key)`; a richer `app.webhook_deliveries` ledger for inbound sources | A single global key table | Inbound webhook keys need the raw body and signature verdict for debugging; action keys need 24h TTL per §1. Different lifetimes, different tables. |
+| D13 | Long-running work | A handler **yields**: run to ~300s, checkpoint, re-enqueue | A long lease plus `EdgeRuntime.waitUntil` | Background tasks share the request's wall clock (400s paid) and do not get a longer budget. There is no fifteen-minute job on this runtime, so the checkpoint machinery is what makes agent runs possible at all. See §2.6. |
+| D14 | Badge channel | **Per user**, `tenant:{t}:user:{u}:badges`, authorised by RLS | Flat `badges` channel (§11); per-role channel (my first draft) | The badge number differs per user, and §11 already calls the stream "per-user filtered". A per-role channel leaks one role's queue depth to every other role. See §3.4, §7.4. |
+| D15 | Client broadcast | A **restrictive** `INSERT` deny on `realtime.messages` | Relying on the absence of an `INSERT` policy | Absence is undone by the first permissive policy anyone adds; a restrictive policy `AND`s with all of them. Without it the approvals badge is spoofable from a browser console. |
 
 ---
 
@@ -78,9 +81,22 @@ create trigger events_append_only
 revoke update, delete on core.events from authenticated, anon, service_role;
 ```
 
-`actor.kind` uses the §12 `ActorKind` enum. `actor` stays jsonb rather than three columns
-because the contract renders it as one object everywhere (`createdBy`, audit `actor`) and
-because a `CLIENT` actor has no row in any user table.
+`actor.kind` uses the §12 `ActorKind` enum and all four values occur: portal RPCs write
+`CLIENT`, the agent principal writes `AGENT`. `actor` stays jsonb rather than three
+columns because the contract renders it as one object everywhere (`createdBy`, audit
+`actor`) and because a `CLIENT` actor has no row in any user table.
+
+Per `sb-tenancy` §3.1, the agent credential is issued **per agent per tenant**, so
+`tenant_id` comes from `app.current_tenant_id()` for agent-authored events exactly as it
+does for human ones. There is no branch. `actor.id` is the agent id string
+(`agent_proposal`), not a `uuid`, which is why `actor` is jsonb and not a foreign key.
+
+**`tenant_id` is `not null` with no exception on this table.** `sb-money` models HRD Corp
+rules with `tenant_id` null meaning platform-global, and that exception does **not**
+extend here: an event about a global rule change carries the tenant whose engagements are
+affected, never null. A null-tenant event cannot appear in any audit drawer, which is the
+one place a rule change most needs to be visible. One global rule change affecting four
+tenants emits four events.
 
 **Indexes.**
 
@@ -200,7 +216,7 @@ begin
   -- transactional outbox: subscriptions become jobs in this same transaction
   insert into app.outbox (
     tenant_id, job_type, priority, payload,
-    event_id, run_id, correlation_id, run_after
+    event_id, run_id, correlation_id, job_key, run_after
   )
   select p_tenant_id, s.job_type, s.priority,
          coalesce(p_payload, '{}'::jsonb)
@@ -208,11 +224,13 @@ begin
                                  'aggregateRef', p_aggregate_ref,
                                  'aggregateId', p_aggregate_id),
          v_event_id, p_run_id, v_corr,
+         'event:' || v_event_id::text || ':' || s.job_type,
          now() + coalesce(s.delay, interval '0')
     from app.event_subscriptions s
    where s.event_type = p_type
      and s.enabled
-     and (s.tenant_id is null or s.tenant_id = p_tenant_id);
+     and (s.tenant_id is null or s.tenant_id = p_tenant_id)
+  on conflict (tenant_id, job_key) where job_key is not null do nothing;
 
   return v_event_id;
 end $$;
@@ -354,21 +372,40 @@ causationId }` in addition to the payload below. `Agg` is `aggregate_type`.
 
 ### 1.7 Catalogue gaps — proposed additions
 
-§3 defines 19 action types and §17 adds two more. Thirteen of them execute without
-emitting anything in the §14 catalogue, so the audit drawer has no row for them and the
-outbox has nothing to subscribe to. These are **proposed additions**, not silent
-implementations; they need contract sign-off.
+§3 defines 19 action types and §17 adds two more. Most execute without emitting anything
+in the §14 catalogue, so the audit drawer has no row for them and the outbox has nothing
+to subscribe to. These are **proposed additions**, not silent implementations; they need
+contract sign-off.
+
+`sb-actions` independently proposed a near-identical list from the action side and holds
+`app.event_name_for(action_type)`. The table below is the **merged** list — theirs plus
+three they did not have (`ActionRequested`, `ApprovalExpired`, `AgentResumed`) — and it
+should be the one list both lanes implement. Where we differed, theirs is taken:
+
+- **`InvoicePushed` splits.** §14 has one event for both `INVOICE_CREATE` and
+  `INVOICE_PUSH`. `sb-actions` emits `InvoiceCreated` for the first and keeps
+  `InvoicePushed` for the second. Correct: creating a draft invoice and pushing it to the
+  accounting package are different facts with different reversibility, and the collections
+  screen needs to tell them apart.
+- **`HRDCPacketVoided` is a separate event**, not a `claimVoided: true` flag on
+  `AttendanceUnlocked` as I had it. Better: voiding a submitted claim is its own fact with
+  its own audit row, and burying it in a boolean on another event is how it goes unnoticed.
+- **`BudgetCapRaised`** for `BUDGET_CAP_RAISE`, which I had missed entirely. §17 has
+  `BudgetCapTripped` for the automatic trip but nothing for the approved raise.
 
 | Proposed event | Agg | Emitted by | Payload |
 |---|---|---|---|
 | `ActionRequested` | ACTION | `POST /actions` (§3 names it but §14 omits it) | `{ actionRef, type, targetRef, requestedBy, confidence, status }` |
+| `InvoiceCreated` | INVOICE | `INVOICE_CREATE` (split from `InvoicePushed`) | `{ invoiceRef, total, lines, rateCardVersion, createdBy }` |
+| `HRDCPacketVoided` | HRDC_PACKET | `ATTENDANCE_UNLOCK` on a submitted packet | `{ engagementRef, packetRef, claimReference, reason, voidedBy }` |
+| `BudgetCapRaised` | AI_BUDGET | `BUDGET_CAP_RAISE` | `{ scope, key, from, to, approvedBy, effectiveFrom }` |
 | `EnquiryArchived` | ENQUIRY | `ENQUIRY_ARCHIVE` | `{ enquiryRef, reason, archivedBy }` |
 | `TNARecommendationAccepted` | TNA | `TNA_RECOMMENDATION_ACCEPT` | `{ tnaRef, programmeRef, acceptedBy, confidence }` |
 | `QuotationApplied` | QUOTATION | `QUOTATION_APPLY` | `{ quotationRef, proposalRef, total, rateCardVersion }` |
 | `DiscountApproved` | QUOTATION | `DISCOUNT_APPROVE` | `{ quotationRef, pct, resultingMargin, floorPrice, approvedBy }` |
 | `TrainerBooked` | ENGAGEMENT | `TRAINER_BOOK` | `{ engagementRef, trainerRef, dates, dayRate }` |
 | `EngagementClosedOut` | ENGAGEMENT | `ENGAGEMENT_CLOSE_OUT` | `{ engagementRef, closedBy, closedAt }` |
-| `AttendanceUnlocked` | ENGAGEMENT | `ATTENDANCE_UNLOCK` | `{ engagementRef, day, reason, unlockedBy, claimVoided }` |
+| `AttendanceUnlocked` | ENGAGEMENT | `ATTENDANCE_UNLOCK` | `{ engagementRef, day, reason, unlockedBy }` |
 | `PaymentRecorded` | INVOICE | `PAYMENT_RECORD` | `{ invoiceRef, amount, method, receivedAt, balance }` |
 | `ReminderSent` | INVOICE | `REMINDER_SEND` | `{ invoiceRef, stage, channel, sentAt, cost }` |
 | `FollowUpSent` | OPPORTUNITY | `FOLLOWUP_SEND` | `{ followUpRef, contactRef, channel, sentAt }` |
@@ -377,10 +414,11 @@ implementations; they need contract sign-off.
 | `AgentPaused` / `AgentResumed` | AGENT | `AGENT_PAUSE` | `{ agentId, actionType, reason, pausedBy, resumeCondition }` |
 | `ApprovalExpired` | APPROVAL | expiry job, **only if §16 Q1 resolves to expire** | `{ approvalRef, policyId, expiredAt, originalSlaDueAt }` |
 
-`AttendanceUnlocked.claimVoided` exists because §16 Q5 asks whether unlock should be
-refused once a claim reference exists. Whichever way that resolves, the event has to
-record that a submitted claim was voided — that is the single most consequential
-reversible action in the system.
+`HRDCPacketVoided` exists because §16 Q5 asks whether unlock should be refused once a
+claim reference exists. Whichever way that question resolves, voiding a submitted claim
+needs its own event carrying the claim reference: it is the single most consequential
+reversible action in the system, and it must be legible in the drawer without reading a
+flag on a different event about a different aggregate.
 
 ---
 
@@ -388,39 +426,72 @@ reversible action in the system.
 
 ### 2.1 pgmq vs a job table
 
-`pgmq` is the obvious candidate and it was rejected on specifics, not on taste.
+`docs/research/08-supabase-agentic-best-practices.md` §4 recommends `pgmq` as the durable
+internal outbox, enqueued in the same transaction as the domain write and drained by a
+worker. This section **agrees with everything in that recommendation except the storage
+engine**, and says why.
 
-**What pgmq gives us.** `pgmq.send()` is a plain insert, so enqueue is transactional
-without a relay. `pgmq.read(queue, vt, qty)` implements the claim with `FOR UPDATE SKIP
-LOCKED` and a visibility timeout; `read_ct` counts attempts; `pgmq.set_vt()` can push a
-message out for backoff; `pgmq.archive()` moves finished messages to `pgmq.a_<queue>` for
-replay. That is a correct queue we do not have to write or maintain.
+**Where we agree, and it is most of it.**
 
-**Why it loses here.** The job ledger is not infrastructure in TrainOS — it is a screen.
+| Research §4 | This document | Where |
+|---|---|---|
+| Enqueue inside the same transaction as the domain write; no dual write | Same, in `app.emit_event` and `app.apply_effects` | §1.3, §2.7 |
+| At-least-once, consumers idempotent by event id, regardless of which Supabase page is authoritative on "exactly-once" | Stated as the guarantee, with no exactly-once mode offered | §1.5 |
+| Broadcast, not Postgres Changes | Same | §3.1 |
+| `pg_net` is an async HTTP primitive, not a queue: unlogged response table, ~6h retention, ~200 req/s, no retry | Same, and it is why the nudge is an optimisation and the cron tick is the guarantee | §2.6 |
+| Database Webhooks are fire-and-forget with no delivery guarantee, wrong for outbox semantics | Not used anywhere in this design | §2.6 |
+| Realtime Authorization: `private: true` plus RLS on `realtime.messages`, channels named by tenant | Same | §3.4 |
+| `pgmq.pop()` is effectively at-most-once — avoid it | Not used | — |
 
-1. **Tenant-scoped queries.** `pgmq.q_<name>` is `(msg_id, read_ct, enqueued_at, vt,
-   message jsonb)`. There is no `tenant_id` column. Every badge count and every
-   agent-failure list becomes a jsonb expression scan, and it has to be repeated across
-   one queue table per job type.
-2. **No dead-letter.** A DLQ is a second queue plus a move when `read_ct > n`. The
-   contract needs a dead letter to carry a `reason`, an actor (`POST /runs/{id}/dead-letter`
-   is human-invoked) and a replay pointer. That is a table either way.
-3. **Backoff.** `set_vt` gives backoff only after a read, so a job that fails fast burns
-   attempts at read cadence. An explicit `run_after` is simpler and inspectable.
-4. **Scheduled work.** The SLA escalation is a job that should become visible at
-   `slaDueAt`. `pgmq.send(delay)` supports that, but the queue cannot then answer "which
-   escalations are pending for this tenant" — which M02-S01 asks.
-5. **Retry from checkpoint.** `POST /runs/{id}/retry?from=checkpoint` re-enqueues with
-   modified payload and a lineage link to the original. That is an update-and-reinsert
-   against a row we need to be able to find by `run_id`.
+The research doc's own layering makes the remaining disagreement narrow. It says to fan
+out "via `pg_net`/HTTP with your own retry/dead-letter logic built on pgmq's
+re-`send`-on-failure". The retry ledger, the dead-letter store and the attempt counter are
+therefore a table we write either way. The only question is whether that table sits
+*beside* the queue or *is* the queue.
+
+**Why the ledger should be the queue.** In TrainOS the job list is not infrastructure, it
+is a screen. `GET /badges` counts `agentFailures`; `POST /runs/{id}/dead-letter` takes a
+human-supplied reason and actor; `POST /runs/{id}/retry?from=checkpoint` re-enqueues with
+a modified payload and a lineage link. Those are tenant-scoped queries and writes against
+job state. Splitting them across `pgmq.q_*` for transport and a second table for state
+means two rows per job that can disagree, and a disagreement there is an approval that the
+UI shows as sent and the queue still holds.
+
+The five specifics, against `pgmq` as it is documented:
+
+1. **No tenant column.** `pgmq.q_<name>` is `(msg_id, read_ct, enqueued_at, vt, message
+   jsonb)`. Every badge count becomes a jsonb expression scan, repeated across one queue
+   table per job type.
+2. **No dead-letter primitive.** A DLQ is a second queue plus a move when `read_ct > n`,
+   and it cannot carry `reason`, `dead_lettered_by` or `replayed_job_id`.
+3. **Backoff is read-coupled.** `pgmq.set_vt()` adjusts visibility only after a read, so a
+   job that fails fast burns attempts at read cadence. An explicit `run_after` is
+   inspectable and testable.
+4. **Scheduled work is invisible.** `pgmq.send(delay)` can hide an SLA escalation until
+   `slaDueAt`, but the queue cannot then answer "which escalations are pending for this
+   tenant", which M02-S01 asks.
+5. **`read_ct` is a read count, not an attempt count.** A worker that dies before reporting
+   and one that reported a failure are indistinguishable.
+
+**What we keep from pgmq's design.** The mechanism this document implements is the same
+mechanism: a visibility timeout (`visible_after`), a reaper that returns expired leases,
+and `FOR UPDATE … SKIP LOCKED` for the claim. `pgmq` implements that correctly inside
+`pgmq.read`; §2.5 implements it in about sixty lines. That is the honest size of what is
+being rewritten, and §2.1's switch condition says when to stop rewriting it.
 
 **When to switch.** If sustained enqueue exceeds roughly a few thousand jobs per minute,
 or if nobody wants to own the reaper, move transport to `pgmq` and keep `app.outbox` as a
 projection written by the handler. Below that, one table is less machinery, not more.
 
-Note if you do enable it: `pgmq` tables have no RLS by default, and the `pgmq_public`
-wrapper schema is only needed to expose queue operations to browser clients over
-PostgREST. TrainOS workers use the service role, so that schema should stay unexposed.
+This is a **documented disagreement with the research doc**, not an oversight. If the
+research doc is treated as binding, the change is mechanical: `claim_jobs` becomes
+`pgmq.read`, `fail_job` becomes `pgmq.set_vt` plus a move to a `dead` queue, and
+`app.outbox` keeps every column in §2.2 as the projection.
+
+Two operational notes if `pgmq` is adopted: its tables have no RLS by default, and the
+`pgmq_public` wrapper schema exists only to expose queue operations to browser clients
+over PostgREST. TrainOS workers hold the service role, so that schema should stay
+unexposed.
 
 ### 2.2 `app.outbox`
 
@@ -439,8 +510,9 @@ create table app.outbox (
   event_id           uuid references core.events(id) on delete set null,
   run_id             uuid references core.runs(id) on delete set null,
   action_request_id  uuid,                    -- seam to sb-actions, see §2.7
+  effect_id          uuid,                    -- app.action_effects.id, for the write-back
   correlation_id     uuid not null,
-  idempotency_key    text,
+  job_key            text,                    -- sb-actions: '<action_request_id>:<seq>'
 
   -- scheduling and lease
   run_after          timestamptz not null default now(),
@@ -480,8 +552,8 @@ create index outbox_failed_idx on app.outbox (tenant_id, finished_at desc)
   where state in ('FAILED','DEAD');
 
 -- dedupe
-create unique index outbox_idempotency_idx on app.outbox (tenant_id, idempotency_key)
-  where idempotency_key is not null;
+create unique index outbox_job_key_idx on app.outbox (tenant_id, job_key)
+  where job_key is not null;
 
 -- foreign keys (Postgres does not index these for you)
 create index outbox_run_idx on app.outbox (run_id) where run_id is not null;
@@ -489,17 +561,40 @@ create index outbox_event_idx on app.outbox (event_id) where event_id is not nul
 create index outbox_action_idx on app.outbox (action_request_id) where action_request_id is not null;
 ```
 
-**RLS.** Workers use the service role and bypass RLS, but the table still gets
-`enable row level security` with no policy for `anon` or `authenticated`. A leaked
-publishable key then reads nothing, and the schema `app` is kept out of the PostgREST
-exposed-schema list as a second layer.
+**RLS.** Workers hold the service role and bypass RLS, but the table is still locked down,
+three ways:
+
+```sql
+alter table app.outbox enable row level security;
+alter table app.outbox force  row level security;   -- removes the owner's exemption
+-- and no policies at all
+```
+
+Zero policies denies `authenticated` as well as `anon`, not just `anon` — so a leaked
+publishable key **and** a logged-in user both read nothing. `force row level security`
+additionally removes the table owner's exemption, so a `security definer` function running
+as `postgres` cannot read it either. `service_role` still bypasses, which is the intent.
+Schema `app` also stays out of the PostgREST exposed-schema list.
+
+**Every service-role write goes through a named function that takes `p_tenant_id`
+explicitly and validates it.** On the worker path, tenant isolation is a code invariant
+rather than a policy — nothing stops a handler from writing the wrong tenant's row — so it
+needs a named choke point and a test. `app.claim_jobs`, `app.complete_job`,
+`app.fail_job`, `app.heartbeat_job` and `app.reap_jobs` are that set, and handlers call
+nothing else. This is `sb-tenancy`'s requirement and §8.7 tests it.
+
+**Expect a Security Advisor finding here.** Supabase's advisor flags "RLS enabled with no
+policies" as locking out access entirely. On `app.outbox`, `app.dead_letters`,
+`app.webhook_deliveries` and `app.webhook_routes` that is the intended posture, not a
+defect. Record these four as accepted findings so nobody closes the advisor by adding a
+permissive policy.
 
 ### 2.3 Job types
 
 | Job type | Triggered by | Priority | Max attempts | Notes |
 |---|---|---|---|---|
 | `ENQUIRY_CLASSIFY` | `EnquiryReceived` | 1 | 5 | Wraps an `LLM_RUN`; emits `EnquiryClassified` |
-| `LLM_RUN` | several events; also direct | 1–5 | 3 | Long-running; heartbeats its lease (§2.5) |
+| `LLM_RUN` | several events; also direct | 1–5 | 3 | Yields at ~300s via a checkpoint and re-enqueues; never holds a lease past the 400s worker lifetime (§2.6) |
 | `SEND_EMAIL` | `ProposalSent`, `FollowUpSent`, `ReminderSent` | 1 | 5 | Provider message id written back before ack |
 | `SEND_WHATSAPP` | same, channel `WHATSAPP` | 1 | 5 | Template + `MessageCategory`; cost metered |
 | `PROPOSAL_PDF_RENDER` | `ProposalDrafted` | 5 | 3 | Writes to Storage, returns a signed path |
@@ -516,6 +611,8 @@ exposed-schema list as a second layer.
 | `USAGE_ROLLUP` | `AgentRunCompleted`; cron hourly backstop | 9 | 3 | Feeds `/ai/usage`; may emit `BudgetCapTripped` |
 | `RETENTION_REDACT` | cron, daily 03:00 MYT | 9 | 2 | §6.6 |
 | `WHATSAPP_RATE_REFRESH` | cron, per §16 Q4 TTL | 9 | 2 | Cached BSP rate card |
+| `JURY_EVALUATE` | `app.apply_effects`, topic `jury.evaluate` (§18 `ESCALATE` mode) | 1 | 2 | Blocking jury; the action waits on it |
+| `AUTH_SIGN_OUT` | membership or role change (`sb-tenancy` §7.4) | 1 | 5 | Calls `auth.admin.signOut` for the affected user. The application role rides in the JWT claim, so a revoked membership is not revoked until the token is. Priority 1 is a security property, not a nicety. |
 
 ### 2.4 State machine
 
@@ -640,8 +737,8 @@ begin
   end if;
 
   if j.action_request_id is not null then
-    -- owned by sb-actions; the job's idempotency_key IS their job_key (§2.7)
-    perform app.settle_effect(j.idempotency_key, 'SETTLED', p_result);
+    -- owned by sb-actions (§2.7); workers never write core tables directly
+    perform app.report_effect_result(j.effect_id, 'SETTLED', p_result, null);
   end if;
 end $$;
 ```
@@ -673,7 +770,7 @@ begin
 
     -- an action's external effect must not sit at DISPATCHED forever (§2.7)
     if j.action_request_id is not null then
-      perform app.settle_effect(j.idempotency_key, 'FAILED', p_error);
+      perform app.report_effect_result(j.effect_id, 'FAILED', null, p_error);
     end if;
   else
     v_state := 'FAILED';
@@ -728,7 +825,7 @@ Deno.serve(async (req) => {
   const { types, limit = 10 } = await req.json();
   const { data: jobs } = await db.rpc("claim_jobs", {
     p_worker: WORKER_ID, p_types: types, p_limit: limit,
-    p_lease: types?.includes("LLM_RUN") ? "15 minutes" : "5 minutes",
+    p_lease: "6 minutes",          // > the 400s worker lifetime, never more
   });
 
   // return immediately; keep processing after the response
@@ -753,17 +850,48 @@ async function runOne(job: Job) {
 }
 ```
 
-Three constraints the handlers inherit:
+**No handler may run longer than the worker lives.** Research doc §4 and §9 correct an
+assumption I had made and it is worth stating plainly, because getting it wrong produces a
+queue that looks healthy and silently redelivers forever:
 
-- **The lease must exceed the handler's worst case.** `LLM_RUN` gets 15 minutes and
-  heartbeats every 60s. A handler that can exceed the edge function wall clock must
-  checkpoint (§6.5) rather than hold the lease.
+| Edge Function limit | Value |
+|---|---|
+| Wall-clock worker lifetime | 150s free, **400s paid** |
+| CPU time per request | 2s, excluding async I/O wait |
+| Memory | 256 MB |
+
+`EdgeRuntime.waitUntil` does **not** buy a longer budget. Background tasks share the same
+wall clock as the request that started them, and the worker is killed when any limit is
+hit. So there is no such thing as a fifteen-minute job.
+
+Three constraints follow:
+
+- **The lease is bounded by the worker lifetime, not by the handler's ambition.** Six
+  minutes, slightly above the 400s ceiling, so a worker killed at the wall clock has its
+  job reaped shortly after rather than immediately re-claimed while it is still finishing.
+  The heartbeat extends within that window; it cannot extend past death.
+- **A long handler yields instead of holding.** `LLM_RUN` runs to roughly 300s, writes a
+  checkpoint (§6.5), re-enqueues itself with `run_after = now()` and returns. The next
+  tick resumes from the checkpoint. This is the same machinery as
+  `POST /runs/{id}/retry?from=checkpoint`, which is why that machinery is not optional
+  extra credit — it is what makes agent runs possible on this runtime at all. A run that
+  cannot checkpoint cannot exceed 400s, full stop.
 - **Handlers are idempotent.** `complete_job` passes `'job:' || job.id` as the event
   idempotency key, so a re-delivered job that already finished writes no second event.
   External effects need the same discipline: pass `job.id` to the provider as its
   idempotency key.
-- **The worker runs as the service role and must scope every query by
-  `job.tenant_id` explicitly.** RLS is not protecting it.
+- **The worker runs as the service role and must scope every query by `job.tenant_id`
+  explicitly.** RLS is not protecting it (§2.2).
+
+Two deployment details that are easy to miss and expensive to debug:
+
+- **Pin the worker to the database region.** Functions run by default in the region
+  nearest the caller; a worker makes many round trips per job (claim, heartbeat, complete,
+  emit). Pin with `FunctionRegion` or the `x-region` header and verify with the
+  `x-sb-edge-region` response header. This trades multi-region failover for latency, which
+  is the right trade for a worker and the wrong one for a user-facing function.
+- **Locally, `supabase/config.toml` needs `policy = "per_worker"`** or background tasks are
+  killed the moment the response returns, and every job appears to succeed and do nothing.
 
 **Scheduling.**
 
@@ -803,8 +931,9 @@ response table is unlogged, so it must never carry the guarantee.
 
 ### 2.7 Completion write-back to `sb-actions`
 
-`03-action-envelope-and-policy-gate.md` landed while this was being written and settles
-most of the seam. Two corrections to my original proposal, and one open item.
+The seam is **settled**. `03-action-envelope-and-policy-gate.md` landed while this was
+being written, and `sb-actions` confirmed the remaining points directly. Three changes
+against my original proposal, all of them adopting theirs.
 
 **Enqueue: they write the outbox directly, and that is correct.** I had proposed that
 `sb-actions` only ever call `app.emit_event` and let the subscription table fan out to
@@ -817,45 +946,50 @@ the approval detail screen renders. Both paths write the same table:
 | Path | Who enqueues | Key |
 |---|---|---|
 | Enumerated external effect of an action | `app.apply_effects` | `<action_request_id>:<seq>` |
+| Jury evaluation | `app.apply_effects` | `<action_request_id>:jury` |
 | Fan-out from a domain event | `app.emit_event` via `app.event_subscriptions` | `event:<event_id>:<job_type>` |
 
-Both are idempotent on `(tenant_id, idempotency_key)`, so an action whose effect is also
+Both paths are idempotent on `(tenant_id, job_key)`, so an action whose effect is also
 subscribed to its event enqueues once, not twice.
 
-**Column names.** `apply_effects` currently writes
-`app.outbox (tenant_id, topic, job_key, payload, available_at)`. The canonical column
-names in §2.2 are:
+**`job_key` is the column name, and the unique constraint is guaranteed.** `sb-actions`
+named this as their one hard requirement — `unique (tenant_id, job_key)` with
+`on conflict do nothing` is the entire retry-safety story for external effects, and it is
+what makes a redelivered job unable to send a second email or push a second invoice. I had
+called the column `idempotency_key`; theirs wins and §2.2 now says `job_key`. The
+`Idempotency-Key` header from §1 of the contract keeps that name on `core.events`, where
+it means something different: a caller-supplied key, not a derived one.
+
+**Two column names still need changing on their side.** `apply_effects` writes
+`app.outbox (tenant_id, topic, job_key, payload, available_at)`:
 
 | Written by `sb-actions` | Canonical | Note |
 |---|---|---|
-| `topic` (`'effect.proposal_send'`) | `job_type` (`'SEND_EMAIL'`) | Not a rename — a different value. The worker dispatches on handler key, not on action type. `app.job_type_for(action_type, effect)` maps it. |
-| `job_key` | `idempotency_key` | Same concept, same uniqueness, one name |
-| `available_at` | `run_after` | Same concept |
+| `topic` (`'effect.proposal_send'`, `'jury.evaluate'`) | `job_type` (`'SEND_EMAIL'`, `'JURY_EVALUATE'`) | Not a rename — a different value. The worker dispatches on a handler key, not on an action type. `app.job_type_for(action_type, effect)` maps it and is mine to write. |
+| `available_at` | `run_after` | Same concept, one name |
 
-Plus `correlation_id` (`= action_request_id`) and `action_request_id`, both `not null` for
-this path.
+Plus `correlation_id` (`= action_request_id`), `action_request_id` and `effect_id`, all
+three `not null` on that path. `effect_id` is new and is what the write-back keys on.
 
-**Completion write-back — still open.** `sb-actions` has `app.apply_effects` and
-`app.action_effects.status ∈ (APPLIED, DISPATCHED)`, but no function for a worker to
-report an external effect *finished*. `complete_job` needs one:
+**Write-back: `app.report_effect_result`, theirs.** I had proposed
+`app.settle_effect(job_key, …)`; `sb-actions` specified
+`app.report_effect_result(effect_id, status, payload, error)` and that is the one used.
+Keying on `effect_id` rather than `job_key` is better — it is their primary key, so the
+function needs no lookup and no parsing of a composite string.
 
-```sql
--- proposed; owned by sb-actions
-app.settle_effect(p_job_key text, p_status text, p_result jsonb)
-```
-
-It advances `action_effects.status` from `DISPATCHED` to `SETTLED` or `FAILED` and, when
-the last external effect of an action settles, stamps `action_requests.completed_at`.
-Both `app.complete_job` and the dead-letter branch of `app.fail_job` call it — the failure
-path matters more than the success path, because without it an action whose effect
-exhausts its retries shows `DISPATCHED` on the approval detail screen forever and the
-`EXECUTED` status is a lie. This is the one part of the seam that is **not** agreed.
+Both `app.complete_job` and the dead-letter branch of `app.fail_job` call it. The failure
+path matters more than the success path: without it, an action whose effect exhausts its
+retries shows `DISPATCHED` on the approval detail screen forever while the action itself
+reads `EXECUTED`, which is a lie the UI has no way to detect.
 
 Ownership, restated:
 
-- `sb-actions` writes `app.outbox` for enumerated effects, using the canonical columns.
-- `sb-events` never writes `action_requests` or `action_effects` directly; it calls
-  `app.settle_effect()`.
+- `sb-actions` writes `app.outbox` for enumerated effects and jury evaluations, using the
+  canonical column names above.
+- **Workers never write `core` tables directly**, and never write `action_requests` or
+  `action_effects` directly. Every write-back goes through `app.report_effect_result`.
+  This is `sb-actions`' rule and it is the right one: a worker holds the service role and
+  bypasses RLS, so the set of tables it may touch has to be small and named.
 - `action_requests.id` is the `correlation_id` for every event and job descending from
   that action; `causation_id` points at the immediately preceding event.
 
@@ -903,10 +1037,17 @@ call it. Three reasons this beats `postgres_changes` here:
 1. **The payloads are projections, not rows.** `approvals` carries `urgencyGroup` and
    `slaBreached`; `invoices` carries `syncState` and `providerCode`. `postgres_changes`
    can only ship the row as written.
-2. **Cost.** `postgres_changes` re-evaluates RLS per subscriber per change. Broadcast
-   authorises once at subscribe time against `realtime.messages`.
-3. **Fan-out shape.** Badges are a tenant-level aggregate that no single row change
-   represents.
+2. **Cost, and Supabase says so.** `postgres_changes` performs one RLS check per
+   subscriber per change and processes changes on a single thread to preserve order, so it
+   does not scale with subscriber count regardless of compute size. Supabase explicitly
+   recommends Broadcast beyond roughly 3,000 concurrent subscribers on a change stream,
+   because Broadcast sends each change once and fans it out. Research doc §4 cites the
+   Postgres Changes, Realtime Architecture and Broadcast guides for this.
+3. **Fan-out shape.** Badges are an aggregate that no single row change represents.
+4. **It is the maintained path.** Broadcast gained binary payloads in June 2026, and the
+   `realtime` schema was locked against modification in July 2026 while RLS on
+   `realtime.messages` continues to work — consistent with Broadcast plus RLS being the
+   forward direction (research doc §4).
 
 `realtime.broadcast_changes()` is the row-shaped convenience wrapper over the same
 mechanism. It is not used here for reason 1.
@@ -918,12 +1059,12 @@ channel config — they must match or nothing is delivered).
 
 | Topic | Event names | Payload | Source | Screens |
 |---|---|---|---|---|
-| `tenant:{tenantId}:role:{role}:badges` | `badges` | `{ approvals: {count, severity}, hrdcDeadlines: {count, severity}, agentFailures: {count, severity} }` | trigger on `approval_requests`, `app.outbox`, `hrdc_packets`, `runs` | sidebar, every screen |
+| `tenant:{tenantId}:user:{userId}:badges` | `badges` | `{ approvals: {count, severity}, hrdcDeadlines: {count, severity}, agentFailures: {count, severity} }` | trigger on `approval_requests`, `app.outbox`, `hrdc_packets`, `runs` | sidebar, every screen |
 | `tenant:{tenantId}:approvals` | `approval.created`, `approval.decided` | `{ event: "CREATED"\|"DECIDED", approvalRef, urgencyGroup, slaBreached, actionType, value }` | trigger on `approval_requests` | M02-S01, M01-S01 |
 | `tenant:{tenantId}:enquiries` | `enquiry.received`, `enquiry.classified` | `{ event: "RECEIVED"\|"CLASSIFIED", enquiryRef, channel, confidence }` | trigger on `core.events` for those two types | M03-S01 |
 | `tenant:{tenantId}:invoices` | `invoice.sync.changed` | `{ invoiceRef, syncState, providerCode?, uin? }` | trigger on `invoices.sync_state` | M13-S02, M13-S05 |
 | `tenant:{tenantId}:operations` | `attendance.locked`, `hrdc.deadline.warning`, `run.completed`, `run.failed` | see below | trigger on `core.events` | M09-S02, M10-S06, M12-S02, M18-S01 |
-| `run:{runId}` | `run.node`, `run.event` | `{ seq, nodeKey, kind, name, tool?, status, durationMs, tier?, cost? }` | trigger on `run_nodes`, `run_events` | M18-S04 |
+| `tenant:{tenantId}:run:{runId}` | `run.node`, `run.event` | `{ seq, nodeKey, kind, name, tool?, status, durationMs, tier?, cost? }` | trigger on `run_nodes`, `run_events` | M18-S04 |
 
 `tenant:{tenantId}:operations` is an **addition to §11**, which defines no channel for
 attendance locks, HRDC deadline warnings, or tenant-level run outcomes. One channel rather
@@ -971,7 +1112,8 @@ begin
     'tenant:' || new.tenant_id::text || ':approvals',
     true                                        -- private channel
   );
-  perform app.broadcast_badges(new.tenant_id, array[new.approver_role, 'MD']);
+  perform app.broadcast_badges(new.tenant_id,
+           app.role_holders(new.tenant_id, array[new.approver_role, 'MD']));
   return null;
 end $$;
 
@@ -1026,48 +1168,69 @@ a time. If node updates ever become chatty, the fix is to broadcast on
 This is the one RLS policy in this lane. Clients subscribe; the database sends. There is
 deliberately **no** `INSERT` policy, so no client can broadcast on any topic.
 
-```sql
-create or replace function app.can_read_run(p_run_id uuid)
-returns boolean
-language sql stable security definer set search_path = ''
-as $$
-  select exists (
-    select 1 from core.runs r
-     where r.id = p_run_id
-       and r.tenant_id = (select app.tenant_id())
-       and (select app.role() = 'ADMIN')       -- §10: run traces are ADMIN
-  );
-$$;
-revoke execute on function app.can_read_run(uuid) from public, anon;
-grant execute on function app.can_read_run(uuid) to authenticated;
+Every topic now begins `tenant:{tenant_id}:`, including the run trace and the per-user
+badge channel. That is deliberate and is `sb-tenancy`'s correction to my first draft: it
+makes the whole policy pure string parsing with **no table lookup at all**, where
+`run:{run_id}` would have forced an `exists (select 1 from core.runs …)` on every
+authorisation.
 
+```sql
+-- receive: one policy, all six topic shapes
 create policy "members receive their own tenant's broadcasts"
 on realtime.messages
 for select
 to authenticated
 using (
   realtime.messages.extension = 'broadcast'
-  and (
-    (
-      split_part(realtime.topic(), ':', 1) = 'tenant'
-      and split_part(realtime.topic(), ':', 2) = (select app.tenant_id())::text
-    )
-    or (
-      split_part(realtime.topic(), ':', 1) = 'run'
-      and (select app.can_read_run(split_part(realtime.topic(), ':', 2)::uuid))
-    )
-  )
+  and split_part(realtime.topic(), ':', 1) = 'tenant'
+  and split_part(realtime.topic(), ':', 2) = (select app.current_tenant_id())::text
+  and case split_part(realtime.topic(), ':', 3)
+        -- per-user badges: the user segment must be the caller
+        when 'user' then split_part(realtime.topic(), ':', 4) = (select auth.uid())::text
+        -- run traces are ADMIN per §10; the tenant is already proven above
+        when 'run'  then (select app.role()) = 'ADMIN'
+        -- approvals, enquiries, invoices, operations: tenant membership is enough
+        else true
+      end
 );
+
+-- send: nobody. Restrictive, so a permissive policy added later cannot re-open it.
+create policy "clients never broadcast"
+on realtime.messages
+as restrictive
+for insert
+to authenticated, anon
+with check (false);
 ```
 
-`app.tenant_id()` is wrapped in `(select …)` so it is evaluated once per query
-rather than once per row, per the RLS performance rule. `app.can_read_run` is
-`security definer` in a non-exposed schema with `execute` revoked from `anon`, because it
-reads a table the caller may not be able to read directly.
+Four things about this policy are load-bearing:
+
+- **The `restrictive` insert deny is not redundant.** With RLS on and no `INSERT` policy,
+  writes are already denied — but the first permissive `INSERT` policy anyone adds opens
+  it. A `restrictive` policy `AND`s with every permissive one, so the deny survives.
+  Without it an authenticated user can publish onto any channel they can read, and the
+  approvals badge becomes spoofable by anyone with a browser console. This is
+  `sb-tenancy`'s catch and it is the sharpest correction in this pass.
+- **`app.current_tenant_id()` and `auth.uid()` are wrapped in `(select …)`** so each is
+  evaluated once per query rather than once per row. The Supabase performance advisor
+  flags the unwrapped form specifically.
+- **Per-user badges are authorised by RLS, not filtered in fan-out code.** §11 says the
+  SSE stream is "per-user filtered" and the badge payload is a different number per user.
+  Because user ids are globally unique, the `user` segment can be compared directly to
+  `auth.uid()` and the correct number can ride a per-user channel safely. My first draft
+  used a per-role channel and leaked one role's queue depth to every other role in the
+  tenant; this replaces it.
+- **Realtime connects as an admin role and enforces access purely through these policies.**
+  There is no second gate behind them.
 
 A user in tenant B who subscribes to `tenant:A:approvals` connects and then receives
 nothing. That is the intended failure: Realtime authorises silently, so the test for this
 (§8) asserts on message count, not on an error.
+
+**Policies are cached per connection.** A permission change — a revoked membership, a role
+change — does not take effect on an open socket. It needs a new JWT and a reconnect. That
+is why a membership change enqueues a priority-1 `AUTH_SIGN_OUT` job (§2.3): signing the
+user out is what forces the reconnect that re-evaluates this policy.
 
 ### 3.5 Durability — realtime is a hint
 
@@ -1215,7 +1378,7 @@ true when it happened.
 ```sql
 select at, actor, event, summary, run_id
   from core.audit_entries
- where tenant_id    = (select app.tenant_id())
+ where tenant_id    = (select app.current_tenant_id())
    and subject_type = $1                      -- 'PROPOSAL'
    and subject_id   = $2
    and ($3::timestamptz is null or (at, id) < ($3, $4))   -- cursor
@@ -1236,7 +1399,55 @@ the drawer row links straight to `GET /runs/{id}` — which is exactly the demo 
 The AI badge in the drawer is driven by `actor.kind`, not by a flag, so it can never
 disagree with who actually did the thing.
 
-### 5.4 Retention
+### 5.4 `app.key_access_audit` — every BYOK decrypt
+
+Vault has no built-in audit log, so provider-key decryption gets its own append-only
+table. `sb-tenancy` §6.3 references this as mine and does not define it; research doc §8
+names the columns.
+
+```sql
+create table app.key_access_audit (
+  id                  uuid primary key default gen_random_uuid(),
+  tenant_id           uuid not null,
+  secret_id           uuid not null,           -- vault secret id
+  provider_id         text not null,           -- 'prv_anthropic', for the UI
+  actor               jsonb not null,          -- { kind, id, name }; kind ∈ HUMAN|AGENT|SYSTEM
+  purpose             text not null check (purpose in ('REVEAL','RUN_CALL','PROBE','ROTATE')),
+  edge_function_name  text not null,
+  request_id          text,                    -- W3C trace id, ties to the Edge log
+  run_id              uuid references core.runs(id) on delete set null,
+  aal                 text,                    -- assurance level at reveal time
+  decrypted_at        timestamptz not null default now()
+);
+create index key_access_audit_tenant_idx
+  on app.key_access_audit (tenant_id, decrypted_at desc);
+create index key_access_audit_secret_idx
+  on app.key_access_audit (secret_id, decrypted_at desc);
+```
+
+Three rules, and the third is the one that gets broken:
+
+1. **The audit row is written in the same transaction as the decrypt**, inside the single
+   `security definer` function that reads `vault.decrypted_secrets`. "Decrypt" and "log"
+   are one operation or the log is fiction.
+2. **`purpose` distinguishes the two callers.** `POST /ai/providers/{id}/reveal` writes
+   `REVEAL` with `actor.kind = 'HUMAN'` and the `aal` from the session; the run engine's
+   per-call decrypt writes `RUN_CALL` with `actor.kind = 'AGENT'` and a `run_id`. They are
+   the same table because they are the same risk, and separating them is how one of them
+   ends up unaudited.
+3. **Nothing queries `vault.decrypted_secrets` ad hoc.** Not the reveal endpoint, not the
+   run engine, not a migration. `anon` and `authenticated` are never granted access to
+   that view.
+
+Only `REVEAL` emits a domain event (`ProviderKeyRevealed`, §14, payload
+`{ providerId, actor, at, reason, aal }`) and therefore only `REVEAL` appears in the audit
+drawer. `RUN_CALL` happens on every agent turn and would drown it; those rows are read
+from this table on the provider detail screen instead.
+
+This table is **not** covered by the 30-day run redaction in §6.7. It holds no key
+material and no prompt text, and it is the record of who saw a credential.
+
+### 5.5 Retention
 
 | Data | Retention | Mechanism |
 |---|---|---|
@@ -1248,6 +1459,7 @@ disagree with who actually did the thing.
 | `app.dead_letters` | Indefinite until replayed, then 1 year | Daily job |
 | `run_node_io` (prompts, completions) | 30 days | §6.6 |
 | `runs`, `run_nodes` metadata | Indefinite | None |
+| `app.key_access_audit` | Indefinite | None. It is the record of who saw a credential (§5.4). |
 | `cron.job_run_details` | 7 days | Daily job — Postgres does **not** clean this up and it grows without bound |
 
 Events are kept indefinitely deliberately. The HRD Corp claim window runs to six months
@@ -1701,55 +1913,73 @@ alert, and colouring it red teaches people to ignore the badge.
 
 ### 7.4 Broadcast
 
-Badges are role-scoped: `app.badge_counts` filters approvals by `approver_role`, so there
-is no meaningful tenant-wide number to broadcast. Calling it with a null role returns zero
-approvals, which would silently blank the sidebar. The broadcast therefore fans out per
-role, and the topic carries the role.
+Badges are **per user**, not per tenant and not per role. `app.badge_counts` filters
+approvals by `approver_role` and narrows again by `assigned_to`, so §11's single flat
+`badges` channel cannot carry a correct number for anybody. Calling the function with a
+null role returns zero approvals and silently blanks the sidebar.
+
+My first draft fanned out per role, which fixed the null but leaked one role's queue depth
+to every other role in the tenant. `sb-tenancy` pointed out that a per-user topic can be
+authorised by RLS directly (§3.4), so the correct number can be pushed to exactly the
+person it belongs to. That is what this does.
 
 ```sql
-create or replace function app.broadcast_badges(p_tenant uuid, p_roles text[] default null)
+create or replace function app.broadcast_badges(p_tenant uuid, p_users uuid[] default null)
 returns void
 language plpgsql security definer set search_path = '' as $$
-declare r text;
+declare u record;
 begin
-  foreach r in array coalesce(
-    p_roles,
-    array['SALES','SALES_MANAGER','OPS','FINANCE','MD','ADMIN','TRAINER']
-  ) loop
-    perform realtime.send(
-      app.badge_counts(p_tenant, null, r),
-      'badges',
-      'tenant:' || p_tenant::text || ':role:' || r || ':badges',
-      true);
+  for u in
+    select m.user_id, m.app_role
+      from public.memberships m
+     where m.tenant_id = p_tenant
+       and (p_users is null or m.user_id = any(p_users))
+  loop
+    begin
+      perform realtime.send(
+        app.badge_counts(p_tenant, u.user_id, u.app_role),
+        'badges',
+        'tenant:' || p_tenant::text || ':user:' || u.user_id::text || ':badges',
+        true);
+    exception when others then
+      raise warning 'badge broadcast failed for user %: %', u.user_id, sqlerrm;
+    end;
   end loop;
-exception when others then
-  raise warning 'badge broadcast failed for tenant %: %', p_tenant, sqlerrm;
 end $$;
 ```
 
-Callers pass the roles that could actually be affected, so an approval routed to
-`SALES_MANAGER` broadcasts once rather than seven times:
+Callers pass the users actually affected, so a new approval routed to one manager
+broadcasts once rather than to the whole tenant:
 
 ```sql
-perform app.broadcast_badges(new.tenant_id, array[new.approver_role, 'MD']);
+-- on an approval insert or decision
+perform app.broadcast_badges(
+  new.tenant_id,
+  app.role_holders(new.tenant_id, array[new.approver_role, 'MD'])
+);
 ```
 
-`MD` is included because §1's policies escalate to it. Called from the triggers on
-`approval_requests`, `hrdc_packets`, `app.outbox` (on transition to `DEAD`) and `runs` (on
-transition to `FAILED`); the latter three affect every role and pass `null`.
+`MD` is included because §1's policies escalate to it. `app.role_holders(tenant, roles[])`
+returns the user ids holding any of those roles and is mine to write; it is the same
+lookup `sb-actions`' `app.pick_role_holder` already does, and the two should share one
+implementation rather than diverge.
 
-`app.badge_counts`'s second argument (`p_user`) stays null in the broadcast, because
-`assigned_to` narrows within a role and a per-user topic would mean one broadcast row per
-eligible approver per approval. A user whose count differs from their role's sees the
-correct number on their next `GET /v1/navigation`; the broadcast is a prompt to look, not
-the source of truth (D7).
+The exception handler is **inside** the loop, not around it. A single user whose broadcast
+fails must not stop the remaining users from getting theirs, and no broadcast failure may
+ever fail the approval write that triggered it.
 
-The role in the topic is authorised by the same tenant check in §3.4 — a user in the
-tenant can subscribe to any role's badge topic. That is acceptable for a queue depth and
-not for anything else, which is why only counts ride this channel. If queue depth per role
-is considered sensitive, the policy gains a role comparison against the caller's claim.
+Two bounds worth stating, because per-user fan-out is the expensive shape:
 
-This is a deviation from §11's flat `badges` channel and needs sign-off.
+- Fan-out is bounded by the number of *eligible approvers*, typically one to three, not by
+  tenant headcount. The `null` case — a dead-lettered job or a failed run, which affects
+  every user's `agentFailures` — is the one that fans out tenant-wide, and it is rare by
+  construction.
+- `realtime.messages` is partitioned daily and retained three days, so this write is cheap
+  and self-cleaning. It is still a write, so the trigger is statement-level.
+
+This is a deviation from §11's flat `badges` channel and needs sign-off. It is a deviation
+in the client's favour: §11 already specifies the SSE stream as "per-user filtered", so a
+per-user topic is closer to the contract's intent than the flat channel name suggests.
 
 ---
 
@@ -1813,19 +2043,49 @@ state, not on logs.
 - **Right tenant receives.** Same broadcast, tenant A subscriber, assert the payload
   matches the trigger's `jsonb_build_object` exactly, field for field.
 - **Non-admin cannot watch a run.** A `SALES` user in the correct tenant subscribes to
-  `run:{id}`; assert zero messages. An `ADMIN` in the same tenant receives them.
-- **Clients cannot send.** An authenticated client attempts `channel.send()` on
-  `tenant:{own}:role:SALES:badges`; assert it is rejected. There is no `INSERT` policy on
-  `realtime.messages` and this test is what stops one being added by accident.
+  `tenant:{own}:run:{id}`; assert zero messages. An `ADMIN` in the same tenant receives
+  them. This is the `case … when 'run'` branch and it is the only branch that reads a role.
+- **One user cannot read another's badges.** User A subscribes to
+  `tenant:{own}:user:{B}:badges` — same tenant, different user; assert zero messages.
+  This is the leak my per-role draft had, so it is a regression test, not a formality.
+- **Clients cannot send, even on a channel they can read.** An authenticated client calls
+  `channel.send()` on `tenant:{own}:user:{own}:badges`; assert rejected. Then add a
+  permissive `INSERT` policy in the test transaction and assert it is **still** rejected —
+  that is what proves the deny is `restrictive` rather than merely absent, and it is the
+  only test that catches someone "fixing" the advisor finding later.
 - **Policy unit test without a socket.** In SQL: `set local role authenticated`,
-  `set local request.jwt.claims = '…'`, `set local realtime.topic = 'tenant:B:role:MD:badges'`,
+  `set local request.jwt.claims = '…'`, `set local realtime.topic = 'tenant:B:user:…:badges'`,
   then evaluate the policy's `using` expression; assert false. (Confirm that
   `realtime.topic()` reads that GUC against the deployed `realtime` schema before relying
   on this form.)
+- **No lookup in the receive path.** `explain` the policy expression and assert no scan of
+  `core.runs` appears. Every topic is tenant-prefixed precisely so authorisation is string
+  parsing; a future edit that reintroduces a subquery should fail here.
 - **Rollback broadcasts nothing.** Begin, insert an approval, roll back; assert no row in
   `realtime.messages`.
 
-### 8.5 Retention and cron
+### 8.5 Worker lifetime and tenant isolation
+
+- **A handler that outlives the worker is redelivered, not lost.** Simulate a worker killed
+  at the 400s wall clock mid-`LLM_RUN`: assert the lease expires, `reap_jobs` returns the
+  job to `QUEUED`, `attempts` incremented once, and the next claim resumes from the last
+  checkpoint rather than from the start. Assert no duplicate external effect was produced.
+- **A long run yields rather than holding.** Assert `LLM_RUN` writes a checkpoint and
+  re-enqueues before 400s, and that the re-enqueued job carries the same `run_id` and
+  `correlation_id` and a new `job_key`.
+- **The lease never exceeds the worker lifetime.** A static assertion over the claim call
+  sites: no `p_lease` above six minutes. Cheap, and it is the constraint most likely to be
+  loosened by someone debugging a slow handler.
+- **Service-role writes are scoped.** `app.outbox` has RLS enabled **and** forced, and zero
+  policies: assert `authenticated` and `anon` both read zero rows, and that a
+  `security definer` function owned by `postgres` also reads zero. Assert `service_role`
+  reads them. Assert every handler write goes through one of the five named functions —
+  `sb-tenancy` §8.7's schema-wide guard sweeps this, and it is the only check standing
+  between a buggy handler and a cross-tenant write.
+- **`tenant_id` leads an index on every table in this lane.** Covered by `sb-tenancy`'s
+  schema-wide pgTAP guard; listed here so it is not assumed to be someone else's problem.
+
+### 8.6 Retention and cron
 
 - **Run I/O is deleted at 30 days, metadata is not.** Insert a run finished 31 days ago
   with I/O and snapshots; run `app.redact_run_io()`; assert `run_node_io` and
@@ -1845,7 +2105,7 @@ state, not on logs.
   `+60` mobile, an NRIC and a passport number; assert none of the originals appear in the
   stored text and that `redaction` counts them correctly.
 
-### 8.6 Correlation and audit
+### 8.7 Correlation and audit
 
 - **The chain holds.** Drive the fixture end to end: `POST /actions PROPOSAL_SEND` →
   `ActionRequested` → `ApprovalRequested` → `ApprovalDecided` → `ProposalSent` →
@@ -1866,7 +2126,7 @@ state, not on logs.
 | Ref | Question | Impact on this lane | Position |
 |---|---|---|---|
 | §16 Q1 | Does an approval expire? | Determines whether `ApprovalExpired` exists and whether an expiry job is scheduled. | **Resolved, and we agree independently.** `sb-actions` implements `app.expire_approvals(500)` on a 5-minute cron, expiring at 24h. `ApprovalExpired` is therefore a real event and is listed in §1.7. Their cron owns the sweep; I own the event and the badge clearing. |
-| §16 Q5 | Should unlock be refused once a claim reference exists? | Decides whether `AttendanceUnlocked` can carry `claimVoided: true` at all. | Whichever way it resolves, the event must record the voided claim reference. Flagged to `sb-money`. |
+| §16 Q5 | Should unlock be refused once a claim reference exists? | Decides whether `HRDCPacketVoided` is ever emitted, or whether the API refuses outright and the event is dead code. | Still open, and owned by `sb-money`. Either way the event exists and carries the claim reference: if unlock is permitted it records the void, and if it is refused the event is simply never emitted. `sb-actions` proposed the separate event and I adopted it over my earlier flag on `AttendanceUnlocked` (§1.7). |
 | §16 Q7 | One agent credential, or one per agent per tenant? | If the `AGENT` principal were global, `events.tenant_id` for agent-authored events could not come from the JWT. | **Resolved by `sb-tenancy`: per agent per tenant**, a hashed revocable API key exchanged for a 15-minute ES256 JWT. `events.actor` therefore takes `app.actor_kind()` and `app.agent_id()` from the token, and no special case is needed. |
 | §16 Q8 | Sandbox replay: live or snapshot? | Entire design of `run_snapshots` and replay semantics. | **Answered here: snapshot pinned to the run** (§6.6). This is the one §16 question this lane resolves rather than escalates. |
 | §16 Q4 | WhatsApp rate TTL | Drives `WHATSAPP_RATE_REFRESH` job cadence and what the composer shows on a stale cache. | Proposed 6h TTL with last-known-good served and flagged stale. Owned by `sb-money`. |
@@ -1905,11 +2165,14 @@ state, not on logs.
    cache. At that point partition by month on `occurred_at` and move idempotency to a
    separate unpartitioned ledger.
 
-3. **`pgmq` rejected in favour of a hand-written queue**, against the general principle of
-   not writing your own queue. Justified in §2.1 on five specifics, with a stated switch
-   condition. This is the decision in this document most likely to be wrong, and it is the
-   cheapest to reverse: `app.outbox` becomes a projection and `claim_jobs` becomes
-   `pgmq.read`.
+3. **`pgmq` rejected in favour of a hand-written queue** — an explicit disagreement with
+   `docs/research/08-supabase-agentic-best-practices.md` §4, which recommends `pgmq` as the
+   durable internal outbox. §2.1 states where we agree (which is everything except the
+   storage engine), the five specifics behind the disagreement, and the switch condition.
+   This is the decision in this document most likely to be wrong and the cheapest to
+   reverse: `app.outbox` keeps every column as a projection and `claim_jobs` becomes
+   `pgmq.read`. It is flagged here rather than buried because a research doc the team
+   commissioned says otherwise.
 
 4. **`text` + `check` instead of Postgres enum types** for `job_type`, `state`, event
    `type` and run event `type`, against the §12 enum catalogue reading like enum types.
@@ -1917,9 +2180,9 @@ state, not on logs.
    value; these lists will change. The §12 catalogue is still the source of truth for the
    allowed values.
 
-5. **A per-role badge topic instead of §11's flat `badges` channel** (§7.4). The flat
-   channel cannot carry role-filtered counts without leaking one role's queue depth to
-   another.
+5. **A per-user badge topic instead of §11's flat `badges` channel** (§7.4, D14). The flat
+   channel cannot carry a correct count for anybody, and my own first draft's per-role
+   channel leaked one role's queue depth to every other role in the tenant.
 
 6. **A sixth realtime channel, `tenant:{t}:operations`** (§3.2), for attendance locks,
    HRDC deadline warnings and tenant-level run outcomes, which §11 defines no channel for.
@@ -1931,32 +2194,26 @@ state, not on logs.
 
 ### What I could NOT verify
 
-- **`docs/research/08-supabase-agentic-best-practices.md` does not exist.** The research
-  directory contains only `07-agent-tooling.md`, which covers Claude Code and OMC
-  scaffolding and has no outbox, realtime or edge-function content. There was nothing to
-  align with or disagree with. If that document is written later, this file's §2.1 and §3.1
-  are the two sections most likely to conflict with it.
+- **Research doc §4 recommends `pgmq` and this document does not use it.** That is a
+  deliberate, argued disagreement (§2.1, Deviation 3), not an oversight, and it is the one
+  decision here most worth a second opinion. Everything else in research doc §4 is adopted.
 
-- **Completion write-back is the one part of the `sb-actions` seam still unagreed.**
-  Their file has `apply_effects` and `action_effects.status ∈ (APPLIED, DISPATCHED)` but
-  no function for a worker to report an external effect finished. §2.7 proposes
-  `app.settle_effect(job_key, status, result)`; until it exists, `app.complete_job`'s
-  action branch is a stub. Everything else in that seam was reconciled against their
-  committed file rather than assumed.
+- **The `sb-actions` seam is now settled, including the write-back.** `app.emit_event`'s
+  three-argument overload, `job_key` and its unique constraint, and
+  `app.report_effect_result(effect_id, status, payload, error)` are all confirmed by
+  `sb-actions` directly. Two column names still need changing on their side
+  (`topic` → `job_type`, `available_at` → `run_after`, plus `effect_id`); until they land,
+  `apply_effects` does not compile against §2.2.
 
-- **Names were corrected against the committed sibling docs, not confirmed by their
-  authors.** `app.tenant_id()` and `app.role()` come from `02-tenancy-auth-rls.md`;
-  `app.outbox`, `app.approval_requests` and the three-argument `app.emit_event` come from
-  `03-action-envelope-and-policy-gate.md`. Two conflicts follow that those authors must
-  rule on, not me: `sb-actions` calls `app.current_tenant_id()` where `sb-tenancy` defines
-  `app.tenant_id()`, so one of those two files is wrong; and `apply_effects` writes
-  `app.outbox (topic, job_key, available_at)` where §2.2 defines
-  `(job_type, idempotency_key, run_after)`, so it needs the three-column change in §2.7.
+- **`app.role_holders(tenant, roles[])` is named but not written**, and overlaps
+  `sb-actions`' `app.pick_role_holder`. The two should be one function. Along with
+  `app.aggregate_type_for`, `app.event_payload_for`, `app.event_summary_for` and
+  `app.job_type_for`, these are mine and mechanical, and they are the largest piece of
+  unwritten work this document implies.
 
-- **`app.aggregate_type_for`, `app.event_payload_for`, `app.event_summary_for` and
-  `app.job_type_for` are named but not written.** They are mine, they are mechanical, and
-  they are where the §14 payload shapes are actually enforced. Naming them without writing
-  them is the largest piece of unwritten work this document implies.
+- **`public.memberships` and its `app_role` column are assumed** by the badge fan-out in
+  §7.4. `sb-tenancy` lists `memberships` among its four tables but I have not verified the
+  column name.
 
 - **`core.hrdc_packets` and `core.invoices` columns are assumed.** The badge SQL in §7.2
   and the invoice channel in §3.2 name `deadline_at`, `status` and `sync_state`, owned by
