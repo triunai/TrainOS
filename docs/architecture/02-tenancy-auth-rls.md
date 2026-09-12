@@ -943,11 +943,35 @@ create index <t>_tenant_owner_idx on <s>.<t> (tenant_id, owner_id);   -- where o
 > it.** The test that settles it, on a branch, before this reaches anything hosted:
 >
 > ```sql
+> -- Resolve the hook's actual owner rather than assuming it is `postgres`,
+> -- then ask whether THAT role can bypass. The owner is what decides this.
+> select p.proname,
+>        pg_get_userbyid(p.proowner)                    as owner,
+>        r.rolsuper, r.rolbypassrls, r.rolinherit
+> from   pg_proc p
+> join   pg_namespace n on n.oid = p.pronamespace and n.nspname = 'app'
+> join   pg_roles r     on r.oid = p.proowner
+> where  p.proname in ('custom_access_token_hook','principal_claims',
+>                      'my_team_user_ids','has_permission');
+>
+> -- And the table's owner, which is the other half of the interaction.
+> select tableowner from pg_tables
+>  where schemaname = 'public' and tablename = 'memberships';
+>
 > select rolname, rolsuper, rolbypassrls from pg_roles
 >  where rolname in ('postgres','supabase_auth_admin','authenticator','service_role');
+>
 > alter table public.memberships force row level security;
 > -- then sign in as a real user and assert the token carries a tenant_id
 > ```
+>
+> Resolving the owner rather than assuming `postgres` is the point, and I had assumed it. Supabase's
+> docs describe `service_role` as the role PostgREST uses to bypass RLS, and separately say `postgres`
+> is deliberately *not* given full superuser access — but superuser and `BYPASSRLS` are different
+> attributes, and neither statement says whether `postgres` carries the latter. Doc-reading cannot
+> settle this. `rolinherit` is in the query because an owner that inherits from a `BYPASSRLS` role
+> does **not** thereby bypass: `BYPASSRLS` is a role attribute, not a privilege, so it does not come
+> through membership.
 >
 > If `postgres` has `BYPASSRLS`, force everything as §8.7 requires and nothing changes. If it does
 > not, there are two clean resolutions and the second is better: either add a policy admitting the
