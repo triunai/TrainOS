@@ -22,7 +22,7 @@ import {
 } from "@trainos/contract";
 import { QUOTATION_SUTERA } from "../data/proposals";
 import { ORG_KENANGA } from "../data/organisations";
-import { createFixtureClient } from "../index";
+import { createFixtureClient, isContractError } from "../index";
 import type { FixtureClient } from "../client/FixtureClient";
 
 let api: FixtureClient;
@@ -231,5 +231,46 @@ describe("the last rung of the collections ladder", () => {
     const aged =
       queue.aging.d1_30.amount + queue.aging.d31_60.amount + queue.aging.d60_plus.amount;
     expect(aged).toBe(overdue);
+  });
+});
+
+/**
+ * The guard a UI boundary uses to tell a refusal from a transport failure.
+ *
+ * Getting this wrong puts a retry button on a policy decision, so it is worth
+ * a test of its own — including the structural path, which is what survives a
+ * bundler ending up with two copies of the module.
+ */
+describe("isContractError", () => {
+  it("recognises a thrown refusal and carries its code through toEnvelope", async () => {
+    const thrown = await api
+      .getQuotation("QUO-2026-9999")
+      .then(() => null)
+      .catch((error: unknown) => error);
+
+    expect(isContractError(thrown)).toBe(true);
+    if (!isContractError(thrown)) return;
+    expect(thrown.code).toBe("NOT_FOUND");
+    expect(thrown.http).toBe(404);
+    expect(thrown.toEnvelope()).toEqual({
+      error: { code: "NOT_FOUND", message: expect.stringContaining("QUO-2026-9999") },
+    });
+  });
+
+  it("recognises a structurally identical error from another module instance", () => {
+    const fromAnotherCopy = {
+      name: "ContractError",
+      code: "FORBIDDEN",
+      http: 403,
+      message: "quotation:read is not granted to OPS.",
+      toEnvelope: () => ({ error: { code: "FORBIDDEN", message: "…" } }),
+    };
+    expect(isContractError(fromAnotherCopy)).toBe(true);
+  });
+
+  it("does not mistake an ordinary error for a refusal", () => {
+    expect(isContractError(new Error("socket hang up"))).toBe(false);
+    expect(isContractError({ code: "NOT_FOUND" })).toBe(false);
+    expect(isContractError(null)).toBe(false);
   });
 });

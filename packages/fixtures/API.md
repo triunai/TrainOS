@@ -52,6 +52,25 @@ validationFailed(message: string, details?: ErrorDetails): ContractError
 Errors are **thrown, never returned**. A `403` carries `requiredRole` and
 `requiredPermission` so the UI can explain rather than just disable.
 
+A UI boundary should catch at its adapter and convert once, because
+`toEnvelope()` returns the contract's own `ErrorEnvelope` — so the layer that
+normalises errors can stay coupled to `@trainos/contract` and never import this
+package:
+
+```ts
+try {
+  return ok(await fixtures.getQuotation(id));
+} catch (thrown) {
+  if (isContractError(thrown)) return fail(domainErrorFromEnvelope(thrown.toEnvelope()));
+  throw thrown;
+}
+```
+
+`isContractError` accepts both an `instanceof` match and the structural shape,
+so it still returns true if a bundler ends up with two copies of this module.
+Mis-classifying a refusal as a transport failure is what puts a retry button on
+a policy decision, so the guard is deliberately not `instanceof`-only.
+
 ## Events
 
 ```ts

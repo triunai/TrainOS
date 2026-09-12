@@ -38,8 +38,27 @@ export class ContractError extends Error {
   }
 }
 
-export const isContractError = (value: unknown): value is ContractError =>
-  value instanceof ContractError;
+/**
+ * Recognises a thrown `ContractError`.
+ *
+ * The `instanceof` check is the fast path, but it is not the whole test: a
+ * bundler that ends up with two copies of this module gives two distinct
+ * classes, and an error thrown by one would fail `instanceof` against the
+ * other. A boundary that mis-classifies a refusal as a transport failure puts
+ * a retry button on a policy decision, so the guard also accepts the structure
+ * — a `ContractError` name, a string `code`, and the `toEnvelope()` every
+ * consumer actually calls.
+ */
+export const isContractError = (value: unknown): value is ContractError => {
+  if (value instanceof ContractError) return true;
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { name?: unknown; code?: unknown; toEnvelope?: unknown };
+  return (
+    candidate.name === "ContractError" &&
+    typeof candidate.code === "string" &&
+    typeof candidate.toEnvelope === "function"
+  );
+};
 
 /** §1 `404` — the collection has no such id or ref. */
 export const notFound = (what: string, id: string): ContractError =>
