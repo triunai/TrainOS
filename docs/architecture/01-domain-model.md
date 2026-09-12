@@ -1277,10 +1277,16 @@ either; both floors and the binding one are generated, which is safe because `fl
 from the row alone after the rate card is retired.
 
 - **Unique:** `(tenant_id, proposal_id, version)`; `(tenant_id, proposal_id) WHERE status = 'APPLIED'`.
-- **Two independent floors.** `programme_floor_price_sen` is the absolute floor snapshotted from the
-  pricing tier, commercial policy and not derivable from cost. `margin_floor_price_sen` is computed from
-  actual cost. `floor_price_sen` is the greater of the two and is what binds. sb-actions compares
-  `sell_price_sen` against `floor_price_sen` and computes nothing.
+- **Two independent floors, and only one of them is stored.** `programme_floor_price_sen` is the absolute
+  floor snapshotted from the pricing tier at pricing time: commercial policy, not derivable from cost, and
+  the only stored value of the four. `margin_floor_price_sen`, `floor_price_sen`, `binding_floor_basis`
+  and `below_floor` are all generated. The binding floor is the greater of the two.
+- **The gate reads `below_floor`, not the floors.** sb-actions compares nothing: the database already
+  maintains the answer, so the policy gate reads one boolean and carries `floor_price_sen` and
+  `binding_floor_basis` into the `FLOOR_PRICE_BREACH` payload, because a manager deciding APV-02 needs to
+  know which of the two floors bound. This is the strongest form of the separation: the gate cannot
+  disagree with the pricing lane about whether a price is below floor, because the answer is a column
+  rather than a comparison either side could get wrong.
 - **Immutability:** an `APPLIED` quotation is frozen entirely; a change writes a new `version` row and sets
   the old one `SUPERSEDED`. See §4. This is what makes `rate_card_id` safe to keep as a live FK: the row
   that points at the card cannot be repriced after the fact.
