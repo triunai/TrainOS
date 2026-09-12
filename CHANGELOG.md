@@ -12,6 +12,26 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — the catalogue, and a trainer who cannot be in two places
+
+### Added
+
+- **Programmes, pricing tiers, materials, trainers, availability and bookings (006).**
+- **A trainer cannot hold two overlapping confirmed bookings.** The database refuses it outright
+  rather than leaving it to a validation rule someone might route around. Two confirmed bookings on
+  overlapping dates is a trainer in the wrong city, a client with no facilitator, and a training
+  grant claim that cannot be filed. Provisional holds are still allowed to overlap, because holding
+  two options for a client while they decide is the whole point of a hold.
+- **The availability calendar is maintained by the bookings, not beside them.** Confirming writes the
+  booked days and moving a booking releases the days it no longer covers. The release is the half
+  that gets forgotten, and the symptom is a trainer who looks busy on dates nobody booked.
+
+### Note
+
+- Tier floor prices are absolute figures set by commercial policy, not margins calculated from cost.
+  The two differ by about seven hundred ringgit on the contract's own worked example, and the
+  difference would appear as a discrepancy between the approval screen and the quote.
+
 ## 2026-09-12 — the sales path, and a tenant boundary the storage engine enforces
 
 ### Added

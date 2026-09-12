@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 5 · **Applied:** 0 · **Authored, not applied:** 5
+**Migrations:** 6 · **Applied:** 0 · **Authored, not applied:** 6
 **Last snapshot of `tables/`:** never
 
 ---
@@ -12,6 +12,8 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-12 — **006 authored and EXECUTED: the catalogue, and the constraint that stops a trainer being in two places.** `tb_no_double_booking` is an EXCLUSION constraint over `daterange(starts_on, ends_on, '[]')` with `btree_gist` so `trainer_id` can be compared with `=` in the same constraint. It is not a validation rule to be caught in a service layer: two confirmed bookings over overlapping dates is a trainer standing in the wrong city, a client without a facilitator, and an HRD Corp claim that cannot be filed. **T3 exercises the whole matrix** — identical span refused, PARTIAL overlap refused (the case a naive unique index on `(trainer, starts_on)` lets straight through), adjacent-but-not-overlapping ALLOWED (an inclusive bound written exclusive breaks exactly this and looks right either way), a different trainer allowed, another tenant allowed, and **two SOFT_HOLDs over the same dates deliberately allowed**, because holding two options for a client while they decide is the point of a soft hold and a constraint that forbade it would quietly break the sales motion. **`trainer_availability` is written by a trigger, never by hand**, and T4 tests the half that gets forgotten: MOVING a booking must RELEASE the days it no longer covers, or the trainer looks busy on dates nobody booked and the recommender stops offering them. **`floor_price_sen` is an ABSOLUTE floor, not a margin** — doc 01 works the arithmetic and the column carries it as a COMMENT, because deriving the floor would put a different number on the approval screen from the one the salesperson was quoted. **Two defects found by running it:** the rollback's generic dependency guard fired on the three foreign keys 006 itself adds to 002's and 005's tables (the generator now takes an owned-constraint exclusion list), and 006 was not re-runnable because `ADD CONSTRAINT` has no `IF NOT EXISTS` — the same trap 004 hit, now guarded here too. Rate cards are NOT here: `trainers.band` is a JOIN KEY into sb-money's rate card, not a rate.
 
 **Last updated:** 2026-09-12 — **005 authored and EXECUTED: the sales path, fourteen tables, applied cleanly on the first run.** The assertions that earn their place in the pin are not the columns. **T2 proves a cross-tenant foreign key is UNREPRESENTABLE** — a contact in tenant Beta attached to an organisation in tenant Alpha is rejected by the storage engine, with RLS irrelevant to the outcome. That is a stronger guarantee than a policy test: RLS can be misconfigured in a migration nobody reviews, a composite foreign key cannot. Every FK into a `core` parent is composite and the migration's own verify block sweeps for a single-column one. **T3 turns a sentence into a property of the data**: the contract says low-confidence enquiries "are never auto-archived", which is a claim about a background job; the constraint makes it true regardless of what tries, and clearing the review flag is the only path. **T5 stops a double-clicked Convert button overstating the pipeline** by the value of a deal. **T7 proves consent survives withdrawal** — the ledger is append-only because PDPA asks what was true on a date, not what is true now, and the historical row itself is frozen. ⚠ **DEVIATION D2, recorded loudly:** `organisations.proposal_count` and `first_proposal_sent_at` are denormalised for the record header, and doc 03 decision 7 says `firstProposalToOrg` is computed LIVE from a partial index. Both columns carry a COMMENT saying the policy gate must not read them, because a column that looks authoritative and is not is exactly what a later author trusts. ⚠ **Four forward-reference columns exist without their FK constraints** (`organisation_suggestions.programme_id`, `follow_ups.proposal_id`, `follow_ups.invoice_id`, `tna_recommendations.programme_id`); the constraints are added by 006, 007 and 010. The gap is real while it lasts, so T8 asserts the columns and test_014 will assert the constraints — tracked, not hoped about.
 
@@ -27,6 +29,7 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 006 | `006_catalogue_programmes_and_trainers.sql` | **What the business sells and who delivers it (2026-09-12).** Programmes with modules, pricing tiers and materials; trainers with pool membership, a declared availability calendar and bookings. The catalogue sits in Delivery, not Sales, because `PUT /programmes/{id}` is ADMIN + L&D and returns FORBIDDEN to SALES. Three things it gets right that are easy to get wrong: the tier floor price is an **absolute** commercial-policy figure rather than a derived margin; a trainer **cannot** hold two overlapping CONFIRMED bookings, enforced by an EXCLUSION constraint rather than by application code, while two SOFT_HOLDs may overlap on purpose; and the availability calendar is written by a trigger on bookings so the two can never disagree. Closes the three foreign keys 002 and 005 left open (`memberships.trainer_id`, `organisation_suggestions.programme_id`, `tna_recommendations.programme_id`). Spine untouched. |
 | 005 | `005_sales_organisations_enquiries_tna.sql` | **The sales path: organisations, contacts and consent, enquiries and extraction, opportunities, follow-ups, needs analysis (2026-09-12).** Fourteen tables, all through `app.finalise_table`, all deny-all until 014. Four non-obvious modelling decisions, each with the reason in the file: `contact_consents` is an append-only PDPA ledger rather than a flag, because "did this person consent on 4 March 2024" must stay answerable after they withdraw; `enquiry_extraction_fields` is one row per field because each carries its OWN provenance and edit history, and four columns could hold four values but not four independent provenances; `organisations.proposal_count` is a header CACHE that the policy gate must not read (deviation D2); and the "never auto-archived" rule for low-confidence enquiries is a CHECK constraint rather than a property of a background job. Every FK into a `core` parent is composite `(tenant_id, parent_id)`, so a cross-tenant reference is rejected by the storage engine independently of RLS. Spine untouched. |
 | 004 | `004_shell_config_and_ref_allocation.sql` | **The shell: `app.finalise_table()`, ref allocation, and 14 configuration and reference tables (2026-09-12).** One procedure gives a tenant-scoped table its whole standard posture — composite `(tenant_id, id)` and `(tenant_id, ref)` uniques, tenant index, `updated_at` trigger, frozen `tenant_id`/`ref` plus any extra columns, ref allocation, and **RLS enabled AND FORCED with zero policies**, so no table in this set is ever open, not even for the duration of one migration. Ref allocation is one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per `(tenant, prefix, period)`, serialising per prefix per tenant rather than globally; the year comes from the TENANT's timezone, because a record created at 08:00 MYT on 1 January is a January record and UTC would call it December. `pipeline_steps` is the point of the migration: the contract shows two different lifecycles for the same object (six steps on the relations panel, nine on the engagement detail) and those are two `pipelines` rows, not two hardcoded arrays. `templates` are versioned and never edited, so a five-year-old proposal still renders as sent. `app.action_types` created here as the global catalogue (conflict C4); seeded in 011. Spine: `finalise_table` IS a new spine object and is pinned hardest. |
 | 003 | `003_enum_types.sql` | **69 native enum types in `core`, 271 labels, generated from the contract package (2026-09-12).** Closed catalogues frozen by contract §12/§17 become native enums — four bytes on disk across a model full of status columns, and real union types in the generated TypeScript. Open, config-driven sets (`action_type`, lifecycle step key, compliance check key, `hrdc_document_type`, metric key, tier key, template type, TNA constraint code) deliberately do NOT appear here: they arrive in 004 as reference tables, because the project rule is that stage names and order render from configuration, and a CHECK constraint is code while a reference table is data. 62 types generated from `packages/contract/src/enums.ts`; 7 named by doc 01 alone and listed separately. `app_role` and `actor_kind` are NOT duplicated into `core` — doc 02 owns both and creates them in `app` (conflict C2). Spine untouched: types only, no table, no function, no policy. |
@@ -201,6 +204,36 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 006 (`006_catalogue_programmes_and_trainers.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Source: `docs/architecture/01` §3.2,
+DECISIONS §1 and §5.
+
+### The 7-point RPC contract check, worked
+
+1/2. No RPC, no envelope. 3. RpcMap: none; Data API tables. 4. Call sites: 007 prices from these,
+008 schedules from them, 016 seeds them. 5. Casts: none. 6. Reload/restore: none.
+7. Public routes: none.
+
+### Pin — `tests/test_006_catalogue_programmes_and_trainers.sql`
+
+Six checks, all executed, all PASS. T1 floor ≤ list and claimable implies a scheme · T2 a certified
+trainer must carry the certificate reference the HRD Corp packet asks for · **T3 the full
+double-booking matrix, seven cases** · **T4 the availability calendar follows confirm, MOVE and
+cancel** · T5 the rule is tenant-scoped · T6 the three deferred foreign keys are closed and a
+cross-tenant programme reference is now impossible.
+
+**RLS four-way: in test_014.** Deny-all until then.
+
+### Rollback — `rollbacks/006_catalogue_programmes_and_trainers_rollback.sql`
+
+States plainly that it reopens three foreign keys on tables it does not own, returning those columns
+to the unconstrained state 002 and 005 left them in — correct for this rollback, and written down so
+it is not read as damage. Guards on CONFIRMED bookings and on live programmes. Round-tripped and
+idempotent; 006 itself is now re-runnable.
 
 ---
 
