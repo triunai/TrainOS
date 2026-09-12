@@ -28,7 +28,7 @@ design, frontend.
 | D9 | Sandbox replay (§16 Q8) | **Snapshot pinned to the run.** Every tool read is captured in `run_snapshots`; replay serves reads from the snapshot, refuses writes, and hard-errors on a miss | Live reads during replay | Live reads make replay non-deterministic, which destroys its only purpose. A miss must fail loudly rather than silently diverge. |
 | D10 | Run PII | Redact in the worker **before** storage; full prompt/completion in `run_node_io` for 30 days, then the row is deleted; metadata (tokens, cost, tier, status) kept indefinitely | Storing raw and redacting later; deleting whole runs | The database should never hold the raw text. Keeping the row and nulling the columns bloats the hot trace table; deleting the side table is instant. |
 | D11 | Enum storage | `text` + `check` constraint | Postgres `enum` types | Job types, event types and run event types all grow. `ALTER TYPE … ADD VALUE` is awkward inside a migration transaction; a `check` constraint is a one-line change. |
-| D12 | Idempotency | Unique partial index on `core.events (tenant_id, idempotency_key)` and on `app.outbox (tenant_id, idempotency_key)`; a richer `app.webhook_deliveries` ledger for inbound sources | A single global key table | Inbound webhook keys need the raw body and signature verdict for debugging; action keys need 24h TTL per §1. Different lifetimes, different tables. |
+| D12 | Idempotency | Unique partial index on `core.events (tenant_id, idempotency_key)` and on `app.outbox (tenant_id, job_key)`; a richer `app.webhook_deliveries` ledger for inbound sources | A single global key table | Inbound webhook keys need the raw body and signature verdict for debugging; action keys need 24h TTL per §1. Different lifetimes, different tables. |
 | D13 | Long-running work | A handler **yields**: run to ~300s, checkpoint, re-enqueue | A long lease plus `EdgeRuntime.waitUntil` | Background tasks share the request's wall clock (400s paid) and do not get a longer budget. There is no fifteen-minute job on this runtime, so the checkpoint machinery is what makes agent runs possible at all. **The six-minute lease cap and the 300s yield are binding on the agent runtime**, per the team lead. See §2.6. |
 | D14 | Badge channel | **Per user**, `tenant:{t}:user:{u}:badges`, authorised by RLS | Flat `badges` channel (§11); per-role channel (my first draft) | The badge number differs per user, and §11 already calls the stream "per-user filtered". A per-role channel leaks one role's queue depth to every other role. See §3.4, §7.4. |
 | D15 | Client broadcast | A **restrictive** `INSERT` deny on `realtime.messages` | Relying on the absence of an `INSERT` policy | Absence is undone by the first permissive policy anyone adds; a restrictive policy `AND`s with all of them. Without it the approvals badge is spoofable from a browser console. |
@@ -512,7 +512,8 @@ create table app.outbox (
   run_id             uuid references core.runs(id) on delete set null,
   action_request_id  uuid,                    -- seam to sb-actions, see §2.7
   correlation_id     uuid not null,
-  idempotency_key    text,                    -- effects: '<action_request_id>:<seq>'
+  effect_id          bigint,                  -- app.action_effects.id (bigint, their PK)
+  job_key            text,                    -- effects: '<action_request_id>:<seq>'
 
   -- scheduling and lease
   run_after          timestamptz not null default now(),
@@ -552,8 +553,8 @@ create index outbox_failed_idx on app.outbox (tenant_id, finished_at desc)
   where state in ('FAILED','DEAD');
 
 -- dedupe
-create unique index outbox_idempotency_idx on app.outbox (tenant_id, idempotency_key)
-  where idempotency_key is not null;
+create unique index outbox_job_key_idx on app.outbox (tenant_id, job_key)
+  where job_key is not null;
 
 -- foreign keys (Postgres does not index these for you)
 create index outbox_run_idx on app.outbox (run_id) where run_id is not null;
@@ -736,9 +737,9 @@ begin
     );
   end if;
 
-  if j.idempotency_key is not null and j.action_request_id is not null then
+  if j.effect_id is not null then
     -- owned by sb-actions (§2.7); workers never write core tables directly
-    perform app.settle_effect(j.idempotency_key, 'SETTLED', p_result, null);
+    perform app.report_effect_result(j.effect_id, 'SETTLED', p_result, null);
   end if;
 end $$;
 ```
@@ -769,8 +770,8 @@ begin
     );
 
     -- an action's external effect must not sit at DISPATCHED forever (§2.7)
-    if j.idempotency_key is not null and j.action_request_id is not null then
-      perform app.settle_effect(j.idempotency_key, 'DEAD_LETTERED', null, p_error);
+    if j.effect_id is not null then
+      perform app.report_effect_result(j.effect_id, 'FAILED', null, p_error);
     end if;
   else
     v_state := 'FAILED';
@@ -931,8 +932,7 @@ response table is unlogged, so it must never carry the guarantee.
 
 ### 2.7 The `sb-actions` seam
 
-**Settled, per ruling R-WB.** One function each way, and the addressing question that took
-three rounds is closed.
+**Settled.** One call out of the gate, one call back from workers.
 
 ```
 core.action_requests ──► app.emit_event(tenant, event_name, action_request_id)   [mine]
@@ -940,90 +940,112 @@ core.action_requests ──► app.emit_event(tenant, event_name, action_request
                                                      │
                                                job-worker
                                                      │
-                         app.settle_effect(job_key, status, result, error)  [theirs]
+             app.report_effect_result(effect_id, status, result, error)    [sb-actions]
                                                      └──► app.action_effects
 ```
 
-**Addressing: `job_key`, not `effect_id`.** I proposed an `action_request_id`-addressed
-write-back; `sb-actions` rightly objected that one action has N external effects that
-succeed and fail independently, so a `PROPOSAL_SEND`'s PDF render and email send need
-separate outcomes. I then proposed `effect_id`. The ruling settles on `job_key`, and it is
-the better answer to their own objection: `job_key = '<action_request_id>:<seq>'` already
-names exactly one effect, so it is as precise as `effect_id` while carrying the action and
-the sequence in a value both lanes already construct. `effect_id` is withdrawn and is no
-longer a column on `app.outbox`.
+**Addressing: `effect_id`.** This took three rounds and `sb-actions` and I ended up
+conceding to each other simultaneously, so the reasoning is recorded here rather than left
+for someone to re-derive.
 
-**Column names, and why there are two for one string.** `sb-actions` writes:
+I first proposed addressing the write-back by `action_request_id`. `sb-actions` objected
+correctly: one action has N external effects that succeed and fail independently — a
+`PROPOSAL_SEND` has a PDF render and an email send, and if the email bounces that one
+effect needs its own outcome and its own attempt count. I then proposed `job_key`, which
+is `'<action_request_id>:<seq>'` and so does name exactly one effect. They adopted it; I
+meanwhile adopted their original `effect_id`. We swapped positions.
+
+`effect_id` is the right answer and it is theirs: it is the primary key of
+`app.action_effects`, so the function needs no lookup and no composite string to parse. It
+is a `bigint`. `job_key` remains on the outbox row as the **dedupe** key, which is a
+different job from addressing — one identifies the effect, the other prevents a second
+insert.
+
+**The final signature**, `sb-actions`':
 
 ```sql
-insert into app.outbox (tenant_id, job_type, idempotency_key, payload,
-                        run_after, correlation_id, action_request_id)
-...
-on conflict (tenant_id, idempotency_key) do nothing;
+app.report_effect_result(p_effect_id bigint, p_status text, p_payload jsonb, p_error jsonb)
 ```
 
-The same string is `app.action_effects.job_key` on their table and
-`app.outbox.idempotency_key` on mine — each lane naming the column it owns in its own
-vocabulary, and `app.settle_effect`'s parameter named after the caller's. That is a
-deliberate, documented equivalence rather than a drift, but it is still two names for one
-value, so it is recorded as a deviation. If the critic wants one name, `job_key` is the
-one to keep: on my table it is not a caller-supplied `Idempotency-Key` header, which is
-what `core.events.idempotency_key` means, and reusing the word across those two meanings is
-the more expensive confusion.
+**Status vocabulary, and the one thing they asked me to confirm.** The worker passes
+`SETTLED` or `FAILED`. Their stored effect status is `SETTLED` or `DEAD_LETTERED`, and the
+asymmetry is deliberate: `app.complete_job` calls with `SETTLED` on success, and only the
+**dead-letter branch** of `app.fail_job` calls at all, with `FAILED`. A transient failure
+that will retry calls nothing — the effect stays `DISPATCHED`, because it has not settled.
+So by construction the only failure that reaches them is terminal, which is why their
+stored value is `DEAD_LETTERED`. Confirming explicitly, since they asked: **`fail_job`
+passes `FAILED`, never `DEAD_LETTERED`.**
 
-**Yes, both columns exist**, answering `sb-actions`' direct question: `correlation_id uuid
-not null` and `action_request_id uuid` are in the §2.2 column list. `correlation_id` is
-`not null` for every row on every path. `action_request_id` is nullable on the table because
-event fan-out jobs have no action, and `not null` on the effect path by construction —
-enforced by a check rather than by the column type:
+**Column list, which they flagged as unverified against my committed §2.2.** Their insert
+is:
+
+```sql
+insert into app.outbox (tenant_id, job_type, job_key, effect_id,
+                        action_request_id, correlation_id, payload, run_after)
+...
+on conflict (tenant_id, job_key) do nothing;
+```
+
+Every one of those eight is in §2.2 with that spelling and these types: `tenant_id uuid`,
+`job_type text`, `job_key text`, `effect_id bigint`, `action_request_id uuid`,
+`correlation_id uuid not null`, `payload jsonb`, `run_after timestamptz`. The unique index
+is `(tenant_id, job_key) where job_key is not null`, so their `on conflict` target
+resolves. **This compiles.**
+
+`correlation_id` is `not null` on every row on every path. `action_request_id` and
+`effect_id` are nullable on the table, because event fan-out jobs have neither; the effect
+path's completeness is enforced by a check rather than by column types:
 
 ```sql
 alter table app.outbox add constraint outbox_effect_path_complete
-  check (action_request_id is null or idempotency_key is not null);
+  check (action_request_id is null or (job_key is not null and effect_id is not null));
 ```
+
+That constraint is what makes the `if j.effect_id is not null` guard in `complete_job`
+safe: an action-derived job always has an effect to report against, and an event-derived
+job never calls into `sb-actions` at all.
+
+**Two keys, two names, no ambiguity.** `app.outbox.job_key` is a key *I derive*
+(`'<action_request_id>:<seq>'` for effects, `'event:<event_id>:<job_type>'` for fan-out).
+`core.events.idempotency_key` is the caller-supplied `Idempotency-Key` header from contract
+§1. They are genuinely different things and keeping `sb-actions`' spelling on the outbox
+preserves that distinction — which matters more than either lane getting its preferred
+word. This was briefly a divergence and is now resolved.
 
 Three enqueue paths, one table, one uniqueness rule:
 
-| Path | Who enqueues | `idempotency_key` |
+| Path | Who enqueues | `job_key` |
 |---|---|---|
 | External effect of an action | `app.apply_effects` | `<action_request_id>:<seq>` |
 | Jury evaluation | `app.apply_effects` (an effect row of kind `EXTERNAL`) | `<action_request_id>:<seq>` |
 | Fan-out from a domain event | `app.emit_event` via `app.event_subscriptions` | `event:<event_id>:<job_type>` |
 
-`unique (tenant_id, idempotency_key)` is `sb-actions`' one hard requirement and it is on the
-table in §2.2. It is the entire retry-safety story for external effects: a redelivered job
-cannot send a second proposal email or push a second invoice.
+`unique (tenant_id, job_key)` is `sb-actions`' one hard requirement. It is the entire
+retry-safety story for external effects: a redelivered job cannot send a second proposal
+email or push a second invoice.
 
 **`app.job_type_for(action_type, entity)` is mine and does not exist yet.** `sb-actions`
 flagged that without it they would have mapped their `topic` onto `job_type` mechanically
 and shipped `'effect.proposal_send'` into a column the worker dispatches on. That would not
-have failed loudly — it would have produced jobs no handler claims, which sit at `QUEUED`
-until someone notices the badge. It is listed among the seven unwritten helpers.
+fail loudly — it would produce jobs no handler claims, sitting at `QUEUED` until somebody
+noticed the badge. It is listed among the unwritten helpers.
 
-**Status vocabulary, aligned to theirs.** `app.settle_effect` is called with `SETTLED` on
-success and `DEAD_LETTERED` on terminal failure; their effect enum dropped `CONFIRMED` and
-`FAILED` to match. `app.complete_job` and the dead-letter branch of `app.fail_job` are the
-only two callers. A transient failure that will retry calls nothing — the effect stays
-`DISPATCHED`, because it has not settled.
+**The lifecycle hole is closed, and the fix is theirs.** I had said the write-back should
+advance `action_requests.status`. They objected that rolling a proposal back from `SENT`
+on a lost delivery acknowledgement would tell the sales team it was never sent while the
+client is reading it. Ruling R-STATUS accepts their resolution, which is better than either
+of our first answers: the row gains `EXECUTING` and `PARTIALLY_FAILED`, an action with an
+external effect commits as `EXECUTING`, and the write-back moves it to `EXECUTED` when the
+last effect settles clean or `PARTIALLY_FAILED` when any dead-letters, stamping
+`completed_at` only then. An action with no external effect — most of the 21 types — goes
+straight to `EXECUTED`.
 
-**The lifecycle hole is closed, and it was mine to notice and theirs to fix.** I had said
-the write-back should advance `action_requests.status`; they correctly objected that
-rolling a proposal back from `SENT` on a lost delivery acknowledgement would tell the sales
-team it was never sent while the client is reading it. Their resolution (ruling R-STATUS)
-is better than either of our first answers: the row gains `EXECUTING` and
-`PARTIALLY_FAILED`, an action with an external effect commits as `EXECUTING`, and
-`settle_effect` moves it to `EXECUTED` when the last effect settles clean or
-`PARTIALLY_FAILED` when any dead-letters, stamping `completed_at` only then. An action with
-no external effect — most of the 21 types — goes straight to `EXECUTED`. The `partial_failure`
-boolean is gone.
-
-Consequence worth carrying here: §12's `ActionStatus` has four values and none is
-`EXECUTING`, so the row status and the response variant are now different things.
-`POST /v1/actions` still returns `202 EXECUTED` at decision time and a fold function maps
-the three execution states onto the three contract variants. Record screens render the row,
-not the response. That is a contract deviation and `sb-actions` has recorded it; it matters
-to me only because the audit drawer renders row states and must not be "corrected" to the
-response vocabulary.
+Consequence I carry here: §12's `ActionStatus` has four values and none is `EXECUTING`, so
+the row status and the response variant are different things. `POST /v1/actions` still
+returns the three-variant §3 contract through a fold function. **The audit drawer renders
+row states**, so it will show `EXECUTING` and `PARTIALLY_FAILED`, and those must not be
+"corrected" to the response vocabulary by a later reader who finds §12 and assumes it is
+authoritative for rows.
 
 **Idempotency keys: reference the rule, not the table.** The raw key is
 `app.idempotency_keys.key` with the 24h rule on `expires_at`, and
@@ -1036,9 +1058,9 @@ Ownership, restated:
 
 - `sb-actions` calls `app.emit_event` and writes its own `app.outbox` rows.
 - **Workers never write `core` tables directly.** Every write-back goes through
-  `app.settle_effect`, which runs a per-type confirm handler on success only — the sole
-  place a worker's data reaches `core`. A worker holds the service role and bypasses RLS,
-  so the set of tables it may touch has to be small and named.
+  `app.report_effect_result`, which runs a per-type confirm handler on success only — the
+  sole place a worker's data reaches `core`. A worker holds the service role and bypasses
+  RLS, so the set of tables it may touch has to be small and named.
 - `core.action_requests.id` is the `correlation_id` for every event and job descending from
   that action, `ApprovalRequested` and `ApprovalDecided` included. `causation_id` is mine
   to derive.
@@ -1980,14 +2002,14 @@ language plpgsql security definer set search_path = '' as $$
 declare u record;
 begin
   for u in
-    select m.user_id, m.app_role
+    select m.user_id, m.role            -- the COLUMN is role; the JWT CLAIM is app_role
       from public.memberships m
      where m.tenant_id = p_tenant
        and (p_users is null or m.user_id = any(p_users))
   loop
     begin
       perform realtime.send(
-        app.badge_counts(p_tenant, u.user_id, u.app_role),
+        app.badge_counts(p_tenant, u.user_id, u.role),
         'badges',
         'tenant:' || p_tenant::text || ':user:' || u.user_id::text || ':badges',
         true);
@@ -2010,9 +2032,17 @@ perform app.broadcast_badges(
 ```
 
 `MD` is included because §1's policies escalate to it. `app.role_holders(tenant, roles[])`
-returns the user ids holding any of those roles and is mine to write; it is the same
-lookup `sb-actions`' `app.pick_role_holder` already does, and the two should share one
-implementation rather than diverge.
+returns the user ids holding any of those roles. **It belongs to `sb-tenancy`, not to me**
+(conflict C15): it reads their membership tables, and neither `sb-actions` nor I should be
+joining into those directly. I call it as-is; `sb-actions`' `app.pick_role_holder` becomes
+a thin wrapper over it adding ordering and the requester exclusion.
+
+**The column is `memberships.role`, not `app_role`** — the type is `app.app_role` and the
+JWT *claim* is `app_role`, which is what I had wrongly used as the column name. The two
+spellings are deliberate, not an accident: `role` is already taken in a Supabase JWT by the
+Postgres role PostgREST switches into, normally `authenticated`, so the claim cannot be
+called `role`. Reading the column is `m.role`; reading the token is `app.jwt() ->> 'app_role'`.
+`sb-tenancy` caught this against migration 002; as written my fan-out would have failed.
 
 The exception handler is **inside** the loop, not around it. A single user whose broadcast
 fails must not stop the remaining users from getting theirs, and no broadcast failure may
@@ -2243,14 +2273,11 @@ state, not on logs.
    grant claim and the claim window alone runs six months past completion. Only run I/O,
    snapshots and webhook bodies are aged out.
 
-8. **Two names for one string across the `sb-actions` seam** (§2.7). The effect key is
-   `app.action_effects.job_key` on their table and `app.outbox.idempotency_key` on mine,
-   and `app.settle_effect`'s parameter is `job_key`. Each lane names the column it owns,
-   which is coherent but is still a divergence, and the project's standing rules call
-   divergence a defect. Recorded rather than hidden. If it is collapsed to one name,
-   `job_key` should win on my table: this column is a derived key, whereas
-   `core.events.idempotency_key` is the caller-supplied `Idempotency-Key` header from §1,
-   and using one word for both meanings is the more expensive confusion.
+8. **The audit drawer shows row statuses the contract's enum does not list** (§2.7).
+   Ruling R-STATUS gives `core.action_requests` an `EXECUTING` and a `PARTIALLY_FAILED`
+   state, while §12's `ActionStatus` has four values and neither of those. The drawer
+   renders the row, not the folded API response, so both will appear in it. Recorded so a
+   later reader who finds §12 does not "correct" them.
 
 ### What I could NOT verify
 
@@ -2258,14 +2285,20 @@ state, not on logs.
   deliberate, argued disagreement (§2.1, Deviation 3), not an oversight, and it is the one
   decision here most worth a second opinion. Everything else in research doc §4 is adopted.
 
-- **The `sb-actions` seam is settled in both directions and nothing is outstanding.**
-  `app.emit_event`'s three-argument overload is mine; `sb-actions` writes its own
-  `app.outbox` rows; `app.settle_effect(job_key, status, result, error)` is theirs, per
-  ruling R-WB. The addressing changed twice before settling — `action_request_id`, then
-  `effect_id`, then `job_key` — and the record of that is in §2.7 rather than erased,
-  because the reason it moved is the design constraint (one action, N independently
-  failing effects) and a future reader will otherwise re-litigate it. I have not compiled
-  either function against their schema.
+- **The `sb-actions` seam is settled and their insert compiles against §2.2.** I checked
+  all eight columns of their committed insert against my committed column list, by name and
+  by type, and they match; the `on conflict (tenant_id, job_key)` target resolves to the
+  partial unique index. They had flagged this as unverified on their side because they
+  wrote it from my message rather than my file, which was the right call — my message had
+  in fact described columns my file did not yet define. What I have *not* done is compile
+  either function against a live schema.
+
+- **The write-back name and addressing changed three times before settling**
+  (`action_request_id` → `job_key` → `effect_id`), with `sb-actions` and me conceding to
+  each other simultaneously at one point. The final answer is theirs:
+  `app.report_effect_result(effect_id, …)`. §2.7 keeps the reasoning rather than erasing it,
+  because the constraint that drove it — one action, N independently failing effects — is
+  the kind of thing a future reader re-litigates from scratch otherwise.
 
 - **Seven helper functions are named but not written**, and they are the largest piece of
   unwritten work this document implies: `app.aggregate_type_for`, `app.event_payload_for`,
