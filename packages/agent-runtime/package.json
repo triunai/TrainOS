@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Provider-agnostic (BYOK) agent runtime. Runs a real orchestrator against any plugged-in LLM key, executes every tool call through a mock adapter over fixture data, and emits traces in the contract's AutomationRun shape.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
   },
   "types": "./src/index.ts",
   "files": [

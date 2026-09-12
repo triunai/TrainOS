@@ -8,10 +8,16 @@
  *
  * Every tool call goes through a `ToolAdapter` over fixture data. Nothing in
  * this package can reach a client.
+ *
+ * **This entry runs anywhere.** Nothing reachable from here imports a Node
+ * builtin or touches `process` unguarded, because the web app imports it to
+ * run the mock agent on M18-S04 and a `node:fs` import at module scope takes
+ * a browser bundle down at build time. The node-only helpers live behind
+ * `@trainos/agent-runtime/node`; a test walks this module graph and fails if
+ * one creeps back in.
  */
 
 export * from './keys/keystore';
-export * from './keys/dotenv';
 export * from './providers';
 export * from './routing';
 export * from './tools';

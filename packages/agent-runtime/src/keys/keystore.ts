@@ -119,7 +119,22 @@ export const ENV_BINDINGS: readonly EnvBinding[] = [
 ] as const;
 
 /**
- * Reads keys from `process.env` and nothing else.
+ * The ambient environment, or nothing at all.
+ *
+ * `process` does not exist in a browser, and this package's default entry is
+ * imported by the web app to run the mock agent on M18-S04. Reading
+ * `process.env` as a constructor default threw a `ReferenceError` before the
+ * caller could pass their own environment — so the guard lives here rather
+ * than in every call site. No ambient environment means no keys, which sends
+ * the runtime to its mock provider: the correct answer in a browser.
+ */
+function ambientEnv(): Record<string, string | undefined> {
+  if (typeof process === 'undefined') return {};
+  return process.env ?? {};
+}
+
+/**
+ * Reads keys from the ambient environment and nothing else.
  *
  * A variable that is absent or blank is simply not offered, so `list()` is the
  * honest answer to "what can this machine actually call".
@@ -127,8 +142,8 @@ export const ENV_BINDINGS: readonly EnvBinding[] = [
 export class EnvKeyStore implements KeyStore {
   private readonly env: Record<string, string | undefined>;
 
-  constructor(env: Record<string, string | undefined> = process.env) {
-    this.env = env;
+  constructor(env?: Record<string, string | undefined>) {
+    this.env = env ?? ambientEnv();
   }
 
   list(): KeyRef[] {

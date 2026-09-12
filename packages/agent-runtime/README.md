@@ -12,6 +12,24 @@ npx tsx src/cli.ts run lead-to-proposal --provider auto
 npx tsx src/cli.ts providers
 ```
 
+## Entry points
+
+```ts
+import { runAgent, createRuntime } from '@trainos/agent-runtime';        // anywhere
+import { loadEnvLocal } from '@trainos/agent-runtime/node';              // Node only
+```
+
+The default entry runs in a browser. Nothing reachable from it imports a Node
+builtin or touches `process` unguarded, because the web app imports it to run
+the mock agent on M18-S04 and a `node:fs` import at module scope fails a Vite
+build — at build time, in a file that did not cause it. The `.env.local` reader
+is the only Node-only module and lives behind the `/node` subpath.
+
+`test/browser-safety.test.ts` walks the default entry's module graph and fails
+if a Node builtin, the dotenv loader or the CLI creeps back in, and runs
+`createRuntime` with `globalThis.process` deleted. A convention would not have
+held; this is a test.
+
 ## BYOK setup
 
 Put one key in `.env.local` at the repo root. Any one of these works; the
