@@ -12,6 +12,29 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — the sales path, and a tenant boundary the storage engine enforces
+
+### Added
+
+- **Organisations, contacts, enquiries, opportunities, follow-ups and the needs analysis (005).**
+  Fourteen tables covering the path from an inbound message to a qualified opportunity.
+- **Consent is a ledger, not a switch.** Personal-data law asks what someone agreed to on a date,
+  not what they agree to now, so withdrawal adds a record rather than editing one, and the original
+  agreement cannot be rewritten afterwards.
+
+### Security
+
+- **A record cannot be attached to another customer's record, at all.** Every foreign key carries
+  the tenant alongside it, so a contact in one customer's account physically cannot point at an
+  organisation in another's. The database rejects it before any access rule is consulted. Access
+  rules can be misconfigured in a migration nobody reviews; this cannot.
+
+### Note
+
+- Two columns on organisations cache the proposal count for the record header and are marked in the
+  schema as unusable by the approval gate, which computes that answer live. A cached value that
+  looks authoritative is exactly what a later author would trust.
+
 ## 2026-09-12 — one procedure gives every table the same posture
 
 ### Added

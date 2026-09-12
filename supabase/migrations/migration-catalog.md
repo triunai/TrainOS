@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 4 · **Applied:** 0 · **Authored, not applied:** 4
+**Migrations:** 5 · **Applied:** 0 · **Authored, not applied:** 5
 **Last snapshot of `tables/`:** never
 
 ---
@@ -12,6 +12,8 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-12 — **005 authored and EXECUTED: the sales path, fourteen tables, applied cleanly on the first run.** The assertions that earn their place in the pin are not the columns. **T2 proves a cross-tenant foreign key is UNREPRESENTABLE** — a contact in tenant Beta attached to an organisation in tenant Alpha is rejected by the storage engine, with RLS irrelevant to the outcome. That is a stronger guarantee than a policy test: RLS can be misconfigured in a migration nobody reviews, a composite foreign key cannot. Every FK into a `core` parent is composite and the migration's own verify block sweeps for a single-column one. **T3 turns a sentence into a property of the data**: the contract says low-confidence enquiries "are never auto-archived", which is a claim about a background job; the constraint makes it true regardless of what tries, and clearing the review flag is the only path. **T5 stops a double-clicked Convert button overstating the pipeline** by the value of a deal. **T7 proves consent survives withdrawal** — the ledger is append-only because PDPA asks what was true on a date, not what is true now, and the historical row itself is frozen. ⚠ **DEVIATION D2, recorded loudly:** `organisations.proposal_count` and `first_proposal_sent_at` are denormalised for the record header, and doc 03 decision 7 says `firstProposalToOrg` is computed LIVE from a partial index. Both columns carry a COMMENT saying the policy gate must not read them, because a column that looks authoritative and is not is exactly what a later author trusts. ⚠ **Four forward-reference columns exist without their FK constraints** (`organisation_suggestions.programme_id`, `follow_ups.proposal_id`, `follow_ups.invoice_id`, `tna_recommendations.programme_id`); the constraints are added by 006, 007 and 010. The gap is real while it lasts, so T8 asserts the columns and test_014 will assert the constraints — tracked, not hoped about.
 
 **Last updated:** 2026-09-12 — **004 authored and EXECUTED. The important object in it is not a table: it is `app.finalise_table()`.** Doc 01's Conventions say every table carries the same eight columns, the same `UNIQUE (tenant_id, id)` and `(tenant_id, ref)`, the same `updated_at` trigger and a frozen `ref`; doc 02 §4.1 says every one is RLS-enabled AND FORCED with a tenant index. That is eight facts across roughly eighty tables. Written per table it is six hundred lines of copy-paste in which exactly one table ends up missing FORCE and nothing notices until that table is the one that leaks. Written once, a single pin proves it for all of them — and the pin tests the FUNCTION on a throwaway table rather than the fourteen tables it happened to be applied to, because otherwise it would not prove the fifteenth table gets the same treatment. This is the project's own consolidation rule applied to SQL. **`finalise_table` refuses a table with no `tenant_id`**, which is the check that matters: a table reaching 014 without one gets no tenant predicate, and a policy that cannot filter by tenant does not isolate. **Two defects found by running it.** (1) The composite FKs failed on first apply — `(tenant_id, attachment_id) → attachments (tenant_id, id)` needs the parent's composite unique to exist first, so the finaliser calls had to be interleaved with the CREATEs in dependency order rather than batched at the end. (2) Re-running 004 failed with `relation "ref_formats_tenant_id_key" already exists`: Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, which the Supabase schema guidance names explicitly as a migration trap. The finaliser now guards each ADD CONSTRAINT with a `pg_constraint` lookup and 004 is re-runnable. **Ref allocation is per tenant and T4 exists to keep it that way**: two tenants creating their first template must BOTH get `TPL-0001`. A global counter would let every customer read every other customer's record volume off a ref, and no access-control test would ever catch it because no row is exposed. **Conflict C4 resolved:** doc 01 wants `action_types` tenant-scoped in `core`; doc 03 §1.1 defines `app.action_types` as global, "the product's vocabulary... Tenants customise policies and grants, never the catalogue". 03 outranks 01 and is right — an action type is a capability the software has, not a per-customer setting.
 
@@ -25,6 +27,7 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 005 | `005_sales_organisations_enquiries_tna.sql` | **The sales path: organisations, contacts and consent, enquiries and extraction, opportunities, follow-ups, needs analysis (2026-09-12).** Fourteen tables, all through `app.finalise_table`, all deny-all until 014. Four non-obvious modelling decisions, each with the reason in the file: `contact_consents` is an append-only PDPA ledger rather than a flag, because "did this person consent on 4 March 2024" must stay answerable after they withdraw; `enquiry_extraction_fields` is one row per field because each carries its OWN provenance and edit history, and four columns could hold four values but not four independent provenances; `organisations.proposal_count` is a header CACHE that the policy gate must not read (deviation D2); and the "never auto-archived" rule for low-confidence enquiries is a CHECK constraint rather than a property of a background job. Every FK into a `core` parent is composite `(tenant_id, parent_id)`, so a cross-tenant reference is rejected by the storage engine independently of RLS. Spine untouched. |
 | 004 | `004_shell_config_and_ref_allocation.sql` | **The shell: `app.finalise_table()`, ref allocation, and 14 configuration and reference tables (2026-09-12).** One procedure gives a tenant-scoped table its whole standard posture — composite `(tenant_id, id)` and `(tenant_id, ref)` uniques, tenant index, `updated_at` trigger, frozen `tenant_id`/`ref` plus any extra columns, ref allocation, and **RLS enabled AND FORCED with zero policies**, so no table in this set is ever open, not even for the duration of one migration. Ref allocation is one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per `(tenant, prefix, period)`, serialising per prefix per tenant rather than globally; the year comes from the TENANT's timezone, because a record created at 08:00 MYT on 1 January is a January record and UTC would call it December. `pipeline_steps` is the point of the migration: the contract shows two different lifecycles for the same object (six steps on the relations panel, nine on the engagement detail) and those are two `pipelines` rows, not two hardcoded arrays. `templates` are versioned and never edited, so a five-year-old proposal still renders as sent. `app.action_types` created here as the global catalogue (conflict C4); seeded in 011. Spine: `finalise_table` IS a new spine object and is pinned hardest. |
 | 003 | `003_enum_types.sql` | **69 native enum types in `core`, 271 labels, generated from the contract package (2026-09-12).** Closed catalogues frozen by contract §12/§17 become native enums — four bytes on disk across a model full of status columns, and real union types in the generated TypeScript. Open, config-driven sets (`action_type`, lifecycle step key, compliance check key, `hrdc_document_type`, metric key, tier key, template type, TNA constraint code) deliberately do NOT appear here: they arrive in 004 as reference tables, because the project rule is that stage names and order render from configuration, and a CHECK constraint is code while a reference table is data. 62 types generated from `packages/contract/src/enums.ts`; 7 named by doc 01 alone and listed separately. `app_role` and `actor_kind` are NOT duplicated into `core` — doc 02 owns both and creates them in `app` (conflict C2). Spine untouched: types only, no table, no function, no policy. |
 | 002 | `002_tenancy_identity_and_permissions.sql` | **Multi-tenancy from row zero: five identity tables, 109 permissions as data, and the access-token hook (2026-09-12).** `public.tenants`, `teams`, `team_members`, `memberships` and `user_profiles` (author addition), all RLS-enabled AND **forced** — forced removes the table owner's exemption, so a function running as `postgres` no longer silently sees every tenant. Three enum types in `app` (`app_role`, `actor_kind`, `data_scope`) per doc 02 §1.2. Eighteen claim readers and predicates: `app.current_tenant_id` (the spelling three lanes converged on — `app.tenant_id()` does not exist and must not be created), `app.has_permission`, `app.can_see_owner`, `app.my_team_user_ids`, `app.aal`, and `app.principal_claims` as the SINGLE claim-building body shared by the GoTrue hook and the agent-token minter, because §3.1 notes the hook does not run for a self-minted token and two bodies would drift. `app.role_permissions` seeded with 399 (role, permission) pairs over 109 permissions, parsed from doc 02 §2.3 rather than transcribed. **The escalation stop is a RESTRICTIVE policy**: `memberships_no_self_edit` — without it an ADMIN can UPDATE their own row to any role, scope or tenant, and `memberships_write_admin` permits it because they ARE an admin of that tenant while they do it. ADMIN writes additionally require `aal2`. Spine untouched — the action envelope does not exist yet; 002 is the authorization the spine will rest on. |
@@ -198,6 +201,47 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 005 (`005_sales_organisations_enquiries_tna.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Source: `docs/architecture/01` §3.1.
+Applied cleanly on the first run; no defect found in the doc's own specification of these tables.
+
+### What it does
+
+Fourteen tables (see the Migration Order row) plus `core.v_contact_consent_current`, a
+`security_invoker` view so the caller's RLS on the ledger applies — a view that bypassed it would be
+a cross-tenant read of exactly the data PDPA cares most about.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** / 2. **Unwrap** — no RPC. 3. **RpcMap** — none; Data API tables.
+4. **Call sites** — none yet; 014 grants, 016 seeds. 5. **Casts** — none.
+6. **Reload/restore** — no client behaviour. 7. **Public routes** — none; the portal reaches
+   proposals in 007, never these.
+
+### Pin — `tests/test_005_sales_organisations_enquiries_tna.sql`
+
+Eight checks, all executed, all PASS. T1 refs · **T2 cross-tenant FK unrepresentable, twice** ·
+T3 low-confidence enquiry cannot be archived, and CAN be after review · T4 a match with no reason is
+refused · T5 one enquiry, one opportunity · T6 LOST needs a reason, a follow-up has at most one
+target · T7 consent survives withdrawal and the recorded fact is frozen · T8 the four deferred
+forward-reference columns exist.
+
+**RLS four-way: deliberately in test_014.** Every table here is RLS-forced with no policy, so an
+impersonated read returns nothing and would prove nothing. T2 is the stronger property anyway — it
+holds with RLS out of the picture entirely.
+
+### Rollback — `rollbacks/005_sales_organisations_enquiries_tna_rollback.sql`
+
+Guards: G0 already rolled back; a generic sweep naming any table OUTSIDE 005 that still references
+one of 005's (so a later migration is named rather than discovered as a cascade failure halfway
+through the drops); a guard on `contact_consents` rows, because that ledger is the only record of
+what a person agreed to and when; and a guard on live `organisations`. Header carries the export
+commands. Guard firing was tested by inserting a live organisation and confirming the refusal.
+Round-tripped, idempotent.
 
 ---
 
