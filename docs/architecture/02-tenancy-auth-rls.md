@@ -20,9 +20,10 @@ for every table family. It stops at the boundary of four sibling designs:
 **Decisions taken in this document.**
 
 1. **Shared schema, `tenant_id` on every row.** Not schema-per-tenant, not database-per-tenant.
-2. **Tenant comes from a JWT claim written by a custom access token hook**, not from a per-request
-   profile lookup. Identity claims only: `tenant_id`, `app_role`, `actor_kind`, `agent_id`,
-   `team_id`, `client_scope`, `team_scope`.
+2. **Tenant comes from a TOP-LEVEL JWT claim written by a custom access token hook**, not from a
+   per-request profile lookup and **not from `app_metadata`**. Identity claims only: `tenant_id`,
+   `app_role`, `actor_kind`, `agent_id`, `team_id`, `client_scope`, `team_scope`. Read through
+   `app.current_tenant_id()`.
 3. **Permissions are NOT in the JWT.** They resolve from a small static table through
    `app.has_permission()`. Reason in §1.4: a revoked permission must bite immediately, not at the
    next token refresh, and a 90-entry array on every request is dead weight.
@@ -66,6 +67,28 @@ and the root-key rotation trap. §10 on PKCE, `getUser()` versus `getClaims()`, 
 `aal2` policy. §13 on the `sb_publishable_` / `sb_secret_` key formats and ES256 signing keys. The
 research doc flags its §2 and §3 as original synthesis rather than first-party Supabase guidance, and
 I carry that caveat forward in §11.
+
+---
+
+## 0 · Cross-lane conventions
+
+The five things the other four lanes need from here, in one place, so nobody reconstructs them.
+Agreed with `sb-actions`, `sb-events` and `sb-money` in review.
+
+| Convention | Value | Trap |
+|---|---|---|
+| Tenant claim path | **top-level** `tenant_id`, read via `app.current_tenant_id()` | `auth.jwt() -> 'app_metadata' ->> 'tenant_id'` returns **null**, not an error. Every policy then denies everything and it presents as a permissions bug. |
+| Helper spelling | `app.current_tenant_id()`, not `app.tenant_id()` | `sb-actions` and `sb-events` converged on this name independently; mine was renamed to match. |
+| Raising vs returning null | `app.current_tenant_id()` returns null; `app.require_tenant_id()` raises | Never call the raising one from a policy: a predicate that raises turns a denied read into a 500 instead of an empty set. |
+| Tenant column | `tenant_id uuid not null`, **leading** column of every tenant-scoped composite index | A PK keyed `(id, tenant_id)` gives no usable index on `tenant_id` alone, and the policy seq-scans. One exception: Template E (§4.2). |
+| Actor kinds | **four** — `HUMAN`, `AGENT`, `SYSTEM`, `CLIENT` | Portal RPCs write `CLIENT`. A three-value enum breaks on the first proposal acceptance. |
+| Agent principal | per agent **per tenant**, so the tenant is trustworthy from the JWT | Answers §16 Q7. Agent-authored rows do not need the tenant read off the row. |
+| Domain tables | live in `public` | The `app` schema is not exposed to PostgREST and has no grants. A domain table there is unreachable by the Data API. Gate functions and reference data belong there; tables do not. |
+| Committing | `git commit <path> -m "…"`, never `git add` then a bare commit | We share one index on `main`. A bare commit sweeps up every other lane's staged work. |
+
+Prefer `app.has_permission('approval:decide')` to `app.has_role('SALES_MANAGER')` everywhere. The
+role-to-permission matrix is data (§1.4), so an MD can move a permission between roles without a
+migration; a role check hard-codes today's matrix into the caller.
 
 ---
 
@@ -520,12 +543,12 @@ set search_path = ''
 as $$
   select coalesce(array_agg(distinct peer.user_id), array[]::uuid[])
   from public.team_members peer
-  where peer.tenant_id = app.tenant_id()
+  where peer.tenant_id = app.current_tenant_id()
     and peer.team_id in (
       select mine.team_id
       from public.team_members mine
       where mine.user_id = (select auth.uid())
-        and mine.tenant_id = app.tenant_id()
+        and mine.tenant_id = app.current_tenant_id()
     );
 $$;
 revoke execute on function app.my_team_user_ids() from public, anon;
@@ -559,7 +582,7 @@ as $$
     select 1
     from public.engagement_trainers et            -- [assumed] sb-erd join table
     where et.engagement_id = p_engagement_id
-      and et.tenant_id     = app.tenant_id()
+      and et.tenant_id     = app.current_tenant_id()
       and et.trainer_id    = app.trainer_id()
   );
 $$;
@@ -703,7 +726,7 @@ as $$
   select not app.is_agent()
       or exists (
         select 1 from public.agents a
-        where a.tenant_id = app.tenant_id()
+        where a.tenant_id = app.current_tenant_id()
           and a.id        = app.agent_id()
           and p_scope     = any (a.scopes)
       );
@@ -731,7 +754,7 @@ as $$
   select not app.is_agent()
       or exists (
         select 1 from public.agents a
-        where a.tenant_id    = app.tenant_id()
+        where a.tenant_id    = app.current_tenant_id()
           and a.id           = app.agent_id()
           and a.status       = 'ACTIVE'
           and a.kill_switch is not true
@@ -790,7 +813,7 @@ write; the values it must use are mine:
 | `created_by.id` | `app.agent_id()` when `app.is_agent()`, else `auth.uid()::text` |
 | `created_by.kind` | `app.actor_kind()` — `HUMAN` / `AGENT` / `SYSTEM` / `CLIENT` |
 | `created_by.name` | `agents.name` or `user_profiles.display_name`; `'Email ingest'` etc. for SYSTEM |
-| `tenant_id` | `app.tenant_id()`, defaulted, and never accepted from the client (§4.2) |
+| `tenant_id` | `app.current_tenant_id()`, defaulted, and never accepted from the client (§4.2) |
 | `run_id` | `current_setting('app.run_id', true)` — set by the orchestrator per run |
 
 Portal writes are the exception: they arrive as `anon` through a `SECURITY DEFINER` RPC, so the RPC
@@ -824,7 +847,7 @@ alter table public.<t> force  row level security;   -- the owner role loses its 
 
 -- 3. tenant_id is never supplied by the client.
 alter table public.<t>
-  alter column tenant_id set default (select app.tenant_id()),
+  alter column tenant_id set default (select app.current_tenant_id()),
   alter column tenant_id set not null;
 
 -- 4. Indexes. Every column a policy reads.
@@ -856,7 +879,7 @@ language sql stable set search_path = '' as $$
   select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
 $$;
 
-create or replace function app.tenant_id() returns uuid
+create or replace function app.current_tenant_id() returns uuid
 language sql stable set search_path = '' as $$
   select nullif(app.jwt() ->> 'tenant_id', '')::uuid
 $$;
@@ -906,6 +929,44 @@ language sql stable set search_path = '' as $$
 $$;
 ```
 
+Three more exist for the sibling lanes rather than for my own policies. `sb-actions` and `sb-events`
+converged independently on `app.current_tenant_id()`, so that spelling won and mine was renamed to
+match; `app.tenant_id()` does not exist.
+
+```sql
+-- For gate functions, where an absent tenant should be an exception rather than a denial.
+-- Policies must NOT call this: a predicate that raises turns an empty result into a 500.
+create or replace function app.require_tenant_id() returns uuid
+language plpgsql stable set search_path = '' as $$
+declare t uuid := app.current_tenant_id();
+begin
+  if t is null then
+    raise exception 'NO_TENANT' using errcode = 'insufficient_privilege';
+  end if;
+  return t;
+end $$;
+
+create or replace function app.has_role(p_role text) returns boolean
+language sql stable set search_path = '' as $$
+  select app.role() = p_role::app.app_role
+$$;
+
+-- sb-actions' actor record. actor_kind has FOUR values: portal RPCs write CLIENT.
+create or replace function app.current_actor()
+returns table (actor_id text, actor_kind text, role text)
+language sql stable set search_path = '' as $$
+  select
+    case when app.is_agent() then app.agent_id() else (select auth.uid())::text end,
+    app.actor_kind()::text,
+    app.role()::text
+$$;
+```
+
+`app.has_role()` exists because `sb-actions` asked for it, but prefer `app.has_permission()` wherever
+a permission string fits. The role-to-permission matrix is data (§1.4), so an MD can move
+`discount:approve` between roles without a migration; a role check hard-codes today's matrix into
+the caller.
+
 `app.has_permission()` is `SECURITY DEFINER` purely so no login role needs `SELECT` on
 `app.role_permissions`. It takes no identity argument and reads only the caller's own claim, so
 there is no privilege to escalate — the self-check the skill requires is structural here rather than
@@ -923,7 +984,7 @@ names `TO authenticated`; none is left at the implicit `public`, which would als
 create policy programmes_select on public.programmes
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('programme:read'))
     and (select app.agent_in_scope('programmes'))
   );
@@ -931,11 +992,11 @@ create policy programmes_select on public.programmes
 create policy programmes_write on public.programmes
   for all to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('programme:write'))
   )
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('programme:write'))
   );
 ```
@@ -949,7 +1010,7 @@ an `UPDATE` move a row *out* of the tenant.
 create policy opportunities_select on public.opportunities
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('opportunity:read'))
     and (select app.can_see_owner(owner_id))
     and (select app.agent_in_scope('organisations'))
@@ -958,7 +1019,7 @@ create policy opportunities_select on public.opportunities
 create policy opportunities_insert on public.opportunities
   for insert to authenticated
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('opportunity:write'))
     and (owner_id = (select auth.uid()) or (select app.client_scope()) <> 'MY_ACCOUNTS')
     and (select app.agent_in_scope('organisations'))
@@ -967,12 +1028,12 @@ create policy opportunities_insert on public.opportunities
 create policy opportunities_update on public.opportunities
   for update to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('opportunity:write'))
     and (select app.can_see_owner(owner_id))
   )
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.can_see_owner(owner_id))
   );
 ```
@@ -987,11 +1048,11 @@ one.
 create policy proposal_sections_select on public.proposal_sections
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and exists (
       select 1 from public.proposals p
       where p.id = proposal_sections.proposal_id
-        and p.tenant_id = (select app.tenant_id())
+        and p.tenant_id = (select app.current_tenant_id())
     )
     and (select app.has_permission('proposal:read'))
   );
@@ -1014,7 +1075,7 @@ the same rewrite the research recommends, done once instead of per policy.
 ```sql
 create policy run_steps_select on public.run_steps
   for select to authenticated
-  using (tenant_id = (select app.tenant_id()) and (select app.has_permission('run:read')));
+  using (tenant_id = (select app.current_tenant_id()) and (select app.has_permission('run:read')));
 
 -- No insert/update/delete policy for authenticated at all.
 -- Writes arrive from the run engine through service_role (§4.9).
@@ -1022,6 +1083,54 @@ create policy run_steps_select on public.run_steps
 
 Absence of a policy is the denial. No `for delete` policy anywhere except where the table below
 explicitly names one.
+
+**Template E — platform-global reference data with tenant overrides.** The one place `tenant_id` is
+nullable. `sb-money` is modelling the HRD Corp rule set this way — `tenant_id is null` means
+national, plus optional tenant-scoped override rows — and they are right. HRD Corp rules *are*
+national, and copying them per tenant means a circular correction must be applied N times, with the
+Nth being the one that gets missed. It also breaks the `supersedesId` / `supersededById` lineage in
+§17 across tenant boundaries.
+
+```sql
+create policy compliance_rules_select on public.compliance_rules
+  for select to authenticated
+  using (
+    (tenant_id is null or tenant_id = (select app.current_tenant_id()))
+    and (select app.has_permission('compliance:rule:read'))
+  );
+
+create policy compliance_rules_tenant_override on public.compliance_rules
+  for all to authenticated
+  using (
+    tenant_id = (select app.current_tenant_id())          -- never null: no tenant edits a global row
+    and (select app.has_permission('compliance:rule:write'))
+  )
+  with check (
+    tenant_id = (select app.current_tenant_id())
+    and (select app.has_permission('compliance:rule:write'))
+    and (select app.aal()) = 'aal2'
+  );
+```
+
+**There is no platform-admin role and I recommend against adding one.** `ADMIN` is tenant-scoped, so
+a tenant's administrator must not be able to edit a national rule — that would let one training
+provider change compliance for every other provider on the platform. Writes to `tenant_id is null`
+rows are a `service_role` provisioning operation (§4.9), which makes them a reviewed deploy-time act
+rather than a button.
+
+Index these as two partial indexes, because the `or` predicate does not use a single plain index
+well:
+
+```sql
+create index compliance_rules_global_idx on public.compliance_rules (scheme, effective_from)
+  where tenant_id is null;
+create index compliance_rules_tenant_idx on public.compliance_rules (tenant_id, scheme, effective_from)
+  where tenant_id is not null;
+```
+
+Tables on this template are the documented exception to the §8.7 guard, and are allowlisted there by
+name rather than left to fail CI — otherwise someone "fixes" the nullable column in six months
+because the test told them to.
 
 ### 4.3 Platform and identity tables
 
@@ -1036,25 +1145,25 @@ explicitly names one.
 ```sql
 create policy tenants_select on public.tenants
   for select to authenticated
-  using (id = (select app.tenant_id()));
+  using (id = (select app.current_tenant_id()));
 
 create policy tenants_update_admin on public.tenants
   for update to authenticated
-  using (id = (select app.tenant_id()) and (select app.role()) = 'ADMIN')
-  with check (id = (select app.tenant_id()));
+  using (id = (select app.current_tenant_id()) and (select app.role()) = 'ADMIN')
+  with check (id = (select app.current_tenant_id()));
 
 create policy memberships_select_self on public.memberships
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (user_id = (select auth.uid()) or (select app.role()) in ('ADMIN','MD'))
   );
 
 create policy memberships_write_admin on public.memberships
   for all to authenticated
-  using (tenant_id = (select app.tenant_id()) and (select app.role()) = 'ADMIN')
+  using (tenant_id = (select app.current_tenant_id()) and (select app.role()) = 'ADMIN')
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.role()) = 'ADMIN'
     and (select app.aal()) = 'aal2'
   );
@@ -1089,7 +1198,7 @@ because the demo needs shared counts and a consultant obviously wants a private 
 create policy saved_views_select on public.saved_views
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('view:read'))
     and (
       owner_id = (select auth.uid())
@@ -1101,7 +1210,7 @@ create policy saved_views_select on public.saved_views
 create policy saved_views_insert on public.saved_views
   for insert to authenticated
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and owner_id = (select auth.uid())
     and (select app.has_permission('view:write'))
     and (visibility = 'PRIVATE' or (select app.has_permission('view:share')))
@@ -1109,12 +1218,12 @@ create policy saved_views_insert on public.saved_views
 
 create policy saved_views_modify on public.saved_views
   for update to authenticated
-  using (tenant_id = (select app.tenant_id()) and owner_id = (select auth.uid()))
-  with check (tenant_id = (select app.tenant_id()) and owner_id = (select auth.uid()));
+  using (tenant_id = (select app.current_tenant_id()) and owner_id = (select auth.uid()))
+  with check (tenant_id = (select app.current_tenant_id()) and owner_id = (select auth.uid()));
 
 create policy saved_views_delete on public.saved_views
   for delete to authenticated
-  using (tenant_id = (select app.tenant_id()) and owner_id = (select auth.uid()));
+  using (tenant_id = (select app.current_tenant_id()) and owner_id = (select auth.uid()));
 ```
 
 **`policies`** (the APV-01 / FIN-01 rows) is read by everyone who can see a gated button, because
@@ -1125,9 +1234,9 @@ path:
 ```sql
 create policy approval_policies_write on public.policies
   for all to authenticated
-  using (tenant_id = (select app.tenant_id()) and (select app.has_permission('policy:write')))
+  using (tenant_id = (select app.current_tenant_id()) and (select app.has_permission('policy:write')))
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('policy:write'))
     and (select app.aal()) = 'aal2'
   );
@@ -1160,7 +1269,7 @@ Worked example for the unassigned-enquiry case, which is the only place a null o
 create policy enquiries_select on public.enquiries
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('enquiry:read'))
     and (select app.agent_in_scope('enquiries'))
     and ( assigned_to is null                      -- the shared inbox, §4's assignedTo: null
@@ -1179,11 +1288,17 @@ the portal never reaches these tables at all (§5). Internally `costing:read` is
 
 `approval_requests`, `approval_decisions`. `sb-actions` owns their columns; I own who sees them.
 
+**These must be in `public`, not `app`.** `sb-actions` was drafting them as `app.approval_requests`.
+The `app` schema is deliberately outside PostgREST's exposed schemas and has no grants to any login
+role, so `GET /v1/approvals` could not read them and M02-S01 would have no data source. The research
+doc's §3 recommendation to keep the gate in a non-exposed schema is about the **RPC**, not the
+tables. Policies below assume `public`.
+
 ```sql
 create policy approval_requests_select on public.approval_requests
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('approval:read'))
     and (
       -- the approver queue
@@ -1203,18 +1318,18 @@ create index approval_requests_assigned_idx
 
 create policy approval_requests_insert on public.approval_requests
   for insert to authenticated
-  with check (tenant_id = (select app.tenant_id()));   -- created by the action envelope, any principal
+  with check (tenant_id = (select app.current_tenant_id()));   -- created by the action envelope, any principal
 
 create policy approval_decisions_insert on public.approval_decisions
   for insert to authenticated
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('approval:decide'))
     and decided_by = (select auth.uid())
     and exists (
       select 1 from public.approval_requests r
       where r.id = approval_decisions.request_id
-        and r.tenant_id = (select app.tenant_id())
+        and r.tenant_id = (select app.current_tenant_id())
         and r.requested_by_user_id is distinct from (select auth.uid())   -- §3 rule 5
         and (r.approver_role = (select app.role()) or r.escalate_to_role = (select app.role()))
     )
@@ -1255,7 +1370,7 @@ The engagement policy carries the trainer branch, and it is the one place two sc
 create policy engagements_select on public.engagements
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('engagement:read'))
     and (select app.agent_in_scope('engagements'))
     and (
@@ -1319,8 +1434,7 @@ when a human with AAL2 approves it. Without that branch the agent could not even
 | `ai_tiers`, `ai_routing` | `ai:tier:read` / `ai:routing:read` | `ADMIN` | `ADMIN` + AAL2 | `ADMIN` |
 | `ai_usage` | `ai:usage:read` | service_role | none | none |
 | `ai_budgets` | `ai:budget:read` | `ADMIN` | `ADMIN`; raising a cap needs `ai:budget:raise` | none |
-| `ai_provider_keys` | `ai:provider:read` | RPC only | RPC only | RPC only |
-| `app.ai_provider_key_secrets` | nobody | nobody | nobody | nobody |
+| `ai_provider` *(sb-money)* | `ai:provider:read` | RPC only | RPC only | RPC only |
 | `agent_api_keys` | metadata only, `ADMIN` | RPC only | revoke only, `ADMIN` | none |
 
 `agent_api_keys` never exposes `key_hash`, and no principal may read it as an agent:
@@ -1329,16 +1443,16 @@ when a human with AAL2 approves it. Without that branch the agent could not even
 create policy agent_api_keys_select on public.agent_api_keys
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.role()) = 'ADMIN'
     and not (select app.is_agent())
   );
 
 create policy agent_api_keys_revoke on public.agent_api_keys
   for update to authenticated
-  using (tenant_id = (select app.tenant_id()) and (select app.role()) = 'ADMIN')
+  using (tenant_id = (select app.current_tenant_id()) and (select app.role()) = 'ADMIN')
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.aal()) = 'aal2'
     and not (select app.is_agent())
   );
@@ -1355,7 +1469,7 @@ what makes a compromised agent credential a small problem:
 create policy agents_select on public.agents
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (
       (select app.has_permission('agent:read'))
       or (select app.agent_id()) = id            -- an agent sees itself
@@ -1365,11 +1479,11 @@ create policy agents_select on public.agents
 create policy agent_autonomy_update on public.agent_autonomy
   for update to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('agent:autonomy'))
   )
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('agent:autonomy'))
     and (select app.aal()) = 'aal2'
     and not (select app.is_agent())              -- no agent raises its own autonomy, ever
@@ -1378,7 +1492,7 @@ create policy agent_autonomy_update on public.agent_autonomy
 create policy runs_select on public.runs
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (
       (select app.has_permission('run:read'))
       or (select app.agent_id()) = agent_id
@@ -1426,43 +1540,34 @@ Two hard rules for the migrations author and for `sb-events`:
    tenant argument against `public.tenants`. Tenant isolation on those paths is a code invariant, so
    it gets a code review and a test, not a policy.
 
-### 4.10 Realtime: the one policy that is mine, not `sb-events`'
+### 4.10 Realtime: `sb-events` owns the policy
 
-§11 specifies SSE. The research doc (§4, and its "Client-facing events" default) recommends Realtime
-**Broadcast** through `realtime.broadcast_changes()` / `realtime.send()` instead, because Postgres
-Changes does not scale past roughly 3,000 concurrent subscribers, and it notes the Realtime schema
-has been locked against direct DDL since July 2026. Whether TrainOS ships SSE or Broadcast is
-`sb-events`' call.
+§11 specifies SSE. The research doc (§4) recommends Realtime **Broadcast** instead, because Postgres
+Changes does not scale past roughly 3,000 concurrent subscribers. If Broadcast wins, authorisation
+is an RLS policy on `realtime.messages`, which by schema is my lane and by content is theirs.
 
-If Broadcast wins, authorisation is an RLS policy on `realtime.messages` and therefore lands in my
-lane. The channel name must carry the tenant so the policy can read it without a lookup:
+**It is theirs.** `sb-events`' channel set is richer than the one I had drafted, and splitting a
+single policy across two documents is how it ends up written twice and differently. Recorded here so
+the policy sweep in §8.7 knows to expect it in `docs/architecture/05-events-outbox-realtime-audit.md`
+rather than flag it missing. Their naming:
+`tenant:{tenant_id}:{badges|approvals|enquiries|invoices}`, `run:{run_id}`, `user:{user_id}:*`.
 
-```
-tenant:{tenant_id}:badges
-tenant:{tenant_id}:approvals
-tenant:{tenant_id}:enquiries
-tenant:{tenant_id}:invoices
-tenant:{tenant_id}:runs:{run_id}
-```
+Three points I owe them, one of which corrects something I told them earlier:
 
-```sql
-create policy realtime_tenant_scoped_read on realtime.messages
-  for select to authenticated
-  using (
-    split_part(realtime.topic(), ':', 1) = 'tenant'
-    and split_part(realtime.topic(), ':', 2) = (select app.tenant_id())::text
-  );
-
-create policy realtime_no_client_writes on realtime.messages
-  as restrictive for insert to authenticated
-  with check (false);      -- only service_role broadcasts
-```
-
-Tenant scoping is all RLS can do here. §11 also requires SSE to be *"per-user filtered"* — an
-approver seeing only their queue's badge counts — and a channel name cannot express `can_see_owner`.
-That filter stays in the fan-out code, which is `sb-events`'. Flagged to them explicitly: a
-tenant-scoped channel is not a user-scoped channel, and the badge payload
-`{ approvals: 7, hrdcDeadlines: 3 }` is a different number per user.
+1. **Per-user fan-out *is* expressible in RLS — I said otherwise and was wrong.** §11 requires the
+   SSE feed to be *"per-user filtered"*, and the badge payload `{ approvals: 7, hrdcDeadlines: 3 }`
+   is a different number per user. I had concluded a channel-name policy could not express that and
+   the filter had to live in fan-out code. Their `user:{user_id}:*` naming solves it directly:
+   `split_part(realtime.topic(),':',2) = (select auth.uid())::text`. User ids are globally unique, so
+   the absent tenant segment is not a hole.
+2. **`run:{run_id}` has no tenant segment**, so it needs a lookup rather than string parsing:
+   `exists (select 1 from public.runs r where r.id = split_part(realtime.topic(),':',2)::uuid and
+   r.tenant_id = (select app.current_tenant_id()))`. The index in §4.8 covers it. Renaming the
+   channel `tenant:{tenant_id}:run:{run_id}` keeps it pure string parsing and consistent with the
+   other four.
+3. **A restrictive INSERT policy denying client broadcasts** (`with check (false)`) so only
+   `service_role` publishes. Without it, an authenticated user can publish onto any channel they can
+   read, and the approvals badge becomes spoofable.
 
 ---
 
@@ -1589,14 +1694,14 @@ document and closes the write path.
 create policy public_share_tokens_select on public.public_share_tokens
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('proposal:read'))
   );
 
 create policy public_share_tokens_insert on public.public_share_tokens
   for insert to authenticated
   with check (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('portal:token:issue'))
     and issued_by = (select auth.uid())
   );
@@ -1604,10 +1709,10 @@ create policy public_share_tokens_insert on public.public_share_tokens
 create policy public_share_tokens_revoke on public.public_share_tokens
   for update to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('portal:token:revoke'))
   )
-  with check (tenant_id = (select app.tenant_id()));
+  with check (tenant_id = (select app.current_tenant_id()));
 ```
 
 An expired or revoked token and a nonexistent one return the same `NOT_FOUND`, so the page cannot be
@@ -1641,50 +1746,44 @@ authenticate.
 
 `anon` and `authenticated` are granted nothing on `vault.decrypted_secrets`, ever.
 
-The important structural choice is that **the secret's locator does not live on the public row**:
+**The metadata table is `sb-money`'s, not mine.** I had defined a `public.ai_provider_keys` here with
+the same columns they were writing on `ai_provider`; that is duplication, and duplication is the
+defect. Their table wins. I own the secret material, the RLS on their table, and the reveal path.
 
 ```sql
-create table public.ai_provider_keys (
-  id                   text primary key,              -- 'prv_anthropic', §17
-  tenant_id            uuid not null references public.tenants(id) on delete cascade,
-  provider             text not null,
-  label                text not null,
-  masked_key           text not null,                 -- 'sk-ant-••••••••••••9a41'
-  key_fingerprint      bytea not null,                -- sha256, for "same key re-added" detection
-  status               text not null default 'NOT_SET'
-                         check (status in ('NOT_SET','VALID','INVALID','EXPIRING')),
-  scope_tiers          text[] not null default '{}',
-  region               text,
-  billing_owner        text check (billing_owner in ('CLIENT_ACCOUNT','PASS_THROUGH')),
-  rotation_date        date,
-  last_tested_at       timestamptz,
-  invalid_since        timestamptz,
-  active_fallback_tier text,
-  added_by             uuid references auth.users(id),
-  added_at             timestamptz not null default now(),
-  unique (tenant_id, provider, label)
-);
-create index ai_provider_keys_tenant_idx on public.ai_provider_keys (tenant_id);
-
--- The locator lives in the private schema with no grants to any login role.
-create table app.ai_provider_key_secrets (
-  provider_key_id text primary key references public.ai_provider_keys(id) on delete cascade,
-  tenant_id       uuid not null,
-  vault_secret_id uuid not null
-);
+-- sb-money owns this shape. Reproduced only for the columns my policies and RPCs depend on.
+-- public.ai_provider (
+--   id text primary key,                -- 'prv_anthropic', §17
+--   tenant_id uuid not null,
+--   provider text, label text,
+--   masked_key text not null,           -- 'sk-ant-••••••••••••9a41'
+--   key_fingerprint bytea,              -- sha256, comparison only, never authentication
+--   key_ref text,                       -- the Vault secret id. Opaque to every reader.
+--   status, scope_tiers, spend, cap, rotation_date, billing_owner, region,
+--   last_tested_at, invalid_since, active_fallback_tier, added_by, added_at )
+create index ai_provider_tenant_idx on public.ai_provider (tenant_id);
 ```
 
-Because `public.ai_provider_keys` contains no secret column, `select *` is safe and PostgREST needs
-no column-level gymnastics. `app.ai_provider_key_secrets` has no `GRANT` to `anon`, `authenticated`
-or `service_role`; only `SECURITY DEFINER` functions owned by `postgres` can read it.
+`key_ref` sits on the public row and that is safe. I had planned a separate private table holding
+the locator, on the theory that a Vault secret id should not be servable by PostgREST. That was
+over-careful: **a Vault secret uuid is not itself a capability.** Decrypting requires `SELECT` on
+`vault.decrypted_secrets`, which no login role has and never will get. Conceding it removes a table
+and keeps `select *` safe, since no column here holds key material.
+
+Two requirements on `sb-money`'s columns that the design depends on:
+
+- `masked_key` is computed **in the database** at write time — `left(key,7) || repeat('•',12) ||
+  right(key,4)` — never by the caller, or the mask can be faked.
+- `key_fingerprint` is a hash used only for "this key was already added" detection. Per §6.1 it is
+  never the thing that authenticates, because BYOK needs reversible decryption.
 
 ### 6.2 Write-only semantics
 
 ```sql
-create policy ai_provider_keys_select on public.ai_provider_keys
+create policy ai_provider_select on public.ai_provider
   for select to authenticated
   using (
-    tenant_id = (select app.tenant_id())
+    tenant_id = (select app.current_tenant_id())
     and (select app.has_permission('ai:provider:read'))
   );
 
@@ -1727,9 +1826,9 @@ begin
   end if;
 
   select vs.decrypted_secret into v_secret
-  from app.ai_provider_key_secrets s
-  join vault.decrypted_secrets vs on vs.id = s.vault_secret_id
-  where s.provider_key_id = p_id and s.tenant_id = (select app.tenant_id());
+  from public.ai_provider k
+  join vault.decrypted_secrets vs on vs.id = k.key_ref::uuid
+  where k.id = p_id and k.tenant_id = (select app.current_tenant_id());
 
   if v_secret is null then
     raise exception 'NOT_FOUND' using errcode = 'no_data_found';
@@ -1737,7 +1836,7 @@ begin
 
   -- sb-events owns the audit table and the outbox row. This is the event name it must emit.
   perform events.record(                                -- [assumed] sb-events' writer
-    p_tenant_id => (select app.tenant_id()),
+    p_tenant_id => (select app.current_tenant_id()),
     p_event     => 'ProviderKeyRevealed',
     p_subject   => p_id,
     p_payload   => jsonb_build_object('providerId', p_id, 'reason', p_reason,
@@ -1818,7 +1917,7 @@ create policy require_aal2_for_privileged_roles on public.<t>
 | `memberships`, `teams`, `team_members` | every write, every role |
 | `policies`, `compliance_rules` (activation) | every write, every role |
 | `agents`, `agent_autonomy`, `ai_tiers`, `ai_routing`, `ai_budgets` | every write, every role |
-| `ai_provider_keys` RPCs incl. reveal | every call |
+| `ai_provider` RPCs incl. reveal | every call |
 | `invoices`, `payments`, `hrdc_packets` (mark-submitted), `costings` (discount below floor) | humans; agents exempt (§4.7) |
 | everything else | `MD` and `ADMIN` writes only |
 
@@ -1986,7 +2085,7 @@ Run the matrix against these families: `tenants`, `memberships`, `teams`, `saved
 `programmes`, `proposals`, `proposal_sections`, `costings`, `approval_requests`,
 `approval_decisions`, `engagements`, `participants`, `attendance_days`, `attendance_entries`,
 `hrdc_packets`, `invoices`, `payments`, `collections`, `agents`, `agent_autonomy`, `runs`,
-`ai_tiers`, `ai_routing`, `ai_budgets`, `ai_provider_keys`, `compliance_rules`,
+`ai_tiers`, `ai_routing`, `ai_budgets`, `ai_provider`, `compliance_rules`,
 `knowledge_sources`, `public_share_tokens`, `agent_api_keys`. Thirty-six families × four cases.
 
 ### 8.3 Scope tests
@@ -2123,7 +2222,7 @@ select is_empty($$
   select polname from pg_policy where 0 = any (polroles)
 $$, 'no policy applies to PUBLIC');
 
--- Every tenant_id column is indexed.
+-- Every tenant_id column is indexed as the leading column of something.
 select is_empty($$
   select c.relname from pg_class c
   join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
@@ -2132,7 +2231,20 @@ select is_empty($$
     and not exists (select 1 from pg_index i
                     where i.indrelid = c.oid and a.attnum = i.indkey[0])
 $$, 'every tenant_id is the leading column of some index');
+
+-- Every tenant_id is NOT NULL, except the Template E global-reference tables.
+select is_empty($$
+  select c.relname from pg_class c
+  join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id'
+  join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+  where c.relkind = 'r' and not a.attnotnull
+    and c.relname not in ('compliance_rules','rule_sets','rule_changes')  -- Template E, §4.2
+$$, 'tenant_id is not null outside the documented global-reference tables');
 ```
+
+That last allowlist is the whole point of writing it as an allowlist rather than dropping the check.
+`sb-money`'s nullable `tenant_id` on the HRD Corp rule set is deliberate and correct; without the
+named exception, the test says it is a defect and someone eventually "fixes" it.
 
 Those three catch the failure mode that matters most: a table added six months from now that nobody
 remembers to protect.
@@ -2195,12 +2307,43 @@ and a RESTRICTIVE `aal2` policy for MD and ADMIN. Where I moved, and where I did
 4. **Realtime Broadcast policy on `realtime.messages`** (§4.10), which I had not considered because
    §11 of the contract specifies SSE.
 
+### Disagreement with the research — for the critic to adjudicate
+
+One substantive disagreement, stated as a comparison so it can be judged rather than taken on trust.
+
+| | Research doc §2 | This document §3.1 | Original Phase 1 header |
+|---|---|---|---|
+| Credential | Hashed, revocable API key | **Same** | Password on an auth user |
+| Token | Short-lived minted JWT with `role: AGENT`, `tenant_id`, `agent_id` | **Same**, 15 min, ES256 | GoTrue session, 1800 s |
+| `sub` claim | An `agents` row id; no `auth.users` row | **An inert `auth.users` row**, no password, cannot sign in | A real auth user with a password |
+| Revocation | Disable the agent row, key stops validating | **Same** | Rotate the password, wait out live sessions |
+
+I adopted the research's design and abandoned my own on the two axes that matter. **The single
+remaining disagreement is the `sub` claim.** The research says model each agent as a row in an
+`agents` table *rather than* an `auth.users` row. I keep one inert `auth.users` row per agent per
+tenant, because taken literally the research's position breaks three things:
+
+1. `created_by`, `owner_id` and `decided_by` are `references auth.users(id)`. An agent that drafts a
+   proposal must appear in those columns, so the alternative is dropping the foreign key
+   estate-wide — a much larger concession than one inert row per agent.
+2. `auth.uid()` returns null, so `app.owns()` and every policy branch comparing to it needs an
+   agent-shaped special case. That is a second code path through the isolation boundary, which is
+   exactly what §3.2's `not app.is_agent() or …` prefix pattern exists to avoid.
+3. Supabase's own session and audit tooling stops recognising the principal.
+
+Cost of my position: N agents × M tenants inert rows, and a provisioning step. Eight agents and
+single-digit tenants is dozens of rows. Cost of the research's position: an estate-wide foreign-key
+concession and a duplicated policy branch. I think the comparison is lopsided, but it is the
+critic's call, and the research doc explicitly labels its §2 and §3 as its own synthesis rather than
+first-party Supabase guidance, so neither of us is citing authority here.
+
+The related risk is in §11 and is the one to watch: whether self-minting a JWT with the project's
+ES256 signing key is supported outside GoTrue at all. If it is not, both designs collapse back to
+the password grant, which is worse than either.
+
 **Kept against, or added to, the research.**
 
-5. **The agent's `sub` points at a real, inert `auth.users` row.** The research says model the agent
-   as an `agents` row *rather than* an `auth.users` row. Argued in §3.1: taken literally that breaks
-   every `references auth.users(id)` column and makes `auth.uid()` null inside policies. The
-   credential is still the API key — the auth row is a name, not a login.
+5. **The agent's `sub` points at a real, inert `auth.users` row** — the disagreement above.
 6. **Permissions are not JWT claims.** Not a deviation after all: the research quotes the Supabase
    Custom Claims & RBAC guide, whose canonical shape is a role claim plus a `role_permissions` table
    plus an `authorize()` helper. That is §1.4 with our names.
