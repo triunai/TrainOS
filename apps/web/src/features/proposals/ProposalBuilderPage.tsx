@@ -12,6 +12,7 @@ import {
   AIChip,
   ApprovalBanner,
   Breadcrumb,
+  CitationChip,
   ContentCard,
   ErrorState,
   ExceptionBanner,
@@ -32,6 +33,7 @@ import {
   useApproval,
   useEditSection,
   useProposal,
+  useProposalClient,
   useRegenerateSection,
   useSendProposal,
 } from "./api";
@@ -57,6 +59,7 @@ export function ProposalBuilderPage() {
 
   const proposalQuery = useProposal(proposalRef);
   const proposal = proposalQuery.data;
+  const clientQuery = useProposalClient(proposal?.opportunityRef);
 
   const [activeN, setActiveN] = useState<number | null>(null);
   const [draftBody, setDraftBody] = useState<string | null>(null);
@@ -126,7 +129,7 @@ export function ProposalBuilderPage() {
 
       <ContentCard flush>
         <RecordHeader
-          title={proposal.ref}
+          title={clientQuery.data ? `${proposal.ref} · ${clientQuery.data.name}` : proposal.ref}
           meta={[
             proposal.opportunityRef,
             proposal.templateId,
@@ -446,6 +449,25 @@ function SectionEditor({
       ) : (
         <p className="text-[13px] leading-relaxed text-ink">{section.body}</p>
       )}
+
+      {/* §7: uncited AI prose is not permitted on a record page. The chips are
+          the section's own provenance sources, not a decoration. */}
+      {section.provenance?.sources && section.provenance.sources.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-ink-secondary">Sources</span>
+          {section.provenance.sources.map((source, index) => (
+            <CitationChip
+              key={`${source.type}-${source.ref}`}
+              label={`${source.type} ${source.ref}`}
+            >
+              {index + 1}
+            </CitationChip>
+          ))}
+          <span className="font-mono text-[10px] text-ink-muted">
+            {section.provenance.sources.map((source) => source.ref).join(" · ")}
+          </span>
+        </div>
+      ) : null}
 
       {section.mergeFieldsUsed && section.mergeFieldsUsed.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">

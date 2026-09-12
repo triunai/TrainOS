@@ -14,10 +14,27 @@ const COSTING_ROUTE = "/finance/quotations/:quotationRef";
 const costingPath = `/finance/quotations/${QUOTATION_AURORA}`;
 
 describe("M07-S02 · proposal builder", () => {
+  it("cites the sources behind an AI-written section", async () => {
+    renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
+
+    await screen.findByRole("heading", { name: "1 · Understanding your needs" });
+    expect(screen.getByText("Sources")).toBeInTheDocument();
+    expect(screen.getByText(/TNA-0042/)).toBeInTheDocument();
+  });
+
   it("renders every section with its own provenance", async () => {
     renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
 
-    expect(await screen.findByRole("heading", { name: PROPOSAL_AURORA })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: new RegExp(PROPOSAL_AURORA) }),
+    ).toBeInTheDocument();
+    /* RecordHeader owns the record's identity, and the identity is the
+       reference AND the client it is for. */
+    expect(
+      await screen.findByRole("heading", {
+        name: `${PROPOSAL_AURORA} · Aurora Manufacturing Sdn Bhd`,
+      }),
+    ).toBeInTheDocument();
 
     const rail = screen.getByRole("navigation", { name: "Proposal sections" });
     expect(within(rail).getByText("Understanding your needs")).toBeInTheDocument();
@@ -81,7 +98,7 @@ describe("M07-S02 · proposal builder", () => {
     const user = userEvent.setup();
     renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
 
-    await screen.findByRole("heading", { name: PROPOSAL_AURORA });
+    await screen.findByRole("heading", { name: new RegExp(PROPOSAL_AURORA) });
     const sendButtons = screen.getAllByRole("button", { name: "Send for approval" });
     await user.click(sendButtons[0] as HTMLElement);
 

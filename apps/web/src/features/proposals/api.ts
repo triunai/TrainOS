@@ -112,6 +112,26 @@ export function useProposal(id: string | undefined) {
   });
 }
 
+/**
+ * The client the proposal is for.
+ *
+ * A `Proposal` names its opportunity and nothing else, so the organisation is
+ * two hops away. The record's identity line carries the client name — that is
+ * what a consultant recognises the document by — so the hops are worth making
+ * rather than showing a bare reference.
+ */
+export function useProposalClient(opportunityRef: string | undefined) {
+  const client = useApi();
+  return useQuery({
+    queryKey: [...queryKeys.opportunities.detail(opportunityRef ?? ""), "organisation"] as const,
+    queryFn: async () => {
+      const opportunity = await client.getOpportunity(opportunityRef as string);
+      return client.getOrganisation(opportunity.organisationRef);
+    },
+    enabled: Boolean(opportunityRef),
+  });
+}
+
 /** A manual edit. Flips the section's origin to `AI_SUGGESTED · edited by`. */
 export function useEditSection(id: string | undefined) {
   const client = useApi();
