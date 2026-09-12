@@ -56,10 +56,21 @@ Eighty-nine tables across six bounded contexts, plus twenty referenced from adja
 
 ### Schema and naming
 
-All tables live in **`public`** and are named in the **plural**, matching `02-tenancy-auth-rls.md`, which is
-committed and whose RLS policies already target these names. Helper functions live in `app`. There is no
-`users` table: the user is `auth.users`, and `memberships` carries the tenant-scoped role. Every `owner_id`
-below references `auth.users(id)`.
+Three schemas, per the lead's ruling, migration `001` and `config.toml`:
+
+| Schema | Holds | Exposed by PostgREST |
+|---|---|---|
+| `core` | All 89 domain tables in this document | yes |
+| `public` | Identity and tenancy only: `tenants`, `memberships`, `profiles`, and `saved_views` | yes |
+| `app` | Unexposed internals: the gate ledger, the outbox, helper functions, the transition registry | no |
+
+**Every table in this document is in `core`** and is named in the **plural**. The one exception is
+`saved_views`, which sits in `public` because `02-tenancy-auth-rls.md` is committed with its policies
+written against `public.saved_views`. Table names below are unqualified for readability; read them all as
+`core.<name>` unless the text says otherwise.
+
+There is no `users` table: the user is `auth.users`, and `public.memberships` carries the tenant-scoped
+role. Every `owner_id` below references `auth.users(id)`.
 
 ### Every table carries this and it is not repeated below
 
@@ -1537,6 +1548,7 @@ three near-identical message tables would be exactly the divergence the project 
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
+| `purpose` | `text` | no | — | `FOLLOW_UP·COLLECTION_REMINDER·BROADCAST·JOINING_INSTRUCTIONS`. Added for GOV-07: three different action types gate the same status edge, and the transition registry keys on the entity, not the reason |
 | `channel` | `enquiry_channel` | no | — | `EMAIL·WHATSAPP` in practice |
 | `template_id` | `uuid` | yes | — | → `templates` `ON DELETE RESTRICT` |
 | `category` | `message_category` | yes | — | `MARKETING·UTILITY·SERVICE` — WhatsApp pricing category |
@@ -2201,7 +2213,304 @@ a legitimate correction or permits an unwind of a filed claim.
 
 ---
 
-## 5 · Soft delete and archival
+## 5 · Gated state transitions (GOV-07)
+
+`03-action-envelope-and-policy-gate.md` §2.9 registers `GOV-07`: a status column on a gated table may only
+be crossed by the effect applier running the action type that gates that specific edge. The trigger and
+the registry are sb-actions'. What belongs here is the domain half: **which tables carry the trigger, which
+columns are revoked, and every legal edge**. A missing edge fails closed, so this list is a completeness
+obligation rather than documentation.
+
+### 5.1 Column grants
+
+The trigger is the second line of defence. The first is a column privilege, which bites where RLS does not:
+`service_role` bypasses row-level security but **not** column-level `UPDATE` grants, so revoking the column
+stops the direct flip before any trigger runs. That is the case sb-actions tests as "GOV-07 direct flip".
+
+For every status column in 5.3:
+
+```sql
+revoke update (<column>) on core.<table> from anon, authenticated, service_role;
+-- the applier is SECURITY DEFINER and runs as the owner, so it needs no grant
+create trigger <table>_state_gate
+  before insert or update of <column> on core.<table>
+  for each row execute function app.enforce_state_transition('<column>');
+```
+
+`INSERT` needs no column revoke, because the registry carries `from_status = null` rows and an insert
+naming a status with no such row is refused by the trigger. That is sb-actions' "insert bypass" test.
+
+### 5.2 One defect in the registry's shape
+
+`state_transitions` is keyed `(entity, column_name, from_status, to_status)` with a single `gated_by`.
+One edge in this model is authorised by **three** different action types: `outbound_messages`
+`DRAFT → QUEUED` is gated by `FOLLOWUP_SEND`, `REMINDER_SEND` or `BROADCAST_SEND` depending on why the
+message exists. That cannot be expressed, and the fail-closed default means the wrong one of the three
+would be rejected at send time.
+
+Two ways out, and the second is better: add a discriminator to the key, or make `gated_by` a `text[]` and
+require the running action's type to be a member. I have added `outbound_messages.purpose` either way,
+since the message needs to know what it is for. **Raised to sb-actions; the registry change is theirs.**
+
+### 5.3 The legal-transition set
+
+`from = (new)` means an `INSERT`. A blank gate means the edge is ungated and the trigger returns early.
+Read every entity as `core.<entity>`.
+
+**`enquiries.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `OPEN` | |
+| `OPEN` | `ASSIGNED` | |
+| `ASSIGNED` | `OPEN` | |
+| `OPEN` | `CONVERTED` | `OPPORTUNITY_CONVERT` |
+| `ASSIGNED` | `CONVERTED` | `OPPORTUNITY_CONVERT` |
+| `OPEN` | `ARCHIVED` | `ENQUIRY_ARCHIVE` |
+| `ASSIGNED` | `ARCHIVED` | `ENQUIRY_ARCHIVE` |
+| `OPEN` | `NOT_AN_ENQUIRY` | `ENQUIRY_ARCHIVE` |
+| `ARCHIVED` | `OPEN` | |
+
+**`opportunities.stage`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `NEW` | |
+| (new) | `QUALIFYING` | `OPPORTUNITY_CONVERT` |
+| `NEW` | `QUALIFYING` | |
+| `QUALIFYING` | `TNA_SENT` | |
+| `TNA_SENT` | `QUALIFYING` | |
+| `QUALIFYING` | `PROPOSAL_SENT` | `PROPOSAL_SEND` |
+| `TNA_SENT` | `PROPOSAL_SENT` | `PROPOSAL_SEND` |
+| `PROPOSAL_SENT` | `NEGOTIATION` | |
+| `NEGOTIATION` | `PROPOSAL_SENT` | `PROPOSAL_SEND` |
+| `PROPOSAL_SENT` | `WON` | |
+| `NEGOTIATION` | `WON` | |
+| `NEW` | `LOST` | |
+| `QUALIFYING` | `LOST` | |
+| `TNA_SENT` | `LOST` | |
+| `PROPOSAL_SENT` | `LOST` | |
+| `NEGOTIATION` | `LOST` | |
+
+**`tnas.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `DRAFT` | |
+| `DRAFT` | `SENT` | |
+| `SENT` | `DRAFT` | |
+| `SENT` | `COMPLETE` | |
+| `COMPLETE` | `REOPENED` | |
+| `REOPENED` | `COMPLETE` | |
+
+**`proposals.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `DRAFT` | |
+| `DRAFT` | `AWAITING_APPROVAL` | `PROPOSAL_SEND` |
+| `AWAITING_APPROVAL` | `DRAFT` | |
+| `AWAITING_APPROVAL` | `SENT` | `PROPOSAL_SEND` |
+| `DRAFT` | `SENT` | `PROPOSAL_SEND` |
+| `SENT` | `VIEWED` | |
+| `SENT` | `ACCEPTED` | |
+| `VIEWED` | `ACCEPTED` | |
+| `SENT` | `LOST` | |
+| `VIEWED` | `LOST` | |
+
+`AWAITING_APPROVAL → DRAFT` is ungated on purpose: it is what `REQUEST_CHANGES` leaves behind, and the
+approval decision is already gated on its own side.
+
+**`quotations.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `DRAFT` | |
+| `DRAFT` | `APPLIED` | `QUOTATION_APPLY` |
+| `DRAFT` | `SUPERSEDED` | |
+| `APPLIED` | `SUPERSEDED` | `QUOTATION_APPLY` |
+
+A below-floor price is not a status edge. It is the `floor_price_needs_approval` constraint plus
+`discount_approval_id`, gated by `DISCOUNT_APPROVE`.
+
+**`engagements.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `PROPOSED` | |
+| `PROPOSED` | `CONFIRMED` | |
+| `CONFIRMED` | `SCHEDULED` | |
+| `SCHEDULED` | `IN_DELIVERY` | |
+| `IN_DELIVERY` | `DELIVERED` | |
+| `DELIVERED` | `CLOSED` | `ENGAGEMENT_CLOSE_OUT` |
+| `PROPOSED` | `CANCELLED` | |
+| `CONFIRMED` | `CANCELLED` | |
+| `SCHEDULED` | `CANCELLED` | |
+
+**`attendance_days.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `OPEN` | |
+| `OPEN` | `PENDING_APPROVAL` | |
+| `PENDING_APPROVAL` | `OPEN` | |
+| `OPEN` | `LOCKED` | `ATTENDANCE_APPROVE` |
+| `PENDING_APPROVAL` | `LOCKED` | `ATTENDANCE_APPROVE` |
+| `LOCKED` | `OPEN` | `ATTENDANCE_UNLOCK` |
+
+`LOCKED → OPEN` is the only edge in the model that also has to void a claim packet. GOV-07 authorises the
+transition; immutability rule I1 and its unlock trigger do the rest.
+
+**`hrdc_packets.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `DRAFT` | |
+| `DRAFT` | `READY` | |
+| `READY` | `DRAFT` | |
+| `READY` | `SUBMITTED` | `HRDC_PACKET_MARK_SUBMITTED` |
+| `SUBMITTED` | `PAID` | |
+| `SUBMITTED` | `REJECTED` | |
+| `REJECTED` | `DRAFT` | |
+
+**`invoices.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `DRAFT` | `INVOICE_CREATE` |
+| `DRAFT` | `SENT` | `INVOICE_PUSH` |
+| `SENT` | `PARTIALLY_PAID` | `PAYMENT_RECORD` |
+| `SENT` | `PAID` | `PAYMENT_RECORD` |
+| `PARTIALLY_PAID` | `PAID` | `PAYMENT_RECORD` |
+| `SENT` | `OVERDUE` | |
+| `PARTIALLY_PAID` | `OVERDUE` | |
+| `OVERDUE` | `PARTIALLY_PAID` | `PAYMENT_RECORD` |
+| `OVERDUE` | `PAID` | `PAYMENT_RECORD` |
+| `DRAFT` | `VOID` | |
+| `SENT` | `VOID` | |
+| `OVERDUE` | `VOID` | |
+
+`→ OVERDUE` is ungated because it is time passing, not an act. It is written by a scheduled job.
+
+**`invoices.sync_state`** — a second gated column on the same table, so the trigger is attached twice
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `NOT_SENT` | |
+| `NOT_SENT` | `SENT` | `INVOICE_PUSH` |
+| `NOT_SENT` | `ERROR` | |
+| `SENT` | `VALIDATED` | |
+| `SENT` | `ERROR` | |
+| `ERROR` | `SENT` | `INVOICE_PUSH` |
+
+`SENT → VALIDATED` is ungated: it arrives on the accounting webhook and no TrainOS action causes it.
+
+**`collections_cases.stage`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `REMINDER_1` | |
+| `REMINDER_1` | `REMINDER_2` | `REMINDER_SEND` |
+| `REMINDER_2` | `REMINDER_3` | `REMINDER_SEND` |
+| `REMINDER_3` | `HUMAN_CALL` | |
+| `HUMAN_CALL` | `TRADING_HOLD` | `DISCOUNT_APPROVE` |
+
+`TRADING_HOLD` needs MD approval (§9) and has no action type of its own in §3. Gating it on
+`DISCOUNT_APPROVE` is wrong and is a placeholder; the contract needs a `TRADING_HOLD_APPLY` action type.
+**Raised as Q24.**
+
+**`trainer_bookings.state`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `SOFT_HOLD` | |
+| `SOFT_HOLD` | `CONFIRMED` | `TRAINER_BOOK` |
+| `SOFT_HOLD` | `RELEASED` | |
+| `SOFT_HOLD` | `CANCELLED` | |
+| `CONFIRMED` | `CANCELLED` | `TRAINER_BOOK` |
+
+**`compliance_rules.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `PROPOSED` | |
+| `PROPOSED` | `ACTIVE` | `RULE_CHANGE_APPROVE` |
+| `PROPOSED` | `SUPERSEDED` | |
+| `ACTIVE` | `SUPERSEDED` | `RULE_CHANGE_APPROVE` |
+
+There is no edge back to `ACTIVE` from `SUPERSEDED`, and none from `ACTIVE` to `PROPOSED`. Rule I5 makes an
+active rule append-only, and this registry says the same thing a second way, which is deliberate: one is
+the invariant, the other is the authorisation.
+
+**`rule_changes.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `PROPOSED` | |
+| (new) | `WITHHELD` | |
+| `WITHHELD` | `PROPOSED` | |
+| `PROPOSED` | `APPROVED` | `RULE_CHANGE_APPROVE` |
+| `PROPOSED` | `REJECTED` | |
+
+**`agents.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `ACTIVE` | |
+| `ACTIVE` | `PAUSED` | `AGENT_PAUSE` |
+| `PAUSED` | `ACTIVE` | `AGENT_PAUSE` |
+| `ACTIVE` | `RETIRED` | |
+| `PAUSED` | `RETIRED` | |
+
+**`ai_budgets.state`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `WITHIN` | |
+| `WITHIN` | `NEAR` | |
+| `NEAR` | `PAUSED` | |
+| `NEAR` | `WITHIN` | |
+| `PAUSED` | `WITHIN` | `BUDGET_CAP_RAISE` |
+
+`→ PAUSED` is ungated because a tripped cap is arithmetic. Leaving `PAUSED` is the act, and it is
+MD-gated (§17).
+
+**`outbound_messages.status`**
+
+| from | to | gated_by |
+|---|---|---|
+| (new) | `DRAFT` | |
+| `DRAFT` | `QUEUED` | see 5.2 — three action types |
+| `QUEUED` | `SENT` | |
+| `SENT` | `DELIVERED` | |
+| `DELIVERED` | `READ` | |
+| `QUEUED` | `FAILED` | |
+| `SENT` | `FAILED` | |
+
+### 5.4 Status columns deliberately outside GOV-07
+
+These carry a status but no action type ever crosses it, so they get neither the trigger nor a column
+revoke. Listing them is the point: silence would read as an omission.
+
+`follow_ups.status`, `organisation_suggestions.status`, `organisations.status`, `programmes.status`,
+`templates.status`, `pipelines.status`, `trainers.status`, `hrdc_packet_documents.status`,
+`ai_tiers.status`, `ai_provider_keys.status`, `knowledge_sources.monitor_status` and `embedding_status`,
+`runs.status`, `run_steps.status`, `run_nodes.status`, `engagement_step_states.state`,
+`compliance_check_results.state`.
+
+Two of those deserve a word. `runs.status` is written only by the run engine and a run is immutable once
+ended (rule I7), so a registry entry would add a lookup to every step of every run for no control.
+`engagement_step_states.state` is computed from the check evaluator and the pipeline, never set by a user,
+and gating it would mean the stepper could not render a `BLOCKED` step without an action.
+
+**Total: 121 edges across 17 gated status columns.** That is roughly twice the sixty the lead estimated,
+because §12's enums are larger than the estimate assumed. The number is not negotiable in the way an
+estimate is: every edge listed here is one a screen or an endpoint actually performs, and every edge
+omitted is a feature that fails closed in production.
+
+---
+
+## 6 · Soft delete and archival
 
 **Default: nothing is deleted.** Almost every entity in this contract already carries a lifecycle status
 that says what "gone" means for it — `ENQUIRY.ARCHIVED`, `OPPORTUNITY.LOST`, `INVOICE.VOID`,
@@ -2245,7 +2554,7 @@ tables; they are candidates for partitioning by month and for a retention window
 
 ---
 
-## 6 · Open questions for the client
+## 7 · Open questions for the client
 
 Mapped to the contract's own numbering where one exists. Each names the column or constraint that changes,
 so none of these blocks the migration author — every one has a default in the schema already.
@@ -2275,10 +2584,12 @@ so none of these blocks the migration author — every one has a default in the 
 | Q21 | Should key reveal exist at all, or only rotate-and-replace? | §17 Q4 | `ai_provider_keys.revealed_count` and the reveal endpoint | Reveal exists and is audited |
 | Q22 | Pass-through billing: a TrainOS invoice line, or a report the client reconciles? | §17 Q5 | An `invoice_lines` item code versus a report over `ai_usage_entries` | Report only. No invoice line |
 | Q23 | Is `pgvector` available and at what dimension? | New | `knowledge_chunks.embedding vector(1536)` | 1536 assumed |
+| Q24 | `TRADING_HOLD` needs MD approval but §3 has no action type for it | New, via GOV-07 | A new `TRADING_HOLD_APPLY` action type, or the edge stays ungated | Gated on `DISCOUNT_APPROVE` as a placeholder, which is wrong and marked so |
+| Q25 | Can one status edge be authorised by more than one action type? | New, via GOV-07 §5.2 | `state_transitions.gated_by` becomes `text[]`, or the key gains a discriminator | `outbound_messages.purpose` added here; the registry change is sb-actions' |
 
 ---
 
-## 7 · Deviations from contract
+## 8 · Deviations from contract
 
 Places where this model does not mirror the contract's JSON, and why.
 
@@ -2386,13 +2697,24 @@ Places where this model does not mirror the contract's JSON, and why.
     their three reversals. If sb-events or the knowledge lane ever needs to join a cited source to a real
     record, the child table this document assumed becomes correct again and it should be revisited.
 
-23. **`identity_no` is stored as a hash plus last four, never in full.** HRD Corp claim documentation
+23. **Domain tables are in `core`, not `public`.** The lead's ruling, following migration `001` and
+    `config.toml`, which sb-actions had already adopted. `public` keeps identity and tenancy only, `app`
+    keeps unexposed internals. `saved_views` stays in `public` because sb-tenancy's committed policies name
+    it there, and it is the one exception in this document.
+
+24. **The transition registry cannot express one of this model's edges.** GOV-07 keys `state_transitions`
+    on `(entity, column, from, to)` with a single `gated_by`, but `outbound_messages` `DRAFT → QUEUED` is
+    authorised by `FOLLOWUP_SEND`, `REMINDER_SEND` or `BROADCAST_SEND` depending on the message's purpose.
+    Fail-closed means the wrong two of the three are rejected at send time. Recorded in §5.2 and raised to
+    sb-actions.
+
+25. **`identity_no` is stored as a hash plus last four, never in full.** HRD Corp claim documentation
     needs an identity number, but this system does not need to be able to read one back. The contract does
     not mention the field at all; it will be needed the first time a real packet is assembled.
 
 ---
 
-## 8 · What I could NOT verify
+## 9 · What I could NOT verify
 
 1. **Field-level optionality against the contract package.** The package landed mid-task and was
    reconciled at the **enum** level only: every value set it fixes now matches, and the divergences are in
