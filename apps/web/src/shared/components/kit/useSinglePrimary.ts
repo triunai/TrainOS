@@ -24,6 +24,20 @@ import { useEffect } from "react";
 
 const mounted = new Map<symbol, string>();
 
+let enabled = true;
+
+/**
+ * Turn the check off for a surface that is deliberately not a view.
+ *
+ * There is exactly one such surface: `/dev/kit`, the showcase, which renders
+ * every variant of every component side by side on purpose. A catalogue of
+ * buttons is not a screen with an action, so warning about it would train
+ * everyone to ignore the warning that matters. Nothing else may call this.
+ */
+export function setSinglePrimaryCheck(value: boolean): void {
+  enabled = value;
+}
+
 /** Test seam: the labels currently claiming the view's single primary. */
 export function currentPrimaries(): string[] {
   return [...mounted.values()];
@@ -42,7 +56,7 @@ export function resetPrimaries(): void {
  */
 export function useSinglePrimary(label: string): void {
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!import.meta.env.DEV || !enabled) return;
 
     const token = Symbol(label);
     /* A DIFFERENT label is the violation. The same label twice is the same

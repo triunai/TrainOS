@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { Provenance, ProvenanceOrigin } from "@trainos/contract";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
 import { cn } from "@/shared/lib/utils";
@@ -110,6 +110,7 @@ export function AIChip({
 }: AIChipProps) {
   const resolved = variant ?? variantOf(provenance);
   const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>();
 
   /* A human-authored value carries no badge. §05: "Human — no visible badge,
      filter/audit only." Rendering a grey "Human" chip on every untouched field
@@ -158,16 +159,28 @@ export function AIChip({
 
   /* The popover is the scaffold's Radix-backed `ui/popover`, which supplies the
      positioning, the outside-click dismissal, the Escape handling and the
-     focus return. It opens on hover AND on click, because §05 requires
-     provenance to be reachable from the badge and a hover-only panel is not
-     reachable by keyboard or touch. */
+     focus return. §05 requires provenance to be reachable FROM the badge, so
+     there are two ways in and both are supported: hovering, which is how a
+     mouse reads it in passing, and activating the trigger with Enter, Space or
+     a tap, which is how everyone else does. A hover-only panel is not reachable
+     by keyboard or by touch at all.
+  
+     Radix portals the content, so it is not a descendant of the trigger and a
+     plain `onMouseLeave` on the trigger would close the panel the instant the
+     pointer set off towards it. Hence the short grace period, cancelled when
+     the pointer arrives on the content itself. */
+  const openNow = () => {
+    clearTimeout(closeTimer.current);
+    setOpen(true);
+  };
+  const closeSoon = () => {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setOpen(false), 140);
+  };
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <span
-        className="inline-flex"
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-      >
+      <span className="inline-flex" onMouseEnter={openNow} onMouseLeave={closeSoon}>
         <PopoverTrigger asChild>
           <button type="button" className={cn("rounded-pill", FOCUS_RING)}>
             {chip}
@@ -178,6 +191,11 @@ export function AIChip({
       <PopoverContent
         align="start"
         sideOffset={6}
+        onMouseEnter={openNow}
+        onMouseLeave={closeSoon}
+        /* Keep focus where the reader put it. The popover is reference
+           material, not a destination, and stealing focus into it would strand
+           a keyboard user inside a panel they only meant to glance at. */
         onOpenAutoFocus={(event) => event.preventDefault()}
         className={cn(
           "z-30 flex w-[340px] flex-col gap-1.5 rounded-control border border-primary-border p-3 text-left shadow-raised",

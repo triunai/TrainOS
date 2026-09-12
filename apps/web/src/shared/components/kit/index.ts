@@ -23,7 +23,12 @@ export {
   PEAK_BG,
   WARNING_ACCENT_BG,
 } from "./tokens";
-export { useSinglePrimary, currentPrimaries, resetPrimaries } from "./useSinglePrimary";
+export {
+  useSinglePrimary,
+  setSinglePrimaryCheck,
+  currentPrimaries,
+  resetPrimaries,
+} from "./useSinglePrimary";
 
 /* ---- Controls (Kit §03) --------------------------------------------- */
 export {

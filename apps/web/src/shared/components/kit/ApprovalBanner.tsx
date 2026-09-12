@@ -92,15 +92,35 @@ export function ApprovalBanner({
     );
   }
 
-  const subtitle = [
-    approval.subject,
-    approval.value ? undefined : null,
-    approval.slaBreached
-      ? "SLA breached"
-      : typeof approval.slaRemainingMinutes === "number"
-        ? `${approval.slaRemainingMinutes} min left`
-        : null,
-  ].filter((part): part is string => typeof part === "string");
+  /* One ordered list of facts, joined by a single separator rule, so the line
+     reads the same whichever facts are present. Building it by appending
+     conditional "· " prefixes is how a banner ends up starting with a dot. */
+  const facts: ReactNode[] = [approval.subject];
+
+  if (approval.value) {
+    facts.push(
+      <MoneyText key="value" value={approval.value} compact className="text-ink-secondary" />,
+    );
+  }
+
+  facts.push(
+    <span key="due" className="inline-flex items-center gap-1">
+      due <DateText value={approval.slaDueAt} withTime />
+    </span>,
+  );
+
+  /* The SLA is the last fact, because it is the one that decides whether this
+     row is read now or later. §7: a breach never blocks — it changes the
+     wording and the tone, not the actions. */
+  if (approval.slaBreached) {
+    facts.push(
+      <span key="sla" className="font-medium text-danger">
+        SLA breached
+      </span>,
+    );
+  } else if (typeof approval.slaRemainingMinutes === "number") {
+    facts.push(`${approval.slaRemainingMinutes} min left`);
+  }
 
   return (
     <div
@@ -119,21 +139,17 @@ export function ApprovalBanner({
           {approverName ? ` from ${approverName}` : ""}
           {approverRole ? ` · ${ROLE_LABEL[approverRole] ?? approverRole}` : ""}
         </p>
-        <p className="flex flex-wrap items-center gap-1.5 text-[12px] text-ink-secondary">
-          {subtitle.map((part, index) => (
-            <span key={part}>
-              {index > 0 ? "· " : ""}
-              {part}
+        <p className="flex flex-wrap items-center gap-x-1.5 text-[12px] text-ink-secondary">
+          {facts.map((fact, index) => (
+            <span key={index} className="inline-flex items-center gap-1.5">
+              {index > 0 ? (
+                <span aria-hidden="true" className="text-ink-muted">
+                  ·
+                </span>
+              ) : null}
+              {fact}
             </span>
           ))}
-          {approval.value ? (
-            <>
-              <span>·</span>
-              <MoneyText value={approval.value} compact className="text-ink-secondary" />
-            </>
-          ) : null}
-          <span>· due</span>
-          <DateText value={approval.slaDueAt} withTime />
         </p>
       </div>
 

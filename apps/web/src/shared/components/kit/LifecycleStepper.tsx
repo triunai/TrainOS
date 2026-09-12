@@ -179,38 +179,41 @@ export function LifecycleStepper({
   }
 
   /* Variant A/B/B2 — the record-header chain. Dot and connector above, label
-     and date below. Connector colour reads back to the PRECEDING step, so a
-     finished run of stages draws one continuous ink line and the chain's
-     progress is legible before any label is read. */
+     and date below.
+
+     Every dot sits at the LEFT edge of its own stage cell and the connector
+     runs from it to the next, so each dot lines up with the label beneath it.
+     Building it the other way — a connector on each side of a centred dot —
+     strands the final dot at the far right of the row, a whole cell away from
+     the stage it belongs to.
+
+     The connector takes its colour from the step it LEAVES, so a finished run
+     of stages draws one continuous ink line and the chain's progress is legible
+     before a single label is read. A skipped step's outgoing line is dashed,
+     matching its dot. */
   return (
     <ol aria-label={description} className={cn("flex w-full items-start", className)}>
       {steps.map((step, index) => {
-        const previous = steps[index - 1];
+        const last = index === steps.length - 1;
         return (
           <li
             key={step.key}
             aria-current={step.state === "CURRENT" ? "step" : undefined}
-            className="flex min-w-0 flex-1 flex-col gap-1.5"
+            className={cn("flex min-w-0 flex-col gap-1.5", last ? "shrink-0" : "flex-1")}
           >
-            <div className="flex items-center gap-2">
-              {index > 0 ? (
+            <div className="flex items-center gap-2 pr-2">
+              <StepDot state={step.state} size={10} />
+              {last ? null : (
                 <span
                   aria-hidden="true"
                   className={cn(
                     "h-px flex-1",
-                    previous?.state === "DONE" ? "bg-ink" : "bg-connector",
-                    previous?.state === "SKIPPED" &&
+                    step.state === "DONE" ? "bg-ink" : "bg-connector",
+                    step.state === "SKIPPED" &&
                       "bg-transparent [border-top:1px_dashed_rgb(var(--border-strong))]",
                   )}
                 />
-              ) : null}
-              <StepDot state={step.state} size={10} />
-              {index < steps.length - 1 ? (
-                <span
-                  aria-hidden="true"
-                  className={cn("h-px flex-1", step.state === "DONE" ? "bg-ink" : "bg-connector")}
-                />
-              ) : null}
+              )}
             </div>
 
             <div className="flex flex-col gap-0.5 pr-3">
