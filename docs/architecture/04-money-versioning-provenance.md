@@ -1173,7 +1173,7 @@ during design; this is the suite that keeps them true.
 **Schema placement**
 83. Every table in the placement table above is in the schema that table names. A catalogue query, because a table in `app` fails silently at the API rather than loudly in CI, which is the whole reason this test exists.
 84. `provenance_subject` is the only object of this lane's in `app` that is a table.
-85. Every function this lane owns has a non-null `proconfig` pinning `search_path`, and every one of them pins it to the empty string. Catches both a new function added without one and a well-meaning `'app, pg_catalog'` that puts a writable schema ahead of the catalogue.
+85. Every function this lane owns has a non-null `proconfig` pinning `search_path`, and every one of them pins it to exactly `search_path=""`. Assert the stored string, not merely that a setting exists. This catches three things at once: a new function with no setting, a `search_path=app, pg_catalog` that puts a writable schema ahead of the catalogue, and a `search_path="app, pg_catalog"` whose comma is inside the quotes and therefore names one schema that does not exist. The third is invisible to any test that only checks `proconfig is not null`.
 86. A `core` table's generated column calling an `app` helper still computes after a schema rebuild.
 87. Each of the client-callable RPCs is reachable in `core` and returns its documented shape.
 
@@ -1314,13 +1314,41 @@ returns 2026-11-11 for a 14-day offset and 2027-05-13 for a 6-month one.
 Functions on an empty path must schema-qualify everything outside `pg_catalog`,
 which this lane's already do.
 
-Reported honestly: **I could not reproduce an actual shadowing exploit against
-the `'app, pg_catalog'` ordering.** With an exact-signature `app.round(numeric)`
-shadow present and `app` first, an unqualified call inside a SQL-bodied function
-still resolved to `pg_catalog.round` in fresh sessions. So the concrete risk here
-is unproven, and the setting was changed because a writable schema ahead of
-`pg_catalog` should not require that argument to be settled, not because an
-exploit was demonstrated.
+**Retraction.** An earlier version of this section reported that no shadowing
+exploit could be reproduced against `'app, pg_catalog'`. **That result was an
+artifact of a broken test and is withdrawn.** sb-tenancy's warning is correct:
+naming `pg_catalog` explicitly does make built-ins shadowable.
+
+The bug was quoting. `set search_path = 'app, pg_catalog'` does not set a
+two-schema path. It sets a **one-schema path whose single member is a schema
+literally named `"app, pg_catalog"`**, which does not exist:
+
+```
+set search_path = 'app, pg_catalog';   show search_path;  -->  "app, pg_catalog"
+set search_path =  app, pg_catalog;    show search_path;  -->  app, pg_catalog
+```
+
+Every earlier test used the quoted form, so `app` was never on the path and the
+shadow never had a chance to win. With the list form, the same probe resolves the
+other way:
+
+| function-level setting | stored `proconfig` | `round(2.5)` |
+|---|---|---|
+| `set search_path = 'app, pg_catalog'` | `search_path="app, pg_catalog"` | 3 |
+| `set search_path = app, pg_catalog` | `search_path=app, pg_catalog` | **999999 — shadow wins** |
+| `set search_path = ''` + qualified body | `search_path=""` | 3 |
+
+**This is a second, separate footgun and it is the more dangerous one.** The
+quoted form is silently broken. It looks more careful than the unquoted form,
+passes review, and leaves a path that resolves nothing. A function under it that
+only touches built-ins appears to work, because `pg_catalog` is still implicitly
+searched, and the accidental protection is indistinguishable from a correct
+setting. A function that relies on the path to find an `app` object fails at
+runtime instead. Either way the stated intent is not what is in force.
+
+The empty-path recommendation above is unaffected and was verified independently:
+`''` stores `search_path=""`, which is a genuinely empty path, not a schema named
+`""`.
 
 `proconfig` is populated for every function afterwards, and the cross-schema
 generated column still computes — the pair matters, because pinning `search_path`
