@@ -16,3 +16,6 @@
 
 ## Resume
 Spawn a migrations author with docs/research/04-supabase-conventions.md + this file; start by finishing 005, then the items above, then batches 006–016 per the original plan. Do not apply to any remote project.
+
+## Critic Part 2 (b01d241)
+7 critical / 29 high still open at pause. Top: 001 unchanged (no pg_cron/pg_net/vector); ~25 migration functions use the four-part search_path list and fail 02 §8.7 exact-string sweep; 05 jsonb columns have no shape constraints; 01 rule snapshot model vs 04 bitemporal; circular 2/2026 vs 04/2026 (D-44). Full list in docs/architecture/06-critic-review.md Part 2.
