@@ -32,8 +32,9 @@ for every table family. It stops at the boundary of four sibling designs:
 5. **`CLIENT` is an actor kind, not a login.** §11 says the portal is unauthenticated by token, so
    there are no client auth users at launch.
 6. **An agent credential is a hashed, revocable API key per agent per tenant**, exchanged for a
-   15-minute ES256 JWT (this answers §16 Q7 with *per tenant*). Revised from my Phase 1 header in
-   response to the research doc; see §3.1 and §10.
+   GoTrue session whose claims the §1.3 hook injects (this answers §16 Q7 with *per tenant*).
+   Revised twice: from a password credential after the research doc, then away from a self-minted
+   JWT after the `spike-jwt` spike. See §3.1, §3.1a and §10.
 7. **The kill switch is enforced in RLS as a blunt fact** (agent active, switch off, table family in
    the agent's scopes). Autonomy levels stay in the policy gate.
 8. **Portal tokens are hashed at rest** and reachable only through `SECURITY DEFINER` RPCs called by
@@ -84,6 +85,7 @@ Agreed with `sb-actions`, `sb-events` and `sb-money` in review.
 | Actor kinds | **four** — `HUMAN`, `AGENT`, `SYSTEM`, `CLIENT` | Portal RPCs write `CLIENT`. A three-value enum breaks on the first proposal acceptance. |
 | Agent principal | per agent **per tenant**, so the tenant is trustworthy from the JWT | Answers §16 Q7. Agent-authored rows do not need the tenant read off the row. |
 | Domain tables | live in `public` | The `app` schema is not exposed to PostgREST and has no grants. A domain table there is unreachable by the Data API. Gate functions and reference data belong there; tables do not. |
+| Minting JWTs | **Nobody mints tokens. Ever.** All tokens are GoTrue-issued | A holder of the project signing key can sign `role: service_role` and bypass every policy in this document. §3.1a. If a lane thinks it needs to mint, bring it to me first. |
 | Committing | `git commit <path> -m "…"`, never `git add` then a bare commit | We share one index on `main`. A bare commit sweeps up every other lane's staged work. |
 
 Prefer `app.has_permission('approval:decide')` to `app.has_role('SALES_MANAGER')` everywhere. The
@@ -601,9 +603,9 @@ to `sb-erd`.
 ### 3.1 How an agent authenticates — decision and justification
 
 **Decision: a hashed, revocable API key per agent per tenant, exchanged by an Edge Function for a
-short-lived ES256 JWT carrying `tenant_id`, `agent_id` and `actor_kind = 'AGENT'`. The JWT's `sub`
-is an inert `auth.users` row provisioned once per agent per tenant.** This answers **§16 Q7 with
-*per tenant*.**
+GoTrue session for an `auth.users` row provisioned once per agent per tenant, whose claims the
+§1.3 hook injects.** This answers **§16 Q7 with *per tenant*.** §3.1a explains why the session is
+obtained by sign-in rather than by minting a JWT ourselves.
 
 This is the research doc's §2 recommendation
 (`docs/research/08-supabase-agentic-best-practices.md` §2, "Decision defaults" row *`AGENT` actor*)
@@ -661,28 +663,78 @@ create index agent_api_keys_tenant_agent_idx
 `sb-erd` as a column I need that the contract's §10 shape does not show. The agent also keeps a
 `memberships` row (`actor_kind = 'AGENT'`, `role = 'AGENT'`, `agent_id` set, `client_scope = 'ALL'`),
 so that one table remains the single answer to "who is a principal in this tenant" for both humans
-and agents, and so `app.principal_claims()` below has one source to read.
+and agents, and so the §1.3 hook has one source to read for both.
 
 The exchange, in one Edge Function invoked with the agent's key:
 
 1. `sha256` the presented key, look up `agent_api_keys` where `revoked_at is null` and
    `expires_at > now()`. No match, or the `agents` row is not `ACTIVE`, or `kill_switch` is true:
-   `401`, nothing minted.
+   `401`, nothing issued.
 2. Read `tenant_id`, `agent_id`, `principal_user_id` from `agents`.
-3. Sign an **ES256** JWT (research §13: asymmetric signing keys from day one; legacy HS256 shared
-   secret is the deprecated path) with `sub = principal_user_id`, `role = 'authenticated'`,
-   `actor_kind = 'AGENT'`, `app_role = 'AGENT'`, `tenant_id`, `agent_id`, `client_scope = 'ALL'`,
-   `team_scope = 'ALL'`, `exp = now() + 15 minutes`.
-4. Stamp `last_used_at`.
+3. **Sign in as the agent's service user** through GoTrue (`signInWithPassword`, the password held
+   as an Edge Function secret, or `admin.generateLink`). The custom access token hook in §1.3 runs
+   and injects `tenant_id`, `agent_id`, `actor_kind` and the scopes from the `memberships` row.
+4. Stamp `last_used_at`. Sign out at run end.
 
-**The custom access token hook in §1.3 does not run for a self-minted token.** The minting function
-is therefore the second place claims are constructed, and the two must not drift. Mitigation for
-the migrations author: extract the claim-building into one SQL function,
-`app.principal_claims(p_user_id uuid) returns jsonb`, called by both the hook and the minting
-function. One body, two callers, one test.
+### 3.1a Why GoTrue sign-in and not a self-minted JWT
 
-Short expiry is the point. A leaked agent JWT is worth fifteen minutes; a leaked agent API key is
-revocable in one `update`.
+The `spike-jwt` spike (`docs/architecture/spikes/2026-09-12-agent-jwt-minting.md`, commit `c090de2`)
+resolved the question §11 had flagged as unverified. Self-minting **is** supported and documented:
+generate an ES256 key with `supabase gen signing-key`, import it as a standby key, rotate it in, and
+sign your own tokens with `jose` inside an Edge Function. `auth.uid()` resolves from the `sub` claim
+to whatever `auth.users` row you pre-provisioned, and custom claims read through `auth.jwt()` exactly
+as the hook's do.
+
+**I am not taking it, and the reason is one line of the spike's own findings.** There is one active
+signing key per project, shared between GoTrue's real end-user sessions and any token you mint with
+it, and the `role` claim *"must be set to an existing Postgres role in your database, such as
+`anon`, `authenticated`, or `service_role`."*
+
+So a holder of the minting key can sign a token claiming `role: service_role`. `service_role` holds
+`BYPASSRLS`. **Every policy in this document — all thirty-six table families, the kill switch, the
+approve-your-own-request backstop, tenant isolation itself — is void against that token.** They can
+equally sign `sub: <the MD's user id>` and become the Managing Director.
+
+That is not a risk to be mitigated, it is a hole straight through the wall this document exists to
+build. The whole argument of §4 is that isolation is a property of the database rather than of any
+handler's correctness; a key that mints arbitrary `role` claims moves it back into the mint service's
+correctness, which is precisely what I rejected `service_role` for in §3.1's opening.
+
+What self-minting buys, measured honestly: a 15-minute expiry instead of the project-wide 1800
+seconds, and no sign-in round trip per run. Against a categorical escalation path, that is a poor
+trade.
+
+| | GoTrue sign-in (chosen) | Self-minted JWT |
+|---|---|---|
+| Blast radius of the held secret | **One agent** | **Every principal and every Postgres role, including `service_role`** |
+| Token lifetime | 1800 s, project-wide | 15 min, per-token |
+| Claims source | The §1.3 hook — one implementation | A second implementation that must not drift from the hook |
+| Revocation | `agent_api_keys.revoked_at` | Same |
+| Key material handled by us | None; Supabase manages the signing key | Raw ES256 private key in an Edge Function secret |
+
+The claim-drift row is worth noting on its own. Self-minting means claims are constructed in two
+places — the hook for humans, the mint service for agents — and nothing enforces that they agree.
+Sign-in keeps one implementation and deletes that whole class of bug, along with the
+`app.principal_claims()` shim I had proposed to paper over it.
+
+**What would change my mind:** the spike's second, unverified fallback — registering an external
+third-party OIDC issuer as a decoupled signer. That would give agents their own key rather than the
+project's, which removes the blast radius entirely and makes self-minting strictly better than
+sign-in. Worth the follow-up spike; not something to build on today. The spike also could not verify
+whether a *standby* key is trusted for verification before rotation, which if true would be a
+partial mitigation — the agent key would never become GoTrue's active session key — but it does not
+help, because a standby key that verifies can still sign `role: service_role`.
+
+**Consequence for token lifetime.** Agent tokens now live 1800 seconds like everyone else's, not
+15 minutes. Compensating controls: the orchestrator signs out at run end, so the practical lifetime
+is a run; `agent_api_keys` revocation stops the *next* run immediately; and the §3.3 kill switch is
+enforced in RLS rather than in the token, so flipping it stops a live agent mid-run without waiting
+for any expiry. That last one is why the kill switch belongs in a policy and not in the gate.
+
+One provisioning detail from the spike, which matters because the failure is silent: agent flags go
+in `app_metadata`, **never `user_metadata`**, which is user-editable. Nothing in this design reads
+either — the hook reads `memberships` — but a future shortcut that trusts `user_metadata.actor_kind`
+would let any user declare themselves an agent.
 
 ```sql
 create or replace function app.is_agent()
@@ -1940,6 +1992,46 @@ uses. Flagged to the migrations author because the wrong version looks right and
 Note also that Supabase's **org-level MFA enforcement** (Pro/Team/Enterprise) governs access to the
 Supabase dashboard, not our end users. It is not a substitute for anything in this section.
 
+### 7.2a What the `aal` claim is worth, honestly
+
+`aal` is a claim in a token. Anyone holding the project's JWT signing key can sign a token asserting
+`aal: aal2` without ever enrolling a factor — the `spike-jwt` spike established this while answering
+a different question (§3.1a). So the policies above are a control against **users**, not against a
+compromised signing key. Against that attacker they are worth nothing, but neither is anything else
+here: the same key signs `role: service_role` and bypasses RLS entirely, so `aal` is not the weak
+link, it is merely not the strong one.
+
+For the two gates where the consequence is worst — revealing a provider key, and raising an agent's
+autonomy — ground the assertion in a row GoTrue wrote rather than in a claim the caller presents:
+
+```sql
+create or replace function app.aal2_verified() returns boolean
+language sql stable security definer set search_path = ''
+as $$
+  select exists (
+    select 1 from auth.sessions s
+    where s.id      = nullif(app.jwt() ->> 'session_id','')::uuid
+      and s.user_id = (select auth.uid())
+      and s.aal     = 'aal2'          -- [assumed] column name; verify against auth schema
+  );
+$$;
+revoke execute on function app.aal2_verified() from public, anon;
+grant  execute on function app.aal2_verified() to authenticated;
+```
+
+A self-minted or forged token can claim any `session_id` it likes, but it cannot conjure a matching
+`auth.sessions` row at `aal2` for that user. Use `app.aal2_verified()` in
+`ai_provider_key_reveal()` and on `agent_autonomy`; keep the cheap `app.aal()` claim check
+everywhere else, because the extra lookup on every privileged write is not worth it when the
+attacker who defeats it has already defeated everything.
+
+Two caveats the migrations author must resolve before relying on this: the `auth.sessions` column
+may be named `aal` or `aal_level` depending on the Supabase version, and `session_id` is present on
+GoTrue-issued tokens but absent from any token minted outside GoTrue — which is the point, but it
+means the function returns false for a legitimate agent too. Agents are exempt from step-up anyway
+(§4.7), so that is correct rather than a bug, but it should be asserted in a test rather than
+discovered.
+
 ### 7.3 Session and JWT settings
 
 | Setting | Value | Reason |
@@ -1952,7 +2044,7 @@ Supabase dashboard, not our end users. It is not a substitute for anything in th
 | Single session per user | **off** | Consultants use a phone for attendance and a laptop for proposals |
 | JWT signing | **asymmetric ES256 from day one** | Local JWKS verification with no Auth round trip; instant key revocation by key-state transition; the legacy HS256 shared secret is the deprecated path (research §13) |
 | Password minimum | 12 chars, leaked-password protection **on** | |
-| Agent sessions | 15-minute minted JWT per §3.1 | A leaked agent token is worth fifteen minutes |
+| Agent sessions | GoTrue sign-in at run start, sign-out at run end (§3.1) | Practical lifetime is a run. Not a 15-minute minted token — see §3.1a |
 
 `GET /v1/me` returns `role` and `permissions[]` straight from the claim plus the
 `app.role_permissions` lookup, so the UI and the database never disagree about what is allowed.
@@ -1962,7 +2054,11 @@ configuration. The rule the frontend must follow, from supabase-js's own guidanc
 doc (§10): **never trust `getSession()`'s embedded user object for an authorization decision.** Use
 `getUser()` where authority matters — it calls the Auth server and notices a ban, a deletion or a
 sign-out immediately — and `getClaims()` for fast local verification against the cached JWKS, which
-only actually avoids the round trip once the project is on asymmetric signing keys. With no server
+only actually avoids the round trip once the project is on asymmetric signing keys. The spike adds a
+boundary on that last one: `getClaims()` is documented for GoTrue-issued tokens only and verification
+*"may fail"* on anything minted outside it. Every token in this design is GoTrue-issued after §3.1a,
+so it holds — but if the OIDC follow-up in §3.1a ever lands, agent tokens must be verified with a
+standard JWT library against the JWKS instead. With no server
 to hold an httpOnly cookie, tokens live in `localStorage`; the 12-hour timebox and 2-hour inactivity
 timeout above are what bound that exposure.
 
@@ -2155,8 +2251,9 @@ select throws_ok($$ update public.agent_api_keys set revoked_at = now() … $$, 
 
 The exchange Edge Function itself is not pgTAP-testable. It needs its own integration test asserting
 four things: a revoked key is rejected, an expired key is rejected, a key belonging to a
-`kill_switch = true` agent is rejected, and the minted token's claims are byte-identical to what
-`app.custom_access_token_hook` would produce for the same principal — the §3.1 drift risk.
+`kill_switch = true` agent is rejected, and the issued token's claims match what
+`app.custom_access_token_hook` produces for that principal. That last one is now cheap to satisfy,
+because after §3.1a the hook is the only thing constructing claims.
 
 ### 8.5 Portal tests
 
@@ -2192,6 +2289,14 @@ select throws_ok($$ update public.agent_autonomy set level='AUTONOMOUS' … $$, 
 select tests.as_user('u_md','T1','MD','ALL','ALL','aal2');
 select lives_ok($$ update public.agent_autonomy set level='SUGGEST' … $$,
                 'MD at aal2 can change autonomy');
+
+-- §7.2a: a forged aal claim does not satisfy the session-grounded check.
+select tests.as_user('u_md','T1','MD','ALL','ALL','aal2');   -- claim says aal2, no session row
+select ok(app.aal2_verified() is false,
+          'aal2 claim without a matching auth.sessions row does not verify');
+select tests.as_agent('u_agent_proposal','T1','agent_proposal');
+select ok(app.aal2_verified() is false,
+          'an agent never verifies as aal2, and is exempt from step-up instead');
 
 select tests.as_user('u_khairul','T1','ADMIN','ALL','ALL','aal2');
 select throws_ok($$ update public.memberships set role='MD' where user_id='u_khairul' $$,
@@ -2272,7 +2377,7 @@ Mapped to §16 where a number exists; new ones prefixed `OQ-T`.
 | # | Question | My default | Who decides |
 |---|---|---|---|
 | §16 Q6 | Client portal token lifetime; revoke on acceptance or keep live | 30 days from issue; on acceptance extend to +90 days and downgrade to `READ_ONLY`; revocable always (§5.3) | MD / Sales |
-| §16 Q7 | Agent service principals: one per agent, or one per agent per tenant | **Per agent per tenant**, as a hashed API key exchanged for a 15-minute JWT (§3.1) | Engineering — decided here, flag if rejected |
+| §16 Q7 | Agent service principals: one per agent, or one per agent per tenant | **Per agent per tenant**, as a hashed API key exchanged for a GoTrue session (§3.1, §3.1a) | Engineering — decided here, flag if rejected |
 | §16 Q9 | Saved views shared or personal | Both, via a `visibility` column; sharing needs `view:share` (§4.4) | Sales Manager |
 | §16 Q1 | Does an approval expire | Affects `approval_requests` SELECT if expired rows leave the queue. No RLS change either way; noting the dependency | `sb-actions` |
 | §16 Q3 | Who owns `firstProposalToOrg` | If denormalised onto `organisations`, that column is written by the effect applier under `service_role` and needs no policy of its own | `sb-actions` |
@@ -2309,37 +2414,51 @@ and a RESTRICTIVE `aal2` policy for MD and ADMIN. Where I moved, and where I did
 
 ### Disagreement with the research — for the critic to adjudicate
 
-One substantive disagreement, stated as a comparison so it can be judged rather than taken on trust.
+The `spike-jwt` spike (`docs/architecture/spikes/2026-09-12-agent-jwt-minting.md`, commit `c090de2`)
+settled one of these and created the other. Both stated as comparisons so they can be judged rather
+than taken on trust.
 
-| | Research doc §2 | This document §3.1 | Original Phase 1 header |
+| | Research doc §2 | This document, final | My Phase 1 header |
 |---|---|---|---|
 | Credential | Hashed, revocable API key | **Same** | Password on an auth user |
-| Token | Short-lived minted JWT with `role: AGENT`, `tenant_id`, `agent_id` | **Same**, 15 min, ES256 | GoTrue session, 1800 s |
-| `sub` claim | An `agents` row id; no `auth.users` row | **An inert `auth.users` row**, no password, cannot sign in | A real auth user with a password |
-| Revocation | Disable the agent row, key stops validating | **Same** | Rotate the password, wait out live sessions |
+| Token | Self-minted short-lived JWT | **GoTrue session, hook-injected claims** | GoTrue session |
+| `sub` claim | An `agents` row id; no `auth.users` row | **A pre-provisioned `auth.users` row** | Same |
+| Revocation | Disable the agent row | **Same** | Rotate password, wait out sessions |
+| Blast radius of the held secret | Every principal and every Postgres role | **One agent** | One agent |
 
-I adopted the research's design and abandoned my own on the two axes that matter. **The single
-remaining disagreement is the `sub` claim.** The research says model each agent as a row in an
-`agents` table *rather than* an `auth.users` row. I keep one inert `auth.users` row per agent per
-tenant, because taken literally the research's position breaks three things:
+**Disagreement 1 — the `sub` claim. Settled in my favour by first-party docs; no longer open.** The
+research said model each agent as an `agents` row *rather than* an `auth.users` row. I argued for a
+real `auth.users` row because otherwise every `references auth.users(id)` column breaks estate-wide,
+`auth.uid()` returns null so every ownership branch needs an agent-shaped special case, and
+Supabase's own audit tooling stops recognising the principal. The spike quotes Supabase's own
+documentation — *"`sub` is an optional UUID that uniquely identifies a user you want to impersonate
+in `auth.users`"* — and its step 1 is "pre-provision one `auth.users` row per AGENT principal". The
+documented path requires the row. Nothing left to adjudicate.
 
-1. `created_by`, `owner_id` and `decided_by` are `references auth.users(id)`. An agent that drafts a
-   proposal must appear in those columns, so the alternative is dropping the foreign key
-   estate-wide — a much larger concession than one inert row per agent.
-2. `auth.uid()` returns null, so `app.owns()` and every policy branch comparing to it needs an
-   agent-shaped special case. That is a second code path through the isolation boundary, which is
-   exactly what §3.2's `not app.is_agent() or …` prefix pattern exists to avoid.
-3. Supabase's own session and audit tooling stops recognising the principal.
+**Disagreement 2 — self-minting, which is new and is the one worth the critic's time.** The research
+recommends minting our own short-lived JWTs. The spike confirms that is supported and documented, so
+this is not a feasibility objection. It is a blast-radius objection, argued in full at §3.1a, and it
+rests on one sentence of Supabase's own docs that the research doc did not surface: the `role` claim
+*"must be set to an existing Postgres role in your database, such as `anon`, `authenticated`, or
+`service_role`."*
 
-Cost of my position: N agents × M tenants inert rows, and a provisioning step. Eight agents and
-single-digit tenants is dozens of rows. Cost of the research's position: an estate-wide foreign-key
-concession and a duplicated policy branch. I think the comparison is lopsided, but it is the
-critic's call, and the research doc explicitly labels its §2 and §3 as its own synthesis rather than
-first-party Supabase guidance, so neither of us is citing authority here.
+One project-wide signing key signs both human sessions and anything we mint with it. A holder of
+that key signs `role: service_role`, gets `BYPASSRLS`, and every policy in this document is void —
+tenant isolation included. They can equally sign `sub: <the MD's id>`. The gain being bought is a
+15-minute expiry instead of 1800 seconds and one saved round trip per run. I do not think that is
+close, but the counter-argument is real and a critic should weigh it: a single well-guarded mint
+service is a normal piece of infrastructure, and I am rejecting a pattern Supabase documents.
 
-The related risk is in §11 and is the one to watch: whether self-minting a JWT with the project's
-ES256 signing key is supported outside GoTrue at all. If it is not, both designs collapse back to
-the password grant, which is worse than either.
+My position in one line: this document's entire claim is that isolation is a property of the
+database rather than of any handler's correctness, and a key that mints arbitrary `role` claims puts
+it back in a handler. Rejecting `service_role` for agents in §3.1 and then holding a key that mints
+`service_role` would be incoherent.
+
+**What would flip me:** the spike's unverified third option, an external OIDC issuer as a decoupled
+signer. That gives agents their own key rather than the project's, the blast radius disappears, and
+self-minting becomes strictly better than sign-in. Worth a follow-up spike. The other unverified item
+— whether a standby key verifies before rotation — does **not** help, because a standby key that
+verifies can still sign `role: service_role`.
 
 **Kept against, or added to, the research.**
 
@@ -2380,19 +2499,24 @@ explicitly and validate it, exactly as §4.9 requires of every other `service_ro
 - **Whether `supabase_auth_admin` needs `select` on `app.role_permissions`.** It does not in the
   design above, because permissions are not claims. If a later decision reverses §1.4, that grant and
   a policy on that table both become necessary, and the hook's cost grows with the matrix.
-- **Whether self-minting a JWT with the project's ES256 signing key is supported outside GoTrue.**
-  §3.1 depends on it, and the research doc flags its own §2 agent design as original synthesis
-  rather than documented Supabase guidance — the only first-party material is an unresolved Supabase
-  GitHub discussion. The fallback if minting is not viable is `auth.admin.generateLink` plus a
-  password grant against the inert agent user, which is my original Phase 1 design and is worse on
-  revocation. **Verify against a real project before the migrations author commits to §3.1.**
+- ~~Whether self-minting a JWT with the project's ES256 signing key is supported outside GoTrue.~~
+  **Resolved** by the `spike-jwt` spike (commit `c090de2`): supported and documented, but rejected
+  on blast-radius grounds in §3.1a. The design now uses GoTrue sign-in, so nothing here depends on
+  it.
+- **Whether `auth.sessions` names its assurance column `aal` or `aal_level`** in the target
+  Supabase version. `app.aal2_verified()` in §7.2a depends on it and is marked [assumed]. Check the
+  `auth` schema before writing that function; a wrong column name makes it raise rather than fail
+  open, which is the safe direction but is still a broken deploy.
+- **Whether an external OIDC issuer can act as a decoupled signer for agent tokens.** The spike
+  flagged this as unverified and it is the one finding that would reverse §3.1a. Worth a follow-up
+  spike; nothing in the current design waits on it.
 - **The exact Realtime `realtime.topic()` helper name and signature** in §4.10. The research notes
   the Realtime schema has been locked against direct DDL since July 2026, so the policy must be
   written against whatever the current helper is, not against an older tutorial's
   `realtime.channel_name()`.
-- **`app.principal_claims()` keeping the hook and the minting function in sync** (§3.1) is a design
-  intention, not a verified pattern. Nothing in Postgres enforces that the two callers stay
-  identical; only the test does.
+- ~~`app.principal_claims()` keeping the hook and the minting function in sync.~~ **Gone.** §3.1a
+  removed the second claim-construction site, so the hook is the only implementation and the drift
+  risk it was papering over no longer exists.
 - **Real query plans.** Every `(select …)` wrapper is applied per `security-rls-performance`, but I
   have no database to `explain (analyze, buffers)` against. The child-table `exists` re-entry in
   Template C is the pattern most likely to need a second look under load, particularly
