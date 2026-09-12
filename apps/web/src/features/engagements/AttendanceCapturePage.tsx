@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import type { AttendanceRow, AttendanceSheet, CaptureMethod } from "@trainos/contract";
 import {
-  Breadcrumb,
   ConfirmDialog,
   ContentCard,
   DataTable,
@@ -19,6 +18,7 @@ import {
   toast,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { ActionOutcome } from "./ActionOutcome";
 import {
   asApiError,
@@ -72,6 +72,16 @@ export function AttendanceCapturePage() {
 
   const capture = useCaptureAttendance(id, sheet?.day ?? 1);
 
+  /* The top bar renders the path; this screen only declares it. Attendance
+     hangs off Participants, not Engagements — that is the nav entry a reader
+     walked to get here. */
+  useBreadcrumb([
+    { label: "Home", href: "/" },
+    { label: "Training", href: "/training/participants" },
+    { label: "Participants", href: "/training/participants" },
+    { label: `${engagement.data?.ref ?? id} attendance` },
+  ]);
+
   if (engagement.isPending || sheets.some((query) => query.isPending)) {
     return <LoadingState rows={8} label="Loading the attendance sheet" />;
   }
@@ -99,21 +109,6 @@ export function AttendanceCapturePage() {
 
   return (
     <div className="flex flex-col">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[
-            { label: "Training", href: "/training/participants" },
-            { label: "Participants", href: "/training/participants" },
-            { label: `${record.ref} attendance` },
-          ]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         title={`Attendance · ${record.ref}`}
         meta={[

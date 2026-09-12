@@ -33,6 +33,12 @@ describe("AttendanceCapturePage · M10-S06", () => {
       await screen.findByRole("heading", { name: /Attendance · ENG-0231/ }),
     ).toBeInTheDocument();
 
+    /* Attendance hangs off Participants, not Engagements — that is the nav
+       entry a reader walked to get here. */
+    expect(await screen.findByTestId("breadcrumb-trail")).toHaveTextContent(
+      "Home › Training › Participants › ENG-0231 attendance",
+    );
+
     /* The second documented exception to the one-primary rule. */
     expect(currentPrimaries()).toHaveLength(0);
 

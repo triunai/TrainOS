@@ -27,6 +27,10 @@ describe("ClientProposalPage · M07-S07", () => {
     expect(currentPrimaries()).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Accept proposal" })).not.toBeInTheDocument();
 
+    /* No breadcrumb: the portal mounts outside the shell, and a client with no
+       account has nowhere to navigate to. A trail here would be decoration. */
+    expect(screen.getByTestId("breadcrumb-trail")).toBeEmptyDOMElement();
+
     expect(screen.getByText(/Accepted 15 Sep 2026/)).toBeInTheDocument();
     expect(
       screen.getByText(/This proposal was accepted on 15 Sep 2026 at 10:24/),

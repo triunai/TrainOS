@@ -31,6 +31,13 @@ describe("EngagementDetailPage · M09-S02", () => {
     expect(headings).toHaveLength(1);
     expect(screen.getAllByText(new RegExp(ENGAGEMENT_AURORA)).length).toBeGreaterThan(0);
 
+    /* The path is DECLARED here and rendered by the top bar; a trail inside
+       the content card would duplicate what the breadcrumb owns. */
+    expect(await screen.findByTestId("breadcrumb-trail")).toHaveTextContent(
+      "Home › Training › Engagements › ENG-0231",
+    );
+    expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).not.toBeInTheDocument();
+
     /* BLOCKED comes from the server's LifecycleStep[], never from a count. */
     expect(screen.getByText("Claim blocked")).toBeInTheDocument();
     expect((await screen.findAllByText(/2 documents missing/)).length).toBeGreaterThan(0);

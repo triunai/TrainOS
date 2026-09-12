@@ -1,8 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import type { EngagementSession } from "@trainos/contract";
 import {
-  Breadcrumb,
   ChecklistRow,
   ContentCard,
   DataTable,
@@ -24,6 +23,7 @@ import {
   toast,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { ActionOutcome } from "./ActionOutcome";
 import {
   asApiError,
@@ -73,6 +73,15 @@ export function EngagementDetailPage() {
   const sheets = useAttendanceDays(id, days);
   const closeOut = usePerformAction();
 
+  /* The top bar renders the path; this screen only declares it. Built inline —
+     `useBreadcrumb` compares by value, so memoising it would be noise. */
+  useBreadcrumb([
+    { label: "Home", href: "/" },
+    { label: "Training", href: "/training/engagements" },
+    { label: "Engagements", href: "/training/engagements" },
+    { label: engagement.data?.ref ?? id },
+  ]);
+
   if (engagement.isPending) return <LoadingState rows={8} label="Loading the engagement" />;
   if (engagement.isError || !record) {
     return (
@@ -105,21 +114,6 @@ export function EngagementDetailPage() {
 
   return (
     <div className="flex flex-col">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[
-            { label: "Training", href: "/training/engagements" },
-            { label: "Engagements", href: "/training/engagements" },
-            { label: record.ref },
-          ]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         title={record.title}
         recordRef={record.ref}

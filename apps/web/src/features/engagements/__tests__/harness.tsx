@@ -4,7 +4,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Role } from "@trainos/contract";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
+import { BreadcrumbProvider } from "@/shared/components/layout";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
+import { BreadcrumbProbe } from "./BreadcrumbProbe";
 
 /**
  * One render harness for the engagements tests.
@@ -15,6 +17,10 @@ import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
  *
  * `MeContext` is provided directly rather than through `MeProvider`, which
  * hardcodes the fixture principal's starting role.
+ *
+ * `BreadcrumbProvider` is included so a test can read back the path a screen
+ * DECLARES. The shell renders the trail in the top bar; a screen that quietly
+ * stopped declaring one would otherwise fail silently.
  */
 export function resetFixtures(): void {
   resetStore();
@@ -35,11 +41,14 @@ export function renderAt(
   return (
     <QueryClientProvider client={queryClient}>
       <MeContext.Provider value={{ me: { ...FIXTURE_ME, role }, setRole: () => {} }}>
-        <MemoryRouter initialEntries={[path]}>
-          <Routes>
-            <Route path={pattern} element={element} />
-          </Routes>
-        </MemoryRouter>
+        <BreadcrumbProvider>
+          <BreadcrumbProbe />
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path={pattern} element={element} />
+            </Routes>
+          </MemoryRouter>
+        </BreadcrumbProvider>
       </MeContext.Provider>
     </QueryClientProvider>
   );
