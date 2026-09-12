@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 7 · **Applied:** 0 · **Authored, not applied:** 7
+**Migrations:** 8 · **Applied:** 0 · **Authored, not applied:** 8
 **Last snapshot of `tables/`:** never
 
 ---
@@ -12,6 +12,8 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-12 — **008 authored and EXECUTED: delivery, and the attendance lock the product cannot bend.** Contract §8 says approved attendance returns `409 ATTENDANCE_LOCKED` and the lock is one-way; DECISIONS §3 lists attendance immutability as an eTRIS rule. **The lock is enforced on BOTH the day and its entries, and that is the whole design.** A trigger on the parent alone freezes the approval columns and leaves every mark on a locked day freely editable — which looks correct in every diff and protects nothing HRD Corp cares about. T3 exercises insert, update AND delete of a mark on a locked day; the migration's own verify block refuses to commit unless both triggers exist. **Locking closes capture without being asked**: `capture_qr`, `capture_signature` and `capture_manual` are forced false, so the contract's "captureModes are all false while locked" is a property of the row and the UI has nothing to get wrong. **Unlocking is an action, not an update**: it requires a reason, clears the old approval so the day does not still look approved, reopens capture, and increments `unlock_count` ITSELF — T6g proves the caller cannot reset it, because the one hand that unlocks must not be able to erase the evidence that it did. **What this migration deliberately does not claim**: it does not stop a superuser disabling the trigger. That is a platform-access question, not a schema one, and the header says so rather than implying a guarantee it cannot make. Two projections with one writer each: `engagement_trainers` is maintained from sessions in BOTH directions (T7b covers the removal half, without which the trainer policy keeps showing an engagement they left), and `programmes.deliveries_count` moves both ways. **A SENT message must cite the consent row it relied on, by id** — PDPA asks which permission a message went out under, and a foreign key is the only answer that cannot be reconstructed favourably afterwards.
 
 **Last updated:** 2026-09-12 — **007 authored and EXECUTED: money. Three defects in doc 04's specification found by running it, all folded in.** (1) **`floor_price_needs_approval` cannot be a table CHECK.** Doc 04 §1.7 writes it as one. Executed, it makes a quotation impossible to CREATE: in a total-from-lines model the header starts at `sell_price_sen = 0` and is filled by the line trigger, so an immediate CHECK fires against a zero sell price and a non-zero programme floor before a single line can be written. The very first attempt to insert the contract's own fixture failed on it. The rule is real and is now a DEFERRABLE CONSTRAINT TRIGGER, judged at COMMIT — the only instant at which the lines, and therefore the price, exist. Same rule, correct instant. (2) **A deferred constraint trigger's `NEW` predates the line trigger's update of the header**, so both the reconciliation and floor assertions compared the lines against a header from before they were written and failed a correct transaction, reporting a header of 0 sen against lines that summed correctly. Both now RE-READ the current row. (3) **The pin's own T4c was backwards** and had to be corrected: the contract's fixture is COMPLIANT — RM 18,500 against a binding floor of RM 17,538.47 is a 0.38 margin over a 0.35 floor — so asserting `below_floor = true` pinned a fiction. A separate T4b now exercises a genuine breach on the contract's own RM 12,400 example and proves an approval is what permits it. **The arithmetic is pinned on the contract's real numbers**, not round figures that would hide a rounding bug: trainer RM 4,800 × 2, venue 0, materials RM 40 × 30, travel RM 300 × 2 = RM 11,400 against an RM 18,500 sell. **`ceil`, not `round`, on the margin floor** — T3 pins 1,753,847 exactly, because `round` gives 1,753,846 and a price one sen under the floor would then pass as compliant, which is precisely the shape a deliberate underprice takes. **The jsonb NULL-check trap is pinned on the exact payload the naive constraint lets past**: a jury object with no `mode` key at all, where `->>` yields NULL, `NULL IN (...)` yields NULL, and a CHECK evaluating to NULL PASSES. **A catalogue query that cannot rot** asserts no column in `core` ending `_sen`, `_rate` or `_pct` is `float4` or `float8`.
 
@@ -31,6 +33,7 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 008 | `008_delivery_engagements_sessions_attendance.sql` | **Delivery, and the one-way attendance lock (2026-09-12).** Engagements with a configuration-driven lifecycle, sessions, participants, attendance, certificates, evaluations, message rates and outbound messages. The attendance lock is enforced on the day AND its entries, because the rule is about the day and the writes happen to the entries. Locking forces all three capture modes false so the response cannot contradict the rule. Unlocking requires a reason, clears the approval, reopens capture and increments a counter the caller cannot set. `engagement_step_states` stores no step key and no position — both come from `pipeline_steps`. Participants' identity numbers are stored as a hash plus last four, never the number. A sent message cites the consent row it relied on by foreign key. Closes the two FKs 006 and 007 left open. Spine untouched: `ATTENDANCE_APPROVE` and `ATTENDANCE_UNLOCK` are action types 011 will dispatch; this is what makes the lock real when it does. |
 | 007 | `007_money_proposals_quotations_portal.sql` | **Money: rate cards, provenance, proposals, quotations and the client portal (2026-09-12).** Eighteen tables. Total-from-lines is enforced, not trusted: `quotation_lines.total_sen` is a GENERATED column so a caller cannot supply a total that disagrees with its own unit price and quantity, a trigger recomputes the header from the lines, and a DEFERRABLE constraint trigger refuses to commit a header that disagrees. Deferred because a multi-line edit legitimately passes through states where they do not match. **Two floors, both generated**: an absolute programme floor stamped at pricing time and a margin floor derived with `ceil` (never `round`), with the binding one and `below_floor` derived from the row so the costing screen and the approval screen cannot compute them differently. `floor_margin_rate` and `commission_rate` are STAMPED onto the quotation, so a rate-card edit cannot silently reprice a proposal already sent, and the floor stays reproducible after the card is retired. Portal tokens store only a SHA-256 hash, and `UNIQUE (tenant_id, proposal_id)` on acceptances makes a double-clicked Accept unable to create a second binding acceptance whatever the handler does. Spine untouched. |
 | 006 | `006_catalogue_programmes_and_trainers.sql` | **What the business sells and who delivers it (2026-09-12).** Programmes with modules, pricing tiers and materials; trainers with pool membership, a declared availability calendar and bookings. The catalogue sits in Delivery, not Sales, because `PUT /programmes/{id}` is ADMIN + L&D and returns FORBIDDEN to SALES. Three things it gets right that are easy to get wrong: the tier floor price is an **absolute** commercial-policy figure rather than a derived margin; a trainer **cannot** hold two overlapping CONFIRMED bookings, enforced by an EXCLUSION constraint rather than by application code, while two SOFT_HOLDs may overlap on purpose; and the availability calendar is written by a trigger on bookings so the two can never disagree. Closes the three foreign keys 002 and 005 left open (`memberships.trainer_id`, `organisation_suggestions.programme_id`, `tna_recommendations.programme_id`). Spine untouched. |
 | 005 | `005_sales_organisations_enquiries_tna.sql` | **The sales path: organisations, contacts and consent, enquiries and extraction, opportunities, follow-ups, needs analysis (2026-09-12).** Fourteen tables, all through `app.finalise_table`, all deny-all until 014. Four non-obvious modelling decisions, each with the reason in the file: `contact_consents` is an append-only PDPA ledger rather than a flag, because "did this person consent on 4 March 2024" must stay answerable after they withdraw; `enquiry_extraction_fields` is one row per field because each carries its OWN provenance and edit history, and four columns could hold four values but not four independent provenances; `organisations.proposal_count` is a header CACHE that the policy gate must not read (deviation D2); and the "never auto-archived" rule for low-confidence enquiries is a CHECK constraint rather than a property of a background job. Every FK into a `core` parent is composite `(tenant_id, parent_id)`, so a cross-tenant reference is rejected by the storage engine independently of RLS. Spine untouched. |
@@ -207,6 +210,35 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 008 (`008_delivery_engagements_sessions_attendance.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Sources: `docs/architecture/01` §3.2,
+contract §8, DECISIONS §3 and §6. Applied cleanly on the first run.
+
+### The 7-point RPC contract check, worked
+
+1/2. No RPC, no envelope. 3. RpcMap: none. 4. Call sites: 009 claims from these, 010 invoices from
+them, 011 gates them. 5. Casts: none. 6. Reload/restore: none. 7. Public routes: none.
+
+### Pin — `tests/test_008_delivery_engagements_sessions_attendance.sql`
+
+Nine checks, all executed, all PASS. T1 a presence needs a capture method, an absence needs a reason ·
+T2 locking stamps the approval and closes all three capture modes · **T3 the check a parent-only lock
+fails: no insert, update OR delete of a mark on a locked day** · T4 the locked day's own columns are
+frozen · T5 locking requires a named approver · **T6 unlocking needs a reason, clears the approval,
+reopens capture, and counts itself even when the caller supplies a zero** · T7 the trainer projection
+follows sessions in both directions · T8 a sent message cites its consent row · T9 the delivery count
+moves both ways.
+
+### Rollback — `rollbacks/008_delivery_engagements_sessions_attendance_rollback.sql`
+
+**Refuses while any locked attendance day exists.** 008's whole point is that locked attendance
+cannot be modified, and dropping the table is the one way around that. Also guards issued
+certificates and sent messages. Reopens two foreign keys on 006's and 007's tables, stated as
+correct. Round-tripped and idempotent.
 
 ---
 

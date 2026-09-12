@@ -12,6 +12,29 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — delivery, and attendance that genuinely cannot be edited
+
+### Added
+
+- **Engagements, sessions, participants, attendance, certificates and evaluations (008).**
+- **Approved attendance is immutable, including the individual marks.** The lock covers the day and
+  every attendance row on it. Protecting only the day would leave every tick editable while the
+  screen showed a locked sheet, and that is what the training grant claim rests on.
+- **Unlocking states a reason and counts itself.** It clears the approval, reopens capture, and
+  increments a counter the caller cannot set, so the person who unlocks cannot also erase the record
+  that they did. A day that was unlocked once is not the same as a day that was never locked.
+- **Capture is switched off by the lock, not by the interface.** All three capture modes become false
+  on the record itself, so the response cannot contradict the rule and the front end has nothing to
+  get wrong.
+
+### Security
+
+- **Participants' identity numbers are never stored.** A hash and the last four digits are enough to
+  match a person against the employer's own record and to display the masked form. A copy of the
+  database no longer exposes a national identity number for thirty people per course.
+- **A sent message records which consent it relied on.** Not as a claim made afterwards, but as a
+  link to the consent record itself.
+
 ## 2026-09-12 — money, and three rules the database now enforces instead of trusting
 
 ### Added
