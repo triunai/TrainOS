@@ -1185,7 +1185,7 @@ begin
     true                                        -- private channel
   );
   perform app.broadcast_badges(new.tenant_id,
-           app.role_holders(new.tenant_id, array[new.approver_role, 'MD']));
+           array[new.approver_role, 'MD']::app.app_role[], 'approval:decide');
   return null;
 end $$;
 
@@ -1996,16 +1996,20 @@ authorised by RLS directly (§3.4), so the correct number can be pushed to exact
 person it belongs to. That is what this does.
 
 ```sql
-create or replace function app.broadcast_badges(p_tenant uuid, p_users uuid[] default null)
-returns void
+create or replace function app.broadcast_badges(
+  p_tenant      uuid,
+  p_roles       app.app_role[] default null,     -- null = every role
+  p_permission  text           default null      -- intersect with the permission matrix
+) returns void
 language plpgsql security definer set search_path = '' as $$
 declare u record;
 begin
   for u in
-    select m.user_id, m.role            -- the COLUMN is role; the JWT CLAIM is app_role
-      from public.memberships m
-     where m.tenant_id = p_tenant
-       and (p_users is null or m.user_id = any(p_users))
+    select rh.user_id, rh.role
+      from app.role_holders(
+             p_tenant,
+             coalesce(p_roles, enum_range(null::app.app_role)),
+             p_permission) rh
   loop
     begin
       perform realtime.send(
@@ -2020,29 +2024,50 @@ begin
 end $$;
 ```
 
-Callers pass the users actually affected, so a new approval routed to one manager
-broadcasts once rather than to the whole tenant:
+Callers pass the roles actually affected, so a new approval routed to one manager
+broadcasts to a handful of people rather than the whole tenant:
 
 ```sql
 -- on an approval insert or decision
 perform app.broadcast_badges(
   new.tenant_id,
-  app.role_holders(new.tenant_id, array[new.approver_role, 'MD'])
-);
+  array[new.approver_role, 'MD']::app.app_role[],
+  'approval:decide');
 ```
 
-`MD` is included because §1's policies escalate to it. `app.role_holders(tenant, roles[])`
-returns the user ids holding any of those roles. **It belongs to `sb-tenancy`, not to me**
-(conflict C15): it reads their membership tables, and neither `sb-actions` nor I should be
-joining into those directly. I call it as-is; `sb-actions`' `app.pick_role_holder` becomes
-a thin wrapper over it adding ordering and the requester exclusion.
+`MD` is included because §1's policies escalate to it.
 
-**The column is `memberships.role`, not `app_role`** — the type is `app.app_role` and the
-JWT *claim* is `app_role`, which is what I had wrongly used as the column name. The two
-spellings are deliberate, not an accident: `role` is already taken in a Supabase JWT by the
-Postgres role PostgREST switches into, normally `authenticated`, so the claim cannot be
-called `role`. Reading the column is `m.role`; reading the token is `app.jwt() ->> 'app_role'`.
-`sb-tenancy` caught this against migration 002; as written my fan-out would have failed.
+**`app.role_holders` is `sb-tenancy`'s** (their §2.6, commit `84c64fb`, agreed as conflict
+C15), and I call it rather than joining `public.memberships` myself:
+
+```sql
+app.role_holders(p_tenant uuid, p_roles app.app_role[], p_requires_permission text default null)
+  returns table (user_id uuid, role app.app_role, team_id uuid)
+```
+
+Calling it instead of joining also retires a bug I had here. My draft read
+`memberships.app_role`, which does not exist — the column is `role`, and `app_role` is the
+JWT *claim*, deliberately different because `role` in a Supabase JWT is already the Postgres
+role PostgREST switches into. `role_holders` returns both a `user_id` and a `role`, so this
+file never names that column and cannot get it wrong again. That is the better fix: not
+having to know beats knowing correctly.
+
+**Pass the permission, not just the roles.** `'approval:decide'` intersects the role set
+with the role-permission matrix, so the badge reaches people who can actually act rather
+than everyone holding the routing role. If someone moves `approval:decide` off a role, that
+role's badge should drop to zero rather than keep showing a queue depth they can no longer
+do anything about. `sb-tenancy` suggested this and it is right: a badge is a call to action,
+and a count you cannot act on is noise.
+
+Two behaviours of `role_holders` that matter here:
+
+- **`service_role` is exempt from its cross-tenant guard.** It raises `CROSS_TENANT_DENIED`
+  when an *authenticated* caller passes a tenant other than their own. The approval-trigger
+  path passes the row's own tenant so it never trips; the tenant-wide paths (a dead-lettered
+  job, a failed run) run from the worker as `service_role` and pass through. If a badge
+  broadcast is ever called from a third context, expect the raise and treat it as correct.
+- **`AGENT` memberships are excluded unconditionally**, which is what this wants: an agent
+  principal has no sidebar and no badges. No opt-in needed.
 
 The exception handler is **inside** the loop, not around it. A single user whose broadcast
 fails must not stop the remaining users from getting theirs, and no broadcast failure may
@@ -2300,17 +2325,20 @@ state, not on logs.
   because the constraint that drove it — one action, N independently failing effects — is
   the kind of thing a future reader re-litigates from scratch otherwise.
 
-- **Seven helper functions are named but not written**, and they are the largest piece of
+- **Six helper functions are named but not written**, and they are the largest piece of
   unwritten work this document implies: `app.aggregate_type_for`, `app.event_payload_for`,
   `app.event_summary_for`, `app.event_name_for` (shared with `sb-actions`),
-  `app.job_type_for`, `app.job_priority_for` and `app.role_holders`. They are mechanical,
-  but `app.event_payload_for` and `app.event_summary_for` are where the §14 payload shapes
-  are actually enforced, so "mechanical" does not mean "trivial". `app.role_holders`
-  overlaps `sb-actions`' `app.pick_role_holder` and the two should be one function.
+  `app.job_type_for` and `app.job_priority_for`. They are mechanical, but
+  `app.event_payload_for` and `app.event_summary_for` are where the §14 payload shapes are
+  actually enforced, so "mechanical" does not mean "trivial". `app.job_type_for` is the
+  urgent one: `sb-actions`' committed `apply_effects` already calls it, so the dependency
+  runs from their shipped SQL into my missing function.
 
-- **`public.memberships` and its `app_role` column are assumed** by the badge fan-out in
-  §7.4. `sb-tenancy` lists `memberships` among its four tables but I have not verified the
-  column name.
+- **The badge fan-out no longer touches `public.memberships`.** It calls `sb-tenancy`'s
+  `app.role_holders` (committed, `84c64fb`), which removes the `app_role`-vs-`role` column
+  bug I had and the assumption behind it. What I have not verified is that `enum_range(null::app.app_role)`
+  is the right way to spell "every role" for the null case, or that `app.app_role` is the
+  exact type name of their enum.
 
 - **`core.hrdc_packets` and `core.invoices` columns are assumed.** The badge SQL in §7.2
   and the invoice channel in §3.2 name `deadline_at`, `status` and `sync_state`, owned by
