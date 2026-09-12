@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 2 · **Applied:** 0 · **Authored, not applied:** 2
+**Migrations:** 3 · **Applied:** 0 · **Authored, not applied:** 3
 **Last snapshot of `tables/`:** never
 
 ---
@@ -13,6 +13,8 @@
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
 
+**Last updated:** 2026-09-12 — **003 authored and EXECUTED: 69 enum types, 271 labels, GENERATED from `packages/contract/src/enums.ts` rather than transcribed.** Sixty-two of the sixty-nine are emitted by reading the contract package's `as const` arrays, one `CREATE TYPE` per array, so the database and the TypeScript contract are the same list by construction rather than by review. Each carries a COMMENT naming the constant it came from, so provenance survives into `\dT+`. The reason is that a misspelt enum label is perfectly valid SQL: `ACT_WITH_APROVAL` creates cleanly, matches nothing at run time, and first shows up as a row that will not insert in staging weeks later. The pin is generated from the migration and asserts every label **in declaration order**, because ORDER is semantic for a Postgres enum — comparisons and ORDER BY use declaration order, so a type recreated alphabetically would pass every membership test and silently sort BREACHING approvals last. T4 demonstrates that rather than asserting it abstractly. **Seven types are NOT in the contract package** and are listed separately with the doc section each came from; `travel_region` is the weakest of them — doc 01 names the type but gives no values, so `KLANG_VALLEY · PENINSULAR · EAST_MALAYSIA` are taken from DECISIONS §5's rate-card travel bands and are flagged. **Conflict C3 recorded, not resolved by precedence:** doc 03 §1 states "check constraints in place of enum types" for its own `app.*` gate tables and doc 01 chooses native enums for the domain, with reasons. These are not in conflict — each document describes the tables it owns — so the gate uses `text` + CHECK and the domain uses enums, and the asymmetry is recorded so nobody "unifies" it in one direction and breaks the other lane's design. **The rollback refuses rather than cascading:** `DROP TYPE ... CASCADE` does not fail on a dependent column, it DROPS THE COLUMN, which on `engagements.status` is silent irreversible data loss dressed as a successful rollback. The guard names every dependent column in one message instead of failing sixty-nine times.
+
 **Last updated:** 2026-09-12 — **002 authored and EXECUTED; three defects found by running the docs' own SQL rather than reading it.** (1) **Doc 02 §4.1's `app.can_see_owner` does not compile.** It writes `p_owner = any ((select app.my_team_user_ids()))`; `ANY ((SELECT ...))` is parsed as the SUBQUERY form of ANY, which wants a set, while the function returns one `uuid[]` value, so Postgres reports `operator does not exist: uuid = uuid[]`. Corrected to `= ANY ((SELECT app.my_team_user_ids())::uuid[])`, which compiles AND keeps the property the doc wanted — `EXPLAIN` shows the whole expression hoisted to `(InitPlan 1).col1`, so the team lookup runs once per statement, not once per row. Calling the function bare also compiles but gives up that guarantee. (2) **Doc 02 §2.2 says "Ninety-four strings"; its own catalogue and its own §2.3 matrix each hold 109.** The seed was built by PARSING the markdown table rather than transcribing it — 74 rows, 109 distinct permissions, 399 (role, permission) pairs — because a hand transcription of a 74×7 grid is a typo generator and a missing tick is a silent authorisation hole no test for a different permission would catch. The prose count is stale; the data is self-consistent; the seed follows the data. (3) **The rollback crashed when re-run.** `'public.tenants'::regclass` RAISES on a missing relation, so a second run produced a bare cast error from inside a guard instead of "nothing to roll back"; and a plpgsql `RETURN` exits its block, not the script, so an early short-circuit did not stop the REVOKE below it. Both fixed with `to_regclass()` and per-statement existence guards; the rollback now round-trips and is safe to re-run. **The three pre-flight guards were tested by making each condition true** and confirming the refusal, not by reading them. **`public.user_profiles` is an AUTHOR ADDITION** — doc 02 §1.2 assigns it to sb-erd and names the two columns it requires, doc 01 never defines it, and the hook and every display-name policy need it to exist. Flagged rather than folded in silently.
 
 **Last updated:** 2026-09-12 — **001 authored and EXECUTED; nothing applied to any hosted database.** The foundation lands: schemas `app`, `core` and `extensions`, four extensions, and five shared helpers. Two things were found by running it rather than by reading it, and both changed the migration. **(1) The rollback's first execution aborted on `cannot drop extension pgcrypto because other objects depend on it`.** That was correct behaviour exposing an incorrect design: Supabase installs pgcrypto on every project, so 001's `CREATE EXTENSION IF NOT EXISTS pgcrypto` is a no-op on the real target and 001 does not own it. Dropping it would not restore the prior state, it would destroy a piece of it. The rollback now drops only the three extensions 001 genuinely creates (citext, btree_gist, pg_trgm) and says why pgcrypto is absent from the list. **(2) Doc 02 §4.1's baseline line `alter default privileges in schema public revoke all on tables from public` does not do what it says, and neither does the functions equivalent.** Measured on PostgreSQL 17.11: for tables it is vacuous, because PUBLIC holds no default table privilege to revoke; for functions it is not vacuous and still does not take — the statement records no row in `pg_default_acl` and a function created afterwards is still executable by PUBLIC and by `anon`. The same statement in GRANT form records correctly, so the mechanism is live and it is the revoke-from-PUBLIC direction that fails. Both lines are kept as the documented baseline and are explicitly **not** the guard; the guard is per-object `REVOKE` at creation in every migration plus test_014's schema-wide sweep. The pin was rewritten to stop asserting the fiction — it had originally asserted a `pg_default_acl` row and failed, which is how this was found. **Conflict C1 resolved and applied here:** the domain lives in schema `core`, not `public`. Doc 03 §1 states it outright and then uses `core.proposals`, `core.quotations`, `core.invoices`, `core.engagements` and `core.hrdc_packets` across twenty places of its own executable SQL including index DDL it prescribes; doc 02 writes the same tables as `public.*` throughout its RLS catalogue. 03 outranks 02. `core` is therefore added to PostgREST's exposed schemas in `config.toml` — without that line the whole domain is invisible to the API with no error to explain it.
@@ -21,6 +23,7 @@
 
 | # | File | Summary |
 |---|------|---------|
+| 003 | `003_enum_types.sql` | **69 native enum types in `core`, 271 labels, generated from the contract package (2026-09-12).** Closed catalogues frozen by contract §12/§17 become native enums — four bytes on disk across a model full of status columns, and real union types in the generated TypeScript. Open, config-driven sets (`action_type`, lifecycle step key, compliance check key, `hrdc_document_type`, metric key, tier key, template type, TNA constraint code) deliberately do NOT appear here: they arrive in 004 as reference tables, because the project rule is that stage names and order render from configuration, and a CHECK constraint is code while a reference table is data. 62 types generated from `packages/contract/src/enums.ts`; 7 named by doc 01 alone and listed separately. `app_role` and `actor_kind` are NOT duplicated into `core` — doc 02 owns both and creates them in `app` (conflict C2). Spine untouched: types only, no table, no function, no policy. |
 | 002 | `002_tenancy_identity_and_permissions.sql` | **Multi-tenancy from row zero: five identity tables, 109 permissions as data, and the access-token hook (2026-09-12).** `public.tenants`, `teams`, `team_members`, `memberships` and `user_profiles` (author addition), all RLS-enabled AND **forced** — forced removes the table owner's exemption, so a function running as `postgres` no longer silently sees every tenant. Three enum types in `app` (`app_role`, `actor_kind`, `data_scope`) per doc 02 §1.2. Eighteen claim readers and predicates: `app.current_tenant_id` (the spelling three lanes converged on — `app.tenant_id()` does not exist and must not be created), `app.has_permission`, `app.can_see_owner`, `app.my_team_user_ids`, `app.aal`, and `app.principal_claims` as the SINGLE claim-building body shared by the GoTrue hook and the agent-token minter, because §3.1 notes the hook does not run for a self-minted token and two bodies would drift. `app.role_permissions` seeded with 399 (role, permission) pairs over 109 permissions, parsed from doc 02 §2.3 rather than transcribed. **The escalation stop is a RESTRICTIVE policy**: `memberships_no_self_edit` — without it an ADMIN can UPDATE their own row to any role, scope or tenant, and `memberships_write_admin` permits it because they ARE an admin of that tenant while they do it. ADMIN writes additionally require `aal2`. Spine untouched — the action envelope does not exist yet; 002 is the authorization the spine will rest on. |
 | 001 | `001_foundation_schemas_and_helpers.sql` | **The floor: three schemas, four extensions, five shared helpers (2026-09-12).** Creates `app` (helpers + the action gate, NOT exposed to PostgREST), `core` (the 86-table domain, exposed), and `extensions`. Installs citext (case-insensitive email, so `EXACT_DOMAIN` contact matching does not silently miss on case), btree_gist (the EXCLUDE constraint that stops a trainer being double-booked, 008), pg_trgm (⌘K search) and pgcrypto (share-token hashing — platform-provided on Supabase, so 001 does not own it and the rollback leaves it). Five helpers: `app.set_updated_at`, `app.enforce_immutable_columns` (generic, column names as trigger arguments — one implementation, N attachments, instead of N triggers that drift), `app.round_half_up_minor` (the single definition of DECISIONS §7's rounding rule), and `app.ok`/`app.err`. **The envelope is a FUNCTION, not a convention:** point 2 of the contract check is structural rather than review-dependent because `app.ok(jsonb)` BUILDS the object, so a top-level sibling key is not something a later author can add by accident. Applies doc 02 §4.1's schema baseline to `public` and `core` — and records that two of its four lines do not work. No spine yet; this creates the primitives the spine is built from. |
 
@@ -192,6 +195,51 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 003 (`003_enum_types.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-12, NOT APPLIED.** Source: `docs/architecture/01` Conventions
+(the enum-versus-reference-table split and the type list), `packages/contract/src/enums.ts` (the
+values), contract §12 and §17.
+
+### What it does
+
+69 `CREATE TYPE ... AS ENUM` in `core`, each idempotent behind a `duplicate_object` handler and each
+carrying a `COMMENT` recording its source. No table, no function, no policy, no grant — a type is
+not a privileged object and there is nothing sensitive in a label.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** / 2. **Unwrap** — no RPC, no jsonb across the boundary.
+3. **RpcMap** — no entries, but this is the one migration where the SQL and
+   `packages/contract/src/enums.ts` MUST stay in lockstep, and it is generated from that file
+   precisely so they do.
+4. **Call sites** — every domain table in 004–013 types a column with one of these. Zero today is
+   expected.
+5. **Casts** — none. 6. **Reload/restore** — no behaviour. 7. **Public routes** — none.
+
+### Pin — `tests/test_003_enum_types.sql`
+
+Six checks, all executed, all PASS. The expected list is generated from the migration, so pin and
+migration are the same list by construction and a disagreement means one was hand-edited.
+T1 all 69 types exist · T2 no UNEXPECTED type crept in (one nobody generated is one somebody typed) ·
+T3 every label matches **in declaration order** · T4 ordering is semantic, demonstrated:
+`BREACHING < TODAY` and `OBSERVE < AUTONOMOUS`, so a ceiling comparison written `level <= ceiling`
+keeps meaning what it says · T5 every type carries its provenance comment · T6 `actor_kind` and
+`app_role` exist in `app` and NOT in `core`.
+
+**RLS four-way: not applicable** — 003 creates no table.
+
+### Rollback — `rollbacks/003_enum_types_rollback.sql`
+
+One guard that answers the real question in one message: which columns are still declared with a
+`core` enum, so the operator knows which migration to roll back first, rather than sixty-nine
+separate refusals. Drops are alphabetical because enum types do not depend on one another, and
+pretending there is a dependency order would imply one exists. **CASCADE is deliberately absent and
+must not be added** — it drops the dependent column rather than refusing. Round-tripped: applied →
+rolled back → re-applied, verify green each time.
 
 ---
 

@@ -12,6 +12,27 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — the status vocabulary, generated from the contract instead of copied
+
+### Added
+
+- **Sixty-nine enum types, generated from the TypeScript contract package (003).** Every closed
+  status catalogue the API contract freezes now exists in the database, emitted by reading
+  `packages/contract/src/enums.ts` rather than by transcribing it. The database and the contract are
+  the same list by construction, not by review, and each type records in a comment which constant it
+  came from. A misspelt enum label is valid SQL: it creates cleanly, matches nothing, and surfaces
+  weeks later as a row that will not insert.
+- **Order is pinned, not just membership.** Postgres compares and sorts enums by declaration order,
+  so a type recreated alphabetically would pass every membership test and quietly sort breaching
+  approvals to the bottom of the queue. The test demonstrates the two orderings that carry meaning.
+
+### Note
+
+- Open, configuration-driven sets are deliberately absent: action types, lifecycle step keys,
+  compliance check keys, document types, metric keys and tier keys arrive as reference tables, not
+  as types. Stage names and their order render from configuration, and a check constraint is code
+  while a table is data an administrator can edit.
+
 ## 2026-09-12 — multi-tenancy: the tenant registry, 109 permissions as data, and the escalation stop
 
 ### Added
