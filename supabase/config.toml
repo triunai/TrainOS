@@ -7,6 +7,16 @@
 # `supabase db push` cannot find a target before a human has chosen one.
 # project_id = ""
 
+[api]
+# `core` holds the entire domain (docs/architecture/03 §1: "Schema `app` holds the
+# gate. Schema `core` holds the domain"). PostgREST exposes only `public` by
+# default, so WITHOUT this line every business table is invisible to the API and
+# the app sees an empty database with no error to explain it.
+# `app` is deliberately ABSENT: it holds the tenant resolver, the permission
+# lookup and the action gate, none of which a client may call directly.
+schemas = ["public", "core", "graphql_public"]
+extra_search_path = ["public", "core", "extensions"]
+
 [db]
 # Pin the engine the migrations were authored and executed against. 17 is what
 # `supabase/tests/` were run on; a lower major would silently reject syntax the

@@ -17,9 +17,9 @@ design, frontend.
 
 | # | Decision | Chosen | Rejected | Why |
 |---|---|---|---|---|
-| D1 | Event log shape | One append-only `public.events` table, plus `public.event_subjects` link rows | Per-aggregate event tables | One catalogue (§14), one audit query, one retention policy. Link rows let an event appear in more than one record's drawer without an `OR` that defeats the index. |
+| D1 | Event log shape | One append-only `core.events` table, plus `core.event_subjects` link rows | Per-aggregate event tables | One catalogue (§14), one audit query, one retention policy. Link rows let an event appear in more than one record's drawer without an `OR` that defeats the index. |
 | D2 | Partitioning | **None at launch.** Documented trigger to partition `events` by month | Monthly range partitioning from day one | The skill's threshold is >100M rows; realistic TrainOS volume is ~10⁵–10⁶ events/yr. Partitioning also forbids a global unique index, which is exactly what the idempotency key needs. See [Deviations](#deviations). |
-| D3 | Queue transport | **Own `app.jobs` table**, claimed with `FOR UPDATE … SKIP LOCKED` | `pgmq` / Supabase Queues | The job ledger is a UI-visible entity here (dead letters, agent-failure badge, retry-from-checkpoint). `pgmq` queue tables are not tenant-indexed and expose no typed state, so every UI query becomes a jsonb expression scan across N queue tables. See [§2.1](#21-pgmq-vs-a-job-table). |
+| D3 | Queue transport | **Own `app.outbox` table**, claimed with `FOR UPDATE … SKIP LOCKED` | `pgmq` / Supabase Queues | The job ledger is a UI-visible entity here (dead letters, agent-failure badge, retry-from-checkpoint). `pgmq` queue tables are not tenant-indexed and expose no typed state, so every UI query becomes a jsonb expression scan across N queue tables. See [§2.1](#21-pgmq-vs-a-job-table). |
 | D4 | Enqueue mechanism | Same transaction as the state change, inside `app.emit_event()` | Separate outbox relay process | Both the event and the job are rows in the same database; a relay would only add a failure mode. This is the transactional outbox with the transport collapsed. |
 | D5 | Worker trigger | `pg_cron` tick every 10s → `pg_net` → `job-worker` edge function, plus an optional per-row `pg_net` nudge for `priority = 1` jobs | Trigger-per-job only; long-lived polling worker | The cron tick is the reliability floor and cannot be starved. The nudge is a latency optimisation and is never the delivery guarantee. `pg_net` requests do not start until the transaction commits, so a nudge can never fire for a rolled-back job. |
 | D6 | Realtime mechanism | **Broadcast from database triggers** (`realtime.send`) on private channels | `postgres_changes` | §11 payloads are reshaped (`urgencyGroup`, `slaBreached`, `syncState`), which `postgres_changes` cannot produce. Broadcast also scales per-topic instead of replaying RLS per subscriber per row change. |
@@ -34,12 +34,12 @@ design, frontend.
 
 ## 1 · Domain events
 
-### 1.1 `public.events`
+### 1.1 `core.events`
 
 Append-only. Never updated, never deleted by application code.
 
 ```sql
-create table public.events (
+create table core.events (
   id              uuid primary key default gen_random_uuid(),
   tenant_id       uuid not null,
 
@@ -57,7 +57,7 @@ create table public.events (
   -- lineage
   correlation_id  uuid not null,            -- the originating action_request id, constant down the chain
   causation_id    uuid,                     -- the immediately preceding event
-  run_id          uuid references public.runs(id) on delete set null,
+  run_id          uuid references core.runs(id) on delete set null,
 
   -- delivery
   idempotency_key text,
@@ -72,10 +72,10 @@ language plpgsql as $$ begin
 end $$;
 
 create trigger events_append_only
-  before update or delete on public.events
+  before update or delete on core.events
   for each row execute function app.reject_mutation();
 
-revoke update, delete on public.events from authenticated, anon, service_role;
+revoke update, delete on core.events from authenticated, anon, service_role;
 ```
 
 `actor.kind` uses the §12 `ActorKind` enum. `actor` stays jsonb rather than three columns
@@ -87,33 +87,33 @@ because a `CLIENT` actor has no row in any user table.
 ```sql
 -- audit drawer and record timelines (the hot path)
 create index events_subject_idx
-  on public.event_subjects (tenant_id, subject_type, subject_id, event_id);
+  on core.event_subjects (tenant_id, subject_type, subject_id, event_id);
 
 -- tenant-wide feeds, keyset paginated
 create index events_tenant_time_idx
-  on public.events (tenant_id, occurred_at desc, id desc);
+  on core.events (tenant_id, occurred_at desc, id desc);
 
 -- catalogue filters (e.g. every ApprovalRequested this month)
 create index events_tenant_type_time_idx
-  on public.events (tenant_id, type, occurred_at desc);
+  on core.events (tenant_id, type, occurred_at desc);
 
 -- dedupe; partial so the index holds only keyed events
 create unique index events_idempotency_idx
-  on public.events (tenant_id, idempotency_key)
+  on core.events (tenant_id, idempotency_key)
   where idempotency_key is not null;
 
 -- run trace back-reference
-create index events_run_idx on public.events (run_id) where run_id is not null;
+create index events_run_idx on core.events (run_id) where run_id is not null;
 
 -- payload containment, only if catalogue-wide payload search is actually needed
--- create index events_payload_gin on public.events using gin (payload jsonb_path_ops);
+-- create index events_payload_gin on core.events using gin (payload jsonb_path_ops);
 ```
 
 The GIN index is commented out deliberately. Nothing in the twenty screens queries an
 event by payload contents; adding it costs write throughput for a query that does not
 exist yet.
 
-### 1.2 `public.event_subjects` — the audit drawer's index
+### 1.2 `core.event_subjects` — the audit drawer's index
 
 `GET /v1/{resourceType}/{id}/audit` must show events where the record is *involved*, not
 only where it is the aggregate. `ApprovalDecided` has aggregate `APPROVAL` but belongs in
@@ -121,8 +121,8 @@ the proposal's drawer too. An `OR` across two columns will not use an index, so
 involvement is normalised.
 
 ```sql
-create table public.event_subjects (
-  event_id     uuid not null references public.events(id) on delete cascade,
+create table core.event_subjects (
+  event_id     uuid not null references core.events(id) on delete cascade,
   tenant_id    uuid not null,
   subject_type text not null,       -- 'PROPOSAL' | 'ORGANISATION' | 'ENGAGEMENT' | …
   subject_id   uuid not null,
@@ -131,7 +131,7 @@ create table public.event_subjects (
   primary key (event_id, subject_type, subject_id)
 );
 create index event_subjects_lookup_idx
-  on public.event_subjects (tenant_id, subject_type, subject_id, event_id);
+  on core.event_subjects (tenant_id, subject_type, subject_id, event_id);
 ```
 
 `app.emit_event()` always writes the aggregate as a `SUBJECT` row and any
@@ -140,7 +140,7 @@ create index event_subjects_lookup_idx
 ### 1.3 `app.emit_event()` — the only write path
 
 Every state change calls this in its own transaction. Nothing else inserts into
-`public.events`.
+`core.events`.
 
 ```sql
 create or replace function app.emit_event(
@@ -168,7 +168,7 @@ declare
 begin
   v_corr := coalesce(p_correlation_id, gen_random_uuid());
 
-  insert into public.events (
+  insert into core.events (
     tenant_id, type, aggregate_type, aggregate_id, aggregate_ref,
     payload, summary, actor, correlation_id, causation_id, run_id, idempotency_key
   ) values (
@@ -183,22 +183,22 @@ begin
   -- replay of a seen key: return the original id, enqueue nothing
   if v_event_id is null then
     select id into v_event_id
-      from public.events
+      from core.events
      where tenant_id = p_tenant_id and idempotency_key = p_idempotency_key;
     return v_event_id;
   end if;
 
-  insert into public.event_subjects (event_id, tenant_id, subject_type, subject_id, role)
+  insert into core.event_subjects (event_id, tenant_id, subject_type, subject_id, role)
   values (v_event_id, p_tenant_id, p_aggregate_type, p_aggregate_id, 'SUBJECT')
   on conflict do nothing;
 
-  insert into public.event_subjects (event_id, tenant_id, subject_type, subject_id, role)
+  insert into core.event_subjects (event_id, tenant_id, subject_type, subject_id, role)
   select v_event_id, p_tenant_id, r->>'type', (r->>'id')::uuid, 'RELATED'
     from jsonb_array_elements(p_related) r
   on conflict do nothing;
 
   -- transactional outbox: subscriptions become jobs in this same transaction
-  insert into app.jobs (
+  insert into app.outbox (
     tenant_id, job_type, priority, payload,
     event_id, run_id, correlation_id, run_after
   )
@@ -223,6 +223,59 @@ revoke execute on function app.emit_event from public, anon, authenticated;
 The `on conflict … do nothing` plus the follow-up select is what makes replay of an
 `Idempotency-Key` return the original event and enqueue **no** duplicate jobs. That is the
 single most important line in this document.
+
+#### The three-argument overload
+
+`03-action-envelope-and-policy-gate.md` calls `app.emit_event(tenant_id, event_name,
+action_request_id)` from `app.apply_effects` and `app.decide_approval`. That is a better
+call site than making the action envelope assemble twelve arguments it would only be
+re-deriving from a row it already holds, so it is supported as an overload rather than
+corrected. Postgres resolves the two by arity.
+
+```sql
+create or replace function app.emit_event(
+  p_tenant_id         uuid,
+  p_type              text,
+  p_action_request_id uuid
+) returns uuid
+language plpgsql security definer set search_path = ''
+as $$
+declare r app.action_requests%rowtype;
+begin
+  select * into r from app.action_requests where id = p_action_request_id;
+  if not found then
+    raise exception 'action request % not found', p_action_request_id
+      using errcode = 'P0002';
+  end if;
+
+  return app.emit_event(
+    p_tenant_id       => p_tenant_id,
+    p_type            => p_type,
+    p_aggregate_type  => app.aggregate_type_for(r.action_type),
+    p_aggregate_id    => r.target_id,
+    p_aggregate_ref   => r.target_ref,
+    p_payload         => app.event_payload_for(r),
+    p_summary         => app.event_summary_for(r, p_type),
+    p_actor           => jsonb_build_object('kind', r.requested_by_kind,
+                                            'id',   r.requested_by_id,
+                                            'name', r.requested_by_name),
+    p_correlation_id  => r.id,                    -- the action request IS the correlation
+    p_run_id          => r.agent_run_id,
+    p_idempotency_key => 'action:' || r.id::text || ':' || p_type
+  );
+end $$;
+```
+
+Three consequences worth stating, because they are load-bearing for the seam:
+
+- **`correlation_id` is `action_requests.id`**, set here rather than passed. Every event
+  descending from one action therefore shares it without any caller having to remember to.
+- **The idempotency key is derived**, `action:<id>:<EventName>`. Re-running
+  `apply_effects` after a crash emits no second event, which is the same guarantee their
+  `on conflict (tenant_id, job_key) do nothing` gives the outbox insert.
+- **`app.event_payload_for` and `app.event_summary_for` are mine to write**, one branch per
+  event type, and they are where the §14 payload shapes are actually enforced. They pair
+  with `app.event_name_for(action_type)`, which `sb-actions` already has.
 
 ### 1.4 `app.event_subscriptions` — event → job routing
 
@@ -276,7 +329,7 @@ causationId }` in addition to the payload below. `Agg` is `aggregate_type`.
 | `TNACompleted` | TNA | `POST /public/tnas/{token}/submit` | `{ tnaRef, opportunityRef, completedBy, completedAt }` | `LLM_RUN` (recommendations) |
 | `ProposalDrafted` | PROPOSAL | `POST /proposals`, section regenerate | `{ proposalRef, templateId, agentId, runId, value }` | `PROPOSAL_PDF_RENDER` |
 | `ApprovalRequested` | APPROVAL | `POST /actions` when policy routes | `{ approvalRef, policyId, actionType, targetRef, value, approverRole, slaDueAt }` | `APPROVAL_SLA_ESCALATE` (delayed) |
-| `ApprovalDecided` | APPROVAL | `POST /approvals/{id}/decide` | `{ approvalRef, decision, decidedBy, decidedAt, effects[] }` | `JURY_SAMPLE` (5%, §18) |
+| `ApprovalDecided` | APPROVAL | `POST /approvals/{id}/decide` | `{ approvalRef, decision, decidedBy, decidedAt, effects[] }` | — (sampling is a cron sweep, not a subscription — see §9) |
 | `ProposalSent` | PROPOSAL | approval effect / direct execute | `{ proposalRef, channel, to, sentAt }` | `SEND_EMAIL` \| `SEND_WHATSAPP` |
 | `ProposalAccepted` | PROPOSAL | `POST /public/proposals/{token}/accept` | `{ proposalRef, acceptedBy, acceptedAt, engagementRef }` | `SEND_EMAIL` (internal notify) |
 | `EngagementCreated` | ENGAGEMENT | proposal acceptance | `{ engagementRef, organisationRef, programmeRef, dates }` | `COMPLIANCE_CHECK_EVALUATE` |
@@ -362,17 +415,17 @@ replay. That is a correct queue we do not have to write or maintain.
    against a row we need to be able to find by `run_id`.
 
 **When to switch.** If sustained enqueue exceeds roughly a few thousand jobs per minute,
-or if nobody wants to own the reaper, move transport to `pgmq` and keep `app.jobs` as a
+or if nobody wants to own the reaper, move transport to `pgmq` and keep `app.outbox` as a
 projection written by the handler. Below that, one table is less machinery, not more.
 
 Note if you do enable it: `pgmq` tables have no RLS by default, and the `pgmq_public`
 wrapper schema is only needed to expose queue operations to browser clients over
 PostgREST. TrainOS workers use the service role, so that schema should stay unexposed.
 
-### 2.2 `app.jobs`
+### 2.2 `app.outbox`
 
 ```sql
-create table app.jobs (
+create table app.outbox (
   id                 uuid primary key default gen_random_uuid(),
   tenant_id          uuid not null,
 
@@ -383,8 +436,8 @@ create table app.jobs (
   payload            jsonb not null default '{}'::jsonb,
 
   -- provenance
-  event_id           uuid references public.events(id) on delete set null,
-  run_id             uuid references public.runs(id) on delete set null,
+  event_id           uuid references core.events(id) on delete set null,
+  run_id             uuid references core.runs(id) on delete set null,
   action_request_id  uuid,                    -- seam to sb-actions, see §2.7
   correlation_id     uuid not null,
   idempotency_key    text,
@@ -415,25 +468,25 @@ full index on a table whose rows are 99% `SUCCEEDED` is wasted write amplificati
 
 ```sql
 -- the claim (the only index on the hot path)
-create index jobs_claim_idx on app.jobs (priority, run_after, id)
+create index outbox_claim_idx on app.outbox (priority, run_after, id)
   where state = 'QUEUED';
 
 -- the lease reaper
-create index jobs_lease_idx on app.jobs (visible_after)
+create index outbox_lease_idx on app.outbox (visible_after)
   where state = 'CLAIMED';
 
 -- badge counts and the failure list
-create index jobs_failed_idx on app.jobs (tenant_id, finished_at desc)
+create index outbox_failed_idx on app.outbox (tenant_id, finished_at desc)
   where state in ('FAILED','DEAD');
 
 -- dedupe
-create unique index jobs_idempotency_idx on app.jobs (tenant_id, idempotency_key)
+create unique index outbox_idempotency_idx on app.outbox (tenant_id, idempotency_key)
   where idempotency_key is not null;
 
 -- foreign keys (Postgres does not index these for you)
-create index jobs_run_idx on app.jobs (run_id) where run_id is not null;
-create index jobs_event_idx on app.jobs (event_id) where event_id is not null;
-create index jobs_action_idx on app.jobs (action_request_id) where action_request_id is not null;
+create index outbox_run_idx on app.outbox (run_id) where run_id is not null;
+create index outbox_event_idx on app.outbox (event_id) where event_id is not null;
+create index outbox_action_idx on app.outbox (action_request_id) where action_request_id is not null;
 ```
 
 **RLS.** Workers use the service role and bypass RLS, but the table still gets
@@ -454,7 +507,7 @@ exposed-schema list as a second layer.
 | `HRDC_PACKET_ASSEMBLE` | `AttendanceLocked`, document upload | 5 | 3 | Emits `HRDCPacketReady` at completeness 1.0 |
 | `COMPLIANCE_CHECK_EVALUATE` | `EngagementCreated`, every stage transition, `RuleChangeApproved` | 5 | 3 | Produces `versionDrift` per §18 |
 | `APPROVAL_SLA_ESCALATE` | `ApprovalRequested`, delayed to `escalateAfterMinutes` | 5 | 2 | No-op if already decided |
-| `JURY_SAMPLE` | `ApprovalDecided`, 5% sample (§18 SAMPLE mode) | 9 | 2 | Asynchronous, never blocks; may emit `JuryDisagreed` |
+| `JURY_SAMPLE` | `app.enqueue_jury_samples()` cron, 5-minutely, 5% of decided (§18 SAMPLE mode) | 9 | 2 | Asynchronous, never blocks; may emit `JuryDisagreed` |
 | `EVAL_RUN` | promotion request (§18 GATE mode), `JuryDisagreed` | 9 | 2 | Golden set, 50–100 items |
 | `RULE_CHANGE_EXTRACT` | `SourceChanged` | 9 | 3 | Emits `RuleChangeProposed`; withholds changes below 0.80 confidence |
 | `KNOWLEDGE_REINGEST` | `POST /knowledge/sources/{id}/reingest` | 9 | 3 | Chunk + embed |
@@ -508,12 +561,12 @@ create or replace function app.claim_jobs(
   p_types  text[] default null,
   p_limit  int    default 10,
   p_lease  interval default interval '5 minutes'
-) returns setof app.jobs
+) returns setof app.outbox
 language sql
 security definer
 set search_path = ''
 as $$
-  update app.jobs j
+  update app.outbox j
      set state         = 'CLAIMED',
          claimed_at    = now(),
          claimed_by    = p_worker,
@@ -522,7 +575,7 @@ as $$
          updated_at    = now()
    where j.id in (
      select id
-       from app.jobs
+       from app.outbox
       where state = 'QUEUED'
         and run_after <= now()
         and (p_types is null or job_type = any(p_types))
@@ -543,7 +596,7 @@ loop forever.
 -- a long job extends its own lease rather than being reaped mid-flight
 create or replace function app.heartbeat_job(p_job_id uuid, p_extend interval default interval '5 minutes')
 returns void language sql security definer set search_path = '' as $$
-  update app.jobs set visible_after = now() + p_extend, updated_at = now()
+  update app.outbox set visible_after = now() + p_extend, updated_at = now()
    where id = p_job_id and state = 'CLAIMED';
 $$;
 ```
@@ -557,9 +610,9 @@ create or replace function app.complete_job(
 ) returns void
 language plpgsql security definer set search_path = ''
 as $$
-declare j app.jobs;
+declare j app.outbox;
 begin
-  update app.jobs
+  update app.outbox
      set state = 'SUCCEEDED', result = p_result,
          finished_at = now(), updated_at = now(), last_error = null
    where id = p_job_id and state = 'CLAIMED'
@@ -587,7 +640,8 @@ begin
   end if;
 
   if j.action_request_id is not null then
-    perform app.record_effect(j.action_request_id, p_result);   -- owned by sb-actions
+    -- owned by sb-actions; the job's idempotency_key IS their job_key (§2.7)
+    perform app.settle_effect(j.idempotency_key, 'SETTLED', p_result);
   end if;
 end $$;
 ```
@@ -598,13 +652,13 @@ create or replace function app.fail_job(p_job_id uuid, p_error jsonb, p_retryabl
 returns text
 language plpgsql security definer set search_path = ''
 as $$
-declare j app.jobs; v_state text;
+declare j app.outbox; v_state text;
 begin
-  select * into j from app.jobs where id = p_job_id for update;
+  select * into j from app.outbox where id = p_job_id for update;
 
   if j.attempts >= j.max_attempts or not p_retryable then
     v_state := 'DEAD';
-    update app.jobs
+    update app.outbox
        set state = 'DEAD', last_error = p_error, finished_at = now(), updated_at = now()
      where id = p_job_id;
 
@@ -616,9 +670,14 @@ begin
       j.payload, p_error, j.attempts,
       jsonb_build_object('kind','SYSTEM','id','worker','name','Worker')
     );
+
+    -- an action's external effect must not sit at DISPATCHED forever (§2.7)
+    if j.action_request_id is not null then
+      perform app.settle_effect(j.idempotency_key, 'FAILED', p_error);
+    end if;
   else
     v_state := 'FAILED';
-    update app.jobs
+    update app.outbox
        set state = 'FAILED', last_error = p_error, updated_at = now(),
            run_after = now() + least(
              interval '1 hour',
@@ -630,7 +689,7 @@ begin
 end $$;
 ```
 
-`FAILED` rows return to the claim index because `jobs_claim_idx` covers `state = 'QUEUED'`
+`FAILED` rows return to the claim index because `outbox_claim_idx` covers `state = 'QUEUED'`
 only — so the reaper is what moves them back:
 
 ```sql
@@ -638,7 +697,7 @@ only — so the reaper is what moves them back:
 create or replace function app.reap_jobs() returns int
 language sql security definer set search_path = '' as $$
   with reaped as (
-    update app.jobs
+    update app.outbox
        set state = 'QUEUED', claimed_by = null, claimed_at = null,
            visible_after = null, updated_at = now()
      where (state = 'CLAIMED' and visible_after < now())
@@ -736,7 +795,7 @@ if not pg_try_advisory_xact_lock(hashtext('jobs-tick')) then return; end if;
 ```
 
 **Optional nudge.** For `priority = 1` only, an `AFTER INSERT` statement-level trigger on
-`app.jobs` calls the same endpoint through `pg_net`. This is safe because `pg_net` does
+`app.outbox` calls the same endpoint through `pg_net`. This is safe because `pg_net` does
 not start the request until the transaction commits, so a rolled-back job never nudges.
 It is an optimisation: if `pg_net` is saturated or the request is dropped, the 10-second
 tick still picks the job up. `pg_net` is rated for about 200 requests/second and its
@@ -744,27 +803,61 @@ response table is unlogged, so it must never carry the guarantee.
 
 ### 2.7 Completion write-back to `sb-actions`
 
-The seam is one function call, made inside `complete_job`'s transaction:
+`03-action-envelope-and-policy-gate.md` landed while this was being written and settles
+most of the seam. Two corrections to my original proposal, and one open item.
+
+**Enqueue: they write the outbox directly, and that is correct.** I had proposed that
+`sb-actions` only ever call `app.emit_event` and let the subscription table fan out to
+jobs. They instead insert into `app.outbox` from `apply_effects`, keyed
+`(tenant_id, job_key)` where `job_key = '<action_request_id>:<seq>'`. That is better,
+because an external effect is enumerated on the action request before the event exists,
+and routing it through a generic event subscription would lose the per-effect identity
+the approval detail screen renders. Both paths write the same table:
+
+| Path | Who enqueues | Key |
+|---|---|---|
+| Enumerated external effect of an action | `app.apply_effects` | `<action_request_id>:<seq>` |
+| Fan-out from a domain event | `app.emit_event` via `app.event_subscriptions` | `event:<event_id>:<job_type>` |
+
+Both are idempotent on `(tenant_id, idempotency_key)`, so an action whose effect is also
+subscribed to its event enqueues once, not twice.
+
+**Column names.** `apply_effects` currently writes
+`app.outbox (tenant_id, topic, job_key, payload, available_at)`. The canonical column
+names in §2.2 are:
+
+| Written by `sb-actions` | Canonical | Note |
+|---|---|---|
+| `topic` (`'effect.proposal_send'`) | `job_type` (`'SEND_EMAIL'`) | Not a rename — a different value. The worker dispatches on handler key, not on action type. `app.job_type_for(action_type, effect)` maps it. |
+| `job_key` | `idempotency_key` | Same concept, same uniqueness, one name |
+| `available_at` | `run_after` | Same concept |
+
+Plus `correlation_id` (`= action_request_id`) and `action_request_id`, both `not null` for
+this path.
+
+**Completion write-back — still open.** `sb-actions` has `app.apply_effects` and
+`app.action_effects.status ∈ (APPLIED, DISPATCHED)`, but no function for a worker to
+report an external effect *finished*. `complete_job` needs one:
 
 ```sql
-perform app.record_effect(p_action_request_id uuid, p_effect jsonb);
+-- proposed; owned by sb-actions
+app.settle_effect(p_job_key text, p_status text, p_result jsonb)
 ```
 
-`sb-actions` owns that function. It appends to `effects` and advances
-`action_requests.status`. Because it runs in the job-completion transaction, an action can
-never be marked `EXECUTED` while its completion event is missing, and vice versa.
+It advances `action_effects.status` from `DISPATCHED` to `SETTLED` or `FAILED` and, when
+the last external effect of an action settles, stamps `action_requests.completed_at`.
+Both `app.complete_job` and the dead-letter branch of `app.fail_job` call it — the failure
+path matters more than the success path, because without it an action whose effect
+exhausts its retries shows `DISPATCHED` on the approval detail screen forever and the
+`EXECUTED` status is a lie. This is the one part of the seam that is **not** agreed.
 
-Direction of ownership, to keep it unambiguous:
+Ownership, restated:
 
-- `sb-actions` **never** inserts into `app.jobs`. It calls `app.emit_event()`; the
-  subscription table turns that into jobs.
-- `sb-events` **never** writes `action_requests` or `effects` directly. It calls
-  `app.record_effect()`.
-- `action_requests.id` is the `correlation_id` for every event descending from that
-  action. `causation_id` points at the immediately preceding event.
-
-This is proposed to `sb-actions` and is **unconfirmed** at the time of writing — see
-[What I could NOT verify](#what-i-could-not-verify).
+- `sb-actions` writes `app.outbox` for enumerated effects, using the canonical columns.
+- `sb-events` never writes `action_requests` or `action_effects` directly; it calls
+  `app.settle_effect()`.
+- `action_requests.id` is the `correlation_id` for every event and job descending from
+  that action; `causation_id` points at the immediately preceding event.
 
 ### 2.8 Dead letters
 
@@ -783,7 +876,7 @@ create table app.dead_letters (
   dead_lettered_at  timestamptz not null default now(),
   dead_lettered_by  jsonb not null,          -- SYSTEM, or the human who called the endpoint
   replayed_at       timestamptz,
-  replayed_job_id   uuid references app.jobs(id)
+  replayed_job_id   uuid references app.outbox(id)
 );
 create index dead_letters_tenant_idx on app.dead_letters (tenant_id, dead_lettered_at desc)
   where replayed_at is null;
@@ -825,11 +918,11 @@ channel config — they must match or nothing is delivered).
 
 | Topic | Event names | Payload | Source | Screens |
 |---|---|---|---|---|
-| `tenant:{tenantId}:role:{role}:badges` | `badges` | `{ approvals: {count, severity}, hrdcDeadlines: {count, severity}, agentFailures: {count, severity} }` | trigger on `approval_requests`, `app.jobs`, `hrdc_packets`, `runs` | sidebar, every screen |
+| `tenant:{tenantId}:role:{role}:badges` | `badges` | `{ approvals: {count, severity}, hrdcDeadlines: {count, severity}, agentFailures: {count, severity} }` | trigger on `approval_requests`, `app.outbox`, `hrdc_packets`, `runs` | sidebar, every screen |
 | `tenant:{tenantId}:approvals` | `approval.created`, `approval.decided` | `{ event: "CREATED"\|"DECIDED", approvalRef, urgencyGroup, slaBreached, actionType, value }` | trigger on `approval_requests` | M02-S01, M01-S01 |
-| `tenant:{tenantId}:enquiries` | `enquiry.received`, `enquiry.classified` | `{ event: "RECEIVED"\|"CLASSIFIED", enquiryRef, channel, confidence }` | trigger on `public.events` for those two types | M03-S01 |
+| `tenant:{tenantId}:enquiries` | `enquiry.received`, `enquiry.classified` | `{ event: "RECEIVED"\|"CLASSIFIED", enquiryRef, channel, confidence }` | trigger on `core.events` for those two types | M03-S01 |
 | `tenant:{tenantId}:invoices` | `invoice.sync.changed` | `{ invoiceRef, syncState, providerCode?, uin? }` | trigger on `invoices.sync_state` | M13-S02, M13-S05 |
-| `tenant:{tenantId}:operations` | `attendance.locked`, `hrdc.deadline.warning`, `run.completed`, `run.failed` | see below | trigger on `public.events` | M09-S02, M10-S06, M12-S02, M18-S01 |
+| `tenant:{tenantId}:operations` | `attendance.locked`, `hrdc.deadline.warning`, `run.completed`, `run.failed` | see below | trigger on `core.events` | M09-S02, M10-S06, M12-S02, M18-S01 |
 | `run:{runId}` | `run.node`, `run.event` | `{ seq, nodeKey, kind, name, tool?, status, durationMs, tier?, cost? }` | trigger on `run_nodes`, `run_events` | M18-S04 |
 
 `tenant:{tenantId}:operations` is an **addition to §11**, which defines no channel for
@@ -883,7 +976,7 @@ begin
 end $$;
 
 create trigger approval_requests_broadcast
-  after insert or update of status on public.approval_requests
+  after insert or update of status on app.approval_requests
   for each row execute function app.broadcast_approval();
 ```
 
@@ -920,7 +1013,7 @@ Run progress is the one high-frequency channel:
 
 ```sql
 create trigger run_nodes_broadcast
-  after insert or update of status on public.run_nodes
+  after insert or update of status on core.run_nodes
   for each row execute function app.broadcast_run_node();
 ```
 
@@ -939,10 +1032,10 @@ returns boolean
 language sql stable security definer set search_path = ''
 as $$
   select exists (
-    select 1 from public.runs r
+    select 1 from core.runs r
      where r.id = p_run_id
-       and r.tenant_id = (select app.current_tenant_id())
-       and (select app.has_role('ADMIN'))       -- §10: run traces are ADMIN
+       and r.tenant_id = (select app.tenant_id())
+       and (select app.role() = 'ADMIN')       -- §10: run traces are ADMIN
   );
 $$;
 revoke execute on function app.can_read_run(uuid) from public, anon;
@@ -957,7 +1050,7 @@ using (
   and (
     (
       split_part(realtime.topic(), ':', 1) = 'tenant'
-      and split_part(realtime.topic(), ':', 2) = (select app.current_tenant_id())::text
+      and split_part(realtime.topic(), ':', 2) = (select app.tenant_id())::text
     )
     or (
       split_part(realtime.topic(), ':', 1) = 'run'
@@ -967,7 +1060,7 @@ using (
 );
 ```
 
-`app.current_tenant_id()` is wrapped in `(select …)` so it is evaluated once per query
+`app.tenant_id()` is wrapped in `(select …)` so it is evaluated once per query
 rather than once per row, per the RLS performance rule. `app.can_read_run` is
 `security definer` in a non-exposed schema with `execute` revoked from `anon`, because it
 reads a table the caller may not be able to read directly.
@@ -986,7 +1079,7 @@ Messages are not replayed to a client that was disconnected. Therefore:
 - Badge counts arrive as absolute values, not deltas, so a missed message self-corrects on
   the next one.
 - Nothing in the system reads `realtime.messages` as a record of anything. The record is
-  `public.events`.
+  `core.events`.
 
 ---
 
@@ -1048,7 +1141,7 @@ create table app.webhook_deliveries (
   http_status      int not null,
   headers          jsonb not null default '{}'::jsonb,
   raw_body         text,                       -- nulled after 30 days
-  event_id         uuid references public.events(id) on delete set null,
+  event_id         uuid references core.events(id) on delete set null,
   error            jsonb,
   received_at      timestamptz not null default now(),
   unique (source, idempotency_key)
@@ -1090,10 +1183,10 @@ therefore the tenant.
 
 ### 5.1 Derived, not duplicated
 
-The audit drawer reads `public.events` through a view. There is no second table.
+The audit drawer reads `core.events` through a view. There is no second table.
 
 ```sql
-create or replace view public.audit_entries as
+create or replace view core.audit_entries as
 select
   e.id,
   e.tenant_id,
@@ -1105,8 +1198,8 @@ select
   e.summary,
   e.run_id,
   e.correlation_id
-from public.event_subjects s
-join public.events e on e.id = s.event_id;
+from core.event_subjects s
+join core.events e on e.id = s.event_id;
 ```
 
 `summary` is written by the emitter, not computed here. A view with a `CASE` over 27 event
@@ -1121,8 +1214,8 @@ true when it happened.
 
 ```sql
 select at, actor, event, summary, run_id
-  from public.audit_entries
- where tenant_id    = (select app.current_tenant_id())
+  from core.audit_entries
+ where tenant_id    = (select app.tenant_id())
    and subject_type = $1                      -- 'PROPOSAL'
    and subject_id   = $2
    and ($3::timestamptz is null or (at, id) < ($3, $4))   -- cursor
@@ -1147,11 +1240,11 @@ disagree with who actually did the thing.
 
 | Data | Retention | Mechanism |
 |---|---|---|
-| `public.events` rows and payloads | Indefinite | None. This is the business record. |
+| `core.events` rows and payloads | Indefinite | None. This is the business record. |
 | `event_subjects` | Follows events | `on delete cascade` |
 | `app.webhook_deliveries.raw_body` | 30 days | Daily `RETENTION_REDACT` job nulls the column |
 | `app.webhook_deliveries` rows | 1 year | Daily job deletes |
-| `app.jobs` `SUCCEEDED` rows | 90 days | Daily job deletes; `DEAD` rows are kept |
+| `app.outbox` `SUCCEEDED` rows | 90 days | Daily job deletes; `DEAD` rows are kept |
 | `app.dead_letters` | Indefinite until replayed, then 1 year | Daily job |
 | `run_node_io` (prompts, completions) | 30 days | §6.6 |
 | `runs`, `run_nodes` metadata | Indefinite | None |
@@ -1171,10 +1264,10 @@ the same rule as run I/O.
 
 ## 6 · Agent runs
 
-### 6.1 `public.runs`
+### 6.1 `core.runs`
 
 ```sql
-create table public.runs (
+create table core.runs (
   id                uuid primary key default gen_random_uuid(),
   tenant_id         uuid not null,
   ref               text not null,                    -- '#4821'
@@ -1203,8 +1296,8 @@ create table public.runs (
   duration_ms       int,
 
   -- lineage
-  parent_run_id     uuid references public.runs(id) on delete set null,  -- retry / handoff
-  replay_of_run_id  uuid references public.runs(id) on delete set null,  -- sandbox replay
+  parent_run_id     uuid references core.runs(id) on delete set null,  -- retry / handoff
+  replay_of_run_id  uuid references core.runs(id) on delete set null,  -- sandbox replay
   correlation_id    uuid not null,
   action_request_id uuid,
 
@@ -1214,9 +1307,9 @@ create table public.runs (
 
   unique (tenant_id, ref)
 );
-create index runs_tenant_started_idx on public.runs (tenant_id, started_at desc);
-create index runs_agent_idx on public.runs (tenant_id, agent_id, started_at desc);
-create index runs_failed_idx on public.runs (tenant_id, finished_at desc)
+create index runs_tenant_started_idx on core.runs (tenant_id, started_at desc);
+create index runs_agent_idx on core.runs (tenant_id, agent_id, started_at desc);
+create index runs_failed_idx on core.runs (tenant_id, finished_at desc)
   where status = 'FAILED' and acknowledged_at is null;
 ```
 
@@ -1228,19 +1321,19 @@ proposed as an addition.
 because `finished_at` is null while the run is in flight and the trace viewer shows
 elapsed time from the client.
 
-### 6.2 `public.run_nodes` — the execution tree
+### 6.2 `core.run_nodes` — the execution tree
 
 §17's node tree: orchestrator → sub-agents (Reader / Matcher / Drafter / Verifier) →
 tools.
 
 ```sql
-create table public.run_nodes (
+create table core.run_nodes (
   id              uuid primary key default gen_random_uuid(),
-  run_id          uuid not null references public.runs(id) on delete cascade,
+  run_id          uuid not null references core.runs(id) on delete cascade,
   tenant_id       uuid not null,
 
   node_key        text not null,                   -- 'n0', 'n3' — stable across retries
-  parent_node_id  uuid references public.run_nodes(id) on delete cascade,
+  parent_node_id  uuid references core.run_nodes(id) on delete cascade,
   seq             int not null,
   kind            text not null check (kind in ('ORCHESTRATOR','SUB_AGENT','TOOL')),
   name            text not null,                   -- 'Orchestrator' | 'Drafter' | 'send_proposal'
@@ -1267,8 +1360,8 @@ create table public.run_nodes (
 
   unique (run_id, node_key)
 );
-create index run_nodes_tree_idx on public.run_nodes (run_id, seq);
-create index run_nodes_parent_idx on public.run_nodes (parent_node_id)
+create index run_nodes_tree_idx on core.run_nodes (run_id, seq);
+create index run_nodes_parent_idx on core.run_nodes (parent_node_id)
   where parent_node_id is not null;
 ```
 
@@ -1279,29 +1372,29 @@ The tree is read in one query with a recursive CTE, or simply ordered by `seq` a
 assembled client-side from `parent_node_id`; at 10–30 nodes per run the flat read is
 cheaper than the CTE.
 
-### 6.3 `public.run_node_io` — prompts and completions
+### 6.3 `core.run_node_io` — prompts and completions
 
 Separated from `run_nodes` so the 30-day deletion is a `DELETE` of a side table rather than
 an `UPDATE` that bloats the table the trace viewer reads.
 
 ```sql
-create table public.run_node_io (
-  run_node_id  uuid primary key references public.run_nodes(id) on delete cascade,
+create table core.run_node_io (
+  run_node_id  uuid primary key references core.run_nodes(id) on delete cascade,
   tenant_id    uuid not null,
   prompt       text,
   completion   text,
   redaction    jsonb not null default '{}'::jsonb,   -- { emails: 2, phones: 1, nric: 0 }
   created_at   timestamptz not null default now()
 );
-create index run_node_io_age_idx on public.run_node_io (created_at);
+create index run_node_io_age_idx on core.run_node_io (created_at);
 ```
 
-### 6.4 `public.run_events` — what happened to the run
+### 6.4 `core.run_events` — what happened to the run
 
 ```sql
-create table public.run_events (
+create table core.run_events (
   id         uuid primary key default gen_random_uuid(),
-  run_id     uuid not null references public.runs(id) on delete cascade,
+  run_id     uuid not null references core.runs(id) on delete cascade,
   tenant_id  uuid not null,
   seq        int not null,
   type       text not null check (type in
@@ -1344,8 +1437,8 @@ The state card is versioned, because retry-from-checkpoint needs the card as it 
 that checkpoint, not as it ended up.
 
 ```sql
-create table public.run_state_cards (
-  run_id           uuid not null references public.runs(id) on delete cascade,
+create table core.run_state_cards (
+  run_id           uuid not null references core.runs(id) on delete cascade,
   version          int not null,
   tenant_id        uuid not null,
   goal             text not null,
@@ -1359,9 +1452,9 @@ create table public.run_state_cards (
   primary key (run_id, version)
 );
 
-create table public.run_checkpoints (
+create table core.run_checkpoints (
   id                  uuid primary key default gen_random_uuid(),
-  run_id              uuid not null references public.runs(id) on delete cascade,
+  run_id              uuid not null references core.runs(id) on delete cascade,
   tenant_id           uuid not null,
   step                int not null,
   node_key            text,
@@ -1370,7 +1463,7 @@ create table public.run_checkpoints (
   replayable          boolean not null default true,
   created_at          timestamptz not null default now(),
   unique (run_id, step),
-  foreign key (run_id, state_card_version) references public.run_state_cards (run_id, version)
+  foreign key (run_id, state_card_version) references core.run_state_cards (run_id, version)
 );
 ```
 
@@ -1392,9 +1485,9 @@ non-deterministic, which removes the only reason to run one.
 Every tool **read** during a `LIVE` run is captured:
 
 ```sql
-create table public.run_snapshots (
+create table core.run_snapshots (
   id          uuid primary key default gen_random_uuid(),
-  run_id      uuid not null references public.runs(id) on delete cascade,
+  run_id      uuid not null references core.runs(id) on delete cascade,
   tenant_id   uuid not null,
   tool_name   text not null,
   args_hash   text not null,        -- sha256 of canonicalised args (sorted keys)
@@ -1447,19 +1540,19 @@ language plpgsql security definer set search_path = '' as $$
 declare n int;
 begin
   with gone as (
-    delete from public.run_node_io
+    delete from core.run_node_io
      where created_at < now() - interval '30 days'
     returning run_node_id
   ) select count(*) into n from gone;
 
-  delete from public.run_snapshots where captured_at < now() - interval '30 days';
+  delete from core.run_snapshots where captured_at < now() - interval '30 days';
 
-  update public.run_nodes rn
+  update core.run_nodes rn
      set args = null, result = null
    where rn.finished_at < now() - interval '30 days'
      and (rn.args is not null or rn.result is not null);
 
-  update public.runs
+  update core.runs
      set redacted_at = now()
    where finished_at < now() - interval '30 days' and redacted_at is null;
 
@@ -1479,23 +1572,23 @@ State cards are kept because `goal`, `decisions` and `constraints` are authored 
 not transcripts. If a state card is ever found to carry client text verbatim, it moves
 under the same 30-day rule.
 
-### 6.8 `public.evals`
+### 6.8 `core.evals`
 
 ```sql
-create table public.evals (
+create table core.evals (
   id                 uuid primary key default gen_random_uuid(),
   tenant_id          uuid not null,
   agent_id           text not null,
   action_type        text,
   kind               text not null check (kind in ('GOLDEN_SET','LIVE_SAMPLE','JURY_GATE','HUMAN_LABEL')),
   golden_set_version text,
-  run_id             uuid references public.runs(id) on delete set null,
+  run_id             uuid references core.runs(id) on delete set null,
   score              numeric(4,3),
   passed             boolean,
   detail             jsonb not null default '{}'::jsonb,
   evaluated_at       timestamptz not null default now()
 );
-create index evals_agent_idx on public.evals (tenant_id, agent_id, evaluated_at desc);
+create index evals_agent_idx on core.evals (tenant_id, agent_id, evaluated_at desc);
 ```
 
 `GET /v1/agents`'s `evalScore` is the rolling median of the last N `GOLDEN_SET` and
@@ -1535,7 +1628,7 @@ with approvals as (
   select
     count(*)                                               as n,
     count(*) filter (where ar.sla_due_at < now())          as breached
-  from public.approval_requests ar
+  from app.approval_requests ar
   where ar.tenant_id = p_tenant
     and ar.status = 'PENDING'
     and ar.approver_role = p_role
@@ -1545,14 +1638,14 @@ hrdc as (
   select
     count(*)                                                                  as n,
     count(*) filter (where p.deadline_at < now() + interval '3 days')          as urgent
-  from public.hrdc_packets p
+  from core.hrdc_packets p
   where p.tenant_id = p_tenant
     and p.status in ('DRAFT','READY')
     and p.deadline_at < now() + interval '14 days'
 ),
 failures as (
   select
-    (select count(*) from public.runs r
+    (select count(*) from core.runs r
       where r.tenant_id = p_tenant and r.status = 'FAILED' and r.acknowledged_at is null)
   + (select count(*) from app.dead_letters d
       where d.tenant_id = p_tenant and d.replayed_at is null)                 as n,
@@ -1579,12 +1672,12 @@ Supporting partial indexes, owned by the lane that owns each table:
 ```sql
 -- sb-actions
 create index approval_requests_pending_idx
-  on public.approval_requests (tenant_id, approver_role, sla_due_at)
+  on app.approval_requests (tenant_id, approver_role, sla_due_at)
   where status = 'PENDING';
 
 -- sb-money / sb-erd
 create index hrdc_packets_open_deadline_idx
-  on public.hrdc_packets (tenant_id, deadline_at)
+  on public.hrdc_packet (tenant_id, deadline_at)
   where status in ('DRAFT','READY');
 ```
 
@@ -1642,7 +1735,7 @@ perform app.broadcast_badges(new.tenant_id, array[new.approver_role, 'MD']);
 ```
 
 `MD` is included because §1's policies escalate to it. Called from the triggers on
-`approval_requests`, `hrdc_packets`, `app.jobs` (on transition to `DEAD`) and `runs` (on
+`approval_requests`, `hrdc_packets`, `app.outbox` (on transition to `DEAD`) and `runs` (on
 transition to `FAILED`); the latter three affect every role and pass `null`.
 
 `app.badge_counts`'s second argument (`p_user`) stays null in the broadcast, because
@@ -1764,7 +1857,7 @@ state, not on logs.
 - **Keyset paging does not skip or repeat.** Page through 200 events with `page[size]=25`
   while inserting new ones; assert no id appears twice and none of the original 200 is
   missed.
-- **Append-only is enforced.** `update public.events set summary = 'x'` raises `0A000`.
+- **Append-only is enforced.** `update core.events set summary = 'x'` raises `0A000`.
 
 ---
 
@@ -1772,9 +1865,9 @@ state, not on logs.
 
 | Ref | Question | Impact on this lane | Position |
 |---|---|---|---|
-| §16 Q1 | Does an approval expire? | Determines whether `ApprovalExpired` exists and whether an expiry job is scheduled alongside `APPROVAL_SLA_ESCALATE`. | **Expire at 24h to `EXPIRED`, emit `ApprovalExpired`, clear the badge.** Nagging forever is what makes an approval queue meaningless; auto-reject silently kills work a human never saw. Both the event and the job are ready to add; blocked on the decision. |
+| §16 Q1 | Does an approval expire? | Determines whether `ApprovalExpired` exists and whether an expiry job is scheduled. | **Resolved, and we agree independently.** `sb-actions` implements `app.expire_approvals(500)` on a 5-minute cron, expiring at 24h. `ApprovalExpired` is therefore a real event and is listed in §1.7. Their cron owns the sweep; I own the event and the badge clearing. |
 | §16 Q5 | Should unlock be refused once a claim reference exists? | Decides whether `AttendanceUnlocked` can carry `claimVoided: true` at all. | Whichever way it resolves, the event must record the voided claim reference. Flagged to `sb-money`. |
-| §16 Q7 | One agent credential, or one per agent per tenant? | If the `AGENT` principal is global, `events.tenant_id` for agent-authored events must come from the row being written, not the JWT — and the realtime policy cannot authorise agents at all. | **Per agent per tenant.** A global agent principal makes every RLS policy in the system special-case it. Asked to `sb-tenancy`; unanswered. |
+| §16 Q7 | One agent credential, or one per agent per tenant? | If the `AGENT` principal were global, `events.tenant_id` for agent-authored events could not come from the JWT. | **Resolved by `sb-tenancy`: per agent per tenant**, a hashed revocable API key exchanged for a 15-minute ES256 JWT. `events.actor` therefore takes `app.actor_kind()` and `app.agent_id()` from the token, and no special case is needed. |
 | §16 Q8 | Sandbox replay: live or snapshot? | Entire design of `run_snapshots` and replay semantics. | **Answered here: snapshot pinned to the run** (§6.6). This is the one §16 question this lane resolves rather than escalates. |
 | §16 Q4 | WhatsApp rate TTL | Drives `WHATSAPP_RATE_REFRESH` job cadence and what the composer shows on a stale cache. | Proposed 6h TTL with last-known-good served and flagged stale. Owned by `sb-money`. |
 | §16 Q6 | Portal token lifetime | Whether a `TOKEN_REVOKE` job is scheduled on acceptance. | No position; the job is trivial either way. |
@@ -1783,7 +1876,11 @@ state, not on logs.
 | New | `GET /badges` does not exist | §7.1. | Counts come from `/navigation` and the `badges` channel, both fed by `app.badge_counts`. |
 | New | §11 badge payload has no `severity`, §2's does | §7.1. | Propose `{ count, severity }` on both. |
 | New | Per-user badges on a per-tenant topic | §7.4. | Propose per-role topics `tenant:{t}:role:{r}:badges`. |
-| New | 13 action types emit no catalogued event | §1.7. | Proposed additions listed; needs contract sign-off. |
+| New | 13 action types emit no catalogued event | §1.7. | Proposed additions listed; needs contract sign-off. `sb-actions` has `app.event_name_for(action_type)` and notes the names there are "a proposal, not a decision" — the two lists must be reconciled into one before either is implemented. |
+| New | Jury sampling is enqueued twice | `sb-actions` runs `app.enqueue_jury_samples()` on a 5-minute cron; I subscribe `JURY_SAMPLE` to `ApprovalDecided`. | **Theirs wins, mine is removed.** A cron sweep over decided approvals samples exactly 5% of the population; an event subscription samples 5% per event and drifts. The `ApprovalDecided → JURY_SAMPLE` subscription row should not be inserted. |
+| New | Which schema holds the eventing tables | I had them in `public`. | **Resolved against migration 001: `core`.** The domain is `core`, `app` is the gate and internals, `public` is identity and tenancy only. `core.events`, `core.runs` and the rest moved; `app.outbox`, `app.dead_letters`, `app.webhook_deliveries`, `app.webhook_routes` and `app.event_subscriptions` stay in `app` and out of PostgREST. |
+| New | `pg_cron` and `pg_net` are not enabled | Migration 001 enables `pgcrypto`, `citext`, `btree_gist` and `pg_trgm` only. Every scheduled sweep and the worker tick in §2.6 need both. | The migration that creates `app.outbox` must also `create extension pg_cron` and `create extension pg_net`, and `config.toml` must expose `core` to PostgREST or the audit drawer returns nothing. Raised to the migrations author. |
+| New | Table naming: singular or plural | Doc 01's prose uses singular (`hrdc_packet`); doc 03 and migration 001 use plural (`core.hrdc_packets`). | **Resolved: plural**, per migration 001's conflict note C1 (doc 03 outranks doc 02, and the migration follows it). This file uses plural throughout. |
 | New | `runs.acknowledged_at` | §6.1. | Required for `agentFailures` to ever decrease. Proposed addition. |
 
 ---
@@ -1811,7 +1908,7 @@ state, not on logs.
 3. **`pgmq` rejected in favour of a hand-written queue**, against the general principle of
    not writing your own queue. Justified in §2.1 on five specifics, with a stated switch
    condition. This is the decision in this document most likely to be wrong, and it is the
-   cheapest to reverse: `app.jobs` becomes a projection and `claim_jobs` becomes
+   cheapest to reverse: `app.outbox` becomes a projection and `claim_jobs` becomes
    `pgmq.read`.
 
 4. **`text` + `check` instead of Postgres enum types** for `job_type`, `state`, event
@@ -1840,22 +1937,37 @@ state, not on logs.
   align with or disagree with. If that document is written later, this file's §2.1 and §3.1
   are the two sections most likely to conflict with it.
 
-- **The `app.record_effect(action_request_id, effect)` seam is proposed, not agreed.**
-  `sb-actions` was asked for the exact function name and signature, for confirmation that
-  `action_requests.id` is available at emit time to serve as the correlation id, and for
-  the column holding the `Idempotency-Key`. No reply had arrived when this was written.
-  If the shape differs, §2.7 and `app.complete_job` change; nothing else does.
+- **Completion write-back is the one part of the `sb-actions` seam still unagreed.**
+  Their file has `apply_effects` and `action_effects.status ∈ (APPLIED, DISPATCHED)` but
+  no function for a worker to report an external effect finished. §2.7 proposes
+  `app.settle_effect(job_key, status, result)`; until it exists, `app.complete_job`'s
+  action branch is a stub. Everything else in that seam was reconciled against their
+  committed file rather than assumed.
 
-- **`app.current_tenant_id()` and `app.has_role()` are assumed.** `sb-tenancy` was asked
-  to confirm the helper names and the JWT claim path, and to say whether the
-  `realtime.messages` policy should live in their file rather than this one. No reply when
-  this was written. If the helpers are named differently, §3.4 and §5.2 need renaming only.
+- **Names were corrected against the committed sibling docs, not confirmed by their
+  authors.** `app.tenant_id()` and `app.role()` come from `02-tenancy-auth-rls.md`;
+  `app.outbox`, `app.approval_requests` and the three-argument `app.emit_event` come from
+  `03-action-envelope-and-policy-gate.md`. Two conflicts follow that those authors must
+  rule on, not me: `sb-actions` calls `app.current_tenant_id()` where `sb-tenancy` defines
+  `app.tenant_id()`, so one of those two files is wrong; and `apply_effects` writes
+  `app.outbox (topic, job_key, available_at)` where §2.2 defines
+  `(job_type, idempotency_key, run_after)`, so it needs the three-column change in §2.7.
 
-- **`approval_requests`, `hrdc_packets`, `invoices` and their columns are assumed.** The
-  badge SQL in §7.2 and the broadcast trigger in §3.3 name columns
-  (`sla_due_at`, `approver_role`, `assigned_to`, `deadline_at`, `sync_state`) owned by
-  `sb-actions` and `sb-money`. They are written to be obvious to correct, not to be right
-  by luck.
+- **`app.aggregate_type_for`, `app.event_payload_for`, `app.event_summary_for` and
+  `app.job_type_for` are named but not written.** They are mine, they are mechanical, and
+  they are where the §14 payload shapes are actually enforced. Naming them without writing
+  them is the largest piece of unwritten work this document implies.
+
+- **`core.hrdc_packets` and `core.invoices` columns are assumed.** The badge SQL in §7.2
+  and the invoice channel in §3.2 name `deadline_at`, `status` and `sync_state`, owned by
+  `sb-erd` and `sb-money`. The table names and the `core` schema are taken from migration
+  001; the column names are not.
+
+- **`pg_cron` and `pg_net` are assumed available and are not yet enabled.** Migration 001
+  enables `pgcrypto`, `citext`, `btree_gist` and `pg_trgm` only. Every cron sweep in this
+  document and the worker tick in §2.6 depend on both, and `core` must also be added to
+  PostgREST's exposed schemas or the audit drawer returns nothing. Neither is verified
+  against a running project.
 
 - **`realtime.topic()` reading a `realtime.topic` GUC is believed but unverified.** The
   SQL-only policy test in §8.4 depends on it. Confirm against the deployed `realtime`
@@ -1863,7 +1975,7 @@ state, not on logs.
   does not depend on it and is the one that must pass.
 
 - **No SQL in this document has been executed.** There is no Supabase project attached to
-  this repo — `supabase/` is empty and the only commit is the repository initialisation.
+  this repo; migration 001 exists on disk but has not been applied from here.
   Every statement here is written from the Postgres and Supabase documentation and has not
   been run, planned or `EXPLAIN`ed. In particular the `app.emit_event` `on conflict … where`
   clause form, the composite foreign key from `run_checkpoints` to `run_state_cards`, and
