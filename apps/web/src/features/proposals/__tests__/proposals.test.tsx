@@ -111,6 +111,21 @@ describe("M07-S02 · proposal builder", () => {
     ).toBeInTheDocument();
   });
 
+  it("adds a human-authored section, which carries no provenance", async () => {
+    const user = userEvent.setup();
+    renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
+
+    const rail = await screen.findByRole("navigation", { name: "Proposal sections" });
+    await user.type(screen.getByLabelText("New section"), "Terms and conditions");
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+
+    expect(await within(rail).findByText("Terms and conditions")).toBeInTheDocument();
+    /* Absent provenance means a person wrote it. */
+    expect(
+      await screen.findByRole("heading", { name: /Terms and conditions/ }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the error state for a proposal that does not exist", async () => {
     renderScreen(<ProposalBuilderPage />, {
       path: "/sales/proposals/PRO-2026-9999",

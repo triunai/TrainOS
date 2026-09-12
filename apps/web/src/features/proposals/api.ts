@@ -145,6 +145,26 @@ export function useEditSection(id: string | undefined) {
   });
 }
 
+/**
+ * A new, empty section at the end of the document.
+ *
+ * Human-authored, so it lands with no provenance at all — which is exactly
+ * right: absent provenance means a person wrote it, and a "Template" or
+ * "System" badge on a section a consultant just typed would be a claim the
+ * record cannot support.
+ */
+export function useAddSection(id: string | undefined) {
+  const client = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { title: string; body?: string }) =>
+      client.addProposalSection(id as string, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.detail(id ?? "") });
+    },
+  });
+}
+
 /** A fresh generation. Returns the new section and the run that produced it. */
 export function useRegenerateSection(id: string | undefined) {
   const client = useApi();

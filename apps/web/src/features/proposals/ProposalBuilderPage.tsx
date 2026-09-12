@@ -32,6 +32,7 @@ import {
   errorMessageOf,
   useApproval,
   useEditSection,
+  useAddSection,
   useProposal,
   useProposalClient,
   useRegenerateSection,
@@ -66,6 +67,7 @@ export function ProposalBuilderPage() {
   const [queued, setQueued] = useState<ActionResponse | null>(null);
 
   const send = useSendProposal(proposal?.ref);
+  const addSection = useAddSection(proposal?.ref);
   const regenerate = useRegenerateSection(proposal?.ref);
   const edit = useEditSection(proposal?.ref);
 
@@ -184,6 +186,14 @@ export function ProposalBuilderPage() {
               setDraftBody(null);
             }}
             templateId={proposal.templateId}
+            onAdd={(title) =>
+              addSection.mutate(
+                { title },
+                { onSuccess: (updated) => setActiveN(updated.sections.at(-1)?.n ?? null) },
+              )
+            }
+            isAdding={addSection.isPending}
+            addError={addSection.error}
           />
 
           <SectionEditor
@@ -321,12 +331,19 @@ function SectionRail({
   activeN,
   onSelect,
   templateId,
+  onAdd,
+  isAdding,
+  addError,
 }: {
   sections: ProposalSection[];
   activeN: number | null;
   onSelect: (n: number) => void;
   templateId: string;
+  onAdd: (title: string) => void;
+  isAdding: boolean;
+  addError: unknown;
 }) {
+  const [title, setTitle] = useState("");
   return (
     <nav aria-label="Proposal sections" className="border-r border-divider p-3">
       <div className="mb-2 flex items-baseline justify-between gap-2">
@@ -360,6 +377,37 @@ function SectionRail({
           </li>
         ))}
       </ul>
+
+      {/* A new section is human-authored and therefore carries no provenance.
+          The title is asked for up front because the server requires one. */}
+      <form
+        className="mt-3 flex flex-col gap-1.5 border-t border-divider pt-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (title.trim().length === 0) return;
+          onAdd(title.trim());
+          setTitle("");
+        }}
+      >
+        <label htmlFor="new-section-title" className="text-[11px] text-ink-secondary">
+          New section
+        </label>
+        <input
+          id="new-section-title"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Section title"
+          className="w-full rounded-[6px] border border-border bg-surface px-2 py-1 text-[12px] text-ink placeholder:text-ink-disabled focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        />
+        <SecondaryButton type="submit" disabled={isAdding || title.trim().length === 0}>
+          {isAdding ? "Adding…" : "Add section"}
+        </SecondaryButton>
+        {addError ? (
+          <span role="alert" className="text-[11px] text-danger">
+            {errorMessageOf(addError)}
+          </span>
+        ) : null}
+      </form>
     </nav>
   );
 }
