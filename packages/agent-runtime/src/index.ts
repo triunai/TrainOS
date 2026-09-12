@@ -11,6 +11,7 @@
  */
 
 export * from './keys/keystore';
+export * from './keys/dotenv';
 export * from './providers';
 export * from './routing';
 export * from './tools';

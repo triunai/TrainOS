@@ -10,6 +10,7 @@
  */
 
 import { leadToProposalAgent, LEAD_TO_PROPOSAL_INPUT } from './agents/lead-to-proposal';
+import { loadEnvLocal } from './keys/dotenv';
 import { EnvKeyStore, maskKey, ENV_BINDINGS } from './keys/keystore';
 import { formatMoney } from './providers/pricing';
 import { runAgent, type AgentRunResult } from './orchestrator/run';
@@ -20,6 +21,10 @@ const AGENTS = { 'lead-to-proposal': leadToProposalAgent } as const;
 type AgentName = keyof typeof AGENTS;
 
 async function main(argv: string[]): Promise<number> {
+  // The README tells people to put a key in `.env.local`, so read it before
+  // anything asks `process.env` what is configured.
+  const env = loadEnvLocal();
+
   const [command, ...rest] = argv;
 
   if (!command || command === 'help' || command === '--help') {
@@ -28,7 +33,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (command === 'providers') {
-    printProviders();
+    printProviders(env.path);
     return 0;
   }
 
@@ -189,9 +194,10 @@ function short(value: unknown): string {
   return String(value);
 }
 
-function printProviders(): void {
+function printProviders(envPath?: string): void {
   const store = new EnvKeyStore();
   console.log(bold('\nProvider keys\n'));
+  if (envPath) console.log(dim(`  read from ${envPath}\n`));
   for (const binding of ENV_BINDINGS) {
     const ref = store.list().find((r) => r.id === binding.env);
     const key = ref ? store.get(ref) : undefined;
