@@ -147,6 +147,7 @@ putProgramme(id: string, body: Partial<Programme>): Programme          // ADMIN 
 listTrainers(page?: PageRequest): ListResponse<FixtureTrainer>
 createProposal(body: ProposalCreateRequest, opts?: RequestOptions): Proposal
 getProposal(id: string): Proposal
+addProposalSection(id: string, body: { title: string; body?: string }, opts?: RequestOptions): Proposal
 putProposalSection(id: string, n: number, body: ProposalSectionWrite): Proposal
 regenerateProposalSection(id: string, n: number): ProposalSectionRegenerateResponse
 getProposalPreview(id: string, format?: "HTML" | "PDF"): ProposalPreview
@@ -282,7 +283,7 @@ gate compares the ex-SST figure against the APV-01 threshold, and folding tax
 into the value would push an RM 14,900 proposal over an RM 15,000 gate on tax
 alone.
 
-## Four things not to rediscover
+## Five things not to rediscover
 
 **Lists.** Every `page?` parameter is a `PageRequest`:
 `{ filter?: FilterClause[], sort?: "-field", page?: { size, cursor }, view?: savedViewId }`.
@@ -304,6 +305,13 @@ every `parentId` resolving inside the run, and the APV-01 halt naming the
 approval. It does **not** guarantee a node count: the agent runtime resumes
 across workers, so how many nodes a trace has is a function of how the run was
 sliced. Assert on the halt and the parentage, never on `nodes.length`.
+
+**Reads hand back live store references, not snapshots.** Two reads of the same
+record return the same object, and a later write is visible through an earlier
+read. This differs from an HTTP client, which returns a fresh object per call.
+It is harmless under React Query, which re-fetches, but a test that captures a
+record to compare against a later one has to snapshot the values it cares
+about rather than the object.
 
 **The gate reads the record, not the request.** An action's gated value comes
 from the stored record, so understating a value in a payload changes nothing.

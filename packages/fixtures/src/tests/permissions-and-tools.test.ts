@@ -12,6 +12,7 @@ import {
   ENGAGEMENT_AURORA,
   PROGRAMME_LEADING_CHANGE,
   QUOTATION_AURORA,
+  PROPOSAL_AURORA,
   QUOTATION_PERMISSIONS,
   TRAINER_DANIEL_REF,
   TRAINER_FARAH_REF,
@@ -272,5 +273,70 @@ describe("isContractError", () => {
     expect(isContractError(new Error("socket hang up"))).toBe(false);
     expect(isContractError({ code: "NOT_FOUND" })).toBe(false);
     expect(isContractError(null)).toBe(false);
+  });
+});
+
+/**
+ * M07-S02's "Add section" control.
+ *
+ * The contract publishes no endpoint for adding a section, only for editing
+ * and regenerating one that exists, so this is a fixture-side method and a
+ * reported gap.
+ */
+describe("adding a proposal section", () => {
+  it("appends after the highest existing section number", async () => {
+    const before = await api.getProposal(PROPOSAL_AURORA);
+    /** Snapshot the numbers, not the object: reads return live store references. */
+    const highest = Math.max(...before.sections.map((section) => section.n));
+    const countBefore = before.sections.length;
+
+    const after = await api.addProposalSection(PROPOSAL_AURORA, {
+      title: "Terms and conditions",
+      body: "Payment within 30 days of invoice.",
+    });
+
+    const added = after.sections.at(-1);
+    expect(added?.n).toBe(highest + 1);
+    expect(added?.title).toBe("Terms and conditions");
+    expect(after.sections).toHaveLength(countBefore + 1);
+  });
+
+  it("hands back a live store reference, not a snapshot", async () => {
+    /**
+     * Worth pinning because it differs from an HTTP client, which returns a
+     * fresh object per call. A caller holding an earlier read sees later
+     * writes through it.
+     */
+    const first = await api.getProposal(PROPOSAL_AURORA);
+    const second = await api.getProposal(PROPOSAL_AURORA);
+    expect(first).toBe(second);
+
+    await api.addProposalSection(PROPOSAL_AURORA, { title: "Terms" });
+    expect(first.sections.at(-1)?.title).toBe("Terms");
+  });
+
+  it("leaves the new section without provenance, because a person wrote it", async () => {
+    const after = await api.addProposalSection(PROPOSAL_AURORA, { title: "Terms" });
+    expect(after.sections.at(-1)?.provenance).toBeUndefined();
+  });
+
+  it("gives the new section a real number the editor can then write to", async () => {
+    const added = await api.addProposalSection(PROPOSAL_AURORA, { title: "Terms" });
+    const n = added.sections.at(-1)?.n ?? 0;
+    const edited = await api.putProposalSection(PROPOSAL_AURORA, n, { body: "Revised wording." });
+    expect(edited.sections.find((section) => section.n === n)?.body).toBe("Revised wording.");
+  });
+
+  it("422s a section with no title", async () => {
+    await expect(api.addProposalSection(PROPOSAL_AURORA, { title: "  " })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      http: 422,
+    });
+  });
+
+  it("404s an unknown proposal", async () => {
+    await expect(
+      api.addProposalSection("PRO-2026-9999", { title: "Terms" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND", http: 404 });
   });
 });

@@ -167,7 +167,11 @@ Reported rather than patched — no change was made to `packages/contract`.
 11. **`CollectionNextAction.type` is `ActionType`**, which is the §3 list only,
     so the ruled `ACCOUNT_TRADING_HOLD` cannot sit on the queue row that needs
     it. Widened locally as `FixtureReceivable`.
-12. **No permission vocabulary.** `QUOTATION_PERMISSIONS` is the only published
+12. **No way to add a proposal section.** §13 publishes
+    `PUT /sections/{n}` and `POST /sections/{n}/regenerate`, both of which need
+    the section to exist, so M07-S02's "Add section" control has no endpoint.
+    `addProposalSection` fills the gap here.
+13. **No permission vocabulary.** `QUOTATION_PERMISSIONS` is the only published
     set; every other grant in the `/me` fixtures is invented and marked as such.
 
 ## What I could not verify

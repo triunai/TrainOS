@@ -711,6 +711,42 @@ export class FixtureClient {
     return this.#read(proposal);
   }
 
+  /**
+   * §6 appends a section to a proposal.
+   *
+   * The §13 matrix has no endpoint for this — it publishes
+   * `PUT /sections/{n}` and `POST /sections/{n}/regenerate`, both of which
+   * need the section to exist already — so the "Add section" control on
+   * M07-S02 has nothing to call. Implemented here and reported as a gap.
+   *
+   * The new section carries **no provenance**, because §1 says absent
+   * provenance means human-authored. Stamping one would claim a model wrote
+   * something a person typed.
+   */
+  async addProposalSection(
+    id: string,
+    body: { title: string; body?: string },
+    options: RequestOptions = {},
+  ): Promise<Proposal> {
+    const proposal = byIdOrRef(this.#store.proposals, id);
+    if (!proposal) throw notFound("Proposal", id);
+    if (body.title.trim().length === 0) {
+      throw validationFailed("A section needs a title.", {
+        fields: [{ field: "title", reason: "REQUIRED" }],
+      });
+    }
+    return this.#write(options, { id: proposal.ref, ...body }, 201, () => {
+      const nextN = proposal.sections.reduce((highest, section) => Math.max(highest, section.n), 0) + 1;
+      proposal.sections.push({
+        n: nextN,
+        title: body.title,
+        ...(body.body === undefined ? {} : { body: body.body }),
+      });
+      proposal.updatedAt = NOW;
+      return proposal;
+    });
+  }
+
   async putProposalSection(id: string, n: number, body: ProposalSectionWrite): Promise<Proposal> {
     await sleep(this.#latencyMs);
     const proposal = byIdOrRef(this.#store.proposals, id);
