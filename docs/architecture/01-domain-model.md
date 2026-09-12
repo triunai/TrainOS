@@ -216,6 +216,15 @@ sources of truth for delivery dates is exactly the divergence the project rules 
 
 ### JSONB, and where it is allowed
 
+Per ruling R-JSONB, **every jsonb column carries a CHECK asserting the keys it must contain**, so an
+open-ended shape never means an unchecked one. `compliance_rules.expression` must hold `field` and `op`;
+`ai_routing_entries.jury` must hold `mode`, `quorum` and `of`; `agents.resume_condition` must hold
+`metric`, `op` and `value`; `saved_views.filters` must be an array of objects carrying `field` and `op`;
+`run_state_cards.plan` must be an array of objects carrying `n` and `status`;
+`compliance_check_results.computed` and `run_steps.args`/`result` are free-form by nature and assert only
+that the value is an object. Written as `CHECK (col ?& array['field','op'])` for objects and a
+`jsonb_array_elements` predicate for arrays.
+
 JSONB is allowed only where the contract's own shape is open-ended and never filtered on in SQL:
 `compliance_rules.expression`, `compliance_check_results.computed`, `run_steps.args/result`,
 `run_events.detail`, `ai_routing_entries.jury`, `saved_views.filters`, `agents.resume_condition`,
@@ -1233,7 +1242,7 @@ record of what the client saw. No `ref`.
 `share_token_id uuid → public_share_tokens`. One row per proposal enforces §11's "a second accept returns
 the original acceptance" at the storage layer, not in application code.
 
-#### `quotations` — §6 (`GET /costings/{id}`), M07-S03
+#### `quotations` — §6, M07-S03
 
 This lane owns the table; **sb-money owns every money column on it**, and the list below is theirs
 verbatim from `04-money-versioning-provenance.md` C-4. The `app.quotation` DDL in that document is a
@@ -1256,8 +1265,16 @@ verification harness, not a competing table.
 | `status` | `text` | no | `'DRAFT'` | `DRAFT·APPLIED·SUPERSEDED` |
 
 Generated columns, all sb-money's: `margin_sen`, `margin_rate`, `programme_floor_price_sen`,
-`margin_floor_price_sen`, `floor_price_sen`, `below_floor`, `commission_sen`, `display_per_pax_sen`.
-Plus their `floor_price_needs_approval` constraint.
+`margin_floor_price_sen`, `floor_price_sen`, `binding_floor_basis`, `below_floor`, `commission_sen`,
+`display_per_pax_sen`. Plus their `floor_price_needs_approval` constraint and
+`CHECK (currency = 'MYR')`.
+
+`binding_floor_basis` is restored per ruling R-PROV, and as a **generated** column rather than an enum this
+lane maintains. That is the better answer to what the lead asked for: deriving it in the database means the
+costing screen and the approval screen cannot compute it differently. There is no stored `floor_price_sen`
+either; both floors and the binding one are generated, which is safe because `floor_margin_rate` and
+`programme_floor_price_sen` are stamped onto the quotation at pricing time, so the floor is reproducible
+from the row alone after the rate card is retired.
 
 - **Unique:** `(tenant_id, proposal_id, version)`; `(tenant_id, proposal_id) WHERE status = 'APPLIED'`.
 - **Two independent floors.** `programme_floor_price_sen` is the absolute floor snapshotted from the
@@ -1720,9 +1737,15 @@ No `ref`. **Unique** `(tenant_id, rule_change_id, engagement_id)`.
 No `ref`. **Unique:** `(tenant_id, engagement_id, check_key, evaluated_at)` — results are append-only, so
 the "re-evaluate at every stage transition" rule (DECISIONS §6) leaves a history rather than overwriting.
 **Indexes:** `(tenant_id, engagement_id, evaluated_at DESC)`; `(tenant_id, state) WHERE state = 'FAIL'`.
-**Check lost to C-1:** `method <> 'DETERMINISTIC' OR provenance_id IS NULL` can no longer be a column
-constraint, because the column is gone. §17's rule that a deterministic check carries no model now has to
-be enforced by whatever writes provenance rows, which is sb-money's side. Raised to them.
+**Two triggers replace one check (sb-money C-5).** §17's rule that a deterministic check carries no model
+was a column check here, `method <> 'DETERMINISTIC' OR provenance_id IS NULL`, and the column is gone.
+sb-money's trigger on `provenance` refuses a row whose subject is a `DETERMINISTIC` check. That alone is
+not enough: nothing would stop an `INTERPRETED` check being flipped to `DETERMINISTIC` after its
+provenance row already exists. **The companion trigger belongs on this table and is this lane's to
+install** — a `BEFORE UPDATE` on `compliance_check_results` that refuses `method → 'DETERMINISTIC'` while
+a provenance row for that subject exists. sb-money wrote and verified both halves in their C-5.
+`compliance_check_results` is on their `provenance_subject` allow-list. Recorded as a real cost of C-1: one
+column check became two triggers across two lanes.
 A `FAIL` writes `engagement_step_states.state = 'BLOCKED'` on the `HRDC_CLAIM` step via trigger.
 
 #### `compliance_version_drifts` — §18/S1
@@ -1777,7 +1800,7 @@ Requires the `vector` extension; confirm it is enabled on the Supabase project b
 
 - **Unique:** `(tenant_id, sync_provider, sync_document_id) WHERE sync_document_id IS NOT NULL`.
 - **Indexes:** `(tenant_id, status, due_at)`; `(tenant_id, organisation_id)`; `(tenant_id, engagement_id)`; `(tenant_id, sync_state) WHERE sync_state = 'ERROR'`; and for the policy gate, `invoices_overdue` on `(tenant_id, organisation_id, due_at) WHERE outstanding_sen > 0 AND status IN ('SENT','PARTIALLY_PAID','OVERDUE')`.
-- **Checks:** `total_sen = subtotal_sen + sst_sen`; `outstanding_sen >= 0`; `status <> 'SENT' OR issued_at IS NOT NULL`.
+- **Checks:** `total_sen = subtotal_sen + sst_sen`; `outstanding_sen >= 0`; `status <> 'SENT' OR issued_at IS NOT NULL`; `currency = 'MYR'` — sb-money's, and it exists because of the `_sen` reservation this document raised. A `_sen` column holding cents is wrong under any suffix; the constraint makes it fail at the point of change and forces the rename as part of whatever work introduces a second currency.
 - **Trigger:** `total_sen` must equal the sum of rounded `invoice_lines.amount_sen` plus SST, or the write is rejected with `TOTAL_NOT_RECONCILED` (§18/S3). This is the constraint that makes lines-from-total unrepresentable.
 - **Immutability:** once `sync_state = 'VALIDATED'`, every column except `status`, `outstanding_sen`, `sync_*` and `updated_at` is frozen. A validated tax invoice is a filed document.
 - `daysOverdue`, `aging` buckets and `dsoDays` are views, never columns.
@@ -2188,18 +2211,27 @@ Each raises with `ERRCODE = 'P0001'` and a JSON `DETAIL` carrying the contract's
 HTTP status without string-matching a message.
 
 **The one escape hatch**, for I1 only. `ATTENDANCE_UNLOCK` is a policy-gated action, so the trigger must
-be able to tell "an approved unlock is executing" from "someone is writing to a locked sheet". The lock
-trigger checks a transaction-local setting:
+be able to tell "an approved unlock is executing" from "someone is writing to a locked sheet". Earlier
+drafts of this document proposed a dedicated key, `trainos.unlock_action_id`. **That is withdrawn** under
+ruling R-GOV. There is one applier key:
 
 ```
-current_setting('trainos.unlock_action_id', true)
+current_setting('app.effect_applier', true)   -- the action_request id, transaction-scoped
 ```
 
-which is set with `set_config(..., true)` — transaction-scoped — inside **sb-actions**' `SECURITY DEFINER`
-executor and only after the policy gate has approved the unlock. It cannot be set by any client, because
-`PostgREST` does not let a caller choose `set_config` keys, and it disappears at commit. The unlock trigger
-also writes `hrdc_packets.voided_at` in the same statement, so §8's "voids the claim packet" cannot be
-skipped by a partial implementation.
+set by `app.apply_effects` and by nothing else. sb-actions is right that a second key would be a second
+vocabulary for a problem the first already solves, and right that theirs is strictly stronger: a key
+holding an id proves only that somebody set a variable, whereas `app.enforce_state_transition` resolves
+the id against `action_requests` and refuses unless that request's `action_type` is the one gating this
+specific edge **in this tenant**. Forging the unlock would mean producing an `ATTENDANCE_UNLOCK` action
+request, and the only way to produce one is through the policy gate.
+
+So the lock is enforced twice over, by two mechanisms with different jobs. GOV-07 authorises the
+`LOCKED → OPEN` edge on `attendance_days.status` (§5.3). Rule I1's own trigger then refuses any write to
+the sheet's `attendance_entries` unless the same `app.effect_applier` names a live `ATTENDANCE_UNLOCK`,
+which is what stops a caller unlocking the day and rewriting yesterday's marks in the same transaction.
+The unlock trigger also writes `hrdc_packets.voided_at` in the same statement, so §8's "voids the claim
+packet" cannot be skipped by a partial implementation.
 
 **sb-actions decides the gating** — which actions are policy-gated, who approves, what the SLA is. This
 lane only asserts that the storage layer must refuse the write when the gate has not run.
@@ -2607,7 +2639,8 @@ Places where this model does not mirror the contract's JSON, and why.
    `registered × 2` (AM and PM) and flags the contract's formula as wrong. If a day can hold three
    sessions with separate sign-in sheets, the formula and the `attendance_half` enum both need revisiting.
 
-4. **`quotations` rather than `costing`.** The endpoint is `GET /v1/costings/{id}` but the entity's `ref` is
+4. **`quotations` rather than `costing`, and the endpoint follows.** The contract's path is
+   `GET /v1/costings/{id}` but the entity's `ref` is
    `QUO-`, REPORT.md calls it `Quotation`, and §18 calls it `Quotation`. One name wins; it is the ref's.
 
 5. **`organisation_status` is not in §12.** The markdown shows `"status": "ACTIVE_CLIENT"` and the enum
@@ -2663,11 +2696,11 @@ Places where this model does not mirror the contract's JSON, and why.
     `attendance_days` and `attendance_entries`. Two lanes against one, and the day is what the API keys on
     (`?day=1`). Renamed here.
 
-17. **`quotations`, not `costings` — and this one is still open.** The endpoint is `GET /v1/costings/{id}`,
-    so sb-tenancy's committed doc says `public.costings`. The ref prefix is `QUO-`, REPORT.md says
-    `Quotation`, §18 says `Quotation`, and sb-actions independently chose `quotations`. This model uses
-    `quotations` and **`02-tenancy-auth-rls.md` needs the matching rename**. Flagged to the lead; it is the
-    one name where the fleet is not yet consistent.
+17. **`quotations`, not `costings`, and this is now settled.** The contract's endpoint is
+    `GET /v1/costings/{id}`, and sb-tenancy's first draft said `public.costings`. The ref prefix is `QUO-`,
+    REPORT.md and §18 both say `Quotation`, and sb-actions independently chose `quotations`. Ruling R-QUO
+    settles it: the table is `core.quotations`, the permissions are `quotation:*`, and **the API path
+    becomes `/v1/quotations`**, which is a change to the contract, not just to the schema.
 
 18. **The §6 costing fixture does not reconcile, and the schema now says why.** Its lines sum to
     RM 11,400 against an RM 18,500 sell price, which is a 0.38 margin and not the 0.41 shown; a 0.35 margin
@@ -2708,7 +2741,14 @@ Places where this model does not mirror the contract's JSON, and why.
     Fail-closed means the wrong two of the three are rejected at send time. Recorded in §5.2 and raised to
     sb-actions.
 
-25. **`identity_no` is stored as a hash plus last four, never in full.** HRD Corp claim documentation
+25. **`trainos.unlock_action_id` is withdrawn.** Earlier revisions of this document proposed a dedicated
+    transaction-local key so the attendance-lock trigger could recognise an approved unlock. Ruling R-GOV
+    settles on `app.effect_applier` as the only applier key, and sb-actions is right that theirs is
+    strictly stronger, because it is resolved against `action_requests` and checked for type and tenant
+    rather than merely being set. The lock is still enforced twice, but by GOV-07 and rule I1 reading the
+    same key rather than by two keys.
+
+26. **`identity_no` is stored as a hash plus last four, never in full.** HRD Corp claim documentation
     needs an identity number, but this system does not need to be able to read one back. The contract does
     not mention the field at all; it will be needed the first time a real packet is assembled.
 
@@ -2736,35 +2776,40 @@ Places where this model does not mirror the contract's JSON, and why.
    sb-tenancy, sb-actions, sb-money and sb-events may choose differently; every FK naming them is a
    placeholder to be reconciled before the migration is written.
 
-4. **Two contradictions inside sb-money's own document, which I could not resolve from outside it.**
+4. **sb-actions' doc reads a column name that no longer exists.** Their reconciliation adopted
+   "`floor_price_minor` as the binding value". Under R-PROV the suffix is `_sen` and under sb-money's C-4
+   there is no stored floor at all: `floor_price_sen` is generated. Their gate reads the right concept from
+   the wrong name. Not mine to edit, and flagged to the lead rather than re-opened.
+
+5. **Two contradictions inside sb-money's own document, which I could not resolve from outside it.**
    Their C-3 says to keep `floor_price_minor` as this document had it, while their C-4 contributes a
    generated `floor_price_sen`. I followed C-4, because it is the authoritative column list and is
    internally consistent. Separately, the lead asked for a `binding_floor` indicator on quotations and
    C-4's list has none. Which of the two floors binds is derivable by comparing the generated columns, but
    it is not a column. Both raised to sb-money.
 
-5. **Rate card values.** Trainer bands A/B/C and their day rates, materials per pax, commission tiers,
+6. **Rate card values.** Trainer bands A/B/C and their day rates, materials per pax, commission tiers,
    margin floors and discount authority are all unknown (DECISIONS §5). `rate_card.version` still reads
    `v0-placeholder` and `quotations` snapshots the floor price rather than reading it live.
 
-6. **Baseline minutes for hours-saved.** Requires time-and-motion sampling that has not happened
+7. **Baseline minutes for hours-saved.** Requires time-and-motion sampling that has not happened
    (DECISIONS §4). The tables exist and are empty; `basis` is `ILLUSTRATIVE` until they are filled.
 
-7. **Whether the HRD Corp rules are correct.** DECISIONS §3 states plainly that the demo's rule set was
+8. **Whether the HRD Corp rules are correct.** DECISIONS §3 states plainly that the demo's rule set was
    wrong once already. Every seeded rule is `PROPOSED` and the schema forbids `ACTIVE` without
    `verified_at`, but nobody has verified anything yet.
 
-8. **Supabase project capabilities.** `pgvector` (for `knowledge_chunks.embedding`), `citext`, `btree_gist`
+9. **Supabase project capabilities.** `pgvector` (for `knowledge_chunks.embedding`), `citext`, `btree_gist`
    (for the `trainer_bookings` exclusion constraint) and `pg_trgm` (for search) are all assumed available.
    `btree_gist` in particular is required for the double-booking constraint and is not enabled by default.
 
-9. **Volume and partitioning.** No figures exist for enquiries per month, runs per day or ledger rows per
+10. **Volume and partitioning.** No figures exist for enquiries per month, runs per day or ledger rows per
    month, so the partitioning suggestion in §5 is a shape, not a recommendation.
 
-10. **Whether two `pipelines` rows or one covers the engagement lifecycle.** §5 shows a six-step lifecycle on
+11. **Whether two `pipelines` rows or one covers the engagement lifecycle.** §5 shows a six-step lifecycle on
    the organisation relations panel and §8 shows a nine-step one on the engagement detail, both for an
    engagement. This model assumes two `pipelines` rows for the same object with one marked default, but it
    is equally readable as one nine-step pipeline rendered in two densities.
 
-11. **`GET /v1/organisations/{id}/health`.** The endpoint is referenced by a `drillTo` and never specified.
+12. **`GET /v1/organisations/{id}/health`.** The endpoint is referenced by a `drillTo` and never specified.
     `organisation_health_snapshots` is a guess at its shape.
