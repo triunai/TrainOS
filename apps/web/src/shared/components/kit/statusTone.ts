@@ -1,5 +1,6 @@
 import type {
   ApprovalStatus,
+  EnquiryStatus,
   CheckState,
   EngagementStatus,
   InvoiceStatus,
@@ -11,6 +12,7 @@ import type {
   SyncState,
   TierStatus,
 } from "@trainos/contract";
+import type { FollowUpStatus } from "@trainos/contract";
 import type { StatusTone } from "./StatusChip";
 
 /**
@@ -125,4 +127,35 @@ export const TIER_STATUS_TONE: Record<TierStatus, StatusTone> = {
   DEGRADED: "warning",
   PAUSED_BY_CAP: "danger",
   DISABLED: "neutral",
+};
+
+/**
+ * §12 `EnquiryStatus`.
+ *
+ * `OPEN` is the one that earns a colour, and it is the only "nothing has
+ * happened yet" state in the kit that does. An unworked enquiry is an SLA
+ * running down, which is why the pack draws it as "Unworked" rather than
+ * "Open": the word and the amber together say a person is waiting. Everything
+ * after it is either someone's job now or already finished.
+ */
+export const ENQUIRY_TONE: Record<EnquiryStatus, StatusTone> = {
+  OPEN: "warning",
+  ASSIGNED: "neutral",
+  CONVERTED: "success",
+  ARCHIVED: "neutral",
+  NOT_AN_ENQUIRY: "neutral",
+};
+
+/**
+ * §4 `FollowUpStatus`.
+ *
+ * Only `OVERDUE` is coloured on the way in. `DUE` is neutral on purpose: a
+ * queue where every row is amber the moment it arrives has no way left to say
+ * that one of them has actually slipped.
+ */
+export const FOLLOW_UP_TONE: Record<FollowUpStatus, StatusTone> = {
+  DUE: "neutral",
+  OVERDUE: "danger",
+  SENT: "success",
+  DISMISSED: "neutral",
 };

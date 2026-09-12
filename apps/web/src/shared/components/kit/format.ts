@@ -139,6 +139,59 @@ export function formatPeriod(value: string): string {
   return MONTHS[Number(match[2]) - 1] ?? value;
 }
 
+/**
+ * An ISO range → the pack's compact form.
+ *
+ *   "2026-11-12/2026-11-13" → "12–13 Nov 2026"
+ *   "2026-11-30/2026-12-01" → "30 Nov – 01 Dec 2026"
+ *   "2026-12-30/2027-01-02" → "30 Dec 2026 – 02 Jan 2027"
+ *   "2026-11-12/2026-11-12" → "12 Nov 2026"
+ *
+ * The contract returns rendered ranges as one slash-joined string on
+ * engagements and trainer availability. Collapsing the shared parts is the
+ * whole point: "12 Nov 2026 – 13 Nov 2026" makes a reader compare two dates to
+ * find the one digit that differs.
+ *
+ * An en dash, not a hyphen. A hyphen between dates reads as a compound word.
+ *
+ * A string that is not a range falls through to `formatDate`, so a single date
+ * passed here renders correctly rather than as a defect.
+ */
+export function formatDateRange(value: string | null | undefined): string {
+  if (!value) return "—";
+
+  const [from, to] = value.split("/");
+  if (!to) return formatDate(from);
+
+  const start = DATE_ONLY.exec(from);
+  const end = DATE_ONLY.exec(to);
+  if (!start || !end) return `${formatDate(from)} – ${formatDate(to)}`;
+
+  const [, startYear, startMonth, startDay] = start;
+  const [, endYear, endMonth, endDay] = end;
+
+  if (from === to) return formatDate(from);
+
+  /* Same month and year: only the day differs, so only the day repeats. */
+  if (startYear === endYear && startMonth === endMonth) {
+    return `${startDay}–${endDay} ${MONTHS[Number(endMonth) - 1]} ${endYear}`;
+  }
+
+  /* Same year: the year is stated once, at the end. Days stay zero-padded, as
+     `formatDate` renders them everywhere else — the pack writes "04 Mar 2024",
+     and a range that dropped the pad would be the only place in the app where a
+     day is one character wide. */
+  if (startYear === endYear) {
+    return `${startDay} ${MONTHS[Number(startMonth) - 1]} – ${endDay} ${
+      MONTHS[Number(endMonth) - 1]
+    } ${endYear}`;
+  }
+
+  /* Crossing a year boundary: nothing can be collapsed, and the years are the
+     most important part of the answer. */
+  return `${formatDate(from)} – ${formatDate(to)}`;
+}
+
 /* ---- Durations ------------------------------------------------------ */
 
 /** `1900` → `1.9s`, `620` → `620ms`, `65000` → `1m 5s`. The pack's own forms. */

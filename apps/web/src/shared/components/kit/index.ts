@@ -32,6 +32,7 @@ export {
 export {
   formatMoney,
   formatDate,
+  formatDateRange,
   formatTime,
   formatPeriod,
   formatDuration,
@@ -56,8 +57,10 @@ export {
   AUTONOMY_RUNGS,
   autonomyCaption,
   chipsFromFilters,
+  describeActionError,
   tabsFromViews,
   TYPE_TAG,
+  type ActionError,
   type AIChipVariant,
   type FilterChipModel,
   type PillTab,
@@ -112,6 +115,8 @@ export {
   RUN_TONE,
   SYNC_TONE,
   TIER_STATUS_TONE,
+  ENQUIRY_TONE,
+  FOLLOW_UP_TONE,
 } from "./statusTone";
 export { AIChip, AIBadge, type AIChipProps } from "./AIChip";
 export { ProvenanceBlock, ProvenancePanel, type ProvenanceBlockProps } from "./ProvenanceBlock";
@@ -131,6 +136,7 @@ export { EscalationLadder, type EscalationLadderProps, type LadderRung } from ".
 
 /* ---- System surfaces (Kit §05) -------------------------------------- */
 export { ApprovalBanner, type ApprovalBannerProps } from "./ApprovalBanner";
+export { ActionOutcome, type ActionOutcomeProps } from "./ActionOutcome";
 export { ExceptionBanner, type ExceptionBannerProps } from "./ExceptionBanner";
 export { DiffBlock, type DiffBlockProps } from "./DiffBlock";
 export {

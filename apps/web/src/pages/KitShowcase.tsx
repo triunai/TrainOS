@@ -1058,13 +1058,22 @@ export default function KitShowcase() {
             ]}
           />
           <WhatsAppCostStrip
+            category="UTILITY"
+            templateLabel="followup_reminder_v3"
+            recipients={30}
+            ratePerMessage={money(6)}
+            ratePerMessageExact="0.0564"
+            estimatedCost={money(169)}
+            alternative={{ category: "MARKETING", ratePerMessage: money(35) }}
+          />
+          <WhatsAppCostStrip
             category="MARKETING"
             templateLabel="proposal_followup_v3"
             recipients={30}
             ratePerMessage={money(35)}
+            ratePerMessageExact="0.3467"
             estimatedCost={money(1040)}
-            alternativeCategory="UTILITY"
-            alternativeRate={money(6)}
+            alternative={{ category: "UTILITY", ratePerMessage: money(6) }}
           />
         </Stack>
       </Entry>

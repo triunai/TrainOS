@@ -6,6 +6,7 @@ import type {
   ProvenanceOrigin,
   SavedView,
 } from "@trainos/contract";
+import { humanise } from "./format";
 
 /**
  * Contract shape → kit prop shape, in one leaf module.
@@ -133,6 +134,50 @@ export const TYPE_TAG: Record<EvidenceType, string> = {
   PROPOSAL: "PRO",
   ACTION: "ACT",
 };
+
+/* ---- Action outcomes ------------------------------------------------ */
+
+export interface ActionError {
+  /** The sentence to show. The server's own wording beats anything composed here. */
+  message: string;
+  /** A machine code, shown small beneath the message when there are no blockers. */
+  code?: string;
+  /** §8 `details.blockers[]`. Rendered individually; this is the actionable part. */
+  blockers?: string[];
+}
+
+/**
+ * Pull an {@link ActionError} out of whatever a mutation threw.
+ *
+ * Defensive on purpose: this runs on the failure path, and a describe function
+ * that throws while describing a throw turns a handled refusal into a blank
+ * screen. Every access is guarded and there is always a sentence at the end.
+ */
+export function describeActionError(
+  error: unknown,
+  fallback = "The action did not go through",
+): ActionError {
+  if (typeof error === "string") return { message: error };
+
+  const bag = (error ?? {}) as Record<string, unknown>;
+  const details = (bag.details ?? {}) as Record<string, unknown>;
+
+  const rawBlockers = details.blockers;
+  const blockers = Array.isArray(rawBlockers)
+    ? rawBlockers.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+
+  const message =
+    (typeof bag.message === "string" && bag.message) ||
+    (typeof bag.code === "string" && humanise(bag.code)) ||
+    fallback;
+
+  return {
+    message,
+    ...(typeof bag.code === "string" ? { code: bag.code } : {}),
+    ...(blockers && blockers.length > 0 ? { blockers } : {}),
+  };
+}
 
 /* ---- List chrome ---------------------------------------------------- */
 
