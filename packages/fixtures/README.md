@@ -18,6 +18,9 @@ npx tsc -p tsconfig.json   # strict, noEmit, zero errors
 npx vitest run             # 101 tests
 ```
 
+The complete method list, one-line signatures grouped by contract section, is
+in [API.md](./API.md).
+
 ## What is in the box
 
 | Layer | Path | What it holds |
