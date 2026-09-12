@@ -1,0 +1,139 @@
+/*
+ * TrainOS design tokens — the single source of colour, type, geometry and
+ * elevation for the whole app.
+ *
+ * MECHANISM: every colour is stored as an `R G B` channel triplet, not a hex
+ * string, so Tailwind can compose it with an alpha modifier
+ * (`rgb(var(--token) / <alpha-value>)`) and `bg-ai-tint/60` works. The hex the
+ * design pack specifies is written beside each value; the hex is the source of
+ * truth for a human, the triplet is the same colour for the machine.
+ *
+ * There is ONE colour mechanism. Do not add a second (no hex literals in
+ * components, no parallel Tailwind palette, no inline rgba()).
+ *
+ * THEME: light values live on bare `:root`. `[data-theme="dark"]` redefines
+ * ONLY the tokens the design pack's dark map changes. Dark is a straight token
+ * swap — no component, layout, spacing or geometry changes between themes.
+ *
+ * Source: docs/research/09-design-pack-inventory.md §1.1 (light), §1.2 (dark
+ * map), §1.3 (typography), §1.4 (geometry). Every value below is quoted from
+ * that document except the six marked DERIVED.
+ */
+
+:root {
+  /* ---- Surfaces ------------------------------------------------------- */
+  --canvas: 247 248 250; /* #F7F8FA  app background behind the card */
+  --sidebar: 243 245 247; /* #F3F5F7  sidebar surface, one step off canvas */
+  --card: 255 255 255; /* #FFFFFF  every content card and popover */
+  --surface: 250 251 252; /* #FAFBFC  table headers, recessed rails, zebra rows */
+  --surface-hover: 241 244 248; /* #F1F4F8  row and nav hover */
+
+  /* ---- Lines ---------------------------------------------------------- */
+  --border: 227 231 236; /* #E3E7EC  1px container border */
+  --divider: 236 239 243; /* #ECEFF3  hairline inside a surface */
+  --border-strong: 213 218 225; /* #D5DAE1  emphasised container */
+  --connector: 205 211 219; /* #CDD3DB  sidebar parent-to-child connector line */
+
+  /* ---- Text ----------------------------------------------------------- */
+  --ink: 24 26 31; /* #181A1F  primary text, charcoal accent */
+  --ink-secondary: 80 86 95; /* #50565F  secondary text */
+  --ink-muted: 105 113 124; /* #69717C  floor for text a user must read */
+  --ink-disabled: 163 169 178; /* #A3A9B2  disabled controls and rules ONLY */
+
+  /* ---- Accent (the one accent; blue budget 5-15% per screen) ---------- */
+  --primary: 31 91 255; /* #1F5BFF  electric blue */
+  --primary-hover: 24 73 214; /* #1849D6  hover, links, text-on-tint */
+  --primary-border: 203 216 255; /* #CBD8FF  accent border */
+  --on-primary: 255 255 255; /* #FFFFFF  label on a solid primary button */
+
+  /* ---- AI surfaces (6% tint + the glyph + a label; never a solid fill) - */
+  --ai-tint: 244 247 255; /* #F4F7FF  AI surfaces */
+  --ai-tint-2: 235 241 255; /* #EBF1FF  selected row, active nav, active pill */
+
+  /* ---- Status (chips ONLY — status colour never leaves a chip) -------- */
+  --success: 43 113 83; /* #2B7153 */
+  --success-fill: 236 246 240; /* #ECF6F0 */
+  --success-border: 191 220 203; /* #BFDCCB */
+  --warning: 150 97 25; /* #966119 */
+  --warning-fill: 255 247 232; /* #FFF7E8 */
+  --warning-border: 236 210 156; /* #ECD29C */
+  --danger: 180 64 59; /* #B4403B */
+  --danger-fill: 255 240 239; /* #FFF0EF */
+  --danger-border: 236 194 191; /* #ECC2BF */
+  --info: 70 100 135; /* #466487 */
+  --info-fill: 239 243 247; /* #EFF3F7 */
+  --info-border: 203 215 227; /* #CBD7E3 */
+
+  /* ---- Identity ------------------------------------------------------- */
+  --avatar-surface: 24 26 31; /* #181A1F  charcoal circle, light initials */
+
+  /* ---- Typography (§1.3) ---------------------------------------------- */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- Geometry (§1.4) — 8px grid with a 4px half-step ---------------- */
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-card-lg: 14px; /* RecordHeader card and some shells */
+  --radius-modal: 18px; /* profile modal */
+  --radius-pill: 999px;
+
+  /* ---- Shell dimensions (§5) ------------------------------------------ */
+  --shell-sidebar-width: 240px;
+  --shell-rail-width: 64px; /* collapsed sidebar, flyout on hover */
+  --shell-topbar-height: 56px;
+  --shell-content-inset: 14px;
+
+  /* ---- Elevation — no shadow heavier than these ----------------------- */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+
+[data-theme="dark"] {
+  /* Only the tokens the §1.2 map changes. Geometry, type and spacing are
+     identical across themes by design. */
+
+  --canvas: 13 17 23; /* #0D1117 */
+  --sidebar: 19 24 32; /* #131820 */
+  --card: 23 28 37; /* #171C25 */
+  --surface: 27 33 43; /* #1B212B */
+  --surface-hover: 30 37 48; /* #1E2530 */
+
+  --border: 42 50 62; /* #2A323E */
+  --divider: 35 42 53; /* #232A35 */
+  --border-strong: 58 67 80; /* #3A4350 */
+  --connector: 42 50 62; /* DERIVED — the pack gives no dark connector value */
+
+  --ink: 232 235 240; /* #E8EBF0  never pure white — reduces halation */
+  --ink-secondary: 170 178 190; /* #AAB2BE */
+  --ink-muted: 137 146 160; /* #8992A0  AA on the dark card at 12px */
+  --ink-disabled: 92 101 114; /* #5C6572 */
+
+  --primary: 76 130 255; /* #4C82FF  lifted to keep 4.5:1 on dark */
+  --primary-hover: 157 187 255; /* #9DBBFF */
+  --primary-border: 46 68 120; /* #2E4478 */
+  --on-primary: 242 245 255; /* #F2F5FF  the accent never carries dark text */
+
+  --ai-tint: 22 33 58; /* #16213A */
+  --ai-tint-2: 27 42 71; /* #1B2A47 */
+
+  --success: 111 211 160; /* #6FD3A0 */
+  --success-fill: 18 42 32; /* #122A20 */
+  --success-border: 31 74 54; /* DERIVED — the pack gives no dark chip border */
+  --warning: 232 180 92; /* #E8B45C */
+  --warning-fill: 42 33 18; /* DERIVED — the pack gives only the dark text colour */
+  --warning-border: 74 58 24; /* DERIVED */
+  --danger: 240 138 133; /* #F08A85 */
+  --danger-fill: 46 25 24; /* DERIVED — the pack gives only the dark text colour */
+  --danger-border: 77 40 37; /* DERIVED */
+  --info: 157 190 228; /* #9DBEE4 */
+  --info-fill: 22 32 43; /* #16202B */
+  --info-border: 36 55 74; /* DERIVED */
+
+  --avatar-surface: 42 50 62; /* #2A323E  raised graphite chip, light initials */
+
+  /* Shadows deepen rather than lighten; elevation is carried by surface
+     lightness, not heavier borders. */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.55);
+  --shadow-raised: 0 1px 3px rgb(0 0 0 / 0.55);
+}
