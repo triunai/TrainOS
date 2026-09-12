@@ -23,7 +23,7 @@ Eighty-nine tables across six bounded contexts, plus twenty referenced from adja
 
 | Contract section | Entities |
 |---|---|
-| §1 conventions | `provenance`*, `provenance_sources`*, `idempotency_keys`*, `ref_sequences`, `ref_formats` |
+| §1 conventions | `provenance`*, `idempotency_keys`*, `ref_sequences`, `ref_formats` |
 | §2 shell | `saved_views`, `templates`, `template_sections`, `pipelines`, `pipeline_steps`, `policies`*, `audit_entries`* |
 | §3 actions | `action_requests`*, `action_effects`*, `action_drafts`*, `action_evidence`* |
 | §4 enquiries | `enquiries`, `enquiry_extraction_fields`, `follow_ups`, `outbound_messages`, `message_rates`, `contact_consents` |
@@ -45,7 +45,7 @@ Eighty-nine tables across six bounded contexts, plus twenty referenced from adja
 | S1 | §17 "checks resolve rules **as at the training date**" | Grant-side rules resolve at **grant submission**, claim-side at **claim submission** (DECISIONS §6). `engagements.grant_rule_set_version_id` is pinned at grant submission; `hrdc_packets.claim_rule_set_version_id` at claim submission. `compliance_check_results` stores the version it applied; `compliance_version_drifts` records a warning citing both versions rather than switching silently. Checks re-evaluate at every stage transition. |
 | S2 | §17 `jury: { enabled: true, quorum, of, tiers }` (boolean-shaped) | `ai_routing_entries.jury` is an object: `mode ∈ GATE·SAMPLE·ESCALATE`, `quorum`, `of`, `tiers[]`, `sampleRate`, `triggers{minConfidence,maxValue,firstOfKind}` (§18, DECISIONS §2). `jury_votes` rows carry `blocking bool` so `SAMPLE` votes are recorded for drift without being decision inputs. |
 | S3 | §16.10 "does the line unit derive from the total, or the total from the lines?" | **Total-from-lines**, integer sen, each line rounded half-up before summing, SST on the summed net (§18, DECISIONS §7). A package price is one line at `qty = 1`. Per-pax is display-only and has **no column** on `invoice_lines` or `quotation_lines`. A reconciliation trigger rejects a total that is not the sum of rounded lines. |
-| S4 | §6 `costing.rateCardYear: 2026` (a year) | `quotations.rate_card_version text not null default 'v0-placeholder'` (§18, DECISIONS §5). Year is not a version. Rate card tables themselves belong to **sb-money**. |
+| S4 | §6 `costing.rateCardYear: 2026` (a year) | A year is not a version (§18, DECISIONS §5). The quotation snapshots the card it was priced against. **sb-money C-3 makes this `rate_card_id uuid` referencing their frozen-label `rate_card`**, with the API's `rateCardVersion` string and its `v0-placeholder` value rendered by join. |
 | S5 | §10 `ADMIN_HOURS_SAVED` as a bare number | `hours_saved_baseline_tables` (versioned, per tenant) + `hours_saved_baselines` (per action type). Reports carry `basis ∈ MEASURED·ILLUSTRATIVE` and `haircut` (0.7 for the first quarter). The tile may not render a bare number (§18, DECISIONS §4). |
 | S6 | DECISIONS §3: the demo's **five-working-day claim window** | Deleted. Claim window is `claim_submitted ≤ training_completion + 6 months`. All HRD Corp offsets are **calendar days**. The "apply before Friday 5 PM" heuristic is not a rule — it is a `WARN` check with no `compliance_rules` row. Seeded rules load as `PROPOSED` until Finance verifies them against the circular. |
 | S7 | §12 `AutonomyLevel` as a free grant | `agent_autonomy` carries both `level` and `ceiling` with `ceiling_reason`. DECISIONS §1 launch defaults seed the table; anything money-moving, client-committing or HRDC-touching has `ceiling = ACT_WITH_APPROVAL`, enforced by a check constraint, not by application code. |
@@ -81,11 +81,24 @@ Plus, on every table: `UNIQUE (tenant_id, id)` and `UNIQUE (tenant_id, ref)` whe
 unrepresentable at the storage layer, independently of whatever RLS **sb-tenancy** writes. The ERD shows
 the logical FK column only; read every one as carrying `tenant_id` alongside it.
 
-**Provenance.** Any AI-touched field or record carries `provenance_id uuid NULL REFERENCES provenance(id)`.
-`NULL` means human-authored, which matches §1 ("absent means human-authored"). The `provenance` and
-`provenance_sources` tables are **sb-money**'s. Where a single row needs provenance on more than one field
-(the enquiry extraction, the proposal section), the field is split into its own row rather than given a
-second provenance column.
+**Provenance.** No table in this model carries a `provenance_id` column. `provenance` is **sb-money**'s
+table and it points **at** the subject, keyed `(subject_table, subject_id, field)`. A row is human-authored
+when no provenance row exists for it, which preserves §1's "absent means human-authored" exactly. The
+absence simply lives in the other table.
+
+This reverses what this document originally assumed, and the reason is decisive. A subject-to-provenance
+foreign key cannot be traversed backwards, so "all AI-generated fields awaiting review" and "everything
+from run_4821" would each need a nine-way union with no shared sort column, which cannot be paginated by
+cursor. See `04-money-versioning-provenance.md` C-1. The cost is real: referential integrity is replaced by
+a subject allow-list, per-table `AFTER DELETE` triggers and a sweep. It is sb-money's cost to carry.
+
+What survives from this side is the field-level shape. Where a record needs provenance on more than one
+field, the field is a row. `proposal_sections`, `tna_gaps` and `enquiry_extraction_fields` are already
+normalised that way, so `(subject_table, subject_id, field)` resolves against them without a second column
+anywhere. **The two directions must not both exist.** A `provenance_id` kept for convenient joins alongside
+the polymorphic key is two sources of truth for one edge.
+
+`provenance.sources` is a **jsonb** column with a GIN index, not a child table (C-2).
 
 ### The monetary value of an action
 
@@ -95,21 +108,21 @@ stable money column, and these are the four:
 
 | Target | Column | Currency |
 |---|---|---|
-| `proposals` | `value_minor` | `currency` |
-| `quotations` | `sell_price_minor` | `currency` |
-| `invoices` | `total_minor` | `currency` |
-| `hrdc_packets` | `claim_value_minor` | `currency` |
+| `proposals` | `value_sen` | `currency` |
+| `quotations` | `sell_price_sen` | `currency` |
+| `invoices` | `total_sen` | `currency` |
+| `hrdc_packets` | `claim_value_sen` | `currency` |
 
 None of the four is nullable once the record reaches a gateable state, and all four are frozen by the
 immutability rules in §4 at the point the gate reads them.
 
 ### Money
 
-Two columns per amount: `<name>_minor bigint` and one `currency char(3) NOT NULL DEFAULT 'MYR'` per table.
+Two columns per amount: `<name>_sen bigint` and one `currency char(3) NOT NULL DEFAULT 'MYR'` per table.
 No composite type and no `numeric`. Rationale: composite types round-trip badly through PostgREST and
 produce unusable generated TypeScript; integer sen is the §1 and §18 requirement; a per-table currency
 column is honest for a single-currency launch and can be promoted to per-column later without a rewrite.
-`CHECK (<name>_minor >= 0)` wherever the contract admits no negative.
+`CHECK (<name>_sen >= 0)` wherever the contract admits no negative.
 
 ### Rates
 
@@ -141,7 +154,7 @@ Native enum types created: `actor_kind`, `app_role`, `provenance_origin`, `auton
 `run_status`, `run_step_status`, `action_status`, `diff_op`, `tier_status`, `routing_strategy`,
 `cache_strategy`, `provider_key_status`, `billing_owner`, `budget_state`, `rule_status`, `rule_change_op`,
 `check_state`, `monitor_status`, `embedding_status`, `trace_node_kind`, `run_event_type`, `jury_mode`,
-`severity`, `view_visibility`, `hours_saved_basis`, `attendance_half`, `booking_state`, `binding_floor`.
+`severity`, `view_visibility`, `hours_saved_basis`, `attendance_half`, `booking_state`.
 
 `severity` is `INFO·WARN·DANGER·ALERT`, matching the contract package's `SEVERITIES`. It consolidates
 §4 `related[].severity`, §6 `constraints[].severity`, §9 `deadlineSeverity` and §18 `versionDrift[].severity`,
@@ -262,7 +275,7 @@ Cross-cutting, tenant-scoped configuration and shared primitives.
 Referenced, owned elsewhere: `tenants`, `auth.users`, `memberships` (sb-tenancy); `policies`, `action_requests`,
 `action_effects`, `action_evidence`, `action_drafts`, `approval_requests`, `approval_decisions`,
 `approval_evidence`, `approval_diff_entries`, `idempotency_keys` (sb-actions); `provenance`,
-`provenance_sources`, `rate_card*` (sb-money); `domain_events`, `outbox`, `audit_entries`, `webhook_receipts`
+`rate_card` (sb-money); `domain_events`, `outbox`, `audit_entries`, `webhook_receipts`
 (sb-events).
 
 ---
@@ -387,12 +400,10 @@ erDiagram
         uuid matched_organisation_id FK
         uuid matched_contact_id FK
         uuid assigned_to_user_id FK
-        uuid provenance_id FK
     }
     enquiry_extraction_fields {
         uuid id PK
         uuid enquiry_id FK
-        uuid provenance_id FK
     }
     opportunities {
         uuid id PK
@@ -405,7 +416,6 @@ erDiagram
         uuid id PK
         uuid organisation_id FK
         uuid programme_id FK
-        uuid provenance_id FK
     }
     follow_ups {
         uuid id PK
@@ -426,7 +436,6 @@ erDiagram
     tna_gaps {
         uuid id PK
         uuid tna_id FK
-        uuid provenance_id FK
     }
     tna_evidence {
         uuid id PK
@@ -436,7 +445,6 @@ erDiagram
         uuid id PK
         uuid tna_id FK
         uuid programme_id FK
-        uuid provenance_id FK
     }
     proposals {
         uuid id PK
@@ -448,7 +456,6 @@ erDiagram
     proposal_sections {
         uuid id PK
         uuid proposal_id FK
-        uuid provenance_id FK
     }
     public_share_tokens {
         uuid id PK
@@ -470,10 +477,11 @@ erDiagram
         uuid id PK
         uuid proposal_id FK
         uuid supersedes_quotation_id FK
+        uuid rate_card_id FK
+        uuid invoice_id FK
     }
     quotation_lines {
         uuid id PK
-        uuid quotation_id FK
     }
 
     %% ---------- Delivery ----------
@@ -571,7 +579,6 @@ erDiagram
         uuid template_id FK
         uuid follow_up_id FK
         uuid invoice_id FK
-        uuid provenance_id FK
     }
     message_rates {
         uuid id PK
@@ -604,7 +611,6 @@ erDiagram
         uuid supersedes_rule_id FK
         uuid superseded_by_rule_id FK
         uuid knowledge_source_id FK
-        uuid provenance_id FK
     }
     rule_change_sets {
         uuid id PK
@@ -628,7 +634,6 @@ erDiagram
         uuid compliance_rule_id FK
         uuid rule_set_version_id FK
         text check_key FK
-        uuid provenance_id FK
     }
     compliance_version_drifts {
         uuid id PK
@@ -658,7 +663,6 @@ erDiagram
         uuid id PK
         uuid organisation_id FK
         uuid engagement_id FK
-        uuid quotation_id FK
     }
     invoice_lines {
         uuid id PK
@@ -883,7 +887,7 @@ erDiagram
     invoices |o--o| collections_cases : "chased by"
     invoices ||--o{ follow_ups : "prompts"
     invoices ||--o{ outbound_messages : "reminded by"
-    quotations |o--o{ invoices : "billed from"
+    quotations |o--o| invoices : "billed as"
 
     %% ---------- AI-ops relationships ----------
     agents ||--o{ agent_autonomy : "granted"
@@ -927,15 +931,9 @@ erDiagram
     action_requests__ext |o--o{ quotations : "approves discount on"
     action_requests__ext |o--o| approval_requests__ext : "queues"
     ref_formats ||--o{ ref_sequences : "formats"
-    provenance__ext ||--o{ enquiries : "attests"
-    provenance__ext ||--o{ enquiry_extraction_fields : "attests"
-    provenance__ext ||--o{ tna_gaps : "attests"
-    provenance__ext ||--o{ tna_recommendations : "attests"
-    provenance__ext ||--o{ proposal_sections : "attests"
-    provenance__ext ||--o{ organisation_suggestions : "attests"
-    provenance__ext ||--o{ compliance_rules : "attests"
-    provenance__ext ||--o{ compliance_check_results : "attests"
-    provenance__ext ||--o{ outbound_messages : "attests"
+    %% provenance is keyed (subject_table, subject_id, field) and points AT the
+    %% subject, so it carries no drawable FK to any of the nine tables it attests.
+    %% See 04-money-versioning-provenance.md C-1.
     tenants__ext ||--o{ organisations : "scopes everything"
 ```
 
@@ -1031,13 +1029,12 @@ No `ref`. **Unique:** `(tenant_id, contact_id, channel, recorded_at)` — the ta
 | `classification_label` | `text` | yes | — | `LEADERSHIP`; open set |
 | `classification_confidence` | `numeric(4,3)` | yes | — | |
 | `needs_human_review` | `boolean` | no | `false` | True below threshold; blocks auto-archive (§4) |
-| `estimated_value_minor` | `bigint` | yes | — | |
+| `estimated_value_sen` | `bigint` | yes | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `matched_organisation_id` | `uuid` | yes | — | → `organisations` `ON DELETE SET NULL` |
 | `matched_contact_id` | `uuid` | yes | — | → `contacts` `ON DELETE SET NULL` |
 | `match_reason` | `organisation_match_reason` | yes | — | `EXACT_DOMAIN·FUZZY_NAME·MANUAL` |
 | `assigned_to_user_id` | `uuid` | yes | — | → `auth.users` `ON DELETE SET NULL` |
-| `provenance_id` | `uuid` | yes | — | → `provenance` — attests the classification |
 | `external_message_id` | `text` | yes | — | `Message-ID` / WhatsApp `messages[0].id`, §11 dedupe |
 
 - **Unique:** `(tenant_id, channel, external_message_id) WHERE external_message_id IS NOT NULL`. This is the storage-level half of webhook idempotency; **sb-events** owns `webhook_receipts`.
@@ -1053,7 +1050,6 @@ One row per extracted field, because each carries its own provenance and its own
 | `enquiry_id` | `uuid` | no | — | → `enquiries` `ON DELETE CASCADE` |
 | `field_key` | `text` | no | — | `topic·audience·timing·budget`; open set |
 | `value` | `text` | yes | — | Null is meaningful (`budget: null` at 0.97 confidence) |
-| `provenance_id` | `uuid` | yes | — | → `provenance` |
 
 No `ref`. **Unique:** `(tenant_id, enquiry_id, field_key)`. A `PATCH` flips the row's provenance to
 `AI_SUGGESTED` with `editedBy` — that is a new `provenance` row, not an update, so the original extraction
@@ -1068,7 +1064,7 @@ survives for the audit drawer.
 | `source_enquiry_id` | `uuid` | yes | — | → `enquiries` `ON DELETE SET NULL` |
 | `owner_id` | `uuid` | no | — | → `auth.users` |
 | `stage` | `opportunity_stage` | no | `'NEW'` | `NEW·QUALIFYING·TNA_SENT·PROPOSAL_SENT·NEGOTIATION·WON·LOST` |
-| `value_minor` | `bigint` | yes | — | |
+| `value_sen` | `bigint` | yes | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `probability` | `numeric(4,3)` | yes | — | REPORT.md `probability` |
 | `stage_changed_at` | `timestamptz` | no | `now()` | |
@@ -1090,7 +1086,6 @@ survives for the audit drawer.
 | `status` | `text` | no | `'OPEN'` | `OPEN·ACTED·DISMISSED` |
 | `dismissed_at` | `timestamptz` | yes | — | |
 | `dismissed_by_user_id` | `uuid` | yes | — | |
-| `provenance_id` | `uuid` | yes | — | → `provenance` |
 
 No `ref`. **Index:** `(tenant_id, organisation_id) WHERE status = 'OPEN'`.
 
@@ -1127,7 +1122,7 @@ No `ref`. **Index:** `(tenant_id, organisation_id) WHERE status = 'OPEN'`.
 | `audience_level` | `text` | yes | — | `LINE_MANAGER`; open set |
 | `audience_sites` | `text[]` | yes | — | Display-only list, never filtered on |
 | `audience_language` | `char(2)` | yes | — | |
-| `budget_minor` | `bigint` | yes | — | Null is meaningful |
+| `budget_sen` | `bigint` | yes | — | Null is meaningful |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `reopened_at` | `timestamptz` | yes | — | `POST /tnas/{id}/reopen` |
 
@@ -1143,7 +1138,7 @@ All four: `tna_id uuid NOT NULL → tna ON DELETE CASCADE`, no `ref`.
 
 `tna_gaps`: `name text`, `description text`, `priority gap_priority` (`HIGH·MEDIUM·LOW`),
 `evidence_refs text[]` (`["Q4","Q7"]` — questionnaire question ids, not entity refs),
-`provenance_id uuid`. **Index** `(tenant_id, tna_id, priority)`.
+**Index** `(tenant_id, tna_id, priority)`.
 
 `tna_evidence`: `source_type evidence_type`, `source_ref text`, `excerpt text`. The contract package
 already unifies this: one `EvidenceType` enum and one `EvidenceRef` shape serve `provenance.sources[]`,
@@ -1151,8 +1146,8 @@ action `evidence[]` and TNA evidence alike. So `evidence_type` is a single nativ
 open question is only which lane owns the table — see Deviation 11.
 
 `tna_recommendations`: `programme_id uuid → programme ON DELETE CASCADE`, `fit_score numeric(4,3)`,
-`rationale text`, `price_indication_minor bigint`, `currency char(3)`, `rank smallint`,
-`scoring_model_version text` (`fit-v3`), `scoring_weights jsonb`, `provenance_id uuid`,
+`rationale text`, `price_indication_sen bigint`, `currency char(3)`, `rank smallint`,
+`scoring_model_version text` (`fit-v3`), `scoring_weights jsonb`,
 `accepted_at timestamptz`. **Unique** `(tenant_id, tna_id, programme_id)`.
 **Index** `(tenant_id, tna_id, fit_score DESC)`.
 
@@ -1166,7 +1161,7 @@ open question is only which lane owns the table — see Deviation 11.
 | `programme_id` | `uuid` | yes | — | → `programmes` `ON DELETE RESTRICT` |
 | `run_id` | `uuid` | yes | — | → `runs` `ON DELETE SET NULL` |
 | `status` | `proposal_status` | no | `'DRAFT'` | `DRAFT·AWAITING_APPROVAL·SENT·VIEWED·ACCEPTED·LOST` |
-| `value_minor` | `bigint` | yes | — | Mirrors the accepted quotation's sell price |
+| `value_sen` | `bigint` | yes | — | Mirrors the accepted quotation's sell price |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `margin_rate` | `numeric(6,4)` | yes | — | |
 | `sent_at` | `timestamptz` | yes | — | |
@@ -1176,7 +1171,7 @@ open question is only which lane owns the table — see Deviation 11.
 
 - **Indexes:** `(tenant_id, opportunity_id)`; `(tenant_id, status, updated_at DESC)`; and for the policy gate, `proposals_org_sent` on `(tenant_id, organisation_id) WHERE status IN ('SENT','VIEWED','ACCEPTED','LOST')`.
 - **Checks:** `status <> 'SENT' OR sent_at IS NOT NULL`.
-- **Immutability:** once `status = 'SENT'`, `template_id`, `value_minor` and every `proposal_sections.body` freeze. See §4.
+- **Immutability:** once `status = 'SENT'`, `template_id`, `value_sen` and every `proposal_sections.body` freeze. See §4.
 
 #### `proposal_sections` — §6
 
@@ -1188,7 +1183,6 @@ open question is only which lane owns the table — see Deviation 11.
 | `body` | `text` | yes | — | |
 | `merge_fields_used` | `text[]` | yes | — | |
 | `needs_review` | `boolean` | no | `false` | |
-| `provenance_id` | `uuid` | yes | — | → `provenance` |
 
 No `ref`. **Unique:** `(tenant_id, proposal_id, n)`.
 `warnings[]` in the response is **not a table** — `LOW_CONFIDENCE_SECTION` is a view over
@@ -1230,32 +1224,40 @@ the original acceptance" at the storage layer, not in application code.
 
 #### `quotations` — §6 (`GET /costings/{id}`), M07-S03
 
+This lane owns the table; **sb-money owns every money column on it**, and the list below is theirs
+verbatim from `04-money-versioning-provenance.md` C-4. The `app.quotation` DDL in that document is a
+verification harness, not a competing table.
+
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | `proposal_id` | `uuid` | no | — | → `proposals` `ON DELETE RESTRICT` |
 | `supersedes_quotation_id` | `uuid` | yes | — | → `quotations` `ON DELETE SET NULL` |
 | `version` | `smallint` | no | `1` | |
-| `rate_card_version` | `text` | no | `'v0-placeholder'` | §18/S4. Value owned by **sb-money** |
-| `sell_price_minor` | `bigint` | no | — | Sum of rounded `quotation_lines.total_minor` |
-| `direct_cost_minor` | `bigint` | no | — | |
+| `rate_card_id` | `uuid` | no | — | → `rate_card(id)`. **sb-money, C-3.** The API's `rateCardVersion` string is a join, and `rate_card.version` is frozen by a `PT409` trigger so the label cannot drift under a priced quotation |
+| `sell_price_sen` | `bigint` | no | — | Sum of rounded `quotation_lines.total_sen` |
+| `direct_cost_sen` | `bigint` | no | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
-| `margin_rate` | `numeric(6,4)` | no | — | Stored, not computed, so the approval evidence is reproducible |
-| `absolute_floor_minor` | `bigint` | yes | — | Snapshot of `programme_pricing_tiers.floor_price_minor` at pricing time |
-| `margin_floor_rate` | `numeric(6,4)` | yes | — | The margin floor applied, from the rate card |
-| `margin_floor_minor` | `bigint` | yes | — | `direct_cost_minor ÷ (1 − margin_floor_rate)`, computed by sb-money |
-| `binding_floor` | `binding_floor` | yes | — | `ABSOLUTE·MARGIN` — which of the two is higher, and therefore binds |
-| `floor_price_minor` | `bigint` | no | — | The binding floor's value. `greatest(absolute_floor_minor, margin_floor_minor)` |
+| `floor_margin_rate` | `numeric(6,4)` | yes | — | The margin floor applied, from the rate card |
 | `commission_rate` | `numeric(6,4)` | yes | — | |
-| `commission_minor` | `bigint` | yes | — | |
 | `commission_payable_on` | `text` | yes | — | `COLLECTION·INVOICE` |
-| `below_floor_approved_by_action_id` | `uuid` | yes | — | → `action_requests` (sb-actions); set by `DISCOUNT_APPROVE` |
+| `discount_approval_id` | `uuid` | yes | — | → `action_requests` (sb-actions); set by `DISCOUNT_APPROVE` |
+| `invoice_id` | `uuid` | yes | — | → `invoices` `ON DELETE SET NULL`. **sb-money puts the edge on this side**, so `invoices.quotation_id` is removed |
 | `status` | `text` | no | `'DRAFT'` | `DRAFT·APPLIED·SUPERSEDED` |
 
+Generated columns, all sb-money's: `margin_sen`, `margin_rate`, `programme_floor_price_sen`,
+`margin_floor_price_sen`, `floor_price_sen`, `below_floor`, `commission_sen`, `display_per_pax_sen`.
+Plus their `floor_price_needs_approval` constraint.
+
 - **Unique:** `(tenant_id, proposal_id, version)`; `(tenant_id, proposal_id) WHERE status = 'APPLIED'`.
-- **Checks:** `sell_price_minor >= floor_price_minor OR below_floor_approved_by_action_id IS NOT NULL` — the `FLOOR_PRICE_BREACH` rule (§6) as a constraint, not a service-layer test; `floor_price_minor = greatest(coalesce(absolute_floor_minor, 0), coalesce(margin_floor_minor, 0))`, so the binding floor cannot disagree with the two it is chosen from.
-- **Two independent floors.** The absolute floor is commercial policy per pricing tier; the margin floor is computed from actual cost. The higher binds. sb-actions compares `sell_price_minor` against `floor_price_minor` and never computes either, which is why both inputs and the result are persisted columns rather than expressions.
-- **Immutability:** an `APPLIED` quotation is frozen entirely; a change writes a new `version` row and sets the old one `SUPERSEDED`. See §4.
-- `perParticipant` (§15.3) is **not a column**. It is `display.perPax` per §18/S3.
+- **Two independent floors.** `programme_floor_price_sen` is the absolute floor snapshotted from the
+  pricing tier, commercial policy and not derivable from cost. `margin_floor_price_sen` is computed from
+  actual cost. `floor_price_sen` is the greater of the two and is what binds. sb-actions compares
+  `sell_price_sen` against `floor_price_sen` and computes nothing.
+- **Immutability:** an `APPLIED` quotation is frozen entirely; a change writes a new `version` row and sets
+  the old one `SUPERSEDED`. See §4. This is what makes `rate_card_id` safe to keep as a live FK: the row
+  that points at the card cannot be repriced after the fact.
+- `perParticipant` (§15.3) is a **generated display column**, `display_per_pax_sen`, and never a line
+  (§18/S3). sb-money's generated column replaces the bare prohibition this document carried before.
 
 #### `quotation_lines` — §6
 
@@ -1267,14 +1269,14 @@ the original acceptance" at the storage layer, not in application code.
 | `detail` | `text` | yes | — | |
 | `qty` | `numeric(10,2)` | no | — | `0` for a zero-cost venue line |
 | `unit` | `text` | yes | — | `DAY·PAX·TRIP` |
-| `rate_minor` | `bigint` | yes | — | |
-| `total_minor` | `bigint` | no | — | `round_half_up(rate_minor * qty)`, §18/S3 |
+| `rate_sen` | `bigint` | yes | — | |
+| `total_sen` | `bigint` | no | — | `round_half_up(rate_sen * qty)`, §18/S3 |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `is_cost` | `boolean` | no | `true` | Cost line versus sell line |
 
 No `ref`. **Unique:** `(tenant_id, quotation_id, n)`.
 **Trigger:** `AFTER INSERT OR UPDATE OR DELETE` recomputes and asserts
-`quotations.sell_price_minor = Σ rounded sell lines` and `direct_cost_minor = Σ rounded cost lines`.
+`quotations.sell_price_sen = Σ rounded sell lines` and `direct_cost_sen = Σ rounded cost lines`.
 
 ### 3.2 Delivery
 
@@ -1289,9 +1291,9 @@ No `ref`. **Unique:** `(tenant_id, quotation_id, n)`.
 | `status` | `text` | no | `'DRAFT'` | `DRAFT·ACTIVE·RETIRED` |
 | `hrdc_scheme` | `hrdc_scheme` | yes | — | `SBL_KHAS·SBL·HRDC_PLACEMENT` |
 | `hrdc_claimable` | `boolean` | no | `false` | |
-| `list_price_minor` | `bigint` | no | — | |
+| `list_price_sen` | `bigint` | no | — | |
 | `list_price_pax` | `smallint` | no | — | The pax count the list price is quoted at |
-| `floor_price_minor` | `bigint` | no | — | |
+| `floor_price_sen` | `bigint` | no | — | |
 | `floor_margin_rate` | `numeric(6,4)` | no | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `outcomes` | `text[]` | no | `'{}'` | Ordered prose, never filtered |
@@ -1300,8 +1302,8 @@ No `ref`. **Unique:** `(tenant_id, quotation_id, n)`.
 | `archived_at` | `timestamptz` | yes | — | |
 
 - **Indexes:** `(tenant_id, status, category)`; GIN trigram on `name`.
-- **Checks:** `floor_price_minor <= list_price_minor`; `days > 0`.
-- **Immutability:** none. `PUT /programmes/{id}` is ADMIN + L&D. A price change does **not** reprice existing quotations, because each quotation snapshots `floor_price_minor` and `rate_card_version`.
+- **Checks:** `floor_price_sen <= list_price_sen`; `days > 0`.
+- **Immutability:** none. `PUT /programmes/{id}` is ADMIN + L&D. A price change does **not** reprice existing quotations, because each quotation snapshots `programme_floor_price_sen` and pins `rate_card_id`.
 
 #### `programme_modules`, `programme_pricing_tiers`, `programme_materials` — §6
 
@@ -1310,11 +1312,11 @@ All: `programme_id uuid NOT NULL → programme ON DELETE CASCADE`, no `ref`.
 `programme_modules`: `n smallint`, `title text`, `format text` (`FACILITATED·SELF_PACED·COACHING`),
 `duration_minutes integer`. **Unique** `(tenant_id, programme_id, n)`.
 
-`programme_pricing_tiers`: `max_pax smallint`, `price_minor bigint`, `floor_price_minor bigint`,
+`programme_pricing_tiers`: `max_pax smallint`, `price_sen bigint`, `floor_price_sen bigint`,
 `currency char(3)`. **Unique** `(tenant_id, programme_id, max_pax)`. **Check** `max_pax > 0` and
-`floor_price_minor <= price_minor`.
+`floor_price_sen <= price_sen`.
 
-`floor_price_minor` is an **absolute** floor, set by commercial policy per tier. It is not derivable from
+`floor_price_sen` is an **absolute** floor, set by commercial policy per tier. It is not derivable from
 cost and it is not a margin. The §6 fixture's RM 13,900 floor against an RM 18,500 sell price is this
 number: a margin floor of 0.35 on RM 11,400 of cost would be RM 17,538, which is not what the screen
 shows. sb-money owns the arithmetic; this column is where the absolute figure lives. Tiers are read in ascending
@@ -1333,7 +1335,7 @@ quote, not a lookup.
 | `phone` | `text` | yes | — | |
 | `user_id` | `uuid` | yes | — | → `auth.users` `ON DELETE SET NULL`; set when a trainer logs in (role `TRAINER`) |
 | `band` | `trainer_band` | yes | — | `A·B·C` (DECISIONS §5); the rates themselves live in **sb-money**'s rate card |
-| `day_rate_override_minor` | `bigint` | yes | — | Per-trainer override; the value, not the schedule, is sb-money's |
+| `day_rate_override_sen` | `bigint` | yes | — | Per-trainer override; the value, not the schedule, is sb-money's |
 | `ttt_certified` | `boolean` | no | `false` | |
 | `ttt_ref` | `text` | yes | — | `TTT-2019-4471` |
 | `ttt_valid_to` | `date` | yes | — | Drives the packet document "Valid to 30 Jun 2027" |
@@ -1366,7 +1368,7 @@ the `trainer_bookings` trigger, so the two never disagree.
 | `starts_on` | `date` | no | — | |
 | `ends_on` | `date` | no | — | |
 | `hold_expires_at` | `timestamptz` | yes | — | 72 hours for a soft hold |
-| `day_rate_minor` | `bigint` | yes | — | Confirmed rate; frozen once `CONFIRMED` |
+| `day_rate_sen` | `bigint` | yes | — | Confirmed rate; frozen once `CONFIRMED` |
 | `currency` | `char(3)` | no | `'MYR'` | |
 
 - **Checks:** `ends_on >= starts_on`; `state <> 'SOFT_HOLD' OR hold_expires_at IS NOT NULL`.
@@ -1387,7 +1389,7 @@ the `trainer_bookings` trigger, so the two never disagree.
 | `status` | `engagement_status` | no | `'PROPOSED'` | `PROPOSED·CONFIRMED·SCHEDULED·IN_DELIVERY·DELIVERED·CLOSED·CANCELLED` |
 | `venue` | `text` | yes | — | |
 | `venue_mode` | `venue_mode` | yes | — | `CLIENT_SITE·OWN_VENUE·EXTERNAL` (DECISIONS §5) |
-| `value_minor` | `bigint` | yes | — | |
+| `value_sen` | `bigint` | yes | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `grant_rule_set_version_id` | `uuid` | yes | — | → `rule_set_versions` `ON DELETE RESTRICT`. **Pinned at grant submission** (§18/S1) |
 | `grant_pinned_at` | `timestamptz` | yes | — | |
@@ -1546,15 +1548,14 @@ three near-identical message tables would be exactly the divergence the project 
 | `body` | `text` | no | — | |
 | `status` | `text` | no | `'DRAFT'` | `DRAFT·QUEUED·SENT·DELIVERED·READ·FAILED` |
 | `sent_at` | `timestamptz` | yes | — | |
-| `rate_per_message_minor` | `bigint` | yes | — | Rounded to the sen at estimate time |
+| `rate_per_message_sen` | `bigint` | yes | — | Rounded to the sen at estimate time |
 | `rate_per_message_exact` | `numeric(10,6)` | yes | — | `0.056400` — §4 requires the exact rate for display |
-| `estimated_cost_minor` | `bigint` | yes | — | |
-| `actual_cost_minor` | `bigint` | yes | — | |
+| `estimated_cost_sen` | `bigint` | yes | — | |
+| `actual_cost_sen` | `bigint` | yes | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `message_rate_id` | `uuid` | yes | — | → `message_rates` — which rate row was applied |
 | `consent_id` | `uuid` | yes | — | → `contact_consents` — the consent relied on, frozen |
 | `provider_message_id` | `text` | yes | — | |
-| `provenance_id` | `uuid` | yes | — | → `provenance` |
 
 - **Indexes:** `(tenant_id, status, sent_at DESC)`; `(tenant_id, invoice_id)`; `(tenant_id, contact_id)`.
 - **Unique:** `(tenant_id, provider_message_id) WHERE provider_message_id IS NOT NULL`.
@@ -1581,8 +1582,8 @@ the composer reads the newest non-stale row, and shows the last known rate label
 | `organisation_id` | `uuid` | no | — | → `organisations` `ON DELETE RESTRICT` |
 | `scheme` | `hrdc_scheme` | no | — | |
 | `employer_code` | `text` | no | — | Frozen copy; the organisation may re-register later |
-| `claim_value_minor` | `bigint` | no | — | |
-| `levy_available_minor` | `bigint` | yes | — | From `hrdc_levy_statements`, frozen at assembly |
+| `claim_value_sen` | `bigint` | no | — | |
+| `levy_available_sen` | `bigint` | yes | — | From `hrdc_levy_statements`, frozen at assembly |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `completeness` | `numeric(4,3)` | no | `0` | Maintained by trigger over `hrdc_packet_documents` |
 | `status` | `packet_status` | no | `'DRAFT'` | `DRAFT·READY·SUBMITTED·PAID·REJECTED` |
@@ -1622,7 +1623,7 @@ circular and the registry must be editable without a migration.
 
 #### `hrdc_levy_statements` — addition, see "Deviations"
 
-`organisation_id`, `employer_code text`, `levy_available_minor bigint`, `as_of date`,
+`organisation_id`, `employer_code text`, `levy_available_sen bigint`, `as_of date`,
 `source text` (`MANUAL_ENTRY·STATEMENT_UPLOAD`), `attachment_id uuid`. Has a `ref`.
 **Unique** `(tenant_id, organisation_id, as_of)`.
 `levyAvailable` is rendered on three screens and has no API source — HRD Corp has no API — so it must be a
@@ -1659,7 +1660,6 @@ so two versions can never claim the same day.
 | `used_by_check_keys` | `text[]` | no | `'{}'` | `["CHK_LEAD_TIME"]` |
 | `verified_by_user_id` | `uuid` | yes | — | |
 | `verified_at` | `timestamptz` | yes | — | |
-| `provenance_id` | `uuid` | yes | — | → `provenance` — AI extraction, model and confidence |
 
 - **Unique:** `(tenant_id, rule_key)`; `(tenant_id, rule_key, rule_set_version_id)`.
 - **Indexes:** `(tenant_id, scheme, status, effective_from)`; `(tenant_id, side)`.
@@ -1702,14 +1702,15 @@ No `ref`. **Unique** `(tenant_id, rule_change_id, engagement_id)`.
 | `rules_as_of` | `date` | no | — | Grant submission date or claim submission date, never the training date |
 | `basis` | `rule_resolution_basis` | no | — | `GRANT_SUBMITTED·CLAIM_SUBMITTED` |
 | `method` | `text` | no | `'DETERMINISTIC'` | `DETERMINISTIC·INTERPRETED` |
-| `provenance_id` | `uuid` | yes | — | Null when `DETERMINISTIC` — §17 says a deterministic check carries no model |
 | `evaluated_at` | `timestamptz` | no | `now()` | |
 | `stage_key` | `text` | yes | — | The transition that triggered re-evaluation |
 
 No `ref`. **Unique:** `(tenant_id, engagement_id, check_key, evaluated_at)` — results are append-only, so
 the "re-evaluate at every stage transition" rule (DECISIONS §6) leaves a history rather than overwriting.
 **Indexes:** `(tenant_id, engagement_id, evaluated_at DESC)`; `(tenant_id, state) WHERE state = 'FAIL'`.
-**Checks:** `method <> 'DETERMINISTIC' OR provenance_id IS NULL`.
+**Check lost to C-1:** `method <> 'DETERMINISTIC' OR provenance_id IS NULL` can no longer be a column
+constraint, because the column is gone. §17's rule that a deterministic check carries no model now has to
+be enforced by whatever writes provenance rows, which is sb-money's side. Raised to them.
 A `FAIL` writes `engagement_step_states.state = 'BLOCKED'` on the `HRDC_CLAIM` step via trigger.
 
 #### `compliance_version_drifts` — §18/S1
@@ -1745,16 +1746,15 @@ Requires the `vector` extension; confirm it is enabled on the Supabase project b
 |---|---|---|---|---|
 | `organisation_id` | `uuid` | no | — | → `organisations` `ON DELETE RESTRICT` |
 | `engagement_id` | `uuid` | yes | — | → `engagements` `ON DELETE RESTRICT` |
-| `quotation_id` | `uuid` | yes | — | → `quotations` `ON DELETE RESTRICT` — what was billed |
 | `status` | `invoice_status` | no | `'DRAFT'` | `DRAFT·SENT·PARTIALLY_PAID·PAID·OVERDUE·VOID` |
 | `issued_at` | `timestamptz` | yes | — | |
 | `due_at` | `date` | yes | — | |
 | `terms_days` | `smallint` | no | `30` | |
-| `subtotal_minor` | `bigint` | no | `0` | Σ rounded lines (§18/S3) |
-| `sst_minor` | `bigint` | no | `0` | Computed on the summed net |
+| `subtotal_sen` | `bigint` | no | `0` | Σ rounded lines (§18/S3) |
+| `sst_sen` | `bigint` | no | `0` | Computed on the summed net |
 | `sst_reason` | `text` | yes | — | `TRAINING_EXEMPT` |
-| `total_minor` | `bigint` | no | `0` | `subtotal + sst` |
-| `outstanding_minor` | `bigint` | no | `0` | `total − Σ payments` |
+| `total_sen` | `bigint` | no | `0` | `subtotal + sst` |
+| `outstanding_sen` | `bigint` | no | `0` | `total − Σ payments` |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `sync_state` | `sync_state` | no | `'NOT_SENT'` | `NOT_SENT·SENT·VALIDATED·ERROR` |
 | `sync_provider` | `text` | yes | — | `ACCOUNTING` |
@@ -1764,18 +1764,18 @@ Requires the `vector` extension; confirm it is enabled on the Supabase project b
 | `voided_at` | `timestamptz` | yes | — | |
 
 - **Unique:** `(tenant_id, sync_provider, sync_document_id) WHERE sync_document_id IS NOT NULL`.
-- **Indexes:** `(tenant_id, status, due_at)`; `(tenant_id, organisation_id)`; `(tenant_id, engagement_id)`; `(tenant_id, sync_state) WHERE sync_state = 'ERROR'`; and for the policy gate, `invoices_overdue` on `(tenant_id, organisation_id, due_at) WHERE outstanding_minor > 0 AND status IN ('SENT','PARTIALLY_PAID','OVERDUE')`.
-- **Checks:** `total_minor = subtotal_minor + sst_minor`; `outstanding_minor >= 0`; `status <> 'SENT' OR issued_at IS NOT NULL`.
-- **Trigger:** `total_minor` must equal the sum of rounded `invoice_lines.amount_minor` plus SST, or the write is rejected with `TOTAL_NOT_RECONCILED` (§18/S3). This is the constraint that makes lines-from-total unrepresentable.
-- **Immutability:** once `sync_state = 'VALIDATED'`, every column except `status`, `outstanding_minor`, `sync_*` and `updated_at` is frozen. A validated tax invoice is a filed document.
+- **Indexes:** `(tenant_id, status, due_at)`; `(tenant_id, organisation_id)`; `(tenant_id, engagement_id)`; `(tenant_id, sync_state) WHERE sync_state = 'ERROR'`; and for the policy gate, `invoices_overdue` on `(tenant_id, organisation_id, due_at) WHERE outstanding_sen > 0 AND status IN ('SENT','PARTIALLY_PAID','OVERDUE')`.
+- **Checks:** `total_sen = subtotal_sen + sst_sen`; `outstanding_sen >= 0`; `status <> 'SENT' OR issued_at IS NOT NULL`.
+- **Trigger:** `total_sen` must equal the sum of rounded `invoice_lines.amount_sen` plus SST, or the write is rejected with `TOTAL_NOT_RECONCILED` (§18/S3). This is the constraint that makes lines-from-total unrepresentable.
+- **Immutability:** once `sync_state = 'VALIDATED'`, every column except `status`, `outstanding_sen`, `sync_*` and `updated_at` is frozen. A validated tax invoice is a filed document.
 - `daysOverdue`, `aging` buckets and `dsoDays` are views, never columns.
 
 #### `invoice_lines` — §9, §18/S3
 
 `invoice_id` `ON DELETE CASCADE`, `n smallint`, `description text`, `detail text`,
-`qty numeric(10,2)`, `unit_price_minor bigint`, `amount_minor bigint`, `currency char(3)`,
+`qty numeric(10,2)`, `unit_price_sen bigint`, `amount_sen bigint`, `currency char(3)`,
 `tax_code text`. No `ref`. **Unique** `(tenant_id, invoice_id, n)`.
-**Check:** `amount_minor = round_half_up(unit_price_minor * qty)`.
+**Check:** `amount_sen = round_half_up(unit_price_sen * qty)`.
 There is no `per_pax` column: a package price is one line at `qty = 1` and per-pax is display only (§18/S3).
 
 #### `invoice_sync_entries` — §9
@@ -1786,11 +1786,11 @@ No `ref`. Append-only. **Index** `(tenant_id, invoice_id, at DESC)`.
 
 #### `payments` — §9 `POST /invoices/{id}/payments`
 
-`invoice_id` `ON DELETE RESTRICT`, `amount_minor bigint`, `currency char(3)`,
+`invoice_id` `ON DELETE RESTRICT`, `amount_sen bigint`, `currency char(3)`,
 `received_at timestamptz`, `method text` (`BANK_TRANSFER·CHEQUE·CARD·HRDC_DISBURSEMENT`),
 `external_reference text`, `recorded_by_user_id uuid`. Has a `ref`.
 **Unique** `(tenant_id, invoice_id, external_reference) WHERE external_reference IS NOT NULL`.
-**Check** `amount_minor > 0`. **Trigger** maintains `invoices.outstanding_minor` and flips `status` to
+**Check** `amount_sen > 0`. **Trigger** maintains `invoices.outstanding_sen` and flips `status` to
 `PARTIALLY_PAID` / `PAID`. Payments are never updated or deleted; a correction is a negative-amount
 reversal row, which is why the check allows only positive amounts on insert and reversals carry
 `is_reversal boolean` with their own sign rule.
@@ -1827,8 +1827,8 @@ MD approval (§9). The ladder is configuration, not code.
 | `paused_reason` | `text` | yes | — | `EVAL_REGRESSION` |
 | `resume_condition` | `jsonb` | yes | — | `{metric, op, value}` |
 | `eval_score` | `numeric(4,3)` | yes | — | Latest from `eval_runs` |
-| `cost_month_minor` | `bigint` | no | `0` | Rolling, from `ai_usage_entries` |
-| `cost_per_run_30d_minor` | `bigint` | yes | — | |
+| `cost_month_sen` | `bigint` | no | `0` | Rolling, from `ai_usage_entries` |
+| `cost_per_run_30d_sen` | `bigint` | yes | — | |
 | `cache_hit_rate_30d` | `numeric(4,3)` | yes | — | |
 | `last_run_at` | `timestamptz` | yes | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
@@ -1848,7 +1848,7 @@ MD approval (§9). The ladder is configuration, not code.
 | `ceiling_reason` | `text` | yes | — | `MONEY_MOVING` |
 | `paused` | `boolean` | no | `false` | Per-action-type pause (§10 `POST /agents/{id}/pause`) |
 | `min_confidence` | `numeric(4,3)` | yes | — | Policy evaluation input 4 (§3) |
-| `value_threshold_minor` | `bigint` | yes | — | Band above which the grant drops to approval |
+| `value_threshold_sen` | `bigint` | yes | — | Band above which the grant drops to approval |
 | `promotion_condition` | `text` | yes | — | DECISIONS §1 promotion conditions, verbatim |
 | `promoted_at` | `timestamptz` | yes | — | |
 
@@ -1874,7 +1874,7 @@ service-layer opinion. **Read by sb-actions' policy gate; written by the AI-ops 
 | `started_at` | `timestamptz` | no | — | |
 | `ended_at` | `timestamptz` | yes | — | |
 | `duration_ms` | `integer` | yes | — | |
-| `cost_minor` | `bigint` | no | `0` | |
+| `cost_sen` | `bigint` | no | `0` | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `tokens_in` | `integer` | no | `0` | |
 | `tokens_out` | `integer` | no | `0` | |
@@ -1899,7 +1899,7 @@ service-layer opinion. **Read by sb-actions' policy gate; written by the AI-ops 
 
 `agent_run_id` `ON DELETE CASCADE`, `seq smallint`, `tool text`, `args jsonb`, `result jsonb`,
 `status run_step_status` (`OK·RETRIED·FAILED·HALTED`), `retries smallint`, `duration_ms integer`,
-`cost_minor bigint`, `error jsonb`, `halted_by_policy_id text`,
+`cost_sen bigint`, `error jsonb`, `halted_by_policy_id text`,
 `approval_request_id uuid → approval_request` (sb-actions) `ON DELETE SET NULL`,
 `halted_reason text`. No `ref`. **Unique** `(tenant_id, agent_run_id, seq)`.
 **Check:** `status <> 'HALTED' OR halted_by_policy_id IS NOT NULL`.
@@ -1909,7 +1909,7 @@ service-layer opinion. **Read by sb-actions' policy gate; written by the AI-ops 
 `agent_run_id` `ON DELETE CASCADE`, `node_key text` (`n0`), `parent_node_id uuid → agent_run_node`,
 `kind trace_node_kind` (`ORCHESTRATOR·SUB_AGENT·TOOL`), `name text`, `tier_key text → ai_tier`,
 `model text`, `provider text`, `tokens_in integer`, `tokens_out integer`,
-`cache_hit_rate numeric(4,3)`, `cost_minor bigint`, `duration_ms integer`,
+`cache_hit_rate numeric(4,3)`, `cost_sen bigint`, `duration_ms integer`,
 `status run_step_status`, `retries smallint`, `halted_by_policy_id text`,
 `approval_request_id uuid`. No `ref`. **Unique** `(tenant_id, agent_run_id, node_key)`.
 **Check:** exactly one root — `(tenant_id, agent_run_id) WHERE parent_node_id IS NULL` partial unique index.
@@ -1930,7 +1930,7 @@ service-layer opinion. **Read by sb-actions' policy gate; written by the AI-ops 
 
 `run_state_cards`: `agent_run_id` **unique** `ON DELETE CASCADE`, `goal text`, `plan jsonb`,
 `decisions text[]`, `constraints text[]`, `record_pointers text[]`, `open_questions text[]`,
-`tokens_used integer`, `tokens_limit integer`, `cost_used_minor bigint`, `cost_limit_minor bigint`.
+`tokens_used integer`, `tokens_limit integer`, `cost_used_sen bigint`, `cost_limit_sen bigint`.
 
 `run_guardrails`: `agent_run_id` `ON DELETE CASCADE`, `label text`, `seq smallint`.
 The five guardrail strings in §10 are rows, so the trace shows what was in force for that run rather than
@@ -1947,7 +1947,7 @@ Has a `ref`. **Unique** `(tenant_id, name, version)`.
 
 `eval_runs`: `agent_id`, `eval_set_id`, `action_type text`, `score numeric(4,3)`, `ran_at timestamptz`,
 `purpose text` (`PROMOTION_GATE·SCHEDULED·AD_HOC`), `passed boolean`,
-`jury_agreement numeric(4,3)`, `cost_minor bigint`. Has a `ref`.
+`jury_agreement numeric(4,3)`, `cost_sen bigint`. Has a `ref`.
 **Index** `(tenant_id, agent_id, ran_at DESC)`.
 `purpose = 'PROMOTION_GATE'` is the jury's first use in DECISIONS §2 — three STRONG models against the
 golden set at promotion time, one-off.
@@ -1965,8 +1965,8 @@ golden set at promotion time, one-off.
 | `max_output_tokens` | `integer` | yes | — | |
 | `allowed_hours` | `int4range[]` | no | `'{"[0,24)"}'` | `[startHour, endHour)` pairs in MYT |
 | `batch_eligible` | `boolean` | no | `false` | Decides queue-versus-escalate outside the window (§17 Q3) |
-| `monthly_cap_minor` | `bigint` | yes | — | |
-| `spend_minor` | `bigint` | no | `0` | |
+| `monthly_cap_sen` | `bigint` | yes | — | |
+| `spend_sen` | `bigint` | no | `0` | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `status` | `tier_status` | no | `'HEALTHY'` | `HEALTHY·DEGRADED·PAUSED_BY_CAP·DISABLED` |
 | `degraded_since` | `timestamptz` | yes | — | |
@@ -1974,7 +1974,7 @@ golden set at promotion time, one-off.
 | `active_fallback_tier_key` | `text` | yes | — | |
 
 - **Unique:** `(tenant_id, tier_key)`.
-- **Checks:** `status <> 'DEGRADED' OR degraded_since IS NOT NULL`; `status <> 'PAUSED_BY_CAP' OR spend_minor >= monthly_cap_minor`.
+- **Checks:** `status <> 'DEGRADED' OR degraded_since IS NOT NULL`; `status <> 'PAUSED_BY_CAP' OR spend_sen >= monthly_cap_sen`.
 
 #### `ai_routing_entries` — §17, §18/S2
 
@@ -2000,8 +2000,8 @@ JSONB because the shape is the contract's and is never filtered in SQL. A check 
 | `status` | `provider_key_status` | no | `'NOT_SET'` | `NOT_SET·VALID·INVALID·EXPIRING` |
 | `masked_key` | `text` | no | — | `sk-ant-••••••••••••9a41`. Display only |
 | `secret_ref` | `text` | no | — | Pointer into Vault. **The key itself is never a column** |
-| `spend_month_minor` | `bigint` | no | `0` | |
-| `cap_minor` | `bigint` | yes | — | |
+| `spend_month_sen` | `bigint` | no | `0` | |
+| `cap_sen` | `bigint` | yes | — | |
 | `currency` | `char(3)` | no | `'MYR'` | |
 | `rotation_date` | `date` | yes | — | |
 | `billing_owner` | `billing_owner` | no | — | `CLIENT_ACCOUNT·PASS_THROUGH` |
@@ -2025,14 +2025,14 @@ key landing in the display column.
 
 `ai_usage_entries`: `period char(7)` (`2026-11`), `agent_run_id uuid`, `agent_id uuid`,
 `tier_key text`, `action_type text`, `kind text` (`LLM·WHATSAPP·COMPUTE`),
-`cost_minor bigint`, `currency char(3)`, `tokens_in integer`, `tokens_out integer`,
+`cost_sen bigint`, `currency char(3)`, `tokens_in integer`, `tokens_out integer`,
 `cache_hit boolean`, `off_peak boolean`, `occurred_at timestamptz`. No `ref`. Append-only.
 **Indexes** `(tenant_id, period, tier_key)`; `(tenant_id, period, agent_id)`; `(tenant_id, period, action_type)`
 — one per `groupBy` value the endpoint accepts. `cacheHitRate`, `offPeakShare`, `estimatedCacheSaving`
 and the forecast are all aggregates over this table.
 
-`ai_budgets`: `scope budget_scope` (`TIER·AGENT·ACTION_TYPE`), `scope_key text`, `cap_minor bigint`,
-`spend_minor bigint`, `state budget_state` (`WITHIN·NEAR·PAUSED`), `period char(7)`,
+`ai_budgets`: `scope budget_scope` (`TIER·AGENT·ACTION_TYPE`), `scope_key text`, `cap_sen bigint`,
+`spend_sen bigint`, `state budget_state` (`WITHIN·NEAR·PAUSED`), `period char(7)`,
 `raised_by_action_id uuid` (sb-actions, `BUDGET_CAP_RAISE`). No `ref`.
 **Unique** `(tenant_id, scope, scope_key, period)`.
 A tripped cap sets the matching `ai_tiers.status = 'PAUSED_BY_CAP'` by trigger, which is what makes runs
@@ -2055,7 +2055,7 @@ has to pick the default. sb-tenancy's `saved_views` policy reads exactly these t
 
 `templates`: `template_type template_type` (`PROPOSAL·QUOTATION·CERTIFICATE·EMAIL·WHATSAPP·INVOICE·TNA_QUESTIONNAIRE·EVALUATION·HRDC_PACKET`),
 `version smallint`, `label text`, `merge_fields text[]`, `status text` (`DRAFT·ACTIVE·RETIRED`),
-`category message_category` (WhatsApp only), `rate_per_message_minor bigint` (WhatsApp only),
+`category message_category` (WhatsApp only), `rate_per_message_sen bigint` (WhatsApp only),
 `approved_provider_ref text` (the BSP-approved template id). Has a `ref` (`tpl_proposal_std_v7`).
 **Unique** `(tenant_id, template_type, label, version)`.
 Templates are **versioned, never edited**: a proposal built from v7 must still render as v7 in five years,
@@ -2139,10 +2139,10 @@ ceiling check reads those columns instead of hardcoding a list of action types.
 |---|---|---|---|---|
 | I1 | **Attendance sheet lock** | §8, DECISIONS §3 | Once `attendance_days.status = 'LOCKED'`: no `UPDATE` or `DELETE` on that sheet's `attendance_entries` rows, and on the sheet itself only `status`, `unlocked_at`, `unlock_reason`, `unlock_count` may change | `ATTENDANCE_UNLOCK` action only |
 | I2 | **Approved quotation** | §6, §7 | Once `quotations.status = 'APPLIED'`: the whole row and all its `quotation_lines` rows | None. A change writes a new `version` and marks the old `SUPERSEDED` |
-| I3 | **Grant terms after approval** | DECISIONS §3 "No amendment" | Once `hrdc_packets.grant_approved_at IS NOT NULL`: `scheme`, `employer_code`, `claim_value_minor`, `grant_reference`, `grant_submitted_at`, `grant_approved_at`, and on the engagement `programme_id`, `grant_rule_set_version_id`, `grant_pinned_at` and the session dates | None in TrainOS. HRD Corp requires a new grant application |
-| I4 | **Sent proposal** | §6 | Once `proposals.status = 'SENT'`: `template_id`, `value_minor`, `margin_rate`, `sent_at`, and every `proposal_sections.body` | None. A revised proposal is a new `proposals` row |
+| I3 | **Grant terms after approval** | DECISIONS §3 "No amendment" | Once `hrdc_packets.grant_approved_at IS NOT NULL`: `scheme`, `employer_code`, `claim_value_sen`, `grant_reference`, `grant_submitted_at`, `grant_approved_at`, and on the engagement `programme_id`, `grant_rule_set_version_id`, `grant_pinned_at` and the session dates | None in TrainOS. HRD Corp requires a new grant application |
+| I4 | **Sent proposal** | §6 | Once `proposals.status = 'SENT'`: `template_id`, `value_sen`, `margin_rate`, `sent_at`, and every `proposal_sections.body` | None. A revised proposal is a new `proposals` row |
 | I5 | **Active compliance rule** | §17, DECISIONS §3 | Once `compliance_rules.status = 'ACTIVE'`: every column except `status`, `superseded_by_rule_id`, `effective_to` | Supersede with a new row carrying the circular's effective date |
-| I6 | **Validated invoice** | §9 | Once `invoices.sync_state = 'VALIDATED'`: everything except `status`, `outstanding_minor`, `sync_*` | None. A correction is a credit note |
+| I6 | **Validated invoice** | §9 | Once `invoices.sync_state = 'VALIDATED'`: everything except `status`, `outstanding_sen`, `sync_*` | None. A correction is a credit note |
 | I7 | **Finished agent run** | §10 | Once `runs.ended_at IS NOT NULL`: the run, its steps, nodes, events, guardrails, checkpoints and state card | None. A retry is a new run with `parent_run_id` |
 | I8 | **Provenance, consent, payments, audit** | §1, §4, §9 | Append-only tables: `provenance` (sb-money), `contact_consents`, `payments`, `invoice_sync_entries`, `compliance_check_results`, `ai_usage_entries`, `organisation_health_snapshots` | None |
 | I9 | **Refs** | §1 | `ref` on every table, after insert | None |
@@ -2365,7 +2365,28 @@ Places where this model does not mirror the contract's JSON, and why.
     the higher binding. The fixture's numbers are still internally inconsistent and the contract should say
     which of them is wrong.
 
-19. **`identity_no` is stored as a hash plus last four, never in full.** HRD Corp claim documentation
+19. **Provenance points at the subject; this document originally had it backwards.** sb-money's C-1
+    reverses the direction, and the argument is sound: a foreign key from subject to provenance cannot be
+    traversed backwards, so neither of the two required queries can be labelled or cursor-paginated. The
+    nine `provenance_id` columns are gone and nothing replaces them. One invariant is lost in the move.
+    §17's "a deterministic check carries no model" was a column check on `compliance_check_results` and is
+    now unenforceable from this side. Raised to sb-money.
+
+20. **Money columns end `_sen`, not `_minor`.** sb-money's contributed column list uses `_sen`, so all 95
+    money columns in this document were renamed to match rather than leave the fleet with two suffixes.
+    One reservation, recorded rather than argued: `_sen` names the Malaysian minor unit in the column
+    itself, so a second currency would make every such column a misnomer where `_minor` would not. Every
+    table here still carries a `currency` column, so the data stays correct either way.
+
+21. **`quotations.invoice_id`, not `invoices.quotation_id`.** sb-money puts the edge on the quotation
+    side. Adopted, and the reverse column removed, because keeping both would be two spellings of one
+    relationship.
+
+22. **`provenance.sources` is jsonb, not a child table.** sb-money's C-2, and they name it the weakest of
+    their three reversals. If sb-events or the knowledge lane ever needs to join a cited source to a real
+    record, the child table this document assumed becomes correct again and it should be revisited.
+
+23. **`identity_no` is stored as a hash plus last four, never in full.** HRD Corp claim documentation
     needs an identity number, but this system does not need to be able to read one back. The contract does
     not mention the field at all; it will be needed the first time a real packet is assembled.
 
@@ -2393,13 +2414,16 @@ Places where this model does not mirror the contract's JSON, and why.
    sb-tenancy, sb-actions, sb-money and sb-events may choose differently; every FK naming them is a
    placeholder to be reconciled before the migration is written.
 
-4. **Whether `provenance` is a table at all.** This model assumes a table with a `provenance_id` FK.
-   sb-money may choose an embedded `jsonb` column instead. If so, every `provenance_id` here becomes a
-   `provenance jsonb` column and the nullability semantics are unchanged.
+4. **Two contradictions inside sb-money's own document, which I could not resolve from outside it.**
+   Their C-3 says to keep `floor_price_minor` as this document had it, while their C-4 contributes a
+   generated `floor_price_sen`. I followed C-4, because it is the authoritative column list and is
+   internally consistent. Separately, the lead asked for a `binding_floor` indicator on quotations and
+   C-4's list has none. Which of the two floors binds is derivable by comparing the generated columns, but
+   it is not a column. Both raised to sb-money.
 
 5. **Rate card values.** Trainer bands A/B/C and their day rates, materials per pax, commission tiers,
-   margin floors and discount authority are all unknown (DECISIONS §5). `rate_card_version` defaults to
-   `'v0-placeholder'` and `quotations` snapshots the floor price rather than reading it live.
+   margin floors and discount authority are all unknown (DECISIONS §5). `rate_card.version` still reads
+   `v0-placeholder` and `quotations` snapshots the floor price rather than reading it live.
 
 6. **Baseline minutes for hours-saved.** Requires time-and-motion sampling that has not happened
    (DECISIONS §4). The tables exist and are empty; `basis` is `ILLUSTRATIVE` until they are filled.
