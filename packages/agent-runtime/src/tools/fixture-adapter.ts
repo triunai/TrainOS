@@ -32,6 +32,27 @@ import {
 } from './definitions';
 
 /**
+ * The argument shapes, taken from `ToolContext` so they cannot drift from the
+ * methods they are passed to.
+ *
+ * These exist because zod's inferred output type is only trustworthy under
+ * `strictNullChecks`. A consumer compiling with `strict: false` — `apps/web`
+ * does — makes `undefined` assignable to everything, zod's inference marks
+ * every key optional, and passing a parsed object into a method with required
+ * parameters stops compiling. The package's own tsconfig is strict, so this
+ * never showed up here; it showed up in somebody else's build.
+ *
+ * The assertion is honest rather than a silencer: `.parse()` throws unless the
+ * data matches the schema, so by the time one of these is applied the shape is
+ * a runtime fact. What is being restored is the compile-time knowledge the
+ * consumer's configuration threw away.
+ */
+type ComputeQuotationArgs = Parameters<ToolContext['computeQuotation']>[0];
+type DraftProposalArgs = Parameters<ToolContext['draftProposal']>[0];
+type SearchProgrammesArgs = Parameters<ToolContext['searchProgrammes']>;
+type TrainerAvailabilityArgs = Parameters<ToolContext['trainerAvailability']>;
+
+/**
  * How many characters of a tool result a node may read before the adapter
  * trims it and emits a `TRUNCATION`.
  *
@@ -95,33 +116,47 @@ export class FixtureToolAdapter implements ToolAdapter {
   private dispatch(op: ToolOperation, args: Record<string, unknown>): unknown {
     switch (op) {
       case 'enquiries.get': {
-        const { ref } = enquiriesGetArgs.parse(args);
+        const { ref } = enquiriesGetArgs.parse(args) as { ref: string };
         const enquiry = this.context.getEnquiry(ref);
         if (!enquiry) throw new Error(`No enquiry ${ref}`);
         return enquiry;
       }
       case 'organisations.search': {
-        const { query } = organisationsSearchArgs.parse(args);
+        const { query } = organisationsSearchArgs.parse(args) as { query: string };
         return { matches: this.context.searchOrganisations(query) };
       }
       case 'programmes.search': {
-        const { query, tags } = programmesSearchArgs.parse(args);
+        const { query, tags } = programmesSearchArgs.parse(args) as {
+          query: SearchProgrammesArgs[0];
+          tags: SearchProgrammesArgs[1];
+        };
         return { matches: this.context.searchProgrammes(query, tags) };
       }
       case 'trainers.availability': {
-        const { programmeRef, from, to } = trainersAvailabilityArgs.parse(args);
+        const { programmeRef, from, to } = trainersAvailabilityArgs.parse(args) as {
+          programmeRef: TrainerAvailabilityArgs[0];
+          from: TrainerAvailabilityArgs[1];
+          to: TrainerAvailabilityArgs[2];
+        };
         return { trainers: this.context.trainerAvailability(programmeRef, from, to) };
       }
       case 'quotations.compute': {
-        const parsed = quotationsComputeArgs.parse(args);
+        const parsed = quotationsComputeArgs.parse(args) as ComputeQuotationArgs;
         return this.context.computeQuotation(parsed);
       }
       case 'proposals.draft': {
-        const parsed = proposalsDraftArgs.parse(args);
+        const parsed = proposalsDraftArgs.parse(args) as DraftProposalArgs;
         return this.context.draftProposal(parsed);
       }
       case 'actions.perform': {
-        const parsed = actionsPerformArgs.parse(args);
+        const parsed = actionsPerformArgs.parse(args) as {
+          type: string;
+          targetRef: string;
+          payload?: Record<string, unknown>;
+          confidence?: number;
+          reasoning?: string;
+          evidence?: Array<{ type: string; ref: string; excerpt?: string }>;
+        };
         const request: ActionRequest = {
           type: parsed.type as ActionRequest['type'],
           targetRef: parsed.targetRef,
