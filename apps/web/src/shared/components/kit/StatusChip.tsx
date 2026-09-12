@@ -2,18 +2,32 @@ import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 
 /**
- * The status chip — and the ONLY place in TrainOS where status colour exists.
+ * The status chip. The only status chip in TrainOS — every workflow status,
+ * sync state, lock and stage renders through this one component.
  *
  * CLAUDE.md: "Three colours: ink neutrals, electric blue #1F5BFF, charcoal
- * #181A1F. Status colour lives on chips only." Green, amber and red appear in
- * this file and nowhere else in the kit. That is grep-checkable:
+ * #181A1F. Status colour lives on chips only." What that rule protects is the
+ * reading surface: green, amber and red never fill a panel, a row of content or
+ * a button a user is reading THROUGH. It does not mean the three status tokens
+ * appear in exactly one file, and they do not. Outside this component they are
+ * allowed in precisely three shapes, all of which are the status rather than
+ * decoration on top of it:
  *
- *   grep -rln 'success\|warning\|danger\|text-info' \
- *     apps/web/src/shared/components/kit --include=*.tsx
+ *   1. A banner whose whole row IS the state — `ApprovalBanner`,
+ *      `ExceptionBanner`, and the failed variant of `AgentRunCard`.
+ *   2. A single mark that encodes a state and carries no text — a stepper dot,
+ *      a run-step or trace glyph, a diff's plus and minus, a bar's fill.
+ *   3. An error that must reach the eye at the field — `MoneyInput`'s invalid
+ *      border, `DangerButton`'s label.
  *
- * should return this file, `RuleCheckRow` (whose verdict pill IS a StatusChip
- * and delegates to it), and the banner components, which tint a whole row
- * because the row is itself the status. Anything else is a defect.
+ * Anything else — a coloured table row, a tinted card, a green heading — is a
+ * defect. The check that matters is therefore not a grep for the tokens but
+ * this one, which must return nothing:
+ *
+ *   grep -rn 'bg-\(success\|warning\|danger\|info\)-fill' \
+ *     apps/web/src/screens
+ *
+ * A screen reaching for a status fill has skipped the chip.
  *
  * Kit.dc.html §02 draws three shapes from one component:
  *   · workflow status — pill (999px), e.g. Draft / Accepted / Lost

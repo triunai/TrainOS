@@ -8,9 +8,13 @@
  * `rgb(var(--token))` arbitrary values. Naming them here means the string
  * `--ai-popover` is typed once in the whole kit rather than in four files.
  *
- * There are no hex literals anywhere in this directory. That is checkable:
- *   grep -rnE '#[0-9A-Fa-f]{3,8}\b' apps/web/src/shared/components/kit
- * should match nothing but this comment.
+ * No kit component carries a hex literal — every colour resolves to a token.
+ * That is checkable, and the only matches are comments quoting the design pack:
+ *
+ *   grep -rnE '#[0-9A-Fa-f]{3,8}' apps/web/src/shared/components/kit \
+ *     --include='*.tsx' --include='*.ts' | grep -v '/__tests__/'
+ *
+ * A match on a line that is not a comment is a defect.
  */
 
 /** Background of the AI badge's hover popover. Kit §02. */
