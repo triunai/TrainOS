@@ -1226,16 +1226,57 @@ is. Three places it is real, in rising order of how much it would matter here:
    implicit rule protects it.
 3. **Naming `pg_catalog` explicitly changes the rule.** A path of `app, pg_catalog` places the
    catalog in the *stated* order rather than implicitly first, so under that setting built-ins
-   genuinely are shadowable. If `sb-money`'s experiment used that path and still resolved to
-   `pg_catalog.round`, the likeliest explanation is a new-style `BEGIN ATOMIC` body, which resolves
-   references at definition time rather than at call time and so pins whatever was visible when the
-   function was created.
+   genuinely are shadowable.
+
+**Measured, not reasoned.** `sb-money` first reported being unable to reproduce any shadowing, then
+retracted it. I reproduced the whole thing on a scratch PostgreSQL 17.11 rather than take either
+version on trust, because a false reassurance sitting next to a security claim is worse than no
+claim. Results, with an exact-signature `app.round(numeric)` returning a sentinel and an
+`app.only_here()` that exists nowhere else:
+
+| Spelling | `proconfig` stores | `only_here()` | `round(3.1)` |
+|---|---|---|---|
+| `set search_path = 'app, pg_catalog'` | `search_path="app, pg_catalog"` | **does not resolve** | `3` — catalog wins |
+| `set search_path = app, pg_catalog` | `search_path=app, pg_catalog` | `42` | **`999999` — shadow wins** |
+| `set search_path = ''` | `search_path=""` | does not resolve | `3` — catalog wins |
+
+Two findings, and the second is the dangerous one.
+
+**Case 3 is confirmed.** With the unquoted list form, a built-in *is* shadowed. Naming `pg_catalog`
+explicitly forfeits the implicit-first protection exactly as described.
+
+**The quoted form is silently broken, and it looks more careful than the correct one.** This is
+`sb-money`'s finding and it is the better one. `'app, pg_catalog'` is not a two-schema path; it is a
+one-schema path whose single member is a schema *named* `app, pg_catalog`, which does not exist. So
+`app` is never searched at all — which is why their shadow never fired. A function under that
+setting that only touches built-ins behaves identically to a correctly hardened one, because the
+implicit rule still covers it. Someone hardening a function by adding a quoted list gets a path that
+resolves nothing, and a review that passes.
+
+When it does fail, it fails at different times depending on the language, which is worth knowing
+before debugging it: a SQL-bodied function fails at `CREATE FUNCTION`, because the body is parsed
+then. A `plpgsql` function creates cleanly and fails at **runtime**, on the first call that reaches
+the unresolvable name.
 
 The rule that follows: `set search_path = ''` and schema-qualify everything, which makes all three
-moot. Empty is viable even in bodies calling built-ins, because the implicit-first rule still
-applies — `sb-money` verified that against real date arithmetic. A path of `'app, pg_catalog'` is
-worse than either empty or omitted, because it is the one spelling that disables the protection
-while looking careful.
+cases moot. Empty is viable even in bodies calling built-ins — measured above, `round(3.1)` returns
+`3` under an empty path — because the implicit-first rule still applies.
+
+**Consequence for the §8.7 sweep: assert the exact stored string, not that `proconfig` is non-null.**
+A non-null test passes all three spellings above, including the broken one. The only assertion that
+catches it is equality against `search_path=""` — note the stored value includes two literal quote
+characters, so the SQL literal is `'search_path="\"\""'`-shaped rather than `'search_path='`. I got
+that wrong on the first attempt and the measurement is the only reason I noticed.
+
+```sql
+select is_empty($$
+  select p.proname
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname in ('app','public','core')
+    and p.prokind = 'f'
+    and (p.proconfig is null or p.proconfig[1] <> 'search_path=""')
+$$, 'every function pins an empty search_path');
+```
 
 ### 4.2 The policy templates
 
