@@ -30,6 +30,25 @@ Read this first in the new session, then `supabase/HANDOFF.md`, then `docs/revie
 - `lefthook.yml` runs `lint-staged --no-stash` (a stash restore lost work once).
 - **Prefer worktrees next blast** for lanes with disjoint folders and no kit additions; the shared index is the one thing they fix.
 
+## WRAP 14 Sep 00:26 (+08) — START HERE. Supersedes the 00:10 entry below (still valid for context). Orchestrator on Fable 5.1 resumed at 00:11, relaunched lanes, user wrapped at 00:25.
+
+**Main is at 4e4dbde** (spine-keeper's final log block over a978cb0). CI still DOWN (billing). Codex quota returns 00:29 and is still OWED on 011–019.
+
+**What landed this pass**
+
+- `cloud/migrations` (PR #6) pushed by fix-014 to **11508ed** = 87ca109 + one pin fix ("T14g asserted T14h's flag, so it could not fail", residual 3). 87ca109 itself was VERIFIED GREEN by fix-014 before the 00:10 wrap (001–017 apply 18/18, 17 pins, 2 apply-context refusals by design, lint:sql 53/53, check:grants 0); the 00:10 label "UNVERIFIED WIP" was stale. fix-014 re-verified on a rebuilt :5436 shim this pass, ran the catalog-diff rollback round-trip and the 019-on-top check; evidence in the session scratchpad `fix-014/` (forward-apply.txt, pins-*.txt, catalog-diff.txt, 019-verify.log, gates.txt). **Not confirmed before wrap:** the PR #6 "FROZEN at <sha>" comment (0 comments on PR #6 at 00:25) and fix-014's final handoff; check `gh pr view 6 --comments` and scratchpad `fix-014/handoff.md` if the scratchpad survived. If 11508ed is not commented FROZEN, treat 11508ed as the freeze candidate and re-run pins once before the final reviews.
+- **019 verification finding:** 018 and 019 from origin/lane/rpc-018 (66ad184) apply OK on top of 11508ed, but `test_018_golden_path_rpcs.sql:135` FAILS on lane/rpc-018's OWN base with `contact_consents_no_new_unspecified` check violation. This goes to fix-018 before its rebase; PR #11 is not 21/21 as claimed.
+- **PR #30 opened** (`fix/bulk-decide-items`, "fix(web): bulk decide sends per-item diff hash (p_items)"): contract items {approvalId, diffHash}, rpcClient p_items, FixtureClient mirrors SQL refusal order, conformance + fixtures tests; 1512 tests, all gates green per lane. Tip moved 2b885b2 → c2b2cbf ("one bulk-decide idempotency key per selection, not per click order") → e310a15 ("pin the bulk decide wire shape") AFTER the lane shut down at 00:16; authorship unresolved at wrap (a duplicate lane fix-bulk-decide-web-2 was told to stand down at 00:13; suspect it). Re-run gates on e310a15 before trusting it. Merges with or after PR #6.
+- **review-pr30** (Opus, worktree `trainos-wt/review-pr30`, branch `review/pr30-bulk-decide-web` cut from main, one doc `docs/reviews/2026-09-14-pr30-bulk-decide-web.md`, first line "PR #30 MERGE / MERGE-WITH-FIXES / BLOCK") was mid-review at wrap; check the branch for a pushed DRAFT.
+- **Worktrees:** 13 dead review worktrees removed and pruned (untracked pnpm files copied to scratchpad `wt-cleanup/`). Left in place: `trainos-wt/codex-011-013-rereview` — working tree has large uncommitted deletions in apps/worker/src/{config,loop}.ts, their tests, and ai/*.md; PR #29 is merged so nothing is lost, but the user should inspect before `git worktree remove --force`. Live worktrees: fix-014, fix-018 (66ad184, 2 dirty files, unrebased), fix-bulk-decide-web, review-pr30.
+
+**Next session, in order**
+
+1. Confirm PR #6 freeze at 11508ed (comment + pins). Then two SEPARATE review lanes cut from main: `docs/reviews/2026-09-13-pr6-final.md` ("PR #6 MAY MERGE / BLOCKED") and the 011–013 final pass ("011–013 CLEAR / BLOCKED"). Merge #6 only on both.
+2. fix-018: fix test_018:135 contact_consents on lane/rpc-018, then the single rebase onto 11508ed; expect 21/21 minus the two by-design refusals. Merge #11 after #6.
+3. Resolve PR #30 authorship, finish review-pr30, merge #30 with/after #6. Then #16 seeds.
+4. Codex 011–019 trace once quota is back (00:29). S3 service_role revoke confirm against hosted. Hosted apply gate unchanged: PR #6 MAY MERGE.
+
 ## WRAP 14 Sep 00:10 (+08) — START HERE. All lanes died at 22:25 on the account session limit; resume on Opus.
 
 **Main is at 8bb95ed** (after PR #29). Merged tonight: #5 web seam swap, #7 gitleaks binary, #8/#9/#10/#13 UI carry-over, #14 audit gate scoped to `--omit=dev`, #17 approval diff-hash client half, #27 worker heartbeat lease fix, and review docs #12 #18 #20 #21 #22 #23 #24 #25 #26 #28 #29 under `docs/reviews/2026-09-13-*`. CI has been DOWN since 20:36 (org billing/spending limit, annotation "recent account payments have failed or your spending limit needs to be increased"); every merge since ran on lane local gates + an independent review verdict.
