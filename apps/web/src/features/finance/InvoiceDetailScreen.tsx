@@ -108,9 +108,10 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
         accent
         collapsible
         recordType="invoice"
-        title={data.ref}
-        recordRef={data.organisationRef}
+        title="Invoice"
+        recordRef={data.ref}
         meta={[
+          data.organisationRef,
           data.engagementRef,
           `issued ${formatDate(data.issuedAt)}`,
           `due ${formatDate(data.dueAt)}`,

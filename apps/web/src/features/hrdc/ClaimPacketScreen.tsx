@@ -99,9 +99,10 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
         accent
         collapsible
         recordType="claim"
-        title={`Claim packet · ${data.engagementRef}`}
-        recordRef={data.employerCode}
+        title="Claim packet"
+        recordRef={data.engagementRef}
         meta={[
+          `employer ${data.employerCode}`,
           `scheme ${data.scheme.replace("_", "-")}`,
           data.organisationRef,
           data.grant ? `grant ${data.grant.reference}` : null,

@@ -15,7 +15,12 @@ describe("M13-S02 · invoice detail", () => {
   it("adds the lines up in front of the reader and puts SST on the net", async () => {
     renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />, { role: "FINANCE" });
 
-    expect(await screen.findByRole("heading", { name: "INV-2026-0311" })).toBeInTheDocument();
+    /* §15a: the h1 names the record, the mono identity line carries the ref.
+       This used to assert the reference AS the heading, which is the shape the
+       ruling withdrew. */
+    expect(await screen.findByRole("heading", { name: "Invoice" })).toBeInTheDocument();
+    /* `recordRef` is the first item of the joined mono meta line, not its own node. */
+    expect(screen.getByText(new RegExp(`^${DEFAULT_INVOICE_REF} · `))).toBeInTheDocument();
 
     /* The subtotal is the sum of the lines, said out loud. */
     expect(screen.getByText("Subtotal · sum of 1 line")).toBeInTheDocument();

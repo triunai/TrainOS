@@ -19,7 +19,11 @@ describe("M12-S02 · claim packet", () => {
       role: "FINANCE",
     });
 
-    expect(await screen.findByText("Claim packet · ENG-0231")).toBeInTheDocument();
+    /* §15a: the title NAMES the record and `recordRef` carries the reference,
+       so the two are asserted separately rather than as one concatenated h1. */
+    expect(await screen.findByRole("heading", { name: "Claim packet" })).toBeInTheDocument();
+    /* `recordRef` is the first item of the joined mono meta line, not its own node. */
+    expect(screen.getByText(/^ENG-0231 · /)).toBeInTheDocument();
 
     /* Two missing documents, and the metric that counts them. */
     expect(screen.getAllByText("Missing")).toHaveLength(2);
