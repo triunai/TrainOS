@@ -291,6 +291,12 @@ DROP TABLE IF EXISTS app.key_access_audit CASCADE;
 DROP TRIGGER IF EXISTS ai_provider_keys_reveal_audit ON core.ai_provider_keys;
 DROP FUNCTION IF EXISTS app.require_reveal_audit();
 
+-- The key-material pairing trigger (013:1463-1520). Left behind, the function
+-- outlives its table and a full rollback aborts at 002, whose preflight refuses
+-- an `app` schema holding functions neither 001 nor 002 created.
+DROP TRIGGER IF EXISTS ai_provider_keys_material_pairing ON core.ai_provider_keys;
+DROP FUNCTION IF EXISTS app.enforce_key_material_pairing();
+
 -- ─── Reverse of forward step 7 · runs, in child-before-parent order ─────────
 DROP TABLE IF EXISTS core.evals CASCADE;
 DROP TABLE IF EXISTS core.run_snapshots CASCADE;
@@ -377,7 +383,8 @@ BEGIN
            'is_valid_jury_policy','is_valid_metric_condition',
            'is_valid_run_event_detail','is_valid_redaction_counts',
            'redact_pattern','redact_pii','placeholder_count','pii_counts',
-           'mask_run_io','require_reveal_audit','record_key_access',
+           'mask_run_io','require_reveal_audit','enforce_key_material_pairing',
+           'record_key_access',
            'mint_agent_key','verify_agent_key','redact_run_io','roll_up_usage'))
      OR (n.nspname = 'public' AND p.proname IN (
            'ai_provider_key_set','ai_provider_key_test','ai_provider_key_rotate',
