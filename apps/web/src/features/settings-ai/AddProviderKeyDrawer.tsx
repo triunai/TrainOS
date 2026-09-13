@@ -33,6 +33,12 @@ const RESIDENCY: Record<AiProvider, string> = {
   GOOGLE: "SG",
   OPENAI: "US",
   DEEPSEEK: "CN",
+  /* Contract R4 added the two BYOK entries. A gateway routes to whichever
+     upstream it picks and a self-declared endpoint is wherever its operator
+     put it, so neither can be stated as a fact. Saying "unknown" is the honest
+     rendering; inventing a country here would be worse than the gap. */
+  OPENROUTER: "Routed — varies by upstream",
+  OTHER: "Unknown",
 };
 
 export interface AddProviderKeyDrawerProps {

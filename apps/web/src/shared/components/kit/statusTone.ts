@@ -100,6 +100,12 @@ export const RUN_TONE: Record<RunStatus, StatusTone> = {
   FAILED: "danger",
   /** Halted is not a failure — a policy stopped it on purpose. */
   HALTED: "warning",
+  /**
+   * Nor is RESUMABLE (contract R5). The run yielded at a checkpoint and is
+   * waiting to be picked up, so it reads as in-flight rather than as something
+   * a reader has to act on.
+   */
+  RESUMABLE: "info",
 };
 
 export const CHECK_TONE: Record<CheckState, StatusTone> = {
