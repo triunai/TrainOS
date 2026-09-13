@@ -43,14 +43,23 @@ describe("M07 · proposal list", () => {
     renderList();
 
     await screen.findByText("Aurora Manufacturing Sdn Bhd");
-    const before = screen.getByText(/of \d+ shown/).textContent ?? "";
+
+    /* The unfiltered size is read from the table, not from the counter: §16b
+       stopped printing "N of M shown" until a filter has actually narrowed the
+       set, so the old reading of it here was of an element that is now
+       deliberately absent. What the test is for — that `runId` splits an
+       agent's drafts from a person's — is unchanged. */
+    const before = screen.getAllByRole("row").length;
 
     await user.selectOptions(screen.getByLabelText("Drafted by"), "HUMAN");
 
     expect(await screen.findByText("Drafted by:")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText(/of \d+ shown/).textContent).not.toEqual(before);
+      expect(screen.getAllByRole("row").length).toBeLessThan(before);
     });
+
+    /* And now that a filter HAS narrowed it, the count is owed again. */
+    expect(screen.getByText(/of \d+ shown/)).toBeInTheDocument();
   });
 
   it("empties honestly when the search matches nothing", async () => {
@@ -61,6 +70,31 @@ describe("M07 · proposal list", () => {
     await user.type(screen.getByLabelText("Search"), "no client by this name");
 
     expect(await screen.findByText("No proposal matches these filters")).toBeInTheDocument();
+  });
+
+  it("puts the proposal status track and the filter controls on ONE row, per brief §10b", async () => {
+    const user = userEvent.setup();
+    renderList();
+
+    await screen.findByText("Aurora Manufacturing Sdn Bhd");
+
+    const tabs = screen.getByRole("tablist", { name: "Proposal status" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+
+    /* Not "both exist" — both resolve to the SAME toolbar row. The filter row
+       used to be a second band under the track, which is what §10b forbids. */
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+
+    /* §16b: unfiltered, nothing counts anything — the active tab already
+       prints the number, and the counter said it again on the same row. */
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
+
+    /* Narrow it and the count comes back, inside the same row. */
+    await user.type(screen.getByLabelText("Search"), "Aurora");
+    const counter = await screen.findByText(/\d+ of \d+ shown/);
+    expect(counter.closest("[data-list-toolbar]")).toBe(row);
   });
 });
 
@@ -123,5 +157,25 @@ describe("M07 · quotation list", () => {
     renderList();
     await screen.findByText("QUO-2026-0184");
     await waitFor(() => expect(currentPrimaries()).toEqual([]));
+  });
+
+  it("puts the quotation status track and the filter controls on ONE row, per brief §10b", async () => {
+    const user = userEvent.setup();
+    renderList();
+
+    await screen.findByText("QUO-2026-0184");
+
+    const tabs = screen.getByRole("tablist", { name: "Quotation status" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
+
+    await user.type(screen.getByLabelText("Search"), "QUO-2026-0184");
+    const counter = await screen.findByText(/\d+ of \d+ shown/);
+    expect(counter.closest("[data-list-toolbar]")).toBe(row);
   });
 });

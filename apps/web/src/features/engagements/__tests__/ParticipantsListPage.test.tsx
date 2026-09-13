@@ -86,4 +86,27 @@ describe("M10 · participant directory", () => {
       expect(screen.queryByRole("table", { name: "Participants" })).not.toBeInTheDocument();
     });
   });
+
+  it("puts the cohort status track and the filter controls on ONE row, per brief §10b", async () => {
+    renderList();
+
+    await screen.findByRole("heading", { name: "Participants", level: 1 });
+
+    const tabs = screen.getByRole("tablist", { name: "Cohort status" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+
+    /* Not "both exist" — both resolve to the SAME toolbar row. The filter row
+       used to be a second band under the track, which is what §10b forbids. */
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+
+    /* §16b: unfiltered, nothing counts anything — the active tab already
+       prints the number, and the counter said it again on the same row. */
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
+
+    await userEvent.type(screen.getByLabelText("Search"), "Nurul");
+    const counter = await screen.findByText(/\d+ of \d+ shown/);
+    expect(counter.closest("[data-list-toolbar]")).toBe(row);
+  });
 });

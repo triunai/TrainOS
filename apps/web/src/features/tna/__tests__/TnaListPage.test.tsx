@@ -47,14 +47,20 @@ describe("M05 · needs analysis list", () => {
     renderList();
 
     await screen.findByText("Aurora Manufacturing Sdn Bhd");
-    const before = screen.getByText(/of \d+ shown/).textContent ?? "";
+    const sent = screen.getByRole("tab", { name: /Sent/ });
+    const tabCount = sent.textContent ?? "";
 
-    await user.click(screen.getByRole("tab", { name: /Sent/ }));
+    await user.click(sent);
 
     await waitFor(() => {
       expect(screen.queryByText("Aurora Manufacturing Sdn Bhd")).not.toBeInTheDocument();
     });
-    expect(screen.getByText(/of \d+ shown/).textContent).not.toEqual(before);
+
+    /* §16b: the count the tab prints is the only one owed here. It used to be
+       asserted through the "N of M shown" counter, which said the same number
+       one control to the right. */
+    expect(sent.textContent).toEqual(tabCount);
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
   });
 
   it("empties honestly when a facet matches nothing", async () => {
@@ -76,5 +82,28 @@ describe("M05 · needs analysis list", () => {
     await waitFor(() => {
       expect(screen.queryByRole("table", { name: "Needs analyses" })).not.toBeInTheDocument();
     });
+  });
+
+  it("puts the TNA status track and the filter controls on ONE row, per brief §10b", async () => {
+    renderList();
+
+    await screen.findByText("Aurora Manufacturing Sdn Bhd");
+
+    const tabs = screen.getByRole("tablist", { name: "TNA status" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+
+    /* Not "both exist" — both resolve to the SAME toolbar row. The filter row
+       used to be a second band under the track, which is what §10b forbids. */
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+
+    /* §16b: unfiltered, nothing counts anything — the active tab already
+       prints the number, and the counter said it again on the same row. */
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
+
+    await userEvent.type(screen.getByLabelText("Search"), "Aurora");
+    const counter = await screen.findByText(/\d+ of \d+ shown/);
+    expect(counter.closest("[data-list-toolbar]")).toBe(row);
   });
 });

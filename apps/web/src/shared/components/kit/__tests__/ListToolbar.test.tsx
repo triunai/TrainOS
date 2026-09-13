@@ -46,12 +46,20 @@ describe("ListToolbar", () => {
     expect(counter.closest("[data-list-toolbar]")).not.toBeNull();
   });
 
-  it("stays on one row from 1100px and wraps below it", () => {
+  it("wraps on content rather than pinning one row at a breakpoint", () => {
     const { container } = renderToolbar();
     const row = container.querySelector("[data-list-toolbar]");
 
     expect(row).toHaveClass("flex-wrap");
-    expect(row).toHaveClass("min-[1100px]:flex-nowrap");
+
+    /* `min-[1100px]:flex-nowrap` is what this used to assert, and it was the
+       bug: a pinned row cannot wrap, so on the engagements list — eight status
+       segments — the filter group was squeezed to 155px and its search box
+       spilled leftward across the last two tabs. A breakpoint cannot know how
+       many segments a track carries. Neither half may pin the row. */
+    expect(row?.className).not.toContain("flex-nowrap");
+    const right = container.querySelector("[data-list-toolbar] > div:nth-of-type(2)");
+    expect(right?.className).not.toContain("flex-nowrap");
   });
 
   it("strips the FilterBar's own row padding, which this row already owns", () => {

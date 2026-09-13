@@ -16,11 +16,19 @@ import { cn } from "@/shared/lib/utils";
  * The count stays on the right edge, furthest from the tabs, because it is the
  * RESULT of both and reads as the row's total.
  *
- * WRAPPING. Below 1100px the two halves stack rather than crush the filter
- * controls, which is the only width at which the old two-row shape is correct.
- * `min-[1100px]:flex-nowrap` rather than a named breakpoint: the number is the
- * width at which a four-segment track plus a search box and two selects stop
- * fitting, not one of the config's device breakpoints.
+ * WRAPPING is driven by CONTENT, not by a breakpoint. The two halves stack when
+ * they do not both fit, which for a typical three- or four-segment track plus a
+ * search box and two selects happens below about 1100px — the number the ruling
+ * quotes.
+ *
+ * It was written as `min-[1100px]:flex-nowrap` first, and that was a bug. A
+ * pinned single row cannot wrap, so the right half is handed whatever width the
+ * track leaves and its contents spill out of it: on the engagements list, whose
+ * status track carries EIGHT segments, the filter group was squeezed to 155px
+ * and `justify-end` pushed the search box leftward straight across the "Closed"
+ * and "Cancelled" tabs. A breakpoint cannot know how many segments a screen's
+ * track has; `flex-wrap` measures the real thing, and stacks rather than
+ * overlaps when the answer is too many.
  *
  * The filter slot strips `FilterBar`'s own `px-4 py-2.5`. A `FilterBar` that
  * owns a row of its own needs that padding; one sitting inside this row would
@@ -53,18 +61,20 @@ export function ListToolbar({ tabs, filters, actions, className }: ListToolbarPr
   return (
     <div
       data-list-toolbar=""
-      className={cn(
-        "flex flex-wrap items-center gap-x-4 gap-y-2.5 min-[1100px]:flex-nowrap",
-        className,
-      )}
+      className={cn("flex flex-wrap items-center gap-x-4 gap-y-2.5", className)}
     >
       <div className="min-w-0 shrink-0">{tabs}</div>
 
       {filters || actions ? (
         <div
           className={cn(
-            "ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-2",
-            "min-[1100px]:flex-nowrap",
+            /* `grow basis-[360px]` is what decides the wrap. Flex breaks a line
+               on an item's BASIS, so the filters stay on the tabs' row while at
+               least 360px is left for them and take a row of their own when it
+               is not — no breakpoint, and no squeezing them into 155px. `grow`
+               then spends whatever is actually left, and `justify-end` keeps
+               the count on the right edge on either row. */
+            "flex min-w-0 grow basis-[360px] flex-wrap items-center justify-end gap-x-3 gap-y-2",
             /* The FilterBar's row padding, removed for the one case where it is
                not a row. Scoped to the element it belongs to rather than to
                every child, so an action button keeps its own geometry. */

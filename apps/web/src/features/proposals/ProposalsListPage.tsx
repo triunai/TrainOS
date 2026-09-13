@@ -13,6 +13,7 @@ import {
   FilterSelect,
   formatDate,
   humanise,
+  ListToolbar,
   LoadingState,
   MoneyText,
   PillTabGroup,
@@ -175,51 +176,63 @@ export function ProposalsListPage() {
         actions={<DensityToggle value={density} onChange={setDensity} />}
       />
 
-      <div className="px-5 pb-3">
-        <PillTabGroup
-          label="Proposal status"
-          activeId={status}
-          onSelect={(id) => setStatus(id as StatusFilter)}
-          tabs={[
-            { id: "ALL", label: "All", count: countOf("ALL") },
-            ...PROPOSAL_STATUSES.map((value) => ({
-              id: value,
-              label: humanise(value),
-              count: countOf(value),
-            })),
-          ]}
-        />
-      </div>
+      {/* Brief §10b: the saved-view track and the narrowing are ONE row, with
+          the table directly beneath. Stacked, they put two horizontal rules
+          between the heading and the first row of data while each band left
+          half its width empty — the tabs say which subset and the filters say
+          which slice of it, so they are one control surface.
 
-      <div className="border-b border-border px-5 pb-3">
-        <FilterBar
-          filters={chips}
-          shown={rows.length}
-          total={all.length}
-          onRemove={(id) => (id === "query" ? setSearch("") : setOrigin("ALL"))}
-          onClearAll={() => {
-            setSearch("");
-            setOrigin("ALL");
-          }}
-        >
-          <FilterSearch
-            label="Search"
-            value={search}
-            onChange={setSearch}
-            placeholder="Client or reference"
-          />
-          <FilterSelect
-            label="Drafted by"
-            value={origin}
-            onChange={setOrigin}
-            options={[
-              { value: "ALL", label: "Anyone" },
-              { value: "AI", label: "An agent" },
-              { value: "HUMAN", label: "A person" },
+          §16b's count rule rides with them: "N of M shown" appears only when a
+          filter chip has actually narrowed the set. Unfiltered, the active tab
+          already prints the number, and the counter beside it was the same
+          fact twice on one row. */}
+      <ListToolbar
+        className="px-5 pb-3"
+        tabs={
+          <PillTabGroup
+            label="Proposal status"
+            activeId={status}
+            onSelect={(id) => setStatus(id as StatusFilter)}
+            tabs={[
+              { id: "ALL", label: "All", count: countOf("ALL") },
+              ...PROPOSAL_STATUSES.map((value) => ({
+                id: value,
+                label: humanise(value),
+                count: countOf(value),
+              })),
             ]}
           />
-        </FilterBar>
-      </div>
+        }
+        filters={
+          <FilterBar
+            filters={chips}
+            shown={chips.length > 0 ? rows.length : undefined}
+            total={chips.length > 0 ? all.length : undefined}
+            onRemove={(id) => (id === "query" ? setSearch("") : setOrigin("ALL"))}
+            onClearAll={() => {
+              setSearch("");
+              setOrigin("ALL");
+            }}
+          >
+            <FilterSearch
+              label="Search"
+              value={search}
+              onChange={setSearch}
+              placeholder="Client or reference"
+            />
+            <FilterSelect
+              label="Drafted by"
+              value={origin}
+              onChange={setOrigin}
+              options={[
+                { value: "ALL", label: "Anyone" },
+                { value: "AI", label: "An agent" },
+                { value: "HUMAN", label: "A person" },
+              ]}
+            />
+          </FilterBar>
+        }
+      />
 
       <div className="flex flex-col gap-3 pt-3">
         {namesUnavailable ? (

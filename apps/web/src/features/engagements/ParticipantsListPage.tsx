@@ -13,6 +13,7 @@ import {
   FilterSelect,
   formatDateRange,
   humanise,
+  ListToolbar,
   LoadingState,
   PillTabGroup,
   RecordHeader,
@@ -195,64 +196,76 @@ export function ParticipantsListPage() {
         actions={<DensityToggle value={density} onChange={setDensity} />}
       />
 
-      <div className="px-5 pb-3">
-        <PillTabGroup
-          label="Cohort status"
-          activeId={status}
-          onSelect={(id) => setStatus(id as StatusFilter)}
-          tabs={[
-            { id: "ALL", label: "All", count: countOf("ALL") },
-            ...ENGAGEMENT_STATUSES.map((value) => ({
-              id: value,
-              label: humanise(value),
-              count: countOf(value),
-            })),
-          ]}
-        />
-      </div>
+      {/* Brief §10b: the saved-view track and the narrowing are ONE row, with
+          the table directly beneath. Stacked, they put two horizontal rules
+          between the heading and the first row of data while each band left
+          half its width empty — the tabs say which subset and the filters say
+          which slice of it, so they are one control surface.
 
-      <div className="border-b border-border px-5 pb-3">
-        <FilterBar
-          filters={chips}
-          shown={rows.length}
-          total={all.length}
-          onRemove={(id) => {
-            if (id === "query") setQuery("");
-            if (id === "engagement") setEngagementRef("ALL");
-            if (id === "department") setDepartment("ALL");
-          }}
-          onClearAll={() => {
-            setQuery("");
-            setEngagementRef("ALL");
-            setDepartment("ALL");
-          }}
-        >
-          <FilterSearch
-            label="Search"
-            value={query}
-            onChange={setQuery}
-            placeholder="Name, reference or cohort"
-          />
-          <FilterSelect
-            label="Engagement"
-            value={engagementRef}
-            onChange={setEngagementRef}
-            options={[
-              { value: "ALL", label: "Any engagement" },
-              ...cohorts.map((cohort) => ({ value: cohort.ref, label: cohort.title })),
+          §16b's count rule rides with them: "N of M shown" appears only when a
+          filter chip has actually narrowed the set. Unfiltered, the active tab
+          already prints the number, and the counter beside it was the same
+          fact twice on one row. */}
+      <ListToolbar
+        className="px-5 pb-3"
+        tabs={
+          <PillTabGroup
+            label="Cohort status"
+            activeId={status}
+            onSelect={(id) => setStatus(id as StatusFilter)}
+            tabs={[
+              { id: "ALL", label: "All", count: countOf("ALL") },
+              ...ENGAGEMENT_STATUSES.map((value) => ({
+                id: value,
+                label: humanise(value),
+                count: countOf(value),
+              })),
             ]}
           />
-          <FilterSelect
-            label="Department"
-            value={department}
-            onChange={setDepartment}
-            options={[
-              { value: "ALL", label: "Any department" },
-              ...departments.map((name) => ({ value: name, label: name })),
-            ]}
-          />
-        </FilterBar>
-      </div>
+        }
+        filters={
+          <FilterBar
+            filters={chips}
+            shown={chips.length > 0 ? rows.length : undefined}
+            total={chips.length > 0 ? all.length : undefined}
+            onRemove={(id) => {
+              if (id === "query") setQuery("");
+              if (id === "engagement") setEngagementRef("ALL");
+              if (id === "department") setDepartment("ALL");
+            }}
+            onClearAll={() => {
+              setQuery("");
+              setEngagementRef("ALL");
+              setDepartment("ALL");
+            }}
+          >
+            <FilterSearch
+              label="Search"
+              value={query}
+              onChange={setQuery}
+              placeholder="Name, reference or cohort"
+            />
+            <FilterSelect
+              label="Engagement"
+              value={engagementRef}
+              onChange={setEngagementRef}
+              options={[
+                { value: "ALL", label: "Any engagement" },
+                ...cohorts.map((cohort) => ({ value: cohort.ref, label: cohort.title })),
+              ]}
+            />
+            <FilterSelect
+              label="Department"
+              value={department}
+              onChange={setDepartment}
+              options={[
+                { value: "ALL", label: "Any department" },
+                ...departments.map((name) => ({ value: name, label: name })),
+              ]}
+            />
+          </FilterBar>
+        }
+      />
 
       <div className="pt-3">
         {pending ? <LoadingState rows={8} label="Loading the participant directory" /> : null}

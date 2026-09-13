@@ -48,18 +48,28 @@ describe("M09 · engagements list", () => {
     await waitFor(() => expect(currentPrimaries()).toEqual([]));
   });
 
-  it("narrows on the status tab group and keeps a shown-of-total count", async () => {
+  /* This test used to read "…and keeps a shown-of-total count". §16b withdrew
+     the count on a tab narrowing: the tab the user just clicked prints its own
+     number, so a counter beside it restated the click. What the tab must still
+     do is narrow the table, and that is what is asserted now. */
+  it("narrows on the status tab group, and counts nothing the tab already says", async () => {
     const user = userEvent.setup();
     renderList();
 
     await screen.findByText("Leading Through Change");
-    const before = screen.getByText(/of \d+ shown/).textContent ?? "";
+    const scheduled = screen.getByRole("tab", { name: /Scheduled/ });
+    const tabCount = scheduled.textContent ?? "";
 
-    await user.click(screen.getByRole("tab", { name: /Scheduled/ }));
+    await user.click(scheduled);
 
     await waitFor(() => {
-      expect(screen.getByText(/of \d+ shown/).textContent).not.toEqual(before);
+      const table = screen.getByRole("table", { name: "Engagements" });
+      expect(within(table).queryByText("Leading Through Change")).not.toBeInTheDocument();
     });
+
+    /* The tab kept its own count, and nothing else on the page repeated it. */
+    expect(scheduled.textContent).toEqual(tabCount);
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
   });
 
   it("narrows on a free-text search and empties honestly", async () => {
@@ -84,5 +94,29 @@ describe("M09 · engagements list", () => {
     await waitFor(() => {
       expect(screen.queryByRole("table", { name: "Engagements" })).not.toBeInTheDocument();
     });
+  });
+
+  it("puts the engagement status track and the filter controls on ONE row, per brief §10b", async () => {
+    renderList();
+
+    await screen.findByRole("heading", { name: "Engagements", level: 1 });
+
+    const tabs = screen.getByRole("tablist", { name: "Engagement status" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+
+    /* Not "both exist" — both resolve to the SAME toolbar row. The filter row
+       used to be a second band under the track, which is what §10b forbids. */
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+
+    /* §16b: unfiltered, nothing counts anything — the active tab already
+       prints the number, and the counter said it again on the same row. */
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
+
+    /* Narrow it and the count comes back, inside the same row. */
+    await userEvent.type(screen.getByLabelText("Search"), "Aurora");
+    const counter = await screen.findByText(/\d+ of \d+ shown/);
+    expect(counter.closest("[data-list-toolbar]")).toBe(row);
   });
 });
