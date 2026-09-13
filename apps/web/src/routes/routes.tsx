@@ -18,6 +18,18 @@ import { programmesRoutes } from "./programmes.routes";
 import { proposalsRoutes } from "./proposals.routes";
 import { settingsAiRoutes } from "./settings-ai.routes";
 import { tnaRoutes } from "./tna.routes";
+import { leadsRoutes } from "./leads.routes";
+import { contactsRoutes } from "./contacts.routes";
+import { pipelineRoutes } from "./pipeline.routes";
+import { relationshipsRoutes } from "./relationships.routes";
+import { calendarRoutes } from "./calendar.routes";
+import { trainersRoutes } from "./trainers.routes";
+import { assessmentsRoutes } from "./assessments.routes";
+import { certificatesRoutes } from "./certificates.routes";
+import { complianceRoutes } from "./compliance.routes";
+import { tasksRoutes } from "./tasks.routes";
+import { reportsRoutes } from "./reports.routes";
+import { settingsRoutes } from "./settings.routes";
 
 /**
  * The route table is GENERATED from the navigation tree. There is no second
@@ -67,6 +79,18 @@ const FEATURE_ROUTES = [
   ...proposalsRoutes,
   ...settingsAiRoutes,
   ...tnaRoutes,
+  ...leadsRoutes,
+  ...contactsRoutes,
+  ...pipelineRoutes,
+  ...relationshipsRoutes,
+  ...calendarRoutes,
+  ...trainersRoutes,
+  ...assessmentsRoutes,
+  ...certificatesRoutes,
+  ...complianceRoutes,
+  ...tasksRoutes,
+  ...reportsRoutes,
+  ...settingsRoutes,
 ];
 
 /**
