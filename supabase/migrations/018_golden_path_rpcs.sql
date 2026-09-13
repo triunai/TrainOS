@@ -434,6 +434,120 @@ BEGIN
 END;
 $fn$;
 
+-- ── The keyset engine, extracted ────────────────────────────────────────────
+--
+-- WHY THESE TWO FUNCTIONS EXIST. Five list RPCs in this file page the same way,
+-- and before this pair each of them owned its own copy of the ordering. Two
+-- copies got it wrong, in OPPOSITE directions:
+--
+--   * `core.list_enquiries` appended the keyset clause to `v_where` and THEN
+--     counted, so `page.total` was the rows remaining AFTER the cursor. With
+--     120 matches at size 50 the list header read 120, then 70, then 20 — the
+--     total counted down as the reader paged.
+--   * The other four counted first (right) but decided `next` from
+--     `v_count = v_size AND v_count < v_total` (wrong). With exactly 100
+--     matches at size 50, page two returns 50 rows and 50 < 100 holds, so a
+--     non-null cursor points PAST the last row; the client fetches page three
+--     and renders an empty list. Every exact multiple of the page size.
+--
+-- The fix is not "correct both copies". It is to make the ORDER OF OPERATIONS
+-- unavailable to a caller. `app._keyset_scope` counts off the filter-only
+-- predicate and returns the keyset-extended one, so counting after the keyset
+-- is not an expressible mistake; `app._next_cursor` asks the table whether a
+-- row exists beyond the last row of the page, so "is there a next page" is
+-- answered by the data rather than by arithmetic over two counts.
+--
+-- NOT SECURITY DEFINER, like every other helper in §1: both are only ever
+-- reached from a definer function in `core`, and EXECUTE is revoked below.
+
+CREATE OR REPLACE FUNCTION app._keyset_scope(
+  p_relation regclass,
+  p_tenant   uuid,
+  p_where    text,
+  p_sort_col text,
+  p_desc     boolean,
+  p_cur_at   timestamptz,
+  p_cur_id   uuid,
+  p_date_sort boolean DEFAULT false,
+  OUT o_total integer,
+  OUT o_where text)
+LANGUAGE plpgsql
+STABLE
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF p_tenant IS NULL THEN
+    RAISE EXCEPTION '_keyset_scope: an explicit tenant is required'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- THE COUNT HAPPENS FIRST AND OFF `p_where`, which is the FILTER-ONLY
+  -- predicate. The keyset clause is built afterwards and returned separately,
+  -- so a caller cannot count the post-cursor remainder by accident.
+  EXECUTE pg_catalog.format(
+    'SELECT pg_catalog.count(*)::integer FROM %s WHERE tenant_id = $1 AND %s',
+    p_relation::text, p_where) INTO o_total USING p_tenant;
+
+  o_where := p_where;
+  IF p_cur_at IS NOT NULL THEN
+    -- The tie-breaker is the id, so a page boundary landing inside a group of
+    -- equal sort keys neither drops nor repeats a row. `p_date_sort` casts a
+    -- DATE sort column to timestamptz so it compares against the cursor's own
+    -- type; it is a boolean rather than a cast string because a cast string
+    -- would be one more piece of caller-supplied SQL in a format().
+    o_where := o_where || pg_catalog.format(
+      ' AND (%I%s, id) %s (%L::timestamptz, %L::uuid)',
+      p_sort_col, CASE WHEN p_date_sort THEN '::timestamptz' ELSE '' END,
+      CASE WHEN p_desc THEN '<' ELSE '>' END, p_cur_at, p_cur_id);
+  END IF;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION app._next_cursor(
+  p_relation  regclass,
+  p_tenant    uuid,
+  p_where     text,
+  p_sort_col  text,
+  p_desc      boolean,
+  p_count     integer,
+  p_size      integer,
+  p_last_at   timestamptz,
+  p_last_id   uuid,
+  p_date_sort boolean DEFAULT false)
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SET search_path = ''
+AS $fn$
+DECLARE v_more boolean;
+BEGIN
+  -- A SHORT PAGE IS THE LAST PAGE, and needs no lookahead.
+  IF p_count IS NULL OR p_size IS NULL OR p_count < p_size OR p_count = 0
+     OR p_last_at IS NULL OR p_last_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- A FULL PAGE IS NOT EVIDENCE OF A NEXT ONE. `count = size AND count < total`
+  -- says yes on every exact-multiple last page; an EXISTS past the last row of
+  -- the page says no, and says it from the table rather than from arithmetic.
+  -- `p_where` may be the filter-only predicate or the keyset-extended one:
+  -- rows after the LAST ROW OF THIS PAGE are a subset of rows after the
+  -- cursor, so the answer is the same either way.
+  EXECUTE pg_catalog.format(
+    'SELECT pg_catalog.count(*) > 0 FROM (SELECT 1 FROM %s '
+    'WHERE tenant_id = $1 AND %s AND (%I%s, id) %s ($2, $3) LIMIT 1) AS lookahead',
+    p_relation::text, p_where, p_sort_col,
+    CASE WHEN p_date_sort THEN '::timestamptz' ELSE '' END,
+    CASE WHEN p_desc THEN '<' ELSE '>' END)
+    INTO v_more USING p_tenant, p_last_at, p_last_id;
+
+  IF NOT v_more THEN
+    RETURN NULL;
+  END IF;
+  RETURN app._cursor_encode(p_last_at, p_last_id);
+END;
+$fn$;
+
 CREATE OR REPLACE FUNCTION app._body_sql(p_fn regprocedure)
 RETURNS text
 LANGUAGE sql
@@ -461,6 +575,10 @@ REVOKE ALL ON FUNCTION app._cursor_encode(timestamptz, uuid)     FROM PUBLIC, an
 REVOKE ALL ON FUNCTION app._cursor_decode(text)                  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._page_size(jsonb)                     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._predicate(text, text, text, jsonb)   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app._keyset_scope(regclass, uuid, text, text, boolean, timestamptz, uuid, boolean)
+  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app._next_cursor(regclass, uuid, text, text, boolean, integer, integer, timestamptz, uuid, boolean)
+  FROM PUBLIC, anon, authenticated;
 
 -- ═══ 2 · The three gate wrappers are 014's, NOT 018's ══════════════════════
 --
@@ -817,6 +935,7 @@ DECLARE
   v_last_at  timestamptz;
   v_last_id  uuid;
   v_count    integer;
+  v_keyed    text;
 BEGIN
   -- ── page ────────────────────────────────────────────────────────────────
   BEGIN
@@ -939,17 +1058,13 @@ BEGIN
   v_where := CASE WHEN pg_catalog.array_length(v_clauses, 1) IS NULL THEN 'true'
                   ELSE pg_catalog.array_to_string(v_clauses, ' AND ') END;
 
-  -- KEYSET, not offset. The tie-breaker is the id, so a page boundary that
-  -- lands inside a group of equal sort keys does not drop or repeat a row.
-  IF v_cur_at IS NOT NULL THEN
-    v_where := v_where || pg_catalog.format(
-      ' AND (%I, id) %s (%L::timestamptz, %L::uuid)',
-      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
-  END IF;
-
-  EXECUTE pg_catalog.format(
-    'SELECT pg_catalog.count(*)::integer FROM core.enquiries WHERE tenant_id = $1 AND %s',
-    v_where) INTO v_total USING v_tenant;
+  -- COUNT BEFORE KEYSET, CURSOR FROM A REAL LOOKAHEAD — both orderings now
+  -- live in `app._keyset_scope` / `app._next_cursor` (§1), so no copy of this
+  -- engine can get either one wrong on its own. See the helpers' header for
+  -- the two defects this pair replaces.
+  SELECT scope.o_total, scope.o_where INTO v_total, v_keyed
+    FROM app._keyset_scope('core.enquiries'::regclass, v_tenant, v_where,
+                           v_sort_col, v_desc, v_cur_at, v_cur_id) AS scope;
 
   v_sql := pg_catalog.format($q$
     WITH page AS (
@@ -1014,7 +1129,7 @@ BEGIN
           LEFT JOIN public.user_profiles AS assignee
                  ON assignee.tenant_id = e.tenant_id AND assignee.user_id = e.assigned_to_user_id
       ) AS row$q$,
-    v_where,
+    v_keyed,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
     v_sort_col);
@@ -1025,10 +1140,8 @@ BEGIN
   -- sensitive to key sets and an omitted key changes the shape — this is the
   -- one doc 09 §5 says a test catches and a reviewer does not, so the pin
   -- asserts present-and-null explicitly.
-  v_next := NULL;
-  IF v_count = v_size AND v_count < v_total THEN
-    v_next := app._cursor_encode(v_last_at, v_last_id);
-  END IF;
+  v_next := app._next_cursor('core.enquiries'::regclass, v_tenant, v_where,
+                             v_sort_col, v_desc, v_count, v_size, v_last_at, v_last_id);
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'data', v_rows,
@@ -2398,6 +2511,7 @@ DECLARE
   v_last_at  timestamptz;
   v_last_id  uuid;
   v_median   integer;
+  v_keyed    text;
 BEGIN
   BEGIN
     v_size := app._page_size(p_page);
@@ -2491,9 +2605,13 @@ BEGIN
   v_where := CASE WHEN pg_catalog.array_length(v_clauses, 1) IS NULL THEN 'true'
                   ELSE pg_catalog.array_to_string(v_clauses, ' AND ') END;
 
-  EXECUTE pg_catalog.format(
-    'SELECT pg_catalog.count(*)::integer FROM core.v_approval_requests WHERE tenant_id = $1 AND %s',
-    v_where) INTO v_total USING v_tenant;
+  -- COUNT BEFORE KEYSET, CURSOR FROM A REAL LOOKAHEAD — both orderings now
+  -- live in `app._keyset_scope` / `app._next_cursor` (§1), so no copy of this
+  -- engine can get either one wrong on its own. See the helpers' header for
+  -- the two defects this pair replaces.
+  SELECT scope.o_total, scope.o_where INTO v_total, v_keyed
+    FROM app._keyset_scope('core.v_approval_requests'::regclass, v_tenant, v_where,
+                           v_sort_col, v_desc, v_cur_at, v_cur_id) AS scope;
 
   -- `groups` is computed over the WHOLE filtered set, not the page. A bucket
   -- header that counted only the visible rows would say "3 breaching" on a
@@ -2508,12 +2626,6 @@ BEGIN
              WHERE tenant_id = $1 AND %s
              GROUP BY urgency_group) AS bucket$q$, v_where)
     INTO v_groups USING v_tenant;
-
-  IF v_cur_at IS NOT NULL THEN
-    v_where := v_where || pg_catalog.format(
-      ' AND (%I, id) %s (%L::timestamptz, %L::uuid)',
-      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
-  END IF;
 
   EXECUTE pg_catalog.format($q$
     SELECT COALESCE(pg_catalog.jsonb_agg(row.item ORDER BY row.ord), '[]'::jsonb),
@@ -2569,14 +2681,12 @@ BEGIN
          LIMIT $2
       ) AS row$q$,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
-    v_sort_col, v_where,
+    v_sort_col, v_keyed,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
     INTO v_rows, v_count, v_last_at, v_last_id USING v_tenant, v_size;
 
-  v_next := NULL;
-  IF v_count = v_size AND v_count < v_total THEN
-    v_next := app._cursor_encode(v_last_at, v_last_id);
-  END IF;
+  v_next := app._next_cursor('core.v_approval_requests'::regclass, v_tenant, v_where,
+                             v_sort_col, v_desc, v_count, v_size, v_last_at, v_last_id);
 
   SELECT pg_catalog.percentile_cont(0.5) WITHIN GROUP (
            ORDER BY pg_catalog.date_part('epoch', decided.decided_at - decided.created_at))::integer
@@ -3088,6 +3198,7 @@ DECLARE
   v_last_at timestamptz;
   v_last_id uuid;
   v_cursor  text;
+  v_keyed   text;
 BEGIN
   BEGIN
     v_size := app._page_size(p_page);
@@ -3166,17 +3277,34 @@ BEGIN
   v_where := CASE WHEN pg_catalog.array_length(v_clauses,1) IS NULL THEN 'true'
                   ELSE pg_catalog.array_to_string(v_clauses,' AND ') END;
 
-  EXECUTE pg_catalog.format(
-    'SELECT pg_catalog.count(*)::integer FROM core.follow_ups WHERE tenant_id = $1 AND %s',
-    v_where) INTO v_total USING v_tenant;
+  -- COUNT BEFORE KEYSET, CURSOR FROM A REAL LOOKAHEAD — both orderings now
+  -- live in `app._keyset_scope` / `app._next_cursor` (§1), so no copy of this
+  -- engine can get either one wrong on its own. See the helpers' header for
+  -- the two defects this pair replaces.
+  -- `p_date_sort => true`: `due_date` is a DATE column, so the keyset tuple
+  -- casts it to timestamptz to compare against the cursor's own type. The two
+  -- timestamptz sort columns are unaffected by the cast.
+  SELECT scope.o_total, scope.o_where INTO v_total, v_keyed
+    FROM app._keyset_scope('core.follow_ups'::regclass, v_tenant, v_where,
+                           v_sort_col, v_desc, v_cur_at, v_cur_id, true) AS scope;
 
-  IF v_cur_at IS NOT NULL THEN
-    v_where := v_where || pg_catalog.format(
-      ' AND (%I::timestamptz, id) %s (%L::timestamptz, %L::uuid)',
-      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
-  END IF;
-
+  -- THE PAGE IS SELECTED BEFORE THE JOINS, in a CTE, exactly as
+  -- `core.list_enquiries` does it — and here that is a correctness rule rather
+  -- than a style. `app._predicate` and the keyset tuple both emit BARE column
+  -- names, and `core.contacts` and `core.organisations` each carry their own
+  -- `id`, `status` and `created_at`. Applied against the three-way join those
+  -- names are AMBIGUOUS, and Postgres refuses the whole query with
+  -- `column reference "id" is ambiguous` — a 500, not a refusal. It was latent
+  -- only because nothing had ever paged this list or filtered it on `status`.
+  -- Against one relation there is nothing for a bare name to be ambiguous
+  -- with. Pinned by T31d-T31f.
   EXECUTE pg_catalog.format($q$
+    WITH page AS (
+      SELECT * FROM core.follow_ups
+       WHERE tenant_id = $1 AND %s
+       ORDER BY %I %s, id %s
+       LIMIT $2
+    )
     SELECT COALESCE(pg_catalog.jsonb_agg(row.item ORDER BY row.ord), '[]'::jsonb),
            pg_catalog.count(*)::integer,
            (pg_catalog.array_agg(row.sort_at ORDER BY row.ord DESC))[1],
@@ -3193,22 +3321,18 @@ BEGIN
                  'dueDate',  f.due_date,
                  'status',   f.status::text,
                  'autonomy', f.autonomy::text) AS item
-          FROM core.follow_ups AS f
+          FROM page AS f
           JOIN core.contacts      AS contact ON contact.tenant_id = f.tenant_id AND contact.id = f.contact_id
           JOIN core.organisations AS org     ON org.tenant_id     = f.tenant_id AND org.id     = f.organisation_id
-         WHERE f.tenant_id = $1 AND %s
-         ORDER BY f.%I %s, f.id %s
-         LIMIT $2
       ) AS row$q$,
+    v_keyed,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
-    v_sort_col, v_where,
-    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
+    v_sort_col)
     INTO v_rows, v_count, v_last_at, v_last_id USING v_tenant, v_size;
 
-  v_next := NULL;
-  IF v_count = v_size AND v_count < v_total THEN
-    v_next := app._cursor_encode(v_last_at, v_last_id);
-  END IF;
+  v_next := app._next_cursor('core.follow_ups'::regclass, v_tenant, v_where,
+                             v_sort_col, v_desc, v_count, v_size, v_last_at, v_last_id, true);
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'data', v_rows,
@@ -3366,6 +3490,7 @@ DECLARE
   v_last_at timestamptz;
   v_last_id uuid;
   v_cursor  text;
+  v_keyed   text;
 BEGIN
   BEGIN
     v_size := app._page_size(p_page);
@@ -3438,15 +3563,13 @@ BEGIN
   v_where := CASE WHEN pg_catalog.array_length(v_clauses,1) IS NULL THEN 'true'
                   ELSE pg_catalog.array_to_string(v_clauses,' AND ') END;
 
-  EXECUTE pg_catalog.format(
-    'SELECT pg_catalog.count(*)::integer FROM core.proposals WHERE tenant_id = $1 AND %s',
-    v_where) INTO v_total USING v_tenant;
-
-  IF v_cur_at IS NOT NULL THEN
-    v_where := v_where || pg_catalog.format(
-      ' AND (%I, id) %s (%L::timestamptz, %L::uuid)',
-      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
-  END IF;
+  -- COUNT BEFORE KEYSET, CURSOR FROM A REAL LOOKAHEAD — both orderings now
+  -- live in `app._keyset_scope` / `app._next_cursor` (§1), so no copy of this
+  -- engine can get either one wrong on its own. See the helpers' header for
+  -- the two defects this pair replaces.
+  SELECT scope.o_total, scope.o_where INTO v_total, v_keyed
+    FROM app._keyset_scope('core.proposals'::regclass, v_tenant, v_where,
+                           v_sort_col, v_desc, v_cur_at, v_cur_id) AS scope;
 
   -- THE PAGE IS SELECTED HERE AND EACH ROW IS PROJECTED BY `core.get_proposal`.
   -- A `Proposal` carries its `sections[]`, each with its own provenance, and a
@@ -3459,7 +3582,7 @@ BEGIN
              ORDER BY %I %s, id %s
              LIMIT $2) AS p$q$,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
-    v_sort_col, v_where,
+    v_sort_col, v_keyed,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
     INTO v_ids USING v_tenant, v_size;
 
@@ -3469,11 +3592,16 @@ BEGIN
     INTO v_rows, v_count
     FROM pg_catalog.unnest(v_ids) WITH ORDINALITY AS element(id, ord);
 
-  IF v_count = v_size AND v_count < v_total THEN
+  -- The last row of the page in DISPLAY ORDER is the cursor anchor. It is read
+  -- unconditionally now: `app._next_cursor` decides whether a next page exists
+  -- by looking past that row, so the anchor has to exist before the question
+  -- can be asked.
+  IF pg_catalog.array_length(v_ids, 1) IS NOT NULL THEN
     EXECUTE pg_catalog.format('SELECT %I, id FROM core.proposals WHERE tenant_id = $1 AND id = $2', v_sort_col)
       INTO v_last_at, v_last_id USING v_tenant, v_ids[pg_catalog.array_length(v_ids,1)];
-    v_next := app._cursor_encode(v_last_at, v_last_id);
   END IF;
+  v_next := app._next_cursor('core.proposals'::regclass, v_tenant, v_where,
+                             v_sort_col, v_desc, v_count, v_size, v_last_at, v_last_id);
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'data', v_rows,
@@ -4002,6 +4130,7 @@ DECLARE
   v_last_at timestamptz;
   v_last_id uuid;
   v_cursor  text;
+  v_keyed   text;
 BEGIN
   -- THIS IS AN RPC AND NOT A VIEW READ, AND THAT IS THE POINT. Under RLS a
   -- reader without the row would get an EMPTY LIST from a view — indis-
@@ -4084,15 +4213,13 @@ BEGIN
   v_where := CASE WHEN pg_catalog.array_length(v_clauses,1) IS NULL THEN 'true'
                   ELSE pg_catalog.array_to_string(v_clauses,' AND ') END;
 
-  EXECUTE pg_catalog.format(
-    'SELECT pg_catalog.count(*)::integer FROM core.quotations WHERE tenant_id = $1 AND %s',
-    v_where) INTO v_total USING v_tenant;
-
-  IF v_cur_at IS NOT NULL THEN
-    v_where := v_where || pg_catalog.format(
-      ' AND (%I, id) %s (%L::timestamptz, %L::uuid)',
-      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
-  END IF;
+  -- COUNT BEFORE KEYSET, CURSOR FROM A REAL LOOKAHEAD — both orderings now
+  -- live in `app._keyset_scope` / `app._next_cursor` (§1), so no copy of this
+  -- engine can get either one wrong on its own. See the helpers' header for
+  -- the two defects this pair replaces.
+  SELECT scope.o_total, scope.o_where INTO v_total, v_keyed
+    FROM app._keyset_scope('core.quotations'::regclass, v_tenant, v_where,
+                           v_sort_col, v_desc, v_cur_at, v_cur_id) AS scope;
 
   -- Each row is projected by `core.get_quotation`, so the R6 floor block and
   -- the PROGRAMME→ABSOLUTE basis mapping exist in ONE place. A list that built
@@ -4105,7 +4232,7 @@ BEGIN
              ORDER BY %I %s, id %s
              LIMIT $2) AS q$q$,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
-    v_sort_col, v_where,
+    v_sort_col, v_keyed,
     v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
     INTO v_ids USING v_tenant, v_size;
 
@@ -4115,11 +4242,16 @@ BEGIN
     INTO v_rows, v_count
     FROM pg_catalog.unnest(v_ids) WITH ORDINALITY AS element(id, ord);
 
-  IF v_count = v_size AND v_count < v_total THEN
+  -- The last row of the page in DISPLAY ORDER is the cursor anchor. It is read
+  -- unconditionally now: `app._next_cursor` decides whether a next page exists
+  -- by looking past that row, so the anchor has to exist before the question
+  -- can be asked.
+  IF pg_catalog.array_length(v_ids, 1) IS NOT NULL THEN
     EXECUTE pg_catalog.format('SELECT %I, id FROM core.quotations WHERE tenant_id = $1 AND id = $2', v_sort_col)
       INTO v_last_at, v_last_id USING v_tenant, v_ids[pg_catalog.array_length(v_ids,1)];
-    v_next := app._cursor_encode(v_last_at, v_last_id);
   END IF;
+  v_next := app._next_cursor('core.quotations'::regclass, v_tenant, v_where,
+                             v_sort_col, v_desc, v_count, v_size, v_last_at, v_last_id);
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'data', v_rows,
@@ -4748,6 +4880,30 @@ BEGIN
      AND app._body_sql(p.oid) ~* '(float8|float4|::real\M|double precision)';
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION '018 verify V11b: a float cast appears in: %',
+      pg_catalog.array_to_string(v_missing, ', ');
+  END IF;
+
+  -- V11c · THE FIVE LIST RPCs SHARE ONE KEYSET ENGINE, asserted off the stored
+  -- bodies rather than claimed in a comment. Two copies of this engine
+  -- disagreed about `page.total` and about `page.next`; the helpers make both
+  -- orderings unavailable to a caller, and this check is what stops a sixth
+  -- list — or an edit to one of the five — from quietly growing its own copy.
+  v_missing := ARRAY[]::text[];
+  FOREACH v_name IN ARRAY ARRAY['list_enquiries','list_approvals','list_follow_ups',
+                                'list_proposals','list_quotations'] LOOP
+    v_body := app._body_sql(
+      (pg_catalog.format('core.%s(jsonb,text,jsonb,text)', v_name))::regprocedure);
+    IF pg_catalog.strpos(v_body, 'app._keyset_scope') = 0
+       OR pg_catalog.strpos(v_body, 'app._next_cursor') = 0 THEN
+      v_missing := v_missing || v_name;
+    END IF;
+    -- The old arithmetic must be GONE, not merely joined by the helper.
+    IF pg_catalog.strpos(v_body, 'v_count < v_total') > 0 THEN
+      v_missing := v_missing || (v_name || ' (still decides next by count<total)');
+    END IF;
+  END LOOP;
+  IF pg_catalog.array_length(v_missing, 1) IS NOT NULL THEN
+    RAISE EXCEPTION '018 verify V11c: list RPC(s) do not share the keyset engine: %',
       pg_catalog.array_to_string(v_missing, ', ');
   END IF;
 
