@@ -276,6 +276,15 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 19:4x — PR #5/#6 open; PR #5 has four real CI failures, not one
+
+- Corrected the report of "gates green except Gitleaks": Prettier drift, npm
+  audit high+ (2 critical) and a Vite artifact-upload quota also fail. Ten
+  missing RPC functions found in PR #5 handed to `lane/rpc-018`. New lanes
+  `seeds` and `codex-review-011-013`. GitHub repo is
+  `PARALLELPARADIGMS/alex-project`, not "trainos". Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 19:25 — headless blast (API phase + UI carry-over)
 
 - Six lanes running: `cloud/migrations` (014–017), `cloud/web-swap`, plus

@@ -20,9 +20,22 @@
 > (014–017) and `cloud/web-swap` continue from the 19:05 entry, no PRs yet.
 > Start from `ai/resume-brief.md` BLAST 19:25 entry.
 
-> **Last updated:** 2026-09-13 19:25 — four new lanes running (one gated RPC
-> pack, three UI carry-over) alongside the two cloud lanes already in flight;
-> nothing from this block has landed yet.
+> **BLAST 13 Sep 19:4x +08** — PR #5 (`cloud/web-swap`) and PR #6
+> (`cloud/migrations`) open. PR #5's CI is NOT green except Gitleaks —
+> verified directly (`gh pr checks 5`): four checks fail (Gitleaks license,
+> Prettier drift, npm audit high+ with 2 critical/1 high, Vite
+> artifact-upload storage quota). `ci-gitleaks` (worktree `ci-gitleaks`,
+> branch `ci/gitleaks`) is fixing the license one. PR #5 also surfaced ten
+> missing RPC functions, now `lane/rpc-018`'s scope. New lanes: `seeds`
+> (worktree `seeds`, branch `lane/seeds`, shim :5434, fixture-world seed
+> data) and `codex-review-011-013` (worktree `codex-011-013`, branch
+> `review/codex-011-013`, D-012 review of packs 011–013). GitHub repo is
+> `PARALLELPARADIGMS/alex-project`, not "trainos". See
+> `ai/workstreams.md` API-PHASE, SEEDS, SUPABASE SCHEMA and CI AND BRANCH
+> PROTECTION threads for detail.
+
+> **Last updated:** 2026-09-13 19:4x — six lanes now running; PR #5 has four
+> real CI failures, not one; nothing from this block has landed yet.
 
 ### Focus
 
@@ -42,7 +55,9 @@ into the kit per CLAUDE.md's consolidation rule once merged.
 Four items still need the user: exposing `core` in the dashboard (R-F),
 n8n in the proposal, and the four UI rulings tracked in
 `ai/resume-brief.md`. Hosted apply (L3) is gated on 014 passing retrofit QA
-first.
+first. Branch protection on `main` cannot be set at all on the current
+GitHub plan/visibility (403, confirmed 19:40) — needs a user decision to
+upgrade or make the repo public.
 
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 

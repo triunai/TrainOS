@@ -15,6 +15,73 @@
 
 ---
 
+## 2026-09-13 19:4x — PR #5/#6 open, RPC gap found, seeds and codex-review lanes, repo-name note
+
+**PR status (verified, not taken on trust).** PR #5 (`cloud/web-swap`) and PR
+#6 (`cloud/migrations`) are both open against `PARALLELPARADIGMS/alex-project`.
+The team lead reported PR #5's gates as "green except Gitleaks"; checking
+`gh pr checks 5` against run 34754549631 directly found that claim wrong —
+four checks fail, not one:
+
+1. **Gitleaks** — as reported: `gitleaks-action@v2` errors `missing gitleaks
+license` because the repo is an organisation repo and has no
+   `GITLEAKS_LICENSE` secret. `ci-gitleaks` (worktree `trainos-wt/ci-gitleaks`,
+   branch `ci/gitleaks`) is swapping the action for the pinned binary.
+2. **Prettier (drift check)** — real, unrelated drift in
+   `apps/web/scripts/check-barrels.mjs`; not mentioned in the report.
+3. **npm audit (high+)** — 8 real vulnerabilities (5 moderate, 1 high, 2
+   critical) in the `vite`/`vite-node` and `react-router`/`react-router-dom`
+   chains; `npm audit fix --force` would force a breaking
+   `react-router-dom@7.18.3` and needs a deliberate decision, not an
+   autofix; not mentioned in the report.
+4. **Vite build** — the build step itself passes; only the
+   `actions/upload-artifact@v4` step fails, on "Artifact storage quota has
+   been hit," a GitHub Actions account-level limit rather than a code
+   defect; not mentioned in the report.
+
+**RPC gap (confirmed).** PR #5 diffs in ten `RPC_NAMES` entries in
+`apps/web/src/shared/api/rpcClient.ts` with no SQL behind them:
+`patch_enquiry_extraction`, `list_follow_ups`, `get_follow_up_draft`,
+`list_proposals`, `add_proposal_section`, `put_proposal_section`,
+`regenerate_proposal_section`, `list_quotations`, `get_rate_card`,
+`get_audit`. `lane/rpc-018` is now implementing all ten as part of 018,
+marking "spec derived from client" wherever `docs/architecture/09` has no
+spec for one.
+
+**New lanes.** `seeds` (Opus, worktree `trainos-wt/seeds`, branch
+`lane/seeds`, shim port 5434): `supabase/seeds` fixture world, wipe script
+and pin, per the user's 19:27 goal "write seeds too for test purposes."
+`codex-review-011-013` (Codex gpt-5.6-sol xhigh via `codex-rescue`, worktree
+`trainos-wt/codex-011-013`, branch `review/codex-011-013`): D-012
+adversarial review of packs 011–013 to
+`docs/reviews/2026-09-13-codex-retrofit-011-013.md`; fallback order if Codex
+is unavailable is Kimi (not installed locally, effectively skipped) then a
+second Opus reviewer. Codex quota reported back at a 19:29 probe — not
+independently re-verified here.
+
+**Repo-name correction.** The GitHub repo is `PARALLELPARADIGMS/alex-project`,
+confirmed via `git remote -v`. "trainos" is only the local directory name and
+the `@trainos/*` npm package scope — nothing in the repo's GitHub identity.
+Recorded here and in `ai/workstreams.md`'s CI thread so a future session does
+not search GitHub for "trainos" and conclude the repo does not exist.
+
+**Also found, unprompted:** the CI AND BRANCH PROTECTION thread in
+`ai/workstreams.md` was itself stale — it said the pipeline "has never
+executed," which stopped being true once PR #5 and PR #6 started running
+seventeen jobs each. Corrected in place. Separately, branch protection on
+`main` cannot be configured at all on the repo's current plan/visibility:
+`gh api repos/.../branches/main/protection` returns 403 "Upgrade to GitHub
+Pro or make this repository public to enable this feature" — a decision for
+the user, not an implementation gap.
+
+**One thing worth telling future-me:** a lane's own status report is not
+verification. The team lead's "gates green except Gitleaks" was probably
+copied from Gitleaks being the most recently-seen failure rather than a full
+check of the run — three other real failures were sitting in the same `gh pr
+checks` output the whole time.
+
+---
+
 ## 2026-09-13 19:35 — correction: worktree paths for the 19:25 blast
 
 The 19:25 entry below named `lane/rpc-018`, `ui/tokens`, `ui/lists` and

@@ -43,6 +43,25 @@ remainder) are being written by cloud lane `cloud/migrations`, no PR yet as of
 worktree lane `lane/rpc-018` at `~/Repos/personal-work/trainos-wt/rpc-018`.
 Nothing has been applied to any hosted database.
 
+**018 scope grew 19:35+:** PR #5 (`cloud/web-swap`) found ten feature calls
+with no `TrainOsClient` method and added them to `RPC_NAMES` in
+`apps/web/src/shared/api/rpcClient.ts` without SQL behind them —
+`patch_enquiry_extraction`, `list_follow_ups`, `get_follow_up_draft`,
+`list_proposals`, `add_proposal_section`, `put_proposal_section`,
+`regenerate_proposal_section`, `list_quotations`, `get_rate_card`,
+`get_audit` (confirmed by diffing PR #5). `lane/rpc-018` has been told to
+implement all ten in 018, marking each "spec derived from client" where
+`docs/architecture/09` has no spec for it.
+
+**Adversarial review running in parallel:** `codex-review-011-013` (Codex
+gpt-5.6-sol xhigh via `codex-rescue`, worktree
+`~/Repos/personal-work/trainos-wt/codex-011-013`, branch
+`review/codex-011-013`) is doing the D-012 adversarial review of packs
+011–013, writing to `docs/reviews/2026-09-13-codex-retrofit-011-013.md`.
+Fallback order if Codex is unavailable: Kimi (not installed locally, so
+effectively skipped), then a second Opus reviewer. Codex quota was reported
+back as of a 19:29 probe (not independently verified here).
+
 ⚠ **Carried from the paused state, not re-verified this session.** Critic Part
 2 (7 CRITICAL, 29 HIGH against 001–009 as of 2026-09-12) — whether 010–013
 closed any of it is unconfirmed; recheck before 014 lands. `N-01`
@@ -51,7 +70,8 @@ closed any of it is unconfirmed; recheck before 014 lands. `N-01`
 a loud NOTICE on skip) were both still open as of the same date.
 
 **Refs:** `supabase/HANDOFF.md`, `supabase/migrations/migration-catalog.md`,
-`docs/architecture/01`–`06`, `D-102`, `D-111`, `D-112`, `D-113`.
+`docs/architecture/01`–`06`, `apps/web/src/shared/api/rpcClient.ts`, `D-102`,
+`D-111`, `D-112`, `D-113`.
 
 ---
 
@@ -74,12 +94,50 @@ api-phase plan references does not exist at repo root, and `pg_isready` on
 real client: `packages/contract`, the `TrainOsClient` seam in `apps/web`, and
 the hosted Supabase apply path.
 
-**State:** `cloud/web-swap` in flight, no PR yet. Hosted project
-`balzmmsmrawzmefkavte` is ACTIVE_HEALTHY with zero migrations applied. Still
-open for the user: `core` exposed in the dashboard (R-F), n8n in the proposal.
+**State:** `cloud/web-swap` opened PR #5 (`refactor(web): enquiries, proposals
+and approvals through the TrainOsClient seam`); PR #6 is `cloud/migrations`.
+Hosted project `balzmmsmrawzmefkavte` is ACTIVE_HEALTHY with zero migrations
+applied. Still open for the user: `core` exposed in the dashboard (R-F), n8n
+in the proposal.
+
+⚠ **PR #5's CI is not "green except Gitleaks."** Checked directly against the
+run (`gh pr checks 5`, run 34754549631) at 19:40: four checks fail, not one.
+**Gitleaks** — as reported: `gitleaks-action@v2` refuses to run on an org
+repo without a `GITLEAKS_LICENSE` secret; `ci-gitleaks` (worktree
+`~/Repos/personal-work/trainos-wt/ci-gitleaks`, branch `ci/gitleaks`) is
+swapping it for the pinned binary. **Prettier (drift check)** — real drift in
+`apps/web/scripts/check-barrels.mjs`, unrelated to Gitleaks, needs a format
+pass. **npm audit (high+)** — 8 real vulnerabilities (5 moderate, 1 high, 2
+critical) in the `vite`/`vite-node` and `react-router`/`react-router-dom`
+dependency chains; `npm audit fix --force` would pull a breaking
+`react-router-dom@7.18.3`, so this needs a deliberate call, not an auto-fix.
+**Vite build** — the build step itself passes; only the
+`actions/upload-artifact@v4` step fails, and it fails on
+`Artifact storage quota has been hit`, a GitHub Actions account-level limit,
+not a code defect. Merge order stays web-swap → migrations regardless.
 
 **Refs:** `ai/briefs/2026-09-13-api-phase-plan.md`, `ai/resume-brief.md`,
-`docs/architecture/07-api-layer-decision.md`.
+`docs/architecture/07-api-layer-decision.md`,
+`apps/web/src/shared/api/rpcClient.ts`.
+
+---
+
+## 🟢 SEEDS — new lane, fixture world for local/CI testing (2026-09-13)
+
+**Resume:** Read `ai/resume-brief.md` BLAST 19:25/19:4x entries, then whatever
+`lane/seeds` has committed under `supabase/seeds/`. Built against a shim on
+port 5434 (separate from the other lanes' shims) so it does not collide with
+`lane/rpc-018`'s or `cloud/migrations`'s. Serves the user's 19:27 goal, stated
+directly: "write seeds too for test purposes."
+
+**Scope:** `supabase/seeds/` — the fixture-world seed data, a wipe script, and
+an executable pin, mirroring the pattern the migrations already use.
+
+**State:** Launched at 19:2x (Opus, worktree
+`~/Repos/personal-work/trainos-wt/seeds`, branch `lane/seeds`). No commits
+reported yet.
+
+**Refs:** `ai/resume-brief.md`, `supabase/HANDOFF.md`.
 
 ---
 
@@ -170,7 +228,10 @@ Nothing has verified any lane against any other lane's output. Picked up from
 PARKED on 2026-09-13 once `d4ae83d` closed the consolidation: this is now the
 work that gates everything else, including the Supabase resume.
 
-⚠ **Every "green" in this repository is a local run.** See CI below.
+⚠ **Every "green" claimed before 2026-09-13 19:40 was a local run only.**
+CI now runs on every PR (see CI AND BRANCH PROTECTION below) and most jobs
+pass there too, but that does not retroactively verify anything merged
+earlier under a local-only claim.
 
 **Refs:** `docs/reviews/2026-09-12-ui-blast-lane-review.md`,
 `ai/findings-log.md`, `CLAUDE.md` execution protocols.
@@ -201,18 +262,31 @@ priority call.
 
 ---
 
-## ⛔ CI AND BRANCH PROTECTION — the pipeline has never executed (2026-09-12)
+## ⛔ CI AND BRANCH PROTECTION — CI runs on every PR now; required checks still cannot be set (2026-09-13)
 
-**Resume:** A person has to do this; nothing in this repository can. Create the
-remote, push, then mark the blocking checks required on `main` in the host's
-settings and set `VITE_SITE_URL` and `VITE_API_BASE_URL` as CI secrets. Only
-then is the first real run of the seventeen jobs meaningful.
+**Corrected 2026-09-13 ~19:40.** This thread's heading was stale: the pipeline
+is no longer untested. The repo is `PARALLELPARADIGMS/alex-project` on
+GitHub (not "trainos" — that name is only the local directory and the
+`@trainos/*` package scope; searching GitHub for "trainos" finds nothing).
+Confirmed directly against PR #5 (`gh pr checks 5`, run 34754549631, 19:40):
+seventeen jobs run on every PR, most passing. See API-PHASE above for PR #5's
+four real failures (Gitleaks license, Prettier drift, npm audit high+, Vite
+artifact-upload quota).
+
+**Resume:** Branch protection is still not achievable as things stand — a
+person confirmed this 19:40: `gh api repos/.../branches/main/protection`
+returns 403 "Upgrade to GitHub Pro or make this repository public to enable
+this feature." So required-checks-on-`main` needs either a plan upgrade or
+making the repo public, a decision for the user, before it can be set at all.
+`VITE_SITE_URL` and `VITE_API_BASE_URL` as CI secrets is unconfirmed either
+way — recheck before assuming they are set.
 
 **Scope:** `.github/workflows/ci.yml`, branch protection, CI secrets.
 
-**State:** Seventeen jobs are written, the summary job hard-fails on `failure`,
-`cancelled` **and** `skipped`, and the three Supabase-coupled checks run clean
-locally against migrations 001 to 009. None of that has ever run in CI.
+**State:** Seventeen jobs are written and now run on every PR to main (PR #5,
+PR #6 confirmed). The three Supabase-coupled checks passed on PR #5. What
+remains open: (1) branch protection is blocked on a plan/visibility decision,
+not implementation; (2) the four real failures on PR #5 above.
 
 ⚠ **This is the one blocker that makes every other green claim provisional.**
 The pipeline is decoration until the checks are required, and it is untested
