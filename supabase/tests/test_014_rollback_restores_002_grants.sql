@@ -25,6 +25,11 @@
 --   RUN IT AFTER `rollbacks/014_rls_policies_and_client_grants_rollback.sql`
 --   AND BEFORE RE-APPLYING 014.
 --
+-- Which in turn means 017, 016 and 015 have already been rolled back, because
+-- 014's rollback refuses to run while 017 is applied — 017 is built on 014 and
+-- rolling 014 back underneath it would revoke 017's five `core` grants with
+-- nothing to restore them, which is CRIT-2 one schema over.
+--
 -- It refuses to run at any other point rather than passing vacuously. A pin that
 -- silently no-ops when its subject is absent is the failure mode this repo's
 -- `test_073` and `test_074` shipped with.
@@ -173,10 +178,21 @@ $r2$;
 DO $r3$
 DECLARE v_left text;
 BEGIN
-  SELECT pg_catalog.string_agg(DISTINCT pg_catalog.format('%s.%s', table_schema, table_name), ', ')
+  -- has_table_privilege here too, not information_schema filtered by grantee.
+  -- R1 above already uses it and this used not to, which made the pin blind in
+  -- exactly the direction it spends twenty lines explaining: a
+  -- `GRANT SELECT ON core.enquiries TO PUBLIC` before the rollback runs would
+  -- leave this assertion green while `anon` read every enquiry in every tenant.
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format('%s.%s', n.nspname, c.relname), ', ' ORDER BY n.nspname, c.relname)
     INTO v_left
-    FROM information_schema.table_privileges
-   WHERE table_schema IN ('core','app') AND grantee IN ('authenticated','anon');
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname IN ('core','app') AND c.relkind IN ('r','v','m','p','f')
+     AND (has_table_privilege('authenticated', c.oid,
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+       OR has_table_privilege('anon', c.oid,
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'));
   ASSERT v_left IS NULL,
     pg_catalog.format('R3a FAIL: a client grant survives in core or app: %s', v_left);
 

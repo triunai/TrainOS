@@ -103,6 +103,23 @@ function stripComments(sql) {
 
 const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 
+/**
+ * The schema of the last `CREATE [OR REPLACE] FUNCTION <schema>.<name>` that
+ * starts before `index`, lowercased, or null if there is none. A bare
+ * `CREATE FUNCTION foo()` with no schema qualification returns null, which is
+ * correctly NOT `pg_temp`. A quoted `"pg_temp"` is accepted, because it names
+ * the same schema.
+ */
+function nearestPrecedingFunctionSchema(sql, index) {
+  const re = /create\s+(?:or\s+replace\s+)?function\s+(?:"([^"]+)"|([a-z_][a-z0-9_$]*))\s*\./gi;
+  let schema = null;
+  for (const m of sql.matchAll(re)) {
+    if (m.index >= index) break;
+    schema = (m[1] ?? m[2]).toLowerCase();
+  }
+  return schema;
+}
+
 /* ---------------------------------------------------------------- *
  * T1 / T2 — test files
  * ---------------------------------------------------------------- */
@@ -134,11 +151,15 @@ for (const file of sqlFiles(TESTS)) {
     // `pg_temp_3` or a schema a test creates for itself, because those are not
     // the per-session temp schema alias and are not covered by the reasoning
     // above.
-    const preceding = sql.slice(0, match.index);
-    const create = preceding.match(
-      /create\s+(?:or\s+replace\s+)?function\s+([a-z_][a-z0-9_$]*)\s*\.[^;]*$/i,
-    );
-    if (create && create[1].toLowerCase() === "pg_temp") continue;
+    // Pair this `security definer` with the NEAREST PRECEDING
+    // `CREATE FUNCTION <schema>.` and test THAT schema. An earlier version asked
+    // instead whether SOME preceding, semicolon-free CREATE was in pg_temp, which
+    // was wrong in both directions: a `pg_temp` helper whose body EXECUTEs a
+    // `CREATE FUNCTION core.x … SECURITY DEFINER` was excepted, and an ordinary
+    // `CREATE FUNCTION pg_temp.f() … AS $$ SELECT 1; $$ … SECURITY DEFINER` was
+    // flagged, because the body's own semicolon broke the anchor. There is no
+    // anchor now and the pairing is positional.
+    if (nearestPrecedingFunctionSchema(sql, match.index) === "pg_temp") continue;
 
     finding(
       "T1",

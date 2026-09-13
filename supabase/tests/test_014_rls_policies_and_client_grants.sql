@@ -927,6 +927,16 @@ RESET ROLE;
 
 -- Now re-grant the privilege this migration withholds, and try again. Inside the
 -- pin's transaction, so it is gone at ROLLBACK like every other fixture.
+--
+-- ⚠ AND THE COUNTERFACTUAL, which T13 and T14 both carry and an earlier version
+-- of this probe did not. "Deleted zero rows" is also what you get if
+-- `memberships_write_admin`'s USING stops matching the target row for an
+-- unrelated reason — somebody adds an aal2 term to its USING, where today there
+-- is only one in its WITH CHECK (002:751-756), or the fixture's role or tenant
+-- drifts. So the same DELETE is run twice: once with the restrictive policy
+-- standing, where it must delete nothing, and once with the policy dropped,
+-- where it MUST delete exactly one row. Only the pair proves the policy is what
+-- is refusing.
 GRANT DELETE ON public.memberships TO authenticated;
 SELECT pg_catalog.set_config('request.jwt.claims',
   (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
@@ -938,6 +948,30 @@ SELECT pg_catalog.set_config('t014.admin_delete_with_grant',
        RETURNING 1)
     SELECT to_jsonb(pg_catalog.count(*)) FROM d$$)::text, true);
 RESET ROLE;
+
+-- The counterfactual: same grant, same caller, same statement, policy removed.
+DROP POLICY memberships_no_client_delete ON public.memberships;
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.admin_delete_without_policy',
+  pg_temp.t014_try_value($$WITH d AS (
+      DELETE FROM public.memberships
+       WHERE user_id = '00000014-0000-0000-0000-0000000000a3'::uuid
+       RETURNING 1)
+    SELECT to_jsonb(pg_catalog.count(*)) FROM d$$)::text, true);
+RESET ROLE;
+
+-- Put both back. The membership row the counterfactual just deleted has to come
+-- back too, or every assertion after this one is measuring a database the pin
+-- broke rather than the one 014 built.
+CREATE POLICY memberships_no_client_delete ON public.memberships
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (false);
+INSERT INTO public.memberships
+  (tenant_id,user_id,role,actor_kind,agent_id,status,is_default)
+VALUES ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a3',
+        'ADMIN','HUMAN',NULL,'ACTIVE',true)
+ON CONFLICT (tenant_id,user_id) DO NOTHING;
 REVOKE DELETE ON public.memberships FROM authenticated;
 
 DO $t11$
@@ -946,6 +980,7 @@ DECLARE
   v_other   jsonb := pg_catalog.current_setting('t014.admin_other_delete')::jsonb;
   v_soft    jsonb := pg_catalog.current_setting('t014.admin_soft_remove')::jsonb;
   v_granted jsonb := pg_catalog.current_setting('t014.admin_delete_with_grant')::jsonb;
+  v_without jsonb := pg_catalog.current_setting('t014.admin_delete_without_policy')::jsonb;
   v_role    text;
 BEGIN
   -- T11a · the privilege itself, resolved through role inheritance and PUBLIC.
@@ -999,6 +1034,16 @@ BEGIN
       'and it did not. Result: %s',
       COALESCE((v_granted->'value')::text,'?'), v_granted::text);
 
+  -- T11f1 · the counterfactual. Without the policy the SAME statement deletes the
+  -- row, so T11f's zero is the policy refusing and not the statement missing.
+  ASSERT (v_without->>'ok')::boolean
+     AND (v_without->'value')::text = '1',
+    pg_catalog.format('T11f1 FAIL: with memberships_no_client_delete DROPPED and '
+      'DELETE granted, the aal2 ADMIN still deleted %s row(s) instead of 1. That '
+      'means T11f''s zero above was not the policy refusing — the DELETE was not '
+      'matching the row for some other reason, and this whole probe proves '
+      'nothing. Result: %s', COALESCE((v_without->'value')::text,'ERROR'), v_without::text);
+
   SELECT m.role::text INTO v_role FROM public.memberships m
    WHERE m.user_id = '00000014-0000-0000-0000-0000000000a3';
   ASSERT v_role = 'ADMIN',
@@ -1007,8 +1052,9 @@ BEGIN
   RAISE NOTICE
     'T11 PASS - DELETE on public.memberships is not granted, an aal2 ADMIN is '
     'refused at 42501 for their own row and for another member''s, the soft-remove '
-    'UPDATE 002 prescribes still works, and with the privilege deliberately '
-    're-granted the restrictive policy still deletes nothing.';
+    'UPDATE 002 prescribes still works, with the privilege deliberately re-granted '
+    'the restrictive policy still deletes nothing, and with that policy dropped '
+    'the same statement deletes exactly one row — so the zero was the policy.';
 END;
 $t11$;
 

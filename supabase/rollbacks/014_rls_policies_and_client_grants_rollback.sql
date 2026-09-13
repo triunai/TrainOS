@@ -40,7 +40,7 @@
 --     and that is exactly why nothing here uses a wildcard. Asserted present at
 --     the end.
 --   * 002's fourteen `public.*` policies and the three `app.*` definer-read
---     policies. Same reasoning, same assertion. 014's own fifteenth policy on
+--     policies (002:286, 004:426, 012:896 — three policies, not three from 002). Same reasoning, same assertion. 014's own fifteenth policy on
 --     `public.memberships` IS dropped here, by name, which is what returns that
 --     count to fourteen.
 --   * 002's five `public.*` grant sets (002:696-701) and 002:665's SELECT for
@@ -69,6 +69,41 @@ BEGIN
   END IF;
   IF pg_catalog.to_regclass('core.autonomy_grants') IS NULL THEN
     RAISE EXCEPTION 'ROLLBACK 014 refused: core.autonomy_grants is absent; 011 is not intact.';
+  END IF;
+
+  -- ⚠ REFUSE WHILE ANYTHING THAT DEPENDS ON 014 IS STILL APPLIED.
+  --
+  -- 017 is built on top of 014: its own preflight refuses unless
+  -- `app.apply_tenant_policies` exists, it CALLS that function for three of its
+  -- tables, and it grants SELECT on five `core` relations that did not exist when
+  -- 014 ran. Rolling 014 back underneath it would do three separate kinds of
+  -- damage, and an earlier version of this file did all three:
+  --
+  --   * `REVOKE ALL ON ALL TABLES IN SCHEMA core` would take 017:1187-1191's five
+  --     grants — grants 014 never created and nothing re-grants — and the
+  --     post-condition below would then certify zero client privilege in `core`
+  --     as the correct restored state. That is CRIT-2 exactly, one schema over.
+  --   * 017's six tenant policies carry no `migration:014` stamp, so the manifest
+  --     loop leaves them standing on tables whose policy function has just been
+  --     dropped, and the post-conditions fire on the leftovers.
+  --   * the derived manifest count is computed from the tenant-scoped table count
+  --     AS IT STANDS, which includes 017's three, and disagrees with the stamped
+  --     set by exactly six.
+  --
+  -- The answer is not for 014's rollback to learn 017's grant list — a rollback
+  -- that knows about later migrations is a rollback that needs editing every time
+  -- one lands, and it would still leave 017's policies pointing at a function it
+  -- had just dropped. The answer is the order this file's own header states: roll
+  -- back 017, then 016, then 015, then this. So it refuses, loudly, with the
+  -- order in the message, instead of succeeding and reporting a restored database.
+  IF pg_catalog.to_regclass('core.tax_policies') IS NOT NULL THEN
+    RAISE EXCEPTION
+      'ROLLBACK 014 refused: migration 017 is still applied (core.tax_policies '
+      'exists). 017 is built on 014 — it calls app.apply_tenant_policies and '
+      'grants SELECT on five core relations 014 never created. Rolling 014 back '
+      'first would revoke those grants with nothing to restore them and leave '
+      '017''s policies attached to a function this file is about to drop. Roll '
+      'back in reverse order: 017, then 016, then 015, then 014.';
   END IF;
 END;
 $preflight$;
@@ -276,6 +311,12 @@ BEGIN
   -- And nothing shaped like one is left either, stamp or no stamp. A policy that
   -- 014 created but failed to stamp would pass the check above and still be a
   -- leftover; this is the check that does not trust the manifest.
+  --
+  -- It is safe to sweep by NAME here, where the drop loop above is not, precisely
+  -- because of the preflight: the only other migration that creates policies in
+  -- this shape is 017, and this file refuses to run while 017 is applied. If a
+  -- later migration starts calling app.apply_tenant_policies, it joins that
+  -- preflight — one more `to_regclass` guard — rather than joining this sweep.
   SELECT pg_catalog.string_agg(pg_catalog.format('%s.%s', c.relname, p.polname), ', ')
     INTO v_left
     FROM pg_catalog.pg_policy p
@@ -309,10 +350,20 @@ BEGIN
   -- post-condition that follows asserts 002's set is PRESENT. These two checks
   -- are deliberately opposite in shape for the two schemas, because the two
   -- schemas had opposite starting states.
-  SELECT pg_catalog.string_agg(DISTINCT pg_catalog.format('%s.%s', table_schema, table_name), ', ')
+  -- has_table_privilege here too, for the same reason R1 below uses it: a
+  -- privilege granted to PUBLIC is inherited by both client roles and appears in
+  -- information_schema.table_privileges under NEITHER name, so the old spelling
+  -- would report a clean `core` while `anon` could read every enquiry.
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format('%s.%s', n.nspname, c.relname), ', ' ORDER BY n.nspname, c.relname)
     INTO v_left
-    FROM information_schema.table_privileges
-   WHERE table_schema IN ('core','app') AND grantee IN ('authenticated','anon');
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname IN ('core','app') AND c.relkind IN ('r','v','m','p','f')
+     AND (has_table_privilege('authenticated', c.oid,
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+       OR has_table_privilege('anon', c.oid,
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'));
   IF v_left IS NOT NULL THEN
     RAISE EXCEPTION 'ROLLBACK 014 incomplete: client grants survive on: %', v_left;
   END IF;
@@ -369,6 +420,13 @@ BEGIN
     JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'public';
+  -- Literals, not derivations, and deliberately so — unlike the manifest count
+  -- above, which had to be derived because re-applying 014 legitimately moves it.
+  -- These three numbers are fixed by migrations that have already run and cannot
+  -- move while this file's preflight holds: 002 authors fourteen policies on
+  -- `public`, 002/004/012 author three on `app`, and `core` is left with 011's
+  -- H-02 alone. A change to any of them is a change to an earlier migration and
+  -- SHOULD stop this rollback until somebody has looked at it.
   IF v_n <> 14 THEN
     RAISE EXCEPTION
       'ROLLBACK 014: public.* should carry 002''s fourteen policies and carries %', v_n;
@@ -381,7 +439,8 @@ BEGIN
    WHERE n.nspname = 'app';
   IF v_n <> 3 THEN
     RAISE EXCEPTION
-      'ROLLBACK 014: app.* should carry the three definer-read policies and carries %', v_n;
+      'ROLLBACK 014: app.* should carry its three definer-read policies '
+      '(002:286, 004:426, 012:896) and carries %', v_n;
   END IF;
 
   -- Back to deny-all: exactly one policy left in core, and it is 011's.
@@ -395,7 +454,10 @@ BEGIN
       'ROLLBACK 014: core should be back to 011''s single policy and carries %', v_n;
   END IF;
 
-  RAISE NOTICE 'ROLLBACK 014: OK — core and app are deny-all again, 002''s five \npublic.* grant sets are back privilege-for-privilege, and 011''s and 002''s \npolicies are intact';
+  RAISE NOTICE
+    'ROLLBACK 014: OK — core and app are deny-all again, 002''s five public.* '
+    'grant sets are back privilege-for-privilege, anon''s USAGE on core is '
+    'restored, and 011''s and 002''s policies are intact';
 END;
 $verify$;
 

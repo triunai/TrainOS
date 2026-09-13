@@ -25,7 +25,7 @@
 --   authenticated EXECUTE on functions: 15, all in `app` — 002:626-640.
 --   schema USAGE for authenticated: `app`, `public` AND `core`, all from
 --     001:190/231/232, which grants `core` to anon and service_role too.
---   policies already standing: 14 on `public` (002), 3 on `app` (002),
+--   policies already standing: 14 on `public` (002), 3 on `app` (002:286, 004:426, 012:896),
 --     1 on `core` (011's H-02 kill switch).
 --
 -- WHY THAT MATTERED RATHER THAN BEING A TIDINESS PROBLEM. The false premise is
@@ -86,8 +86,15 @@
 --       except the one on `public.memberships`) plus 011's H-02 kill switch.
 --   15 policies on `public`: 002's fourteen plus 014's one.
 --
---   Every figure above was read back off a clean 001-014 apply, not counted by
---   hand off this file.
+--   ⚠ EVERY FIGURE ABOVE DESCRIBES A CLEAN 001-014 DATABASE, read back off one
+--   rather than counted by hand off this file. THE PIN'S T1 COUNTS A DIFFERENT
+--   STATE — 001-017, because that is what the harness applies — so T1 asserts 116
+--   policy pairs and 121 `core` SELECT grants where this header says 113 and 114.
+--   Both are right about their own database and neither is a correction of the
+--   other: 017 adds three tenant-scoped tables and five granted relations. §6
+--   derives rather than asserting a literal, so it is correct in both states; T1's
+--   literals are pinned to the post-017 state on purpose, and the catalog records
+--   that as the 017 amendment pass.
 --   114 `core` tables granted SELECT; 2 of the 5 `core` views granted, not 4 —
 --       the other three are explicitly REVOKED here and each has its reason
 --       written beside it.
@@ -179,17 +186,26 @@
 -- `core.get_approval` are 018's to write over it; 014 leaves the relation in the
 -- state their definer bodies require.
 --
--- The other four views (`core.audit_entries`, `budget_status`,
--- `model_tier_status`, `v_contact_consent_current`) ARE granted SELECT. All four
--- are `security_invoker=true`, so each one re-runs the underlying tables' policies
--- as the caller and inherits tenant isolation from them rather than needing its
--- own. That is a property, not a hope, and T4 measures it by reading each view as
--- two different tenants.
+-- ⚠ THE OTHER FOUR VIEWS ARE NOT ALL GRANTED, WHICH IS WHAT AN EARLIER VERSION
+-- OF THIS PARAGRAPH SAID. TWO ARE: `core.audit_entries` and
+-- `core.v_contact_consent_current`. `core.budget_status` and
+-- `core.model_tier_status` are explicitly REVOKED in §4 with their reason — they
+-- are `security_invoker` over `app.usage_rollup`, which no client role can read,
+-- so a grant on them delivers a permission error rather than a row. Measured:
+-- `has_table_privilege('authenticated', …, 'SELECT')` is false for both.
+--
+-- The two that ARE granted are `security_invoker=true`, so each re-runs the
+-- underlying tables' policies as the caller and inherits tenant isolation rather
+-- than needing its own. §4 asserts that flag on every `core` view before granting
+-- anything, because Postgres creates a view SECURITY DEFINER by default and one
+-- that lost the flag in a later edit would bypass every policy above it and look
+-- identical in `\dv`. T5 measures the isolation by reading as two tenants; T4 is
+-- the `anon` test.
 --
 -- ── WHAT THE THREE WRAPPERS DO AND DO NOT DO ────────────────────────────────
 --
 -- `app.perform_action`, `app.decide_approval` and `app.bulk_decide` are granted to
--- `service_role` only (011:3408-3415) and `app` is not in PostgREST's exposed
+-- `service_role` only (011:3408-3413) and `app` is not in PostgREST's exposed
 -- schemas, so a browser cannot reach them at all. The wrappers are what make them
 -- reachable, and they are one line each on purpose:
 --
@@ -342,6 +358,7 @@ DECLARE
   v_notnull    boolean;
   v_read       text;
   v_write      text;
+  v_existing   text;
   v_select_pol text := p_table || '_tenant_select';
   v_iso_pol    text := p_table || '_tenant_isolation';
   v_gate       text := '';
@@ -420,7 +437,7 @@ BEGIN
   -- copy of 002's permission catalogue that nothing keeps in step with the first.
   -- The `(SELECT ...)` wrapper is the InitPlan form used throughout this file:
   -- one evaluation per statement, not per row.
-  IF p_permission IS NOT NULL THEN
+  IF p_permission IS NOT NULL AND p_permission <> 'UNGATE' THEN
     IF NOT EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.permission = p_permission) THEN
       RAISE EXCEPTION
         'apply_tenant_policies: permission % names no row in app.role_permissions, '
@@ -428,6 +445,40 @@ BEGIN
         'can satisfy is a broken screen, not security.', p_permission, p_schema, p_table;
     END IF;
     v_gate := pg_catalog.format(' AND (SELECT app.has_permission(%L))', p_permission);
+  ELSE
+    -- ⚠ A TWO-ARGUMENT CALL MUST NOT BE ABLE TO STRIP AN EXISTING GATE.
+    --
+    -- This function is DROP-then-CREATE by design, so the obvious spelling —
+    -- `SELECT app.apply_tenant_policies('core','run_node_io')`, one line,
+    -- identical to the three calls 017 already ships — would replace a gated
+    -- isolation policy with an ungated one and hand every principal of the tenant
+    -- the raw agent prompt and completion text back. Nothing would fail: the
+    -- policy would exist, the pin would not be running, and §6's check would not
+    -- run again until somebody re-applied 014.
+    --
+    -- A security control that three documented callers can delete by accident is
+    -- not a control, so the function refuses instead. It reads the gate out of the
+    -- policy it is about to drop — the database is the manifest, the same way the
+    -- rollback's `migration:014` stamp is — and makes removing one a thing you
+    -- have to write down.
+    SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) INTO v_existing
+      FROM pg_catalog.pg_policy p
+     WHERE p.polrelid = v_oid AND p.polname = v_iso_pol;
+
+    IF v_existing IS NOT NULL AND pg_catalog.strpos(v_existing, 'has_permission') > 0 THEN
+      RAISE EXCEPTION
+        'apply_tenant_policies: %.% already carries a role gate and this call '
+        'passes no permission, which would silently remove it. Its current '
+        'isolation predicate is: %. Pass the same permission again to keep the '
+        'gate, pass a different one to change it, or pass the literal string '
+        '''UNGATE'' to remove it on purpose.', p_schema, p_table, v_existing;
+    END IF;
+  END IF;
+
+  -- The deliberate escape hatch, spelled so it cannot be typed by accident and
+  -- shows up in a diff as what it is.
+  IF p_permission = 'UNGATE' THEN
+    v_gate := '';
   END IF;
 
   -- Idempotent by DROP-then-CREATE rather than by a pg_policy lookup: a policy
@@ -518,7 +569,7 @@ COMMENT ON FUNCTION app.require_tenant_id() IS
 -- that matters: the new table would be deny-all and someone would "fix" it by
 -- hand, off-pattern, in a migration about something else. Driving from
 -- pg_class means a table added later and finalised by 004 is either covered by
--- re-running this loop or caught by §7's sweep, and never quietly half-covered.
+-- re-running this loop or caught by §6's check (1), and never quietly half-covered.
 --
 -- `core.provenance_subjects` is excluded by name and handled in §3.
 
@@ -528,9 +579,25 @@ DECLARE
   v_count   integer := 0;
 BEGIN
   FOR r IN
-    SELECT c.relname
+    SELECT c.relname, g.perm, g.why
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      -- ⚠ THE GATED SET, DECLARED ONCE AND NOWHERE ELSE. §4b explains which
+      -- tables these are and why each one is here; this is the only list, and it
+      -- is consulted on the SAME pass that creates the policies rather than by a
+      -- second pass that re-creates them. A second pass would have to call
+      -- app.apply_tenant_policies with two arguments for the other 110 tables and
+      -- three arguments for these, and the function now refuses the two-argument
+      -- spelling on a table that already carries a gate — correctly, because that
+      -- spelling is how a later migration would strip one by accident.
+      LEFT JOIN (VALUES
+        ('ai_provider_keys',    'ai:provider:read',
+         'masked key prefix, fingerprint and key_ref; 002:1135 makes ai:provider:read ADMIN-only'),
+        ('run_node_io',         'run:read',
+         'raw agent prompt and completion text; 002:1116/1212 make run:read MD and ADMIN only'),
+        ('public_share_tokens', 'portal:token:issue',
+         'the portal token hashes and which proposal or TNA each opens; 002 gives portal:token:issue to SALES, SALES_MANAGER, MD and ADMIN')
+      ) AS g(relname, perm, why) ON g.relname = c.relname
      WHERE n.nspname = 'core'
        AND c.relkind = 'r'
        AND EXISTS (
@@ -539,7 +606,7 @@ BEGIN
                 AND a.attnum > 0 AND NOT a.attisdropped)
      ORDER BY c.relname
   LOOP
-    PERFORM app.apply_tenant_policies('core', r.relname);
+    PERFORM app.apply_tenant_policies('core', r.relname, r.perm);
 
     -- ⚠ THE MANIFEST. Each policy is stamped with the migration that created it,
     -- in its COMMENT, and the rollback drops by that stamp rather than by the
@@ -560,8 +627,15 @@ BEGIN
     EXECUTE pg_catalog.format(
       'COMMENT ON POLICY %I ON core.%I IS %L',
       r.relname || '_tenant_isolation', r.relname,
-      'migration:014 — restrictive FOR ALL tenant isolation. Correct on the day '
-      'somebody grants a write, which is the only day it decides anything.');
+      CASE WHEN r.perm IS NULL THEN
+        'migration:014 — restrictive FOR ALL tenant isolation. Correct on the day '
+        'somebody grants a write, which is the only day it decides anything.'
+      ELSE
+        pg_catalog.format(
+          'migration:014 — restrictive FOR ALL tenant isolation AND role gate on %s: %s. '
+          'Tenant membership is not sufficient authorization on this table.',
+          r.perm, r.why)
+      END);
 
     v_count := v_count + 1;
   END LOOP;
@@ -609,7 +683,7 @@ COMMENT ON POLICY provenance_subjects_read ON core.provenance_subjects IS
 -- table it touches. It fired on the first run, on exactly one relation:
 --
 --   `core.rule_set_versions` is the one table in 009 that was hand-rolled instead
---   of being passed through `app.finalise_table`. 009:229-236 re-implements the
+--   of being passed through `app.finalise_table`. 009:229-237 re-implements the
 --   RLS enable, the FORCE, the revoke, the updated_at trigger and the immutable
 --   trigger inline, and in doing so drops the two things the finaliser also does
 --   and a hand copy forgets: the tenant index, and the composite
@@ -785,6 +859,17 @@ $views$;
 -- on `core` today, so the write half decides nothing now and is already correct
 -- on the day that changes.
 --
+-- WHERE THE GATE IS ACTUALLY APPLIED, AND WHY NOT HERE. The three permissions are
+-- carried by the LEFT JOIN in §2's loop, so a gated table is created gated on the
+-- first pass. This block only CHECKS. An earlier version re-applied the three
+-- tables here with a second call, which meant the same table was created ungated
+-- and then gated a moment later — a window inside one transaction, invisible, and
+-- the kind of thing that stops being invisible the first time somebody runs half
+-- a migration by hand. `app.apply_tenant_policies` now refuses a two-argument
+-- call against a table that already carries a gate, which also made that second
+-- pass impossible: the refusal is the point, because that two-argument spelling
+-- is exactly how a future migration would strip one of these by accident.
+--
 -- WHY `app.has_permission` AND NOT A ROLE LIST. It is SECURITY DEFINER over
 -- app.role_permissions (002), which `authenticated` cannot read directly, and it
 -- is already granted EXECUTE to `authenticated` (002:637) — so it is runnable
@@ -794,43 +879,33 @@ $views$;
 -- form the rest of this file uses: one evaluation per statement, not per row.
 DO $role_gates$
 DECLARE
-  r pg_catalog.record;
+  r      pg_catalog.record;
+  v_qual text;
 BEGIN
   FOR r IN
-    SELECT relname, perm, why FROM (VALUES
-      ('ai_provider_keys',    'ai:provider:read',
-       'masked key prefix, fingerprint and key_ref; 002:1135 makes ai:provider:read ADMIN-only'),
-      ('run_node_io',         'run:read',
-       'raw agent prompt and completion text; 002:1116/1212 make run:read MD and ADMIN only'),
-      ('public_share_tokens', 'portal:token:issue',
-       'the portal token hashes and which proposal or TNA each opens; 002 gives portal:token:issue to SALES, SALES_MANAGER, MD and ADMIN')
-    ) AS t(relname, perm, why)
+    SELECT relname, perm FROM (VALUES
+      ('ai_provider_keys',    'ai:provider:read'),
+      ('run_node_io',         'run:read'),
+      ('public_share_tokens', 'portal:token:issue')
+    ) AS t(relname, perm)
   LOOP
-    IF pg_catalog.to_regclass(pg_catalog.format('core.%I', r.relname)) IS NULL THEN
+    SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) INTO v_qual
+      FROM pg_catalog.pg_policy p
+      JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'core' AND c.relname = r.relname
+       AND p.polname = r.relname || '_tenant_isolation';
+
+    IF v_qual IS NULL OR pg_catalog.strpos(v_qual, r.perm) = 0 THEN
       RAISE EXCEPTION
-        '014: core.% does not exist, so the role gate it needs cannot be created '
-        'and §4 is about to grant SELECT on a sensitive table with no gate.', r.relname;
+        '014 §4b: core.% did not come out of §2''s loop carrying its % gate. The '
+        'gated set is the LEFT JOIN in §2 and this block only checks it; if the '
+        'table was renamed or dropped from that list, §4 is about to grant SELECT '
+        'on it to every principal of the tenant. Predicate: %',
+        r.relname, r.perm, COALESCE(v_qual, 'NO POLICY');
     END IF;
-
-    -- Re-runs the SAME function §2 ran, with the permission this time. It is a
-    -- DROP-then-CREATE inside, so this replaces the ungated pair §2 left rather
-    -- than layering on top of it — which is why this block has to come AFTER §2's
-    -- loop and not before.
-    PERFORM app.apply_tenant_policies('core', r.relname, r.perm);
-
-    EXECUTE pg_catalog.format(
-      'COMMENT ON POLICY %I ON core.%I IS %L',
-      r.relname || '_tenant_select', r.relname,
-      'migration:014 — permissive tenant-scoped SELECT. Narrowed by the '
-      'restrictive isolation policy beside it, which carries a permission term.');
-    EXECUTE pg_catalog.format(
-      'COMMENT ON POLICY %I ON core.%I IS %L',
-      r.relname || '_tenant_isolation', r.relname,
-      pg_catalog.format(
-        'migration:014 — restrictive FOR ALL tenant isolation AND role gate: %s. '
-        'Tenant membership is not sufficient authorization on this table.', r.why));
   END LOOP;
-  RAISE NOTICE '014: role gates folded into the isolation policy of 3 sensitive core tables';
+  RAISE NOTICE '014: 3 sensitive core tables carry a permission term in their isolation policy';
 END;
 $role_gates$;
 
@@ -893,9 +968,9 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC, anon;
 -- withholds DELETE deliberately, and the DELETE would have been a privilege
 -- escalation with a clean audit trail, by this route:
 --
---   `memberships_write_admin` (002:749) is `FOR ALL`, so its USING clause — tenant
+--   `memberships_write_admin` (002:750) is `FOR ALL`, so its USING clause — tenant
 --   match AND role = 'ADMIN', with NO aal2 term — already permits a DELETE.
---   `memberships_no_self_edit` (002:763), the RESTRICTIVE policy 002's own comment
+--   `memberships_no_self_edit` (002:764), the RESTRICTIVE policy 002's own comment
 --   calls "THE escalation stop", is `FOR UPDATE` ONLY. It never sees a DELETE.
 --   So an ADMIN holding the DELETE privilege could delete their own membership row
 --   and INSERT a replacement naming a higher role: `app.role()` reads the JWT, not
@@ -1043,7 +1118,7 @@ COMMENT ON FUNCTION core.bulk_decide_approvals(uuid[],text,text,text) IS
 
 -- The underlying app functions keep their 011 grants EXACTLY. Doc 09 §1: "All
 -- three are granted to `service_role` only (011:3408-3415). The wrapper is what
--- makes them reachable; the underlying grant must not change." §7 re-derives that
+-- makes them reachable; the underlying grant must not change." §6's check (7) re-derives that
 -- rather than trusting this comment.
 
 -- ============================================================================
