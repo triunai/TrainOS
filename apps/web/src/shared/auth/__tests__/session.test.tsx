@@ -170,6 +170,20 @@ describe("sign-in page", () => {
     expect(google).toBeEnabled();
   });
 
+  it("offers no Google button until it knows whether the reader is already signed in", async () => {
+    let resolve: (value: typeof ALEX | null) => void = () => undefined;
+    const port = fakeAuth(null, {
+      currentUser: () => new Promise((settle) => (resolve = settle)),
+    });
+    renderAt(`${SIGN_IN_PATH}?next=${encodeURIComponent("/approvals")}`, port);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Checking your session");
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+
+    resolve(ALEX);
+    expect(await screen.findByText("Approval inbox")).toBeVisible();
+  });
+
   it("sends an already signed-in reader straight on", async () => {
     renderAt(`${SIGN_IN_PATH}?next=${encodeURIComponent("/approvals")}`, fakeAuth(ALEX));
     expect(await screen.findByText("Approval inbox")).toBeVisible();

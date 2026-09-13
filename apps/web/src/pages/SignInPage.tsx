@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
-import { AuthShell, GoogleGlyph, PrimaryButton } from "@/shared/components/kit";
+import { AuthShell, GoogleGlyph, LoadingState, PrimaryButton } from "@/shared/components/kit";
 import { DEFAULT_ROUTE_PATH } from "@/shared/config/nav";
 import { safeReturnPath, useAuth } from "@/shared/auth";
 
@@ -24,6 +24,17 @@ export function SignInPage() {
 
   if (auth?.session.status === "signedIn") {
     return <Navigate to={next ?? DEFAULT_ROUTE_PATH} replace />;
+  }
+
+  /* Until the stored session has been read, a signed-in reader would see the
+     Google button for a frame before being sent on. Hold on the same state
+     the route guard shows. */
+  if (auth?.session.status === "loading") {
+    return (
+      <div className="min-h-dvh bg-canvas">
+        <LoadingState label="Checking your session" />
+      </div>
+    );
   }
 
   const start = async () => {
