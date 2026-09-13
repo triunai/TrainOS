@@ -19,6 +19,21 @@ describe("loadConfig", () => {
     expect(config.heartbeatSeconds).toBe(100);
   });
 
+  it("refuses a heartbeat that is not strictly shorter than the lease (T16)", () => {
+    // Previously WORKER_HEARTBEAT_SECONDS was clamped against MAX_LEASE_SECONDS
+    // (360) instead of the configured lease, so a 60s-lease/300s-heartbeat
+    // configuration was silently accepted and did the work S4 warns about.
+    expect(() =>
+      loadConfig({ ...BASE, WORKER_LEASE_SECONDS: "60", WORKER_HEARTBEAT_SECONDS: "300" }),
+    ).toThrow(/WORKER_HEARTBEAT_SECONDS.*WORKER_LEASE_SECONDS/);
+  });
+
+  it("refuses a heartbeat equal to the lease, not just one that exceeds it", () => {
+    expect(() =>
+      loadConfig({ ...BASE, WORKER_LEASE_SECONDS: "60", WORKER_HEARTBEAT_SECONDS: "60" }),
+    ).toThrow(/WORKER_HEARTBEAT_SECONDS.*WORKER_LEASE_SECONDS/);
+  });
+
   it("refuses a lease 012 would raise on", () => {
     expect(() =>
       loadConfig({ ...BASE, WORKER_LEASE_SECONDS: String(MAX_LEASE_SECONDS + 1) }),
