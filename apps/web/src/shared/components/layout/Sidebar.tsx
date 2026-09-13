@@ -2,10 +2,10 @@ import { useMemo } from "react";
 import { NavLink } from "react-router-dom";
 import type { Role } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { Collapse } from "@/shared/components/kit";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
 import { getNavGroups } from "@/shared/config/nav";
 import { NavBadge } from "./NavBadge";
-import { NavCollapse } from "./NavCollapse";
 import { SidebarFooter } from "./SidebarFooter";
 import { useNavSelection } from "./useNavSelection";
 import { useSidebarState } from "./useSidebarState";
@@ -163,7 +163,7 @@ export function Sidebar({ role }: { role: Role }) {
                   )}
 
                   {leaf || collapsed ? null : (
-                    <NavCollapse open={open} id={panelId}>
+                    <Collapse open={open} id={panelId}>
                       {/* Every scrap of spacing sits on the list, inside the
                           clipped row, so a closed group is exactly 0px. */}
                       <ul className="flex flex-col gap-0.5 pt-0.5">
@@ -189,7 +189,7 @@ export function Sidebar({ role }: { role: Role }) {
                           );
                         })}
                       </ul>
-                    </NavCollapse>
+                    </Collapse>
                   )}
                 </div>
               );

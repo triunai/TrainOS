@@ -150,7 +150,7 @@ export { AIChip, AIBadge, type AIChipProps } from "./AIChip";
 export { ProvenanceBlock, ProvenancePanel, type ProvenanceBlockProps } from "./ProvenanceBlock";
 export { AutonomyChip, type AutonomyChipProps } from "./AutonomyChip";
 export { TierChip, type TierChipProps } from "./TierChip";
-export { JuryChip, type JuryChipProps } from "./JuryChip";
+export { JuryChip, describeJuryPolicy, type JuryChipProps } from "./JuryChip";
 export { CitationChip, type CitationChipProps } from "./CitationChip";
 export { RefChip, type RefChipProps } from "./RefChip";
 
@@ -176,6 +176,13 @@ export {
 export { AgentRunCard, type AgentRunCardProps } from "./AgentRunCard";
 export { RunStepRow, type RunStepRowProps } from "./RunStepRow";
 export { RunEventRow, type RunEventRowProps } from "./RunEventRow";
+export {
+  Collapse,
+  DisclosureButton,
+  type CollapseProps,
+  type DisclosureButtonProps,
+} from "./Collapse";
+
 export { CommandPalette, type CommandPaletteProps } from "./CommandPalette";
 export { Drawer, type DrawerProps } from "./Drawer";
 export { ConfirmDialog, type ConfirmDialogProps } from "./ConfirmDialog";

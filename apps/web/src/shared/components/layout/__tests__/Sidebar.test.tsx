@@ -120,7 +120,7 @@ describe("Sidebar", () => {
 
   it("uses indent and one selected treatment, and no third hierarchy device", () => {
     const { container } = renderAt("/training/programmes");
-    const panel = container.querySelector(".nav-collapse");
+    const panel = container.querySelector("[data-open]");
     const list = within(panel as HTMLElement).getByRole("list");
 
     /* No connector rule down the children, and no bullet per row. */

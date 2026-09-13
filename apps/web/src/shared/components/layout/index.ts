@@ -9,7 +9,6 @@ export { useBadgeCounts, useUnreadCount } from "./useBadgeCounts";
 export { Sidebar } from "./Sidebar";
 export { Topbar } from "./Topbar";
 export { NavBadge } from "./NavBadge";
-export { NavCollapse } from "./NavCollapse";
 export { SidebarFooter } from "./SidebarFooter";
 export { selectNav, useNavSelection, type NavSelection } from "./useNavSelection";
 export { useSidebarState, type SidebarState } from "./useSidebarState";
