@@ -434,6 +434,81 @@ BEGIN
 END;
 $fn$;
 
+-- ── Saved-view resolution, extracted ────────────────────────────────────────
+--
+-- `core.list_follow_ups`, `core.list_proposals` and `core.list_quotations` all
+-- DECLARED `p_view text DEFAULT NULL` and never read the variable. A reader who
+-- saved a view restricting them to their own proposals and asked for it got
+-- EVERY proposal in the tenant, with `appliedFilters: []`, `success: true`, and
+-- no error. That is the exact failure §5 of this file forbids in its own words:
+-- "FAIL CLOSED … never an ignored clause: ignoring a filter shows rows the
+-- reader explicitly asked to exclude." An ignored VIEW is an ignored filter.
+--
+-- THE OBJECT IS THE GATE, AND IT IS READ OFF THE ENUM RATHER THAN HARDCODED.
+-- `core.saved_view_object` (003:352) has exactly three values — LEAD, ENQUIRY,
+-- APPROVAL. There is no FOLLOW_UP, PROPOSAL or QUOTATION, so a saved view for
+-- those three lists CANNOT EXIST, and 018 creates no enum value (its own header
+-- says so). Those lists therefore REFUSE a `p_view` with a spec'd code rather
+-- than silently dropping it. The parameter stays in the signature: PostgREST
+-- resolves by named arguments, so removing it would 404 every client call that
+-- sends `p_view` against a migrated database (the PGRST202 trap).
+--
+-- The check is `p_object = ANY (enum_range)`, so on the day the contract adds
+-- PROPOSAL to `core.saved_view_object`, these three start resolving views with
+-- no further edit — the refusal is derived from the schema, not asserted about
+-- it.
+--
+-- Raises `invalid_parameter_value`; every caller translates that into
+-- VALIDATION_FAILED with `details.fields[0]`, which is the shape §5 already
+-- uses for an unknown filter field.
+
+CREATE OR REPLACE FUNCTION app._view_filters(
+  p_tenant  uuid,
+  p_view    text,
+  p_object  text,
+  p_request jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = ''
+AS $fn$
+DECLARE v_view core.saved_views%ROWTYPE; v_out jsonb;
+BEGIN
+  IF NULLIF(p_view, '') IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  IF p_object IS NULL
+     OR NOT (p_object = ANY (
+       SELECT pg_catalog.unnest(pg_catalog.enum_range(NULL::core.saved_view_object))::text)) THEN
+    RAISE EXCEPTION 'UNSUPPORTED_VIEW_OBJECT' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT saved.* INTO v_view FROM core.saved_views AS saved
+   WHERE saved.tenant_id = p_tenant
+     AND saved.deleted_at IS NULL
+     AND saved.object = p_object::core.saved_view_object
+     AND (saved.id::text = p_view OR saved.ref = p_view);
+  IF NOT FOUND THEN
+    -- Cross-tenant and absent are the SAME answer, as everywhere else in this
+    -- file: a view id that resolves in another tenant must not be an existence
+    -- oracle.
+    RAISE EXCEPTION 'UNKNOWN_VIEW' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- REQUEST FILTERS WIN on the same field, and `source` on each applied filter
+  -- is what lets the UI show a reader WHY rows are missing.
+  SELECT COALESCE(pg_catalog.jsonb_agg(
+           element.value || pg_catalog.jsonb_build_object('source','VIEW')), '[]'::jsonb)
+    INTO v_out
+    FROM pg_catalog.jsonb_array_elements(COALESCE(v_view.filters, '[]'::jsonb)) AS element(value)
+   WHERE NOT EXISTS (
+     SELECT 1 FROM pg_catalog.jsonb_array_elements(COALESCE(p_request,'[]'::jsonb)) AS req(value)
+      WHERE req.value ->> 'field' = element.value ->> 'field');
+  RETURN v_out;
+END;
+$fn$;
+
 -- ── The keyset engine, extracted ────────────────────────────────────────────
 --
 -- WHY THESE TWO FUNCTIONS EXIST. Five list RPCs in this file page the same way,
@@ -575,6 +650,7 @@ REVOKE ALL ON FUNCTION app._cursor_encode(timestamptz, uuid)     FROM PUBLIC, an
 REVOKE ALL ON FUNCTION app._cursor_decode(text)                  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._page_size(jsonb)                     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._predicate(text, text, text, jsonb)   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app._view_filters(uuid, text, text, jsonb)  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._keyset_scope(regclass, uuid, text, text, boolean, timestamptz, uuid, boolean)
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._next_cursor(regclass, uuid, text, text, boolean, integer, integer, timestamptz, uuid, boolean)
@@ -918,7 +994,6 @@ DECLARE
   v_applied  jsonb  := '[]'::jsonb;
   v_errors   jsonb  := '[]'::jsonb;
   v_merged   jsonb  := '[]'::jsonb;
-  v_view     core.saved_views%ROWTYPE;
   v_clause   jsonb;
   v_field    text;
   v_op       text;
@@ -958,27 +1033,18 @@ BEGIN
     END;
   END IF;
 
-  -- ── saved view ──────────────────────────────────────────────────────────
-  -- A view contributes filters; REQUEST FILTERS WIN. `source` on each applied
-  -- filter is what lets the UI show a reader WHY rows are missing — without it
-  -- a saved view silently subtracts rows nobody asked it to.
-  IF NULLIF(p_view, '') IS NOT NULL THEN
-    SELECT saved.* INTO v_view FROM core.saved_views AS saved
-     WHERE saved.tenant_id = v_tenant
-       AND saved.deleted_at IS NULL
-       AND (saved.id::text = p_view OR saved.ref = p_view);
-    IF NOT FOUND THEN
-      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
-        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
-          'field','view','reason','UNKNOWN_VIEW'))));
-    END IF;
-    SELECT COALESCE(pg_catalog.jsonb_agg(element.value || pg_catalog.jsonb_build_object('source','VIEW')), '[]'::jsonb)
-      INTO v_merged
-      FROM pg_catalog.jsonb_array_elements(COALESCE(v_view.filters, '[]'::jsonb)) AS element(value)
-     WHERE NOT EXISTS (
-       SELECT 1 FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS req(value)
-        WHERE req.value ->> 'field' = element.value ->> 'field');
-  END IF;
+  -- SAVED VIEW. One resolution path for all five lists (§1
+  -- `app._view_filters`): it gates on `core.saved_view_object`, refuses a view
+  -- that does not resolve in THIS tenant, and tags what it contributes
+  -- `source: VIEW`. A list whose object has no enum value refuses rather than
+  -- dropping the parameter.
+  BEGIN
+    v_merged := app._view_filters(v_tenant, p_view, 'ENQUIRY', p_filter);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','view','reason', SQLERRM))));
+  END;
 
   SELECT v_merged || COALESCE(pg_catalog.jsonb_agg(element.value || pg_catalog.jsonb_build_object('source','REQUEST')), '[]'::jsonb)
     INTO v_merged
@@ -2493,7 +2559,6 @@ DECLARE
   v_clauses  text[] := ARRAY[]::text[];
   v_errors   jsonb  := '[]'::jsonb;
   v_merged   jsonb  := '[]'::jsonb;
-  v_view     core.saved_views%ROWTYPE;
   v_clause   jsonb;
   v_field    text;
   v_op       text;
@@ -2533,22 +2598,19 @@ BEGIN
     END;
   END IF;
 
-  IF NULLIF(p_view, '') IS NOT NULL THEN
-    SELECT saved.* INTO v_view FROM core.saved_views AS saved
-     WHERE saved.tenant_id = v_tenant
-       AND saved.deleted_at IS NULL
-       AND (saved.id::text = p_view OR saved.ref = p_view);
-    IF NOT FOUND THEN
-      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
-        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
-          'field','view','reason','UNKNOWN_VIEW'))));
-    END IF;
-    SELECT COALESCE(pg_catalog.jsonb_agg(element.value), '[]'::jsonb) INTO v_merged
-      FROM pg_catalog.jsonb_array_elements(COALESCE(v_view.filters, '[]'::jsonb)) AS element(value)
-     WHERE NOT EXISTS (
-       SELECT 1 FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS req(value)
-        WHERE req.value ->> 'field' = element.value ->> 'field');
-  END IF;
+  -- SAVED VIEW. One resolution path for all five lists (§1
+  -- `app._view_filters`): it gates on `core.saved_view_object`, refuses a view
+  -- that does not resolve in THIS tenant, and tags what it contributes
+  -- `source: VIEW`. A list whose object has no enum value refuses rather than
+  -- dropping the parameter.
+  BEGIN
+    v_merged := app._view_filters(v_tenant, p_view, 'APPROVAL', p_filter);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','view','reason', SQLERRM))));
+  END;
+
   SELECT v_merged || COALESCE(pg_catalog.jsonb_agg(element.value), '[]'::jsonb) INTO v_merged
     FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter, '[]'::jsonb)) AS element(value);
 
@@ -3199,6 +3261,7 @@ DECLARE
   v_last_id uuid;
   v_cursor  text;
   v_keyed   text;
+  v_merged  jsonb  := '[]'::jsonb;
 BEGIN
   BEGIN
     v_size := app._page_size(p_page);
@@ -3220,8 +3283,25 @@ BEGIN
     END;
   END IF;
 
-  FOR v_clause IN SELECT element.value
-                    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS element(value)
+  -- SAVED VIEW. This parameter was DECLARED AND NEVER READ: a reader who asked
+  -- for a saved view got every row in the tenant with `appliedFilters: []` and
+  -- `success: true`. `core.saved_view_object` has no value for this list's
+  -- object, so a view for it cannot exist and the only honest answers are
+  -- "refuse" or "resolve it once the enum has the value". `app._view_filters`
+  -- gives both: it refuses off the enum today and resolves the day the
+  -- contract adds the value, with no edit here.
+  BEGIN
+    v_merged := app._view_filters(v_tenant, p_view, 'FOLLOW_UP', p_filter);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','view','reason', SQLERRM))));
+  END;
+
+  SELECT v_merged || COALESCE(pg_catalog.jsonb_agg(element.value), '[]'::jsonb) INTO v_merged
+    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter, '[]'::jsonb)) AS element(value);
+
+  FOR v_clause IN SELECT element.value FROM pg_catalog.jsonb_array_elements(v_merged) AS element(value)
   LOOP
     v_field := v_clause ->> 'field';
     v_op    := v_clause ->> 'op';
@@ -3244,7 +3324,8 @@ BEGIN
                      CASE WHEN v_column = 'due_date' THEN 'text' ELSE v_kind END, v_op, v_clause -> 'value');
       v_applied := v_applied || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', v_field, 'op', v_op,
-        'value', COALESCE(v_clause -> 'value','null'::jsonb), 'source','REQUEST'));
+        'value', COALESCE(v_clause -> 'value','null'::jsonb),
+        'source', COALESCE(v_clause ->> 'source', 'REQUEST')));
     EXCEPTION WHEN invalid_parameter_value THEN
       v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', v_field, 'reason', SQLERRM, 'code', COALESCE(v_op,'(null)')));
@@ -3491,6 +3572,7 @@ DECLARE
   v_last_id uuid;
   v_cursor  text;
   v_keyed   text;
+  v_merged  jsonb  := '[]'::jsonb;
 BEGIN
   BEGIN
     v_size := app._page_size(p_page);
@@ -3512,8 +3594,25 @@ BEGIN
     END;
   END IF;
 
-  FOR v_clause IN SELECT element.value
-                    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS element(value)
+  -- SAVED VIEW. This parameter was DECLARED AND NEVER READ: a reader who asked
+  -- for a saved view got every row in the tenant with `appliedFilters: []` and
+  -- `success: true`. `core.saved_view_object` has no value for this list's
+  -- object, so a view for it cannot exist and the only honest answers are
+  -- "refuse" or "resolve it once the enum has the value". `app._view_filters`
+  -- gives both: it refuses off the enum today and resolves the day the
+  -- contract adds the value, with no edit here.
+  BEGIN
+    v_merged := app._view_filters(v_tenant, p_view, 'PROPOSAL', p_filter);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','view','reason', SQLERRM))));
+  END;
+
+  SELECT v_merged || COALESCE(pg_catalog.jsonb_agg(element.value), '[]'::jsonb) INTO v_merged
+    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter, '[]'::jsonb)) AS element(value);
+
+  FOR v_clause IN SELECT element.value FROM pg_catalog.jsonb_array_elements(v_merged) AS element(value)
   LOOP
     v_field := v_clause ->> 'field';
     v_op    := v_clause ->> 'op';
@@ -3533,7 +3632,8 @@ BEGIN
       v_clauses := v_clauses || app._predicate(v_column, v_kind, v_op, v_clause -> 'value');
       v_applied := v_applied || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', v_field, 'op', v_op,
-        'value', COALESCE(v_clause -> 'value','null'::jsonb), 'source','REQUEST'));
+        'value', COALESCE(v_clause -> 'value','null'::jsonb),
+        'source', COALESCE(v_clause ->> 'source', 'REQUEST')));
     EXCEPTION WHEN invalid_parameter_value THEN
       v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', v_field, 'reason', SQLERRM, 'code', COALESCE(v_op,'(null)')));
@@ -4131,6 +4231,7 @@ DECLARE
   v_last_id uuid;
   v_cursor  text;
   v_keyed   text;
+  v_merged  jsonb  := '[]'::jsonb;
 BEGIN
   -- THIS IS AN RPC AND NOT A VIEW READ, AND THAT IS THE POINT. Under RLS a
   -- reader without the row would get an EMPTY LIST from a view — indis-
@@ -4163,8 +4264,25 @@ BEGIN
     END;
   END IF;
 
-  FOR v_clause IN SELECT element.value
-                    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS element(value)
+  -- SAVED VIEW. This parameter was DECLARED AND NEVER READ: a reader who asked
+  -- for a saved view got every row in the tenant with `appliedFilters: []` and
+  -- `success: true`. `core.saved_view_object` has no value for this list's
+  -- object, so a view for it cannot exist and the only honest answers are
+  -- "refuse" or "resolve it once the enum has the value". `app._view_filters`
+  -- gives both: it refuses off the enum today and resolves the day the
+  -- contract adds the value, with no edit here.
+  BEGIN
+    v_merged := app._view_filters(v_tenant, p_view, 'QUOTATION', p_filter);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','view','reason', SQLERRM))));
+  END;
+
+  SELECT v_merged || COALESCE(pg_catalog.jsonb_agg(element.value), '[]'::jsonb) INTO v_merged
+    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter, '[]'::jsonb)) AS element(value);
+
+  FOR v_clause IN SELECT element.value FROM pg_catalog.jsonb_array_elements(v_merged) AS element(value)
   LOOP
     v_field := v_clause ->> 'field';
     v_op    := v_clause ->> 'op';
@@ -4183,7 +4301,8 @@ BEGIN
       v_clauses := v_clauses || app._predicate(v_column, v_kind, v_op, v_clause -> 'value');
       v_applied := v_applied || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', v_field, 'op', v_op,
-        'value', COALESCE(v_clause -> 'value','null'::jsonb), 'source','REQUEST'));
+        'value', COALESCE(v_clause -> 'value','null'::jsonb),
+        'source', COALESCE(v_clause ->> 'source', 'REQUEST')));
     EXCEPTION WHEN invalid_parameter_value THEN
       v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', v_field, 'reason', SQLERRM, 'code', COALESCE(v_op,'(null)')));

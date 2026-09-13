@@ -2135,5 +2135,123 @@ BEGIN
 END
 $t31$;
 
+DO $banner$ BEGIN RAISE NOTICE '════════ T32 · p_view IS NEVER SILENTLY DROPPED ════════'; END $banner$;
+DO $t32$
+DECLARE
+  v        jsonb;
+  v_tenant uuid := '11111111-1111-4111-8111-111111111111';
+  v_view   text;
+  v_other  text;
+  v_all    integer;
+  r        record;
+BEGIN
+  -- ── A saved view actually filters, and says it did ───────────────────────
+  SELECT id::text INTO v_view FROM core.saved_views
+   WHERE tenant_id = v_tenant AND object = 'ENQUIRY' LIMIT 1;
+
+  v := core.list_enquiries('[]'::jsonb, NULL, '{"size":50}'::jsonb, NULL);
+  v_all := (v #>> '{data,page,total}')::integer;
+  v := core.list_enquiries('[]'::jsonb, NULL, '{"size":50}'::jsonb, v_view);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T32a: %', v; END IF;
+  IF (v #>> '{data,page,total}')::integer >= v_all THEN
+    RAISE EXCEPTION 'T32b: the saved view subtracted nothing: % of %',
+      v #>> '{data,page,total}', v_all;
+  END IF;
+  IF v #>> '{data,appliedFilters,0,source}' <> 'VIEW' THEN
+    RAISE EXCEPTION 'T32c: a view filter is not sourced VIEW: %', v -> 'data' -> 'appliedFilters';
+  END IF;
+
+  -- A view belonging to ANOTHER TENANT is not an existence oracle.
+  INSERT INTO core.saved_views
+    (id, tenant_id, object, label, filters, columns, is_default, owner_id, visibility,
+     created_by_kind, created_by_id)
+  VALUES ('5a5e0001-0000-4000-8000-000000000001'::uuid,
+          '99999999-9999-4999-8999-999999999999','ENQUIRY','Theirs',
+          '[{"field":"status","op":"eq","value":"OPEN"}]'::jsonb,
+          ARRAY['ref'],false,'88888888-8888-4888-8888-888888888888','TEAM',
+          'HUMAN','88888888-8888-4888-8888-888888888888');
+  v_other := '5a5e0001-0000-4000-8000-000000000001';
+  v := core.list_enquiries('[]'::jsonb, NULL, '{"size":50}'::jsonb, v_other);
+  IF v -> 'success' <> 'false'::jsonb
+     OR v #>> '{error,details,fields,0,reason}' <> 'UNKNOWN_VIEW' THEN
+    RAISE EXCEPTION 'T32d: another tenant''s view resolved: %', v;
+  END IF;
+
+  -- A view of the WRONG OBJECT does not apply to this list either. The
+  -- ENQUIRY view above is not an APPROVAL view, and list_approvals must say so
+  -- rather than apply enquiry filters to approval columns.
+  v := core.list_approvals('[]'::jsonb, NULL, '{"size":50}'::jsonb, v_view);
+  IF v -> 'success' <> 'false'::jsonb
+     OR v #>> '{error,details,fields,0,reason}' <> 'UNKNOWN_VIEW' THEN
+    RAISE EXCEPTION 'T32e: an ENQUIRY view was accepted by list_approvals: %', v;
+  END IF;
+
+  -- ── THE BLOCKER. Three lists DECLARED p_view and never read it ───────────
+  -- Against the pre-fix migration every one of these three returned
+  -- success:true with EVERY row in the tenant and `appliedFilters: []`. A
+  -- reader who saved a view restricting them to their own proposals saw
+  -- everyone's. An ignored view is an ignored filter, and §5 of the migration
+  -- forbids exactly that.
+  --
+  -- `core.saved_view_object` (003:352) has three values — LEAD, ENQUIRY,
+  -- APPROVAL — so a view for these three lists CANNOT EXIST and the refusal is
+  -- the honest answer. This assertion is written against the ENUM, not against
+  -- a hardcoded list: the day the contract adds PROPOSAL, the branch below
+  -- flips to requiring resolution instead of refusal, and the pin still holds.
+  FOR r IN SELECT * FROM (VALUES
+             ('list_follow_ups','FOLLOW_UP'),
+             ('list_proposals', 'PROPOSAL'),
+             ('list_quotations','QUOTATION')) AS t(fn, obj)
+  LOOP
+    EXECUTE pg_catalog.format(
+      'SELECT core.%I(''[]''::jsonb, NULL, ''{"size":50}''::jsonb, %L)', r.fn, v_view)
+      INTO v;
+
+    IF r.obj = ANY (SELECT pg_catalog.unnest(
+                      pg_catalog.enum_range(NULL::core.saved_view_object))::text) THEN
+      -- The enum has grown. A view of that object must now RESOLVE, and one of
+      -- another object must still be refused.
+      IF v -> 'success' <> 'false'::jsonb THEN
+        RAISE EXCEPTION 'T32f: core.% accepted an ENQUIRY view although % is now a '
+                        'saved_view_object of its own', r.fn, r.obj;
+      END IF;
+    ELSE
+      IF v -> 'success' <> 'false'::jsonb THEN
+        RAISE EXCEPTION 'T32g: core.% SILENTLY DROPPED p_view and returned % rows '
+                        'with appliedFilters %', r.fn, v #>> '{data,page,total}',
+                        v -> 'data' -> 'appliedFilters';
+      END IF;
+      IF v #>> '{error,code}' <> 'VALIDATION_FAILED'
+         OR v #>> '{error,details,fields,0,field}' <> 'view'
+         OR v #>> '{error,details,fields,0,reason}' <> 'UNSUPPORTED_VIEW_OBJECT' THEN
+        RAISE EXCEPTION 'T32h: core.% refused p_view with the wrong shape: %', r.fn, v;
+      END IF;
+    END IF;
+
+    -- AND THE PARAMETER IS STILL IN THE SIGNATURE. PostgREST resolves by named
+    -- arguments; dropping `p_view` would 404 every client call that sends it.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_proc AS p
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'core' AND p.proname = r.fn
+         AND p.pronargs = 4
+         AND 'p_view' = ANY (p.proargnames)) THEN
+      RAISE EXCEPTION 'T32i: core.% no longer takes four arguments; a client sending '
+                      'p_view would get PGRST202', r.fn;
+    END IF;
+  END LOOP;
+
+  -- Passing NO view still works on all three, so the refusal is about the view
+  -- and not about the parameter existing.
+  IF core.list_proposals() -> 'success' <> 'true'::jsonb THEN
+    RAISE EXCEPTION 'T32j: list_proposals refuses even with no view';
+  END IF;
+
+  RAISE NOTICE 'T32 PASS: a saved view filters and is sourced VIEW, a foreign or '
+               'wrong-object view is refused, and the three lists that dropped p_view '
+               'now refuse it with UNSUPPORTED_VIEW_OBJECT — signature unchanged.';
+END
+$t32$;
+
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
