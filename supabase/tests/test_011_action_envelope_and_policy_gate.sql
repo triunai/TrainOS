@@ -266,6 +266,25 @@ BEGIN
 END;
 $fn$;
 
+CREATE FUNCTION pg_temp.t011_bulk(p_items jsonb, p_decision text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_body jsonb; v_detail text;
+BEGIN
+  BEGIN
+    v_body := app.bulk_decide(p_items, p_decision, NULL, NULL);
+    RETURN pg_catalog.jsonb_build_object('ok',true,'body',v_body);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
 CREATE FUNCTION pg_temp.t011_report(p_id bigint,p_status text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -1406,6 +1425,132 @@ BEGIN
     'DIFF_CHANGED when the underlying quotation was repriced in between.';
 END;
 $t19$;
+
+
+
+-- ─── T20 · HIGH · bulk APPROVE cannot bypass the diff guard ────────────────
+-- THE HOLE. `core.decide_approval` refuses an APPROVE that carries no diff hash,
+-- and the commit that added that refusal claimed a guard both sides enforce
+-- "cannot be re-disabled by one of them changing". `core.bulk_decide_approvals`
+-- falsified it on the same day: granted to `authenticated` exactly like its
+-- sibling, it took NO hash at all and `app.bulk_decide` forwarded every item as
+-- `app.decide_approval(id, decision, note, NULL, NULL)`. 011 compares the hash
+-- only when it is non-NULL, so the bulk path skipped the check entirely — and the
+-- bulk path is the one an approver uses to clear an inbox quickly, which is
+-- exactly when they are not re-reading diffs.
+--
+-- `p_items` is now an array of `{approvalId, expectedDiffHash}` because a hash
+-- per approval cannot travel in an array of ids.
+DO $t20$
+DECLARE
+  v_ap_c  uuid := '00000011-a919-0000-0000-00000000000c';
+  v_ap_d  uuid := '00000011-a919-0000-0000-00000000000d';
+  v_read_c text;
+  v_read_d text;
+  v_res   jsonb;
+BEGIN
+  -- Two more approvals, staged the same way T19 stages its own and for the same
+  -- reason. bulk_approvable is true: the monetary exclusion is a separate guard
+  -- and this pin must not be refused by it instead.
+  INSERT INTO core.action_requests
+    (id,tenant_id,ref,action_type,target_ref,requested_by_kind,requested_by_id,status)
+  VALUES
+    ('00000011-ac20-0000-0000-00000000000c','00000011-1111-1111-1111-111111111111',
+     'ACT-T020-C','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_a'),
+     'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL'),
+    ('00000011-ac20-0000-0000-00000000000d','00000011-1111-1111-1111-111111111111',
+     'ACT-T020-D','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_b'),
+     'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL');
+
+  INSERT INTO core.approval_requests
+    (id,tenant_id,action_request_id,policy_id,action_type,subject,target_ref,
+     requested_by_kind,requested_by_id,reason,diff,diff_hash,approver_role,
+     sla_due_at,expires_at,bulk_approvable)
+  SELECT q.approval_id,'00000011-1111-1111-1111-111111111111',q.request_id,
+    'pol_t020','QUOTATION_APPLY','quotation',q.ref,
+    'HUMAN','00000011-0000-0000-0000-0000000000a1','T020 bulk hash probe',
+    app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object(
+        'effects', app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+        'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                     q.quotation_id, '{}'::jsonb))::text,'UTF8')),'hex'),
+    'MD', pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', true
+  FROM (VALUES
+    ('00000011-a919-0000-0000-00000000000c'::uuid,'00000011-ac20-0000-0000-00000000000c'::uuid,
+     '00000011-0977-0977-0977-097777777771'::uuid, pg_catalog.current_setting('t011.qref_a')),
+    ('00000011-a919-0000-0000-00000000000d'::uuid,'00000011-ac20-0000-0000-00000000000d'::uuid,
+     '00000011-0977-0977-0977-097777777772'::uuid, pg_catalog.current_setting('t011.qref_b'))
+  ) AS q(approval_id, request_id, quotation_id, ref);
+
+  SELECT diff_hash INTO v_read_c FROM core.approval_requests WHERE id = v_ap_c;
+  SELECT diff_hash INTO v_read_d FROM core.approval_requests WHERE id = v_ap_d;
+
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-00000000000b"}',true);
+
+  -- T20a · AN APPROVE ITEM WITH NO HASH IS REFUSED, and the whole batch with it.
+  -- A partial bulk decide is worse than a refused one: the approver cannot tell
+  -- which half went through.
+  v_res := pg_temp.t011_bulk(
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('approvalId', v_ap_c),
+      pg_catalog.jsonb_build_object('approvalId', v_ap_d, 'expectedDiffHash', v_read_d)),
+    'APPROVE');
+  ASSERT NOT (v_res->>'ok')::boolean,
+    pg_catalog.format('T20a FAIL: a bulk APPROVE with one hashless item was '
+      'accepted. That is the bypass: core.decide_approval refuses a NULL hash and '
+      'this door forwarded it anyway. %s', v_res::text);
+  ASSERT v_res->>'detailText' LIKE '%expectedDiffHash%',
+    pg_catalog.format('T20a2 FAIL: refused, but not for the missing hash: %s',
+      COALESCE(v_res->>'detailText','<none>'));
+
+  -- T20b · A REPRICED APPROVAL IS REFUSED AS DIFF_CHANGED, through the bulk door.
+  UPDATE core.quotations SET sell_price_sen = sell_price_sen + 310000
+   WHERE id = '00000011-0977-0977-0977-097777777772';
+
+  v_res := pg_temp.t011_bulk(
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('approvalId', v_ap_d, 'expectedDiffHash', v_read_d)),
+    'APPROVE');
+  ASSERT NOT (v_res->>'ok')::boolean,
+    pg_catalog.format('T20b FAIL: a bulk APPROVE of an approval whose quotation '
+      'was repriced after the diff was read was ACCEPTED. %s', v_res::text);
+  ASSERT v_res->>'detailText' LIKE '%DIFF_CHANGED%',
+    pg_catalog.format('T20b2 FAIL: the stale bulk APPROVE was refused, but not as '
+      'DIFF_CHANGED: %s', COALESCE(v_res->>'detailText','<none>'));
+
+  -- T20c · and an unchanged one still goes through, with the CONTRACT SHAPE.
+  v_res := pg_temp.t011_bulk(
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('approvalId', v_ap_c, 'expectedDiffHash', v_read_c)),
+    'APPROVE');
+  ASSERT (v_res->>'ok')::boolean,
+    pg_catalog.format('T20c FAIL: an unchanged bulk APPROVE was refused. The '
+      'guard must admit the unchanged case or bulk decide is unusable: %s',
+      v_res::text);
+
+  ASSERT (v_res -> 'body') ? 'results',
+    pg_catalog.format('T20d FAIL: the bulk response has no `results` key. The '
+      'contract''s ApprovalBulkDecideResponse is {results:[...]}; this used to '
+      'return {data,count}, whose second top-level key also flipped the client''s '
+      'auto-unwrap to pass-through. Body: %s', (v_res -> 'body')::text);
+  ASSERT NOT ((v_res -> 'body') ? 'count'),
+    'T20d2 FAIL: `count` is back beside `results`. app.ok wraps this, and a '
+    'sibling key is what breaks the client''s auto-unwrap — 001''s comment on '
+    'app.ok says exactly this.';
+  ASSERT ((v_res -> 'body' -> 'results' -> 0) ? 'id')
+     AND ((v_res -> 'body' -> 'results' -> 0) ? 'ref'),
+    pg_catalog.format('T20e FAIL: a bulk result element carries no id/ref, so the '
+      'inbox cannot reconcile which of N approvals got which outcome. Element: %s',
+      (v_res -> 'body' -> 'results' -> 0)::text);
+
+  RAISE NOTICE
+    'T20 PASS - bulk APPROVE refuses a hashless item, refuses a repriced approval '
+    'as DIFF_CHANGED, admits an unchanged one, and returns {results:[{id,ref,...}]} '
+    'with no sibling key beside it.';
+END;
+$t20$;
 
 
 ROLLBACK;

@@ -296,7 +296,7 @@ BEGIN
   FOREACH v_fn IN ARRAY ARRAY[
     'core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)',
     'core.decide_approval(uuid,text,text,text,text)',
-    'core.bulk_decide_approvals(uuid[],text,text,text)']
+    'core.bulk_decide_approvals(jsonb,text,text,text)']
   LOOP
     ASSERT pg_catalog.to_regprocedure(v_fn) IS NOT NULL,
       pg_catalog.format('T1f FAIL: wrapper %s does not exist', v_fn);
@@ -865,7 +865,7 @@ BEGIN
     'optimistic-concurrency check is disabled with no visible symptom.';
 
   v_def := pg_catalog.regexp_replace(
-    pg_catalog.pg_get_functiondef('core.bulk_decide_approvals(uuid[],text,text,text)'::regprocedure),
+    pg_catalog.pg_get_functiondef('core.bulk_decide_approvals(jsonb,text,text,text)'::regprocedure),
     '\s+','','g');
   ASSERT pg_catalog.strpos(v_def,'app.ok(app.bulk_decide(') > 0,
     'T10e FAIL: core.bulk_decide_approvals does not wrap app.bulk_decide in app.ok.';
@@ -875,7 +875,7 @@ BEGIN
   FOREACH v_fn IN ARRAY ARRAY[
     'app.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)',
     'app.decide_approval(uuid,text,text,text,text)',
-    'app.bulk_decide(uuid[],text,text,text)']
+    'app.bulk_decide(jsonb,text,text,text)']
   LOOP
     ASSERT NOT has_function_privilege('authenticated', pg_catalog.to_regprocedure(v_fn), 'EXECUTE'),
       pg_catalog.format('T10f FAIL: %s is reachable by authenticated. The wrapper '
@@ -1927,8 +1927,9 @@ CREATE INDEX t014_gate_probe_tenant_idx ON core.t014_gate_probe (tenant_id);
 
 DO $t16$
 DECLARE
-  v_gated   boolean;
-  v_refused boolean;
+  v_gated     boolean;
+  v_refused   boolean;
+  v_bad_stamp text;
 BEGIN
   -- (a) gated on creation
   PERFORM app.apply_tenant_policies('core','t014_gate_probe','014','run:read');
@@ -1985,6 +1986,54 @@ BEGIN
     'a first version of this function that called back into the very refusal it '
     'exists to bypass — which is why every branch of it is pinned.';
 
+  -- (f0) ⚠ THE THREE-ARGUMENT SPELLING IS REFUSED, and this is the one that was
+  --      silently wrong rather than loudly. There is no three-argument overload
+  --      to resolve to, so `apply_tenant_policies('core','x','run:read')` — the
+  --      spelling the catalog taught before the signature changed — binds to the
+  --      four-argument function with p_migration='run:read' and p_permission=NULL.
+  --      Reproduced before the fix: it produced an UNGATED policy stamped
+  --      `migration:run:read`, a security gate quietly downgraded AND a policy no
+  --      rollback can find, from a call that reads exactly like the documented
+  --      one. Dropping the old signature does nothing about it, because the old
+  --      signature is not what the call resolves to — only typing the slot does.
+  v_refused := false;
+  BEGIN
+    PERFORM app.apply_tenant_policies('core','t014_gate_probe','run:read');
+  EXCEPTION WHEN OTHERS THEN
+    v_refused := true;
+    ASSERT SQLERRM LIKE '%three-digit pack%',
+      pg_catalog.format('T16f0a FAIL: the three-argument spelling was refused, '
+        'but not by the p_migration check: %s', SQLERRM);
+  END;
+  ASSERT v_refused,
+    'T16f0 FAIL: app.apply_tenant_policies accepted a permission string in the '
+    'p_migration slot. That call produces an ungated policy with an unfindable '
+    'stamp and looks exactly like a correct one.';
+
+  -- NULL and empty are refused for the same reason: a policy with no owner stamp
+  -- is a policy the rollback''s manifest loop will never drop.
+  FOREACH v_bad_stamp IN ARRAY ARRAY[NULL, '', '  ', '14', '0014', 'migration:014'] LOOP
+    v_refused := false;
+    BEGIN
+      PERFORM app.apply_tenant_policies('core','t014_gate_probe', v_bad_stamp, 'run:read');
+    EXCEPTION WHEN OTHERS THEN v_refused := true;
+    END;
+    ASSERT v_refused,
+      pg_catalog.format('T16f1 FAIL: p_migration %s was accepted. Anything but a '
+        'three-digit pack number leaves a stamp the rollback cannot match.',
+        COALESCE('''' || v_bad_stamp || '''','NULL'));
+  END LOOP;
+
+  -- And ungate demands one too, because removing a gate is the act most worth
+  -- being able to attribute.
+  v_refused := false;
+  BEGIN
+    PERFORM app.ungate_tenant_policy('core','t014_gate_probe', NULL);
+  EXCEPTION WHEN OTHERS THEN v_refused := true;
+  END;
+  ASSERT v_refused,
+    'T16f2 FAIL: ungate_tenant_policy accepted a NULL p_migration.';
+
   -- (f) and a permission nobody holds is refused, because a gate no role can
   --     satisfy is a broken screen rather than security
   v_refused := false;
@@ -2000,7 +2049,9 @@ BEGIN
   RAISE NOTICE
     'T16 PASS - a permission argument gates, a call without one against a gated '
     'table REFUSES, re-passing keeps it, a different permission replaces it, '
-    'app.ungate_tenant_policy removes it, and an unknown permission is refused.';
+    'app.ungate_tenant_policy removes it, an unknown permission is refused, and '
+    'the three-argument spelling that used to bind a permission into the '
+    'migration slot is refused along with every non-pack stamp.';
 END;
 $t16$;
 

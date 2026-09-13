@@ -750,7 +750,7 @@ first review could not have seen because they were introduced by the fix:
   its own header already states. 014's rollback does not learn 017's grant list — a rollback that
   knows about later migrations needs editing every time one lands.
 - **The role gate was erasable by any later two-argument call.** `SELECT
-  app.apply_tenant_policies('core','run_node_io')` — one line, identical in shape to the three
+  app.apply_tenant_policies('core','run_node_io','014')` — one line, identical in shape to the three
   017 already ships — would have silently replaced the gated isolation policy with an ungated one
   and handed every principal of the tenant the raw agent prompt text back. **Fixed:** the
   function refuses a two-argument call against a table that already carries a gate, naming the
@@ -866,10 +866,16 @@ residue carried by 010, 011, 012 and 013.
 
 ### What it does
 
-- **`app.apply_tenant_policies(schema, table, permission DEFAULT NULL)`** — one function, N
-  attachments. ⚠ The two-argument signature is DROPPED before the three-argument one is created:
-  `CREATE OR REPLACE` matches on the argument list, and 017 makes three two-argument calls that a
-  second overload would have made ambiguous. Verify (13b) asserts exactly one overload. Stamps a
+- **`app.apply_tenant_policies(schema, table, migration, permission DEFAULT NULL)`** — one function, N
+  attachments. ⚠ **`migration` is the THIRD argument and is required**: the three-digit pack that
+  owns the policy, `'014'` or `'017'`. It is validated against `^[0-9]{3}$` and NULL, `''` and a
+  permission string are all refused — because there is no three-argument overload to resolve to, so
+  the old spelling `apply_tenant_policies('core','x','run:read')` binds the PERMISSION into the
+  MIGRATION slot and produces an **ungated policy with a stamp no rollback can find**. Reproduced on
+  a live database before the check existed. Dropping the old signature does not help, because the
+  old signature is not what that call resolves to; only typing the slot does. Earlier signatures are
+  dropped explicitly all the same, for a database carrying one. Verify (13b) asserts exactly one
+  overload. Stamps a
   PERMISSIVE `<table>_tenant_select` (`FOR SELECT TO authenticated`) and a RESTRICTIVE
   `<table>_tenant_isolation` (`FOR ALL`, predicate in USING **and** WITH CHECK). Refuses a
   table with no `tenant_id` and a table that is not RLS-forced. Idempotent by DROP-then-CREATE,

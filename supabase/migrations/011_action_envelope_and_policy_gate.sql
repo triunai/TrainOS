@@ -678,10 +678,17 @@ CREATE TABLE app.idempotency_keys (
   created_at        timestamptz NOT NULL DEFAULT pg_catalog.now(),
   updated_at        timestamptz NOT NULL DEFAULT pg_catalog.now(),
   UNIQUE (tenant_id, actor_id, endpoint, key),
+  -- ⚠ `results` IS THE BULK SHAPE NOW. `{data, count}` is kept so a row stored by
+  -- an earlier build still satisfies the constraint, but nothing writes it any
+  -- more: the contract's ApprovalBulkDecideResponse is `{results:[...]}`, and a
+  -- second top-level key beside `data` is what flipped the client's auto-unwrap
+  -- to pass-through and left `response.results` undefined behind a blind cast.
   CONSTRAINT idempotency_keys_response_shape CHECK (
     response IS NULL OR
     (pg_catalog.jsonb_typeof(response) = 'object'
      AND (response ? 'status'
+          OR (response ? 'results'
+              AND pg_catalog.jsonb_typeof(response -> 'results') = 'array')
           OR (response ? 'data' AND response ? 'count'
               AND pg_catalog.jsonb_typeof(response -> 'data') = 'array'
               AND pg_catalog.jsonb_typeof(response -> 'count') = 'number')))),
@@ -3387,8 +3394,18 @@ END;
 $fn$;
 
 
+-- ⚠ THE SIGNATURE CHANGED, AND THE OLD ONE IS DROPPED FIRST.
+--
+-- `p_ids uuid[]` became `p_items jsonb` — an array of
+-- `{"approvalId": <uuid>, "expectedDiffHash": <text>}` — because a bulk APPROVE
+-- has to carry one hash PER APPROVAL and an array of ids cannot. The old
+-- signature is dropped rather than left beside this one: `CREATE OR REPLACE`
+-- matches on the argument list, so without the DROP there would be two
+-- `app.bulk_decide`s and the four-argument call would be ambiguous.
+DROP FUNCTION IF EXISTS app.bulk_decide(jsonb, text, text, text);
+
 CREATE OR REPLACE FUNCTION app.bulk_decide(
-  p_ids uuid[],
+  p_items jsonb,
   p_decision text,
   p_note text DEFAULT NULL,
   p_idempotency_key text DEFAULT NULL
@@ -3403,20 +3420,68 @@ DECLARE
   v_tenant       uuid := app.require_tenant_id();
   v_actor        record;
   v_id           uuid;
+  v_hash         text;
+  v_item         jsonb;
+  v_ids          uuid[];
   v_blocked      jsonb;
+  v_missing      jsonb;
   v_results      jsonb := '[]'::jsonb;
+  v_one          jsonb;
   v_idempotency  app.idempotency_keys%ROWTYPE;
   v_request_hash text;
 BEGIN
   SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
-  IF p_ids IS NULL OR pg_catalog.cardinality(p_ids) = 0
-     OR pg_catalog.cardinality(p_ids) <> (
-       SELECT pg_catalog.count(DISTINCT item)::integer
-         FROM pg_catalog.unnest(p_ids) AS item) THEN
-    RAISE EXCEPTION 'ids must be a non-empty set'
+
+  IF p_items IS NULL OR pg_catalog.jsonb_typeof(p_items) <> 'array'
+     OR pg_catalog.jsonb_array_length(p_items) = 0 THEN
+    RAISE EXCEPTION 'items must be a non-empty array'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object(
               'code','VALIDATION_FAILED','reason','INVALID_APPROVAL_IDS')::text;
+  END IF;
+
+  -- The ids, in SORTED order. Sorted because the idempotency request hash is
+  -- taken over them: the client hashes its selection in click order, so the same
+  -- two approvals picked in the other order produced a different key and a
+  -- spurious refusal on the retry.
+  SELECT pg_catalog.array_agg(x ORDER BY x) INTO v_ids
+    FROM (SELECT DISTINCT (item ->> 'approvalId')::uuid AS x
+            FROM pg_catalog.jsonb_array_elements(p_items) AS item) AS ids;
+
+  IF v_ids IS NULL OR pg_catalog.cardinality(v_ids) <> pg_catalog.jsonb_array_length(p_items) THEN
+    RAISE EXCEPTION 'items must be a non-empty set of distinct approvalId values'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','reason','INVALID_APPROVAL_IDS')::text;
+  END IF;
+
+  -- ⚠ EVERY APPROVE ITEM CARRIES ITS OWN DIFF HASH, AND THIS IS THE HOLE THAT
+  -- WAS HERE. This function used to take `uuid[]` and call
+  -- `app.decide_approval(v_id, p_decision, p_note, NULL, NULL)` — the expected
+  -- hash HARDCODED NULL, once per item. 011 only compares the hash when it is
+  -- non-NULL, so bulk APPROVE skipped the optimistic-concurrency check entirely
+  -- while `core.decide_approval` refused a NULL hash on the single path. One door
+  -- locked, the door beside it wedged open, and `core.bulk_decide_approvals` is
+  -- granted to `authenticated` exactly like its sibling.
+  --
+  -- Refused here rather than left to decide_approval, so the whole batch fails
+  -- before any of it is applied: a partial bulk decide is worse than a refused
+  -- one, because the approver cannot tell which half went through.
+  IF p_decision = 'APPROVE' THEN
+    SELECT pg_catalog.jsonb_agg(item -> 'approvalId') INTO v_missing
+      FROM pg_catalog.jsonb_array_elements(p_items) AS item
+     WHERE NULLIF(pg_catalog.btrim(COALESCE(item ->> 'expectedDiffHash','')),'') IS NULL;
+    IF v_missing IS NOT NULL THEN
+      RAISE EXCEPTION
+        'every APPROVE item must carry the diff hash the approver was shown'
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','VALIDATION_FAILED',
+                'fields', pg_catalog.jsonb_build_array(
+                  pg_catalog.jsonb_build_object(
+                    'field','expectedDiffHash','reason','REQUIRED')),
+                'missingFor', v_missing)::text;
+    END IF;
   END IF;
 
   IF p_idempotency_key IS NOT NULL THEN
@@ -3428,7 +3493,7 @@ BEGIN
       v_tenant::text || ':' || v_actor.actor_id || ':' || p_idempotency_key)::bigint);
     v_request_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
       pg_catalog.jsonb_build_object(
-        'ids',p_ids,'decision',p_decision,'note',p_note)::text,'UTF8')),'hex');
+        'ids',v_ids,'decision',p_decision,'note',p_note)::text,'UTF8')),'hex');
     INSERT INTO app.idempotency_keys
       (tenant_id,actor_id,endpoint,key,request_hash)
     VALUES
@@ -3456,8 +3521,8 @@ BEGIN
   END IF;
 
   IF (SELECT pg_catalog.count(*) FROM core.approval_requests AS approval
-       WHERE approval.tenant_id = v_tenant AND approval.id = ANY (p_ids))
-     <> pg_catalog.cardinality(p_ids) THEN
+       WHERE approval.tenant_id = v_tenant AND approval.id = ANY (v_ids))
+     <> pg_catalog.cardinality(v_ids) THEN
     RAISE EXCEPTION 'one or more approvals were not found'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
@@ -3469,7 +3534,7 @@ BEGIN
                 ELSE 'MONEY_MOVING_TYPE' END))
     INTO v_blocked
     FROM core.approval_requests AS approval
-   WHERE approval.tenant_id = v_tenant AND approval.id = ANY (p_ids)
+   WHERE approval.tenant_id = v_tenant AND approval.id = ANY (v_ids)
      AND NOT approval.bulk_approvable;
   IF v_blocked IS NOT NULL THEN
     RAISE EXCEPTION 'one or more approvals may not be decided in bulk'
@@ -3478,12 +3543,37 @@ BEGIN
               'code','BULK_NOT_PERMITTED','notBulkApprovable',v_blocked)::text;
   END IF;
 
-  FOREACH v_id IN ARRAY p_ids LOOP
+  FOR v_item IN SELECT item FROM pg_catalog.jsonb_array_elements(p_items) AS item LOOP
+    v_id   := (v_item ->> 'approvalId')::uuid;
+    v_hash := NULLIF(pg_catalog.btrim(COALESCE(v_item ->> 'expectedDiffHash','')),'');
+
+    -- The per-item hash, passed through. Each approval has its own diff and
+    -- therefore its own hash; there is no batch-level hash that could stand in
+    -- for them, which is why the argument had to become an array of objects.
+    v_one := app.decide_approval(v_id,p_decision,p_note,v_hash,NULL);
+
+    -- ⚠ `{id, ref, status, effects}`, NOT the raw decide body. The contract's
+    -- ApprovalBulkDecideResponse is `{results:[{id,ref,status,effects?}]}` and
+    -- this used to return `{data:[...],count:n}` whose elements carried no `id`
+    -- and no `ref`. Two consequences, both silent: `app.ok` wraps this in
+    -- `{success,data}`, the client's unwrapEnvelope only auto-unwraps when `data`
+    -- is the SOLE non-success key, and `count` beside it flipped it to
+    -- pass-through — so `response.results` was `undefined` at runtime behind a
+    -- blind `as T` cast. And even unwrapped, the inbox could not tell WHICH of N
+    -- approvals got which outcome, because the elements were anonymous.
     v_results := v_results || pg_catalog.jsonb_build_array(
-      app.decide_approval(v_id,p_decision,p_note,NULL,NULL));
+      pg_catalog.jsonb_build_object(
+        'id',      v_id,
+        'ref',     (SELECT approval.ref FROM core.approval_requests AS approval
+                     WHERE approval.id = v_id),
+        'status',  v_one ->> 'status',
+        'effects', COALESCE(v_one -> 'effects', v_one -> 'result' -> 'effects', '[]'::jsonb)));
   END LOOP;
-  v_results := pg_catalog.jsonb_build_object(
-    'data',v_results,'count',pg_catalog.jsonb_array_length(v_results));
+
+  -- ONE top-level key. `app.ok` adds `{success, data}` around this, and a sibling
+  -- key here is what flips the client's auto-unwrap to pass-through — 001's own
+  -- comment on app.ok says so in as many words, and `count` was that sibling.
+  v_results := pg_catalog.jsonb_build_object('results', v_results);
 
   IF v_idempotency.id IS NOT NULL THEN
     UPDATE app.idempotency_keys
@@ -3621,7 +3711,7 @@ GRANT EXECUTE ON FUNCTION app.perform_action(text,text,jsonb,jsonb,numeric,text,
   TO service_role;
 GRANT EXECUTE ON FUNCTION app.decide_approval(uuid,text,text,text,text)
   TO service_role;
-GRANT EXECUTE ON FUNCTION app.bulk_decide(uuid[],text,text,text)
+GRANT EXECUTE ON FUNCTION app.bulk_decide(jsonb,text,text,text)
   TO service_role;
 GRANT EXECUTE ON FUNCTION app.report_effect_result(bigint,app.effect_status,jsonb,jsonb)
   TO service_role;

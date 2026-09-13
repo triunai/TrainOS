@@ -277,7 +277,7 @@ BEGIN
   IF pg_catalog.to_regprocedure('app.decide_approval(uuid,text,text,text,text)') IS NULL THEN
     RAISE EXCEPTION '014 preflight: app.decide_approval/5 is absent; 011 has not been applied';
   END IF;
-  IF pg_catalog.to_regprocedure('app.bulk_decide(uuid[],text,text,text)') IS NULL THEN
+  IF pg_catalog.to_regprocedure('app.bulk_decide(jsonb,text,text,text)') IS NULL THEN
     RAISE EXCEPTION '014 preflight: app.bulk_decide/4 is absent; 011 has not been applied';
   END IF;
   IF pg_catalog.to_regclass('core.v_approval_requests') IS NULL THEN
@@ -365,6 +365,34 @@ DECLARE
   v_iso_pol    text := p_table || '_tenant_isolation';
   v_gate       text := '';
 BEGIN
+  -- ⚠ VALIDATE `p_migration` FIRST, AND VALIDATE ITS SHAPE, NOT JUST ITS
+  -- PRESENCE. This is the check that closes a silent hole the DROP above cannot.
+  --
+  -- The old three-argument spelling — `apply_tenant_policies('core','x','run:read')`,
+  -- which the catalog taught and 017 used before the signature changed — does NOT
+  -- fail. There is no three-argument overload to resolve to; it binds to THIS
+  -- function with `p_migration = 'run:read'` and `p_permission = NULL`, and
+  -- produces an UNGATED policy stamped `migration:run:read`. Reproduced on a live
+  -- database: the table came out with `has_permission` nowhere in its predicate
+  -- and a stamp no rollback will ever match. A security gate silently downgraded
+  -- and an unfindable policy, from a call that reads exactly like the documented
+  -- one. Dropping the old signature does nothing about it, because the old
+  -- signature is not what the call resolves to.
+  --
+  -- So the slot is typed by its content: a three-digit pack number and nothing
+  -- else. 'run:read' is refused, NULL is refused, '' is refused. Same vocabulary
+  -- as app.tenant_seed_checks.pack, for the same reason — a migration identifier
+  -- that could be any string is a slot any argument can fall into.
+  IF p_migration IS NULL OR p_migration !~ '^[0-9]{3}$' THEN
+    RAISE EXCEPTION
+      'apply_tenant_policies: p_migration must be the three-digit pack that owns '
+      'the policy (''014'', ''017''), and is %. If you meant to pass a permission, '
+      'it is the FOURTH argument: the three-argument spelling binds it here '
+      'instead and produces an ungated policy with a stamp no rollback can find.',
+      COALESCE('''' || p_migration || '''', 'NULL')
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
   v_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', p_schema, p_table));
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'apply_tenant_policies: %.% does not exist', p_schema, p_table;
@@ -594,6 +622,14 @@ DECLARE
   v_iso_pol text := p_table || '_tenant_isolation';
   v_before  text;
 BEGIN
+  IF p_migration IS NULL OR p_migration !~ '^[0-9]{3}$' THEN
+    RAISE EXCEPTION
+      'ungate_tenant_policy: p_migration must be the three-digit pack removing '
+      'the gate, and is %. Removing one is a deliberate act and the record of who '
+      'did it is the point.', COALESCE('''' || p_migration || '''', 'NULL')
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
   v_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', p_schema, p_table));
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'ungate_tenant_policy: %.% does not exist', p_schema, p_table;
@@ -1217,8 +1253,16 @@ $fn$;
 -- The contract now makes it mandatory: `ApprovalDecideRequest.diffHash` is
 -- `string`, not `string | undefined`, with the comment "Required, not optional:
 -- the only caller always has one, having just read it off the same approval it is
--- now deciding." So the database can require it too, and a guard that both sides
--- enforce cannot be re-disabled by one of them changing.
+-- now deciding." So the database can require it too.
+--
+-- ⚠ AN EARLIER VERSION OF THIS COMMENT ADDED "and a guard that both sides enforce
+-- cannot be re-disabled by one of them changing." That was false when it was
+-- written. `core.bulk_decide_approvals`, twenty lines below, is granted to the
+-- same role, took no hash at all, and forwarded every item with the hash
+-- hardcoded NULL — so the bulk path bypassed this refusal entirely while this one
+-- looked airtight. A guard is only as good as the narrowest door into the same
+-- room, and there were two doors. Both are shut now; the claim is not restated,
+-- because the next sibling wrapper would falsify it again.
 --
 -- ONLY ON APPROVE, deliberately: REJECT and REQUEST_CHANGES do not apply the
 -- diff, and 011 does not compare the hash for them either. Refusing them for a
@@ -1262,8 +1306,27 @@ $fn$;
 -- argument silently disables" the optimistic-concurrency check, and the caller
 -- cannot tell, because the decision still succeeds. T5 asserts the arity.
 
+-- ⚠ `p_items jsonb`, NOT `p_ids uuid[]`, AND THE OLD SIGNATURE IS DROPPED.
+--
+-- THE HOLE THIS CLOSES. `core.decide_approval` refuses an APPROVE with no diff
+-- hash, and the commit that added that refusal claimed a guard both sides enforce
+-- "cannot be re-disabled by one of them changing". That was wrong, and this
+-- function is why: it is granted to `authenticated` exactly like its sibling, it
+-- took no hash at all, and `app.bulk_decide` forwarded every item with the hash
+-- HARDCODED NULL. 011 compares the hash only when it is non-NULL, so bulk APPROVE
+-- skipped the optimistic-concurrency check completely. One door locked and the
+-- door beside it wedged open — and the bulk door is the one an approver uses to
+-- clear an inbox quickly, which is exactly when they are not re-reading diffs.
+--
+-- A hash per approval cannot travel in an array of ids, so the argument is an
+-- array of objects. `CREATE OR REPLACE` matches on the argument list, so the old
+-- spelling is dropped rather than left beside this one: two overloads differing
+-- in their first argument type would make a four-argument call from PostgREST
+-- resolve by whatever it could coerce, silently.
+DROP FUNCTION IF EXISTS core.bulk_decide_approvals(jsonb, text, text, text);
+
 CREATE OR REPLACE FUNCTION core.bulk_decide_approvals(
-  p_ids             uuid[],
+  p_items           jsonb,
   p_decision        text,
   p_note            text DEFAULT NULL,
   p_idempotency_key text DEFAULT NULL
@@ -1273,21 +1336,21 @@ SECURITY DEFINER
 SET search_path = ''
 SET statement_timeout = '10s'
 AS $fn$
-  SELECT app.ok(app.bulk_decide(p_ids, p_decision, p_note, p_idempotency_key));
+  SELECT app.ok(app.bulk_decide(p_items, p_decision, p_note, p_idempotency_key));
 $fn$;
 
 REVOKE ALL ON FUNCTION core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)
   FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION core.decide_approval(uuid,text,text,text,text)
   FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION core.bulk_decide_approvals(uuid[],text,text,text)
+REVOKE ALL ON FUNCTION core.bulk_decide_approvals(jsonb,text,text,text)
   FROM PUBLIC, anon;
 
 GRANT EXECUTE ON FUNCTION core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)
   TO authenticated;
 GRANT EXECUTE ON FUNCTION core.decide_approval(uuid,text,text,text,text)
   TO authenticated;
-GRANT EXECUTE ON FUNCTION core.bulk_decide_approvals(uuid[],text,text,text)
+GRANT EXECUTE ON FUNCTION core.bulk_decide_approvals(jsonb,text,text,text)
   TO authenticated;
 
 COMMENT ON FUNCTION core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text) IS
@@ -1304,7 +1367,7 @@ COMMENT ON FUNCTION core.decide_approval(uuid,text,text,text,text) IS
   'PR #17; the contract now types diffHash as required, so both sides enforce it '
   'and neither can re-disable it alone. Doc 09 §12. 014.';
 
-COMMENT ON FUNCTION core.bulk_decide_approvals(uuid[],text,text,text) IS
+COMMENT ON FUNCTION core.bulk_decide_approvals(jsonb,text,text,text) IS
   'Wraps app.bulk_decide (011). Named for its consumer: rpcClient.ts:533 calls '
   '"bulk_decide_approvals" and doc 09 §1 specifies that spelling. 014.';
 
@@ -1431,7 +1494,7 @@ BEGIN
     SELECT x FROM pg_catalog.unnest(ARRAY[
       'core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)',
       'core.decide_approval(uuid,text,text,text,text)',
-      'core.bulk_decide_approvals(uuid[],text,text,text)']) AS t(x)
+      'core.bulk_decide_approvals(jsonb,text,text,text)']) AS t(x)
   LOOP
     IF pg_catalog.to_regprocedure(v_missing) IS NULL THEN
       RAISE EXCEPTION '014 verify: wrapper % was not created', v_missing;
@@ -1461,7 +1524,7 @@ BEGIN
     SELECT x FROM pg_catalog.unnest(ARRAY[
       'app.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)',
       'app.decide_approval(uuid,text,text,text,text)',
-      'app.bulk_decide(uuid[],text,text,text)']) AS t(x)
+      'app.bulk_decide(jsonb,text,text,text)']) AS t(x)
   LOOP
     IF has_function_privilege('authenticated', pg_catalog.to_regprocedure(v_missing), 'EXECUTE')
        OR has_function_privilege('anon', pg_catalog.to_regprocedure(v_missing), 'EXECUTE') THEN

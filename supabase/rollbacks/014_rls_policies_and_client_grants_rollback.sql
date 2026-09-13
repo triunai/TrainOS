@@ -111,6 +111,9 @@ $preflight$;
 -- ── 1 · The three wrappers ──────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text);
 DROP FUNCTION IF EXISTS core.decide_approval(uuid,text,text,text,text);
+-- Both signatures: 014 changed this from uuid[] to jsonb when bulk APPROVE had to
+-- start carrying a diff hash per approval.
+DROP FUNCTION IF EXISTS core.bulk_decide_approvals(jsonb,text,text,text);
 DROP FUNCTION IF EXISTS core.bulk_decide_approvals(uuid[],text,text,text);
 
 -- ── 2 · The client grants ───────────────────────────────────────────────────
@@ -339,6 +342,7 @@ BEGIN
 
   IF pg_catalog.to_regprocedure('core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)') IS NOT NULL
      OR pg_catalog.to_regprocedure('core.decide_approval(uuid,text,text,text,text)') IS NOT NULL
+     OR pg_catalog.to_regprocedure('core.bulk_decide_approvals(jsonb,text,text,text)') IS NOT NULL
      OR pg_catalog.to_regprocedure('core.bulk_decide_approvals(uuid[],text,text,text)') IS NOT NULL THEN
     RAISE EXCEPTION 'ROLLBACK 014 incomplete: a core wrapper survives';
   END IF;
