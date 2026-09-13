@@ -276,6 +276,17 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 20:3x — 014-017 land on PR #6, 018 becomes PR #11, hosted-apply hard rule confirmed
+
+- PR #6 confirmed 4/4 packs (014-017) with real defects fixed (ungranted
+  require_tenant_id, missing index, ungrantable views deferred to 018).
+  018 is now PR #11, confirmed open: 23/24 RPC_NAMES done, me_profile
+  deferred, R-C resolved by grep (tax_policies genuinely absent), a keyset
+  paging bug found and fixed, DEAL_CHAIN divergence deliberately pinned.
+  Hard rule confirmed baked into 018's own test: it self-detects and warns
+  if applied to a hosted project before 014. Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 20:2x — PR #8 merged too; main-red recount (five, not four); MoneyText correction
 
 - PR #8 confirmed merged at a4ea833 after review-pr8's MERGE verdict (1004

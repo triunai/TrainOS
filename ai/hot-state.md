@@ -97,8 +97,27 @@
 > carry their own independent `font-mono` wrappers PR #9 never touched.
 > Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 20:2x — PR #8 merged too; main-red was five
-> checks not four; the MoneyText follow-up needed a correction of its own.
+> **BLAST 13 Sep 20:3x +08** — 014–017 all landed: PR #6 confirmed at 4
+> commits (`gh pr view 6`), 51/13/15/39 assertions, 17/17 pins pass from a
+> clean shim including a full reverse rollback. Real defects found and
+> fixed: `app.require_tenant_id` was ungranted (confirmed in the diff),
+> plus a missing tenant index, an ungrantable view pair deferred to 018,
+> and a `SET LOCAL` refusal. `pg_cron`/`pg_net` are shim stubs, so 015's
+> job registration is pinned but firing is unverified until hosted. 018 is
+> now PR #11, confirmed open (3 commits, 4955 additions): 23 of 24
+> `RPC_NAMES` implemented, `me_profile` confirmed NOT implemented (needs an
+> HR table), `core.tax_policies`/`app.resolve_tax_policy` confirmed absent
+> from 001–013 by grep (R-C resolved), a real keyset-cursor paging bug
+> found and fixed, and `DEAL_CHAIN` confirmed to be a genuine contract/004
+> divergence left unpapered-over on purpose. **Hard rule confirmed baked
+> into 018's own test as a runtime assertion**: every `core` table is
+> FORCE RLS with zero policies until 014 lands, so on any non-BYPASSRLS
+> owner every 018 read returns zero rows silently — the test raises "018
+> MUST NOT be applied to a hosted project before 014" if it ever detects
+> this. Full detail in `ai/workstreams.md` SUPABASE SCHEMA.
+
+> **Last updated:** 2026-09-13 20:3x — 014–017 landed on PR #6, 018 is PR
+> #11; the hosted-apply ordering rule is now confirmed machine-enforced.
 
 ### Focus
 

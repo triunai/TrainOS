@@ -17,7 +17,7 @@
 
 ---
 
-## 🟢 SUPABASE SCHEMA — 001–013 committed; 014–017 in cloud, 018 in a lane (2026-09-13)
+## 🟢 SUPABASE SCHEMA — 001–013 committed; 014–017 on PR #6 (4/4 packs); 018 on PR #11 (2026-09-13)
 
 **Resume:** Read `supabase/HANDOFF.md` in full, then check what has actually
 landed before writing anything: `git log` on `supabase/migrations/`, then the
@@ -46,11 +46,81 @@ nothing else currently blocks the hosted apply once 014 passes review.
 pins, the catalog, and the architecture documents they implement.
 
 **State:** 001–013 authored, EXECUTED against a local PostgreSQL 17.11 shim,
-and committed to main (013 in `bc15b17`). 014–017 (RLS, realtime+cron, and the
-remainder) are being written by cloud lane `cloud/migrations`, no PR yet as of
-19:25. 018 (the RPC pack) has the user's go-ahead as of 19:23 and is running in
-worktree lane `lane/rpc-018` at `~/Repos/personal-work/trainos-wt/rpc-018`.
-Nothing has been applied to any hosted database.
+and committed to main (013 in `bc15b17`). **014–017 all landed on PR #6**,
+confirmed 4 commits (`gh pr view 6`): 014 RLS policies/client grants/core
+envelope wrappers, 015 cron schedules, 016 tenant provisioning, 017 baseline
+amendment. Assertions per pack as reported: 014×51, 015×13, 016×15, 017×39;
+17/17 pins pass from a clean shim including a full reverse rollback to zero
+relations — not independently re-run here (needs the shim). **018 is now PR
+#11** (`feat(supabase): 018 golden-path RPC pack`, branch `lane/rpc-018`,
+confirmed open, 3 commits, 3 files — migration + rollback + test, matching
+this repo's per-pack convention — 4955 additions total). Nothing has been
+applied to any hosted database.
+
+**014–017 execution findings, negative results for the log (reported,
+partially spot-checked):**
+
+- `app.require_tenant_id` was ungranted, so RLS policies errored instead of
+  denying — confirmed directly in the PR #6 diff: "no policy in 001-013 used
+  it — 014 is the first to grant it."
+- `rule_set_versions` lacked its tenant index.
+- `budget_status`/`model_tier_status` views were found ungrantable and
+  deferred to 018.
+- `SET LOCAL` was refused inside a non-volatile function.
+- The `ADD CONSTRAINT IF NOT EXISTS` trap (a known Postgres footgun this
+  spine has hit before) was hit a third time.
+- Shim caveat: `pg_cron` and `pg_net` are stubs in the local shim, so 015's
+  job _registration_ is pinned but _firing_ is unverified until hosted.
+- Deferred: the pipeline seed moves to 018; tax/HRD rows are PROPOSED
+  pending a Finance verifier; four retention reapers await approved policy
+  rows; four AI-ops columns await a runtime vocabulary that doesn't exist
+  yet. Codex second pass requested on 015–017 and on nineteen edits made to
+  earlier (001–013) pins.
+
+**018 (PR #11) findings, confirmed directly against the diff:**
+
+- 23 of 24 `RPC_NAMES` implemented; `me_profile` (the 24th) is NOT
+  implemented — confirmed in the migration's own comment: "the 24th name in
+  `RPC_NAMES`... needs an HR table for eleven required fields." One view,
+  nine `app.*` helpers, 160 pin assertions + 28 in-migration verify;
+  `check:rpc` 0 BROKEN, `check:grants` OK, `lint:sql` 42/42 reported (not
+  independently re-run). Shim rebuilt from `initdb` on port 5433 with a
+  hand-written platform shim (four Supabase roles, `auth.*`, a storage
+  stub, a realtime publication).
+- **R-C resolved by verification, confirmed by grep**: `core.tax_policies`
+  and `app.resolve_tax_policy` genuinely do not exist anywhere in 001–013,
+  and 018 does not need them because `Quotation` carries no tax field.
+- A real keyset-cursor bug was found by the pack's own pin, confirmed in the
+  diff's comment: a `DESCENDING` sort took the array's `max` sort key for
+  the next cursor, which under DESC is the wrong end of the page, so page
+  two repeated page one's tail. Fixed and pinned.
+- `SET CONSTRAINTS IMMEDIATE` fires nothing inside a PL/pgSQL
+  subtransaction — replaced with an explicit read-back.
+- `DEAL_CHAIN` is a contract pipeline object that 004's own CHECK constraint
+  disallows (004 allows `ENGAGEMENT | OPPORTUNITY | PACKET`; the contract's
+  `PIPELINE_OBJECTS` is `ENGAGEMENT | DEAL_CHAIN | OPPORTUNITY`) — confirmed
+  directly, and the migration deliberately does NOT paper over it: "inventing
+  an alias would hide a schema/contract disagreement that has to be settled
+  in 003/004, not here," with a pin that fails loudly if the divergence is
+  ever silently resolved.
+- Doc 09's `search_path` pin was found to assert a string PostgreSQL never
+  actually stores — this is exactly [[postgres-search-path-footgun]] from
+  memory, the quoted-list form being a silent no-op.
+
+⚠ **Hard rule, confirmed baked directly into 018's own test file as a
+runtime assertion, not just stated in a report:** every `core` table is
+`ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero
+policies** until 014's policies exist. FORCE removes the owner's RLS
+exemption, so on any project whose definer-function owner is not
+`BYPASSRLS`, every read in 018 returns ZERO ROWS **silently, as an empty
+list, not an error** — until 014 is applied. The local shim's `postgres`
+role IS a superuser, which is why 018's own pins all pass there regardless.
+The migration's test file literally asserts this as its first check and
+raises the notice **"018 MUST NOT be applied to a hosted project before
+014"** if it ever detects a FORCE-RLS table with no policy. **This is the
+single most important ordering constraint on the whole hosted-apply path.**
+Follow-up slice requested for `lane/rpc-018`: PR #5's ten new RPC names,
+rebase on `cloud/migrations`, and the pipeline stage seed.
 
 **018 scope grew 19:35+:** PR #5 (`cloud/web-swap`) found ten feature calls
 with no `TrainOsClient` method and added them to `RPC_NAMES` in
