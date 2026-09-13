@@ -123,6 +123,9 @@ export function ProgrammeDetailPage() {
     <div className="flex flex-col gap-4">
       <ContentCard flush>
         <RecordHeader
+          accent
+          collapsible
+          recordType="programme"
           title={programme.name}
           recordRef={programme.ref}
           meta={[
