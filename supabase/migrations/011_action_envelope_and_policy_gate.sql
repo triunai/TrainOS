@@ -2292,37 +2292,27 @@ BEGIN
   -- posted. `app.has_permission` was called exactly once in this entire file, in
   -- `decide_approval`, and 014's wrapper re-validates nothing.
   --
-  -- HUMAN always; CLIENT only once CLIENT has permissions to check (see below).
+  -- HUMAN and CLIENT, unconditionally: both are principals with a role, and
+  -- `required_permission` is documented (the COMMENT ON COLUMN above) as the key
+  -- a HUMAN or CLIENT actor must hold.
   -- An AGENT's authority is the autonomy grant and the policy ceiling, which the
   -- sections below evaluate in full and which is a different model — agents hold
   -- no role in `app.role_permissions`. A SYSTEM actor is the database acting on
   -- its own behalf and has no principal to check.
-  -- ⚠ CLIENT IS EXEMPT WHILE — AND ONLY WHILE — IT HOLDS NO PERMISSIONS.
   --
-  -- A first version of this check covered HUMAN and CLIENT together, and that
-  -- broke every CLIENT-initiated action outright: `app.role_permissions` has rows
-  -- for the seven staff roles and NONE for CLIENT or AGENT, so `has_permission`
-  -- is false for a portal caller no matter what they are doing. A gate that
-  -- refuses everybody is not a gate, it is an outage, and it would have surfaced
-  -- as "the portal stopped working" on the day 018's accept path landed rather
-  -- than here.
-  --
-  -- The deeper reason it was wrong: `required_permission` is drawn from the STAFF
-  -- role model. A portal caller is authenticated by a share token, not by a
-  -- membership — 002:480, "portal RPCs write CLIENT" — and `app.role()` for them
-  -- is not a staff role at all. Asking `has_permission` about them is asking the
-  -- wrong table.
-  --
-  -- So the exemption is conditional on the thing that makes it true, not written
-  -- as a permanent carve-out: the moment anybody seeds CLIENT rows into
-  -- app.role_permissions, this check starts applying to CLIENT automatically and
-  -- the portal is gated by the same mechanism as everything else. Nobody has to
-  -- remember to come back and delete an exemption — which is how 017's third
-  -- provisioning trigger went unguarded and is the failure this file has now met
-  -- twice.
-  IF v_actor_kind = 'HUMAN'
-     OR (v_actor_kind = 'CLIENT'
-         AND EXISTS (SELECT 1 FROM app.role_permissions AS rp WHERE rp.role = 'CLIENT'))
+  -- ⚠ CLIENT FAILS CLOSED, AND THAT IS THE DECISION, NOT AN OVERSIGHT.
+  -- `app.role_permissions` seeds the seven staff roles and no CLIENT row, so
+  -- every CLIENT-kind action is refused FORBIDDEN until a migration seeds CLIENT
+  -- permissions. An earlier version exempted CLIENT while it held no rows, to
+  -- avoid that outage. That was a fail-open: nothing ties
+  -- `memberships.actor_kind = 'CLIENT'` to anything, a tenant ADMIN can create
+  -- such a membership, and a CLIENT principal at aal1 then executed
+  -- QUOTATION_APPLY, AGENT_PAUSE and ENQUIRY_ARCHIVE with no permission check
+  -- (docs/reviews/2026-09-14-011-013-final.md §2). No code path creates a CLIENT
+  -- actor today — 018's portal writes use HUMAN branches and emit_event — so
+  -- the refusal costs nothing now, and a portal that needs CLIENT actions must
+  -- seed exactly the permissions it needs.
+  IF v_actor_kind IN ('HUMAN','CLIENT')
   THEN
     IF v_type.required_permission IS NULL THEN
       RAISE EXCEPTION
@@ -2367,8 +2357,10 @@ BEGIN
   END IF;
 
   -- H-05: assurance is checked inside the definer envelope. Agents and system
-  -- facts do not have GoTrue MFA sessions; human money commitments do.
-  IF v_type.money_moving AND v_actor_kind = 'HUMAN'
+  -- facts do not have GoTrue MFA sessions; human and client money commitments
+  -- do. CLIENT is here because it is a signed-in principal like HUMAN; leaving
+  -- it out let a CLIENT holding a money-moving permission commit at aal1.
+  IF v_type.money_moving AND v_actor_kind IN ('HUMAN','CLIENT')
      AND NOT app.aal2_verified() THEN
     RAISE EXCEPTION 'AAL2 is required for money-moving actions'
       USING ERRCODE = 'TRNOS',
@@ -2963,8 +2955,9 @@ BEGIN
       USING ERRCODE = 'integrity_constraint_violation';
   END IF;
 
-  -- H-05: the decision endpoint is its own money-commitment boundary.
-  IF v_type.money_moving AND v_actor.actor_kind = 'HUMAN'
+  -- H-05: the decision endpoint is its own money-commitment boundary. CLIENT is
+  -- held to it exactly as in perform_action.
+  IF v_type.money_moving AND v_actor.actor_kind IN ('HUMAN','CLIENT')
      AND NOT app.aal2_verified() THEN
     RAISE EXCEPTION 'AAL2 is required to decide a money-moving action'
       USING ERRCODE = 'TRNOS',
