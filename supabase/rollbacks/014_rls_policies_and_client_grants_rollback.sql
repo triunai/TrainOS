@@ -19,7 +19,9 @@
 --                                        RE-ISSUED, because the blanket revoke
 --                                        that step needs takes those too and 014
 --                                        never created them
---   3. the policies 014 created         (by name, never by wildcard)
+--   3. the policies 014 created         (by the `migration:014` stamp each one
+--                                        carries in its COMMENT, never by a name
+--                                        pattern and never by a wildcard)
 --   4. the index and the policy function
 --
 -- Step 2 before step 3 is the half that matters. The other order — policies down
@@ -142,33 +144,84 @@ $auth_admin$;
 -- grant has no consumer, and 013 did not have it.
 REVOKE EXECUTE ON FUNCTION app.require_tenant_id() FROM authenticated;
 
--- ── 3 · The policies 014 created, by name ───────────────────────────────────
+-- ── 3 · The policies 014 created, by stamped manifest ───────────────────────
+-- ⚠ BY MANIFEST, NOT BY NAMING CONVENTION.
+--
+-- An earlier version of this block selected policies to drop by matching
+-- `<table>_tenant_select` / `<table>_tenant_isolation`, while the forward
+-- migration's comment claimed "nothing uses a wildcard DROP POLICY". Matching a
+-- name pattern IS a wildcard with extra steps: `app.apply_tenant_policies` is a
+-- shared function, 017 already calls it for three of its own tables, and anything
+-- later that calls it — or hand-writes a policy with the same name shape — would
+-- have its policies silently dropped by 014's rollback.
+--
+-- So 014 stamps every policy it creates with `migration:014` at the head of the
+-- policy's COMMENT, from the CALLER rather than from inside the shared function,
+-- and this loop drops exactly what carries that stamp. 017's three tables are
+-- stamped by 017 or not at all; either way they are not 014's.
+--
+-- The stamp lives in pg_description, which is dropped with the policy, so there
+-- is no separate manifest table to keep in step and nothing survives the drop.
 DO $drop_policies$
 DECLARE
-  r       pg_catalog.record;
-  v_count integer := 0;
+  r          pg_catalog.record;
+  v_count    integer := 0;
+  v_expected integer;
 BEGIN
+  -- What the stamp SHOULD cover, DERIVED from the catalogue as it stands right
+  -- now rather than hardcoded. Two policies for every tenant-scoped core table,
+  -- plus provenance_subjects_read, plus the three role gates, plus 014's one
+  -- policy on public.memberships.
+  --
+  -- Derived and not a literal because the number legitimately moves. 014's §2
+  -- loop covers every tenant-scoped core table that exists WHEN IT RUNS: on a
+  -- clean forward apply that is 113, but re-applying 014 on top of an already
+  -- applied 017 re-creates 017's three tables' policies too, and they carry 014's
+  -- stamp afterwards because 014 genuinely was the last thing to create them.
+  -- A literal would have made a correct re-apply fail here, which is how magic
+  -- numbers teach people to delete assertions.
+  SELECT pg_catalog.count(*) * 2 + 5 INTO v_expected
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'core' AND c.relkind = 'r'
+     AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                  WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                    AND a.attnum > 0 AND NOT a.attisdropped);
+
   FOR r IN
     SELECT n.nspname, c.relname, p.polname
       FROM pg_catalog.pg_policy p
       JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname = 'core'
-       AND (p.polname = c.relname || '_tenant_select'
-         OR p.polname = c.relname || '_tenant_isolation')
+      JOIN pg_catalog.pg_description d
+        ON d.objoid = p.oid
+       AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+     WHERE n.nspname IN ('core','public')
+       AND d.description LIKE 'migration:014 %'
   LOOP
     EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON %I.%I', r.polname, r.nspname, r.relname);
     v_count := v_count + 1;
   END LOOP;
-  RAISE NOTICE 'ROLLBACK 014: dropped % tenant policies', v_count;
+  RAISE NOTICE 'ROLLBACK 014: dropped % policies stamped migration:014', v_count;
+
+  -- A count that does not match the derivation means the stamp has drifted from
+  -- the DDL, and a drifted manifest is a drop that silently misses something.
+  IF v_count <> v_expected THEN
+    RAISE EXCEPTION
+      'ROLLBACK 014: dropped % policies stamped migration:014, and the catalogue '
+      'says there should have been % (two per tenant-scoped core table, plus '
+      'provenance_subjects_read, three role gates and memberships_no_client_delete). '
+      'Either 014 created a policy it did not stamp, or something other than 014 '
+      'is writing 014''s marker.', v_count, v_expected;
+  END IF;
 END;
 $drop_policies$;
 
-DROP POLICY IF EXISTS provenance_subjects_read ON core.provenance_subjects;
-
--- 014's own policy on a `public` table. It is 014's to drop and nobody else's:
--- 002 authored fourteen policies on `public.*` and this is the fifteenth, so the
--- post-condition's count of 14 is what proves this line ran and took only this.
+-- 014's own policy on a `public` table. The manifest loop above already took it
+-- — `public` is in that loop's schema list for exactly this policy — and this
+-- line is the belt to that braces: if the stamp is ever lost from this one
+-- policy, the count assertion above fires AND this line still removes it, so the
+-- post-condition's count of 14 cannot be reached by leaving it behind.
 DROP POLICY IF EXISTS memberships_no_client_delete ON public.memberships;
 
 -- ── 4 · The index and the policy function ───────────────────────────────────
@@ -186,7 +239,25 @@ DECLARE
   v_left text;
   v_n    integer;
 BEGIN
-  -- Nothing 014 created is left standing.
+  -- Nothing carrying 014's stamp is left standing, in either schema. Checked off
+  -- the same manifest the drop loop used, so the two cannot disagree about what
+  -- "014's policies" means.
+  SELECT pg_catalog.string_agg(pg_catalog.format('%s.%s.%s', n.nspname, c.relname, p.polname), ', ')
+    INTO v_left
+    FROM pg_catalog.pg_policy p
+    JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_description d
+      ON d.objoid = p.oid
+     AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+   WHERE d.description LIKE 'migration:014 %';
+  IF v_left IS NOT NULL THEN
+    RAISE EXCEPTION 'ROLLBACK 014 incomplete: policies survive: %', v_left;
+  END IF;
+
+  -- And nothing shaped like one is left either, stamp or no stamp. A policy that
+  -- 014 created but failed to stamp would pass the check above and still be a
+  -- leftover; this is the check that does not trust the manifest.
   SELECT pg_catalog.string_agg(pg_catalog.format('%s.%s', c.relname, p.polname), ', ')
     INTO v_left
     FROM pg_catalog.pg_policy p
@@ -194,9 +265,11 @@ BEGIN
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'core'
      AND (p.polname LIKE '%\_tenant\_select' OR p.polname LIKE '%\_tenant\_isolation'
+          OR p.polname LIKE '%\_role\_gate'
           OR p.polname = 'provenance_subjects_read');
   IF v_left IS NOT NULL THEN
-    RAISE EXCEPTION 'ROLLBACK 014 incomplete: policies survive: %', v_left;
+    RAISE EXCEPTION
+      'ROLLBACK 014 incomplete: unstamped 014-shaped policies survive: %', v_left;
   END IF;
 
   IF pg_catalog.to_regprocedure('core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)') IS NOT NULL

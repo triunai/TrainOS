@@ -410,6 +410,29 @@ BEGIN
      ORDER BY c.relname
   LOOP
     PERFORM app.apply_tenant_policies('core', r.relname);
+
+    -- ⚠ THE MANIFEST. Each policy is stamped with the migration that created it,
+    -- in its COMMENT, and the rollback drops by that stamp rather than by the
+    -- `<table>_tenant_select` / `<table>_tenant_isolation` naming convention.
+    --
+    -- Why the convention is not good enough: `app.apply_tenant_policies` is a
+    -- FUNCTION, and 017 already calls it for three of its own tables. Anything
+    -- later that calls it — or that simply names a policy the same way by hand —
+    -- gets policies indistinguishable from 014's, and a convention-matching
+    -- rollback of 014 would drop them. The stamp is written by the CALLER, here,
+    -- not inside the shared function, so 017's three tables are NOT stamped 014
+    -- and are not 014's to drop.
+    EXECUTE pg_catalog.format(
+      'COMMENT ON POLICY %I ON core.%I IS %L',
+      r.relname || '_tenant_select', r.relname,
+      'migration:014 — permissive tenant-scoped SELECT. Predicate derived from '
+      'tenant_id''s NOT NULL flag by app.apply_tenant_policies.');
+    EXECUTE pg_catalog.format(
+      'COMMENT ON POLICY %I ON core.%I IS %L',
+      r.relname || '_tenant_isolation', r.relname,
+      'migration:014 — restrictive FOR ALL tenant isolation. Correct on the day '
+      'somebody grants a write, which is the only day it decides anything.');
+
     v_count := v_count + 1;
   END LOOP;
 
@@ -440,10 +463,10 @@ CREATE POLICY provenance_subjects_read ON core.provenance_subjects
   USING (true);
 
 COMMENT ON POLICY provenance_subjects_read ON core.provenance_subjects IS
-  'Reference data with no tenant dimension: the list of tables that may carry a '
+  'migration:014 — Reference data with no tenant dimension: the list of tables that may carry a '
   'provenance row. USING (true) is the whole predicate because there is nothing '
   'to scope by; the guard is that the table holds no tenant data and receives no '
-  'write privilege. 014.';
+  'write privilege.';
 
 -- ============================================================================
 -- §3b · A defect found by executing this migration, fixed where it was found
@@ -571,6 +594,101 @@ BEGIN
   END LOOP;
 END;
 $views$;
+
+-- ============================================================================
+-- §4b · The tables where tenant membership is NOT sufficient authorization
+-- ============================================================================
+-- THE DEFECT THIS CLOSES. §2 gives every tenant-scoped `core` table the same
+-- pair of policies, whose only term is the tenant. §4 then grants SELECT on all
+-- of them. Composed, that says: any authenticated principal of a tenant may read
+-- every row of every table of that tenant. For 111 of the 114 tables that is the
+-- product — a SALES consultant is meant to see the tenant's enquiries.
+--
+-- For three of them it is a leak, because 002 already decided otherwise and
+-- wrote the decision down as a permission that only some roles hold:
+--
+--   core.ai_provider_keys      `ai:provider:read`     ADMIN only        (002:1135)
+--   core.run_node_io           `run:read`             MD and ADMIN      (002:1116,1212)
+--   core.public_share_tokens   `portal:token:issue`   SALES, SALES_MANAGER,
+--                                                     MD, ADMIN         (002:861,919,1102,1196)
+--
+-- Concretely, before this block: a SALES principal — the lowest-privileged human
+-- role in a tenant — could read every provider key row in the tenant (masked key
+-- prefix, 32-byte fingerprint, key_ref, provider, region, billing owner), and
+-- every run's raw `prompt` and `completion` text, which 013's own retention
+-- machinery treats as PII-bearing enough to redact and sweep at 30 days. Neither
+-- is a tenant-isolation failure; both are an authorization failure INSIDE a
+-- tenant, which is a different question that the tenant predicate cannot answer.
+--
+-- WHY THESE THREE AND NOT MORE. These are the three the 2026-09-13 retrofit
+-- review named, each with the permission that already gates it in 002. Every
+-- other `core` table keeps the blanket tenant-scoped SELECT, and that is a
+-- POSTURE, not an oversight: within-tenant read authorization for the rest is
+-- deferred to the RPC layer, where doc 09 puts it. It is recorded as a carried
+-- item in the catalog so that the next person to widen a read surface finds the
+-- decision rather than re-deriving it.
+--
+-- WHY RESTRICTIVE AND FOR ALL. RESTRICTIVE so it ANDs with the permissive SELECT
+-- policy §2 created and with any permissive policy a later migration adds — a
+-- second permissive policy would OR the gate away, and the day somebody adds one
+-- is the day this has to still hold. FOR ALL rather than FOR SELECT for the same
+-- reason §2's isolation policy is FOR ALL: no client role holds a write privilege
+-- on `core` today, so the write half decides nothing now and is already correct
+-- on the day that changes.
+--
+-- WHY `app.has_permission` AND NOT A ROLE LIST. It is SECURITY DEFINER over
+-- app.role_permissions (002), which `authenticated` cannot read directly, and it
+-- is already granted EXECUTE to `authenticated` (002:637) — so it is runnable
+-- inside a policy predicate, which is evaluated AS THE QUERYING ROLE. A hardcoded
+-- role list here would be a second copy of 002's permission catalogue that
+-- nothing keeps in step with the first. The `(SELECT ...)` wrapper is the InitPlan
+-- form the rest of this file uses: one evaluation per statement, not per row.
+DO $role_gates$
+DECLARE
+  r pg_catalog.record;
+BEGIN
+  FOR r IN
+    SELECT relname, perm, why FROM (VALUES
+      ('ai_provider_keys',    'ai:provider:read',
+       'masked key prefix, fingerprint and key_ref; 002:1135 makes ai:provider:read ADMIN-only'),
+      ('run_node_io',         'run:read',
+       'raw agent prompt and completion text; 002:1116/1212 make run:read MD and ADMIN only'),
+      ('public_share_tokens', 'portal:token:issue',
+       'the portal token hashes and which proposal each opens; 002 gives portal:token:issue to SALES, SALES_MANAGER, MD and ADMIN')
+    ) AS t(relname, perm, why)
+  LOOP
+    IF pg_catalog.to_regclass(pg_catalog.format('core.%I', r.relname)) IS NULL THEN
+      RAISE EXCEPTION
+        '014: core.% does not exist, so the role gate it needs cannot be created '
+        'and §4 is about to grant SELECT on a sensitive table with no gate.', r.relname;
+    END IF;
+
+    -- The permission must be one 002 actually issued to somebody. A typo here
+    -- would produce a policy nobody can satisfy, which reads as very secure and
+    -- is a broken screen.
+    IF NOT EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.permission = r.perm) THEN
+      RAISE EXCEPTION
+        '014: permission %s names no row in app.role_permissions, so the gate on '
+        'core.%s would refuse every role including ADMIN.', r.perm, r.relname;
+    END IF;
+
+    EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON core.%I',
+      r.relname || '_role_gate', r.relname);
+    EXECUTE pg_catalog.format(
+      'CREATE POLICY %I ON core.%I AS RESTRICTIVE FOR ALL TO authenticated '
+      'USING ((SELECT app.has_permission(%L))) WITH CHECK ((SELECT app.has_permission(%L)))',
+      r.relname || '_role_gate', r.relname, r.perm, r.perm);
+    EXECUTE pg_catalog.format(
+      'COMMENT ON POLICY %I ON core.%I IS %L',
+      r.relname || '_role_gate', r.relname,
+      pg_catalog.format(
+        'migration:014 — tenant membership is not sufficient authorization here: %s. '
+        'RESTRICTIVE, so it ANDs with the permissive tenant SELECT policy and with '
+        'any permissive policy a later migration adds.', r.why));
+  END LOOP;
+  RAISE NOTICE '014: role gates created on 3 sensitive core tables';
+END;
+$role_gates$;
 
 GRANT SELECT ON core.audit_entries             TO authenticated;
 GRANT SELECT ON core.v_contact_consent_current TO authenticated;
@@ -954,7 +1072,8 @@ BEGIN
     JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'core'
-     AND (p.polname LIKE '%\_tenant\_select' OR p.polname LIKE '%\_tenant\_isolation')
+     AND (p.polname LIKE '%\_tenant\_select' OR p.polname LIKE '%\_tenant\_isolation'
+          OR p.polname LIKE '%\_role\_gate')
      AND NOT (SELECT 'authenticated'::regrole::oid = ANY (p.polroles));
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION '014 verify: policy/policies not scoped TO authenticated: %', v_missing;
@@ -1031,6 +1150,96 @@ BEGIN
       '014 verify: memberships_no_client_delete is missing or is not a RESTRICTIVE '
       'DELETE policy. Without it the only thing refusing a membership hard-delete '
       'is the absent privilege, and 002''s memberships_write_admin is FOR ALL.';
+  END IF;
+
+  -- (13) The three role gates exist, are RESTRICTIVE, and name a permission that
+  --      at least one role holds and at least one role does not. A gate no role
+  --      satisfies is a broken screen that reads as security; a gate every role
+  --      satisfies is decoration. Both are asserted off the catalogue rather than
+  --      off the DDL text above.
+  FOR v_missing IN
+    SELECT x FROM pg_catalog.unnest(ARRAY[
+      'ai_provider_keys:ai:provider:read',
+      'run_node_io:run:read',
+      'public_share_tokens:portal:token:issue']) AS t(x)
+  LOOP
+    DECLARE
+      v_rel  text := pg_catalog.split_part(v_missing, ':', 1);
+      v_perm text := pg_catalog.substr(v_missing, pg_catalog.strpos(v_missing, ':') + 1);
+      v_qual text;
+      v_have integer;
+      v_all  integer;
+    BEGIN
+      SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) INTO v_qual
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'core' AND c.relname = v_rel
+         AND p.polname = v_rel || '_role_gate'
+         AND NOT p.polpermissive
+         AND p.polcmd = '*';
+      IF v_qual IS NULL THEN
+        RAISE EXCEPTION
+          '014 verify: core.%s has no RESTRICTIVE FOR ALL policy %s_role_gate. '
+          'Without it §4''s blanket SELECT grant lets every role in the tenant read '
+          'it, and 002 says only the holders of %s may.', v_rel, v_rel, v_perm;
+      END IF;
+      IF pg_catalog.strpos(v_qual, v_perm) = 0 THEN
+        RAISE EXCEPTION
+          '014 verify: core.%s''s role gate does not consult %s. Predicate is: %s',
+          v_rel, v_perm, v_qual;
+      END IF;
+
+      SELECT pg_catalog.count(*) INTO v_have
+        FROM app.role_permissions rp WHERE rp.permission = v_perm;
+      SELECT pg_catalog.count(DISTINCT rp.role) INTO v_all FROM app.role_permissions rp;
+      IF v_have = 0 THEN
+        RAISE EXCEPTION
+          '014 verify: %s is held by no role, so core.%s is unreadable by every '
+          'client. A gate nobody can satisfy is a broken screen, not security.',
+          v_perm, v_rel;
+      END IF;
+      IF v_have >= v_all THEN
+        RAISE EXCEPTION
+          '014 verify: %s is held by every role that holds any permission, so the '
+          'gate on core.%s narrows nothing.', v_perm, v_rel;
+      END IF;
+    END;
+  END LOOP;
+
+  -- (14) THE MANIFEST IS COMPLETE. Every policy 014 created carries the
+  --      `migration:014` stamp its rollback drops by, and the number of stamped
+  --      policies matches what the catalogue says this database's inventory
+  --      implies. A policy created without a stamp is a policy the rollback will
+  --      leave behind, and the rollback's own count check would then fire against
+  --      a database it is halfway through changing — which is a worse place to
+  --      find out than here.
+  SELECT pg_catalog.count(*) * 2 + 5 INTO v_n
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'core' AND c.relkind = 'r'
+     AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                  WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                    AND a.attnum > 0 AND NOT a.attisdropped);
+  IF (SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_description d
+          ON d.objoid = p.oid
+         AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+       WHERE d.description LIKE 'migration:014 %') <> v_n THEN
+    RAISE EXCEPTION
+      '014 verify: the migration:014 policy manifest does not cover what this '
+      'migration created. Expected % stamped policies (two per tenant-scoped core '
+      'table, plus provenance_subjects_read, three role gates and '
+      'memberships_no_client_delete) and found %. The rollback drops by that '
+      'stamp, so an unstamped policy is one it will leave standing.',
+      v_n,
+      (SELECT pg_catalog.count(*)
+         FROM pg_catalog.pg_policy p
+         JOIN pg_catalog.pg_description d
+           ON d.objoid = p.oid
+          AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+        WHERE d.description LIKE 'migration:014 %');
   END IF;
 
   SELECT pg_catalog.count(*) INTO v_n

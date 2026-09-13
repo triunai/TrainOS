@@ -957,4 +957,273 @@ END;
 $t11$;
 
 
+
+-- ─── T12 · HIGH-1 · role-gated reads on the three sensitive tables ──────────
+-- The finding: §2 gives all 113 tenant-scoped core tables the same tenant-only
+-- predicate and §4 grants SELECT on all of them, so any principal of a tenant
+-- could read every row of every table in it. For three tables 002 had already
+-- decided otherwise and wrote the decision as a permission.
+--
+-- FOUR WAYS PER TABLE, because "gated" has four separate halves and a pin that
+-- checks one of them proves nothing about the other three:
+--   (a) signed out          — `anon`, which must hold nothing at all
+--   (b) same tenant, low role — the principal the gate exists to stop
+--   (c) same tenant, ADMIN  — the principal the gate must NOT stop, or the gate
+--                             is a broken screen rather than an authorization
+--   (d) wrong tenant, ADMIN — an ADMIN of the OTHER tenant, who holds the
+--                             permission and must still see nothing, which is
+--                             the half that proves the role gate composes WITH
+--                             tenant isolation instead of replacing it
+--
+-- Each probe is ONE STATEMENT. A batched probe matrix lets the planner fold
+-- repeated identical calls of a STABLE function, and `set_config`'s role-swap
+-- side effects are invisible to it, so a batch returns a silently-wrong
+-- all-denied result — which reads as a pass.
+
+-- Fixture rows: one per tenant per table, so "sees nothing" and "sees only its
+-- own" are distinguishable from "the table is empty".
+INSERT INTO core.ai_provider_keys
+  (tenant_id,provider_ref,provider,label,masked_key,key_fingerprint,key_ref,region,added_by)
+VALUES
+  ('00000014-1111-1111-1111-111111111111','prv_t014_alpha','OPENAI','Alpha key',
+   'sk-'||pg_catalog.repeat('*',12)||'AAAA', pg_catalog.sha256('alpha'::bytea),
+   'vault:alpha','ap-southeast-1','{"kind":"HUMAN","id":"00000014-0000-0000-0000-0000000000a3","name":null}'::jsonb),
+  ('00000014-2222-2222-2222-222222222222','prv_t014_beta','OPENAI','Beta key',
+   'sk-'||pg_catalog.repeat('*',12)||'BBBB', pg_catalog.sha256('beta'::bytea),
+   'vault:beta','ap-southeast-1','{"kind":"HUMAN","id":"00000014-0000-0000-0000-0000000000b1","name":null}'::jsonb);
+
+-- A share token must point at exactly one real target (007's
+-- pst_exactly_one_target / pst_kind_matches_target). TNA is the shallower of the
+-- two chains — opportunity then TNA — so it is the one the fixture builds.
+INSERT INTO core.opportunities (id,tenant_id,organisation_id,owner_id,value_sen) VALUES
+  ('00000014-0bbb-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-bbbb-bbbb-bbbb-bbbbbbbbbba1','00000014-0000-0000-0000-0000000000a1',100000),
+  ('00000014-0bbb-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000014-0000-0000-0000-0000000000b1',100000);
+
+INSERT INTO core.tnas (id,tenant_id,opportunity_id) VALUES
+  ('00000014-0ddd-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-0bbb-0000-0000-000000000001'),
+  ('00000014-0ddd-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-0bbb-0000-0000-000000000002');
+
+INSERT INTO core.public_share_tokens
+  (tenant_id,target_kind,tna_id,token_hash,created_by_kind,created_by_id)
+VALUES
+  ('00000014-1111-1111-1111-111111111111','TNA','00000014-0ddd-0000-0000-000000000001',
+   extensions.digest('t014-alpha-token','sha256'),'HUMAN','00000014-0000-0000-0000-0000000000a1'),
+  ('00000014-2222-2222-2222-222222222222','TNA','00000014-0ddd-0000-0000-000000000002',
+   extensions.digest('t014-beta-token','sha256'),'HUMAN','00000014-0000-0000-0000-0000000000b1');
+
+-- run_node_io hangs off runs -> run_nodes, and a run needs a registered agent
+-- (013's runs_agent_fk), so the fixture is four rows deep per tenant.
+INSERT INTO core.tier_keys (tenant_id,tier_key,label) VALUES
+  ('00000014-1111-1111-1111-111111111111','MID','Mid'),
+  ('00000014-2222-2222-2222-222222222222','MID','Mid');
+
+INSERT INTO core.agents
+  (id,tenant_id,agent_id,name,status,principal_user_id,default_tier)
+VALUES
+  ('00000014-a9e7-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   'agent_proposal','Proposal Agent','ACTIVE','00000014-0000-0000-0000-0000000000a1','MID'),
+  ('00000014-a9e7-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   'agent_proposal','Proposal Agent','ACTIVE','00000014-0000-0000-0000-0000000000b1','MID');
+
+INSERT INTO core.runs
+  (id,tenant_id,agent_id,trigger,status,tiers_used,correlation_id,tokens_in,tokens_out,cost_sen)
+VALUES
+  ('00000014-7777-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   'agent_proposal','{"type":"TNA_SIGNED_OFF"}'::jsonb,'SUCCEEDED',ARRAY['MID'],
+   '00000014-c077-0000-0000-000000000001',10,10,10),
+  ('00000014-7777-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   'agent_proposal','{"type":"TNA_SIGNED_OFF"}'::jsonb,'SUCCEEDED',ARRAY['MID'],
+   '00000014-c077-0000-0000-000000000002',10,10,10);
+
+INSERT INTO core.run_nodes (id,tenant_id,run_id,node_key,seq,kind,name)
+VALUES
+  ('00000014-8888-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-7777-0000-0000-000000000001','extract',0,'TOOL','Extract'),
+  ('00000014-8888-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-7777-0000-0000-000000000002','extract',0,'TOOL','Extract');
+
+INSERT INTO core.run_node_io (tenant_id,run_node_id,prompt,completion) VALUES
+  ('00000014-1111-1111-1111-111111111111','00000014-8888-0000-0000-000000000001',
+   'ALPHA PROMPT','ALPHA COMPLETION'),
+  ('00000014-2222-2222-2222-222222222222','00000014-8888-0000-0000-000000000002',
+   'BETA PROMPT','BETA COMPLETION');
+
+-- (a) signed out, all three tables, one statement each.
+SELECT pg_catalog.set_config('request.jwt.claims','{}',true);
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('t014.g_anon_keys',
+  pg_temp.t014_try($$SELECT 1 FROM core.ai_provider_keys LIMIT 1$$)::text, true);
+SELECT pg_catalog.set_config('t014.g_anon_tok',
+  pg_temp.t014_try($$SELECT 1 FROM core.public_share_tokens LIMIT 1$$)::text, true);
+SELECT pg_catalog.set_config('t014.g_anon_io',
+  pg_temp.t014_try($$SELECT 1 FROM core.run_node_io LIMIT 1$$)::text, true);
+RESET ROLE;
+
+-- (b) same tenant, the role the gate exists to stop. SALES for the two ADMIN/MD
+-- tables; OPS for the share tokens, because SALES legitimately holds
+-- portal:token:issue (002:861) and picking it there would pin the wrong claim.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_keys',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.ai_provider_keys$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_io',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_node_io$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_ops'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_tok',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.public_share_tokens$$)::text, true);
+RESET ROLE;
+
+-- (c) same tenant, ADMIN — holds all three permissions.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_keys',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.ai_provider_keys$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_io',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_node_io$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_tok',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.public_share_tokens$$)::text, true);
+RESET ROLE;
+
+-- (d) wrong tenant, ADMIN — permission held, tenant wrong.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_keys',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.ai_provider_keys
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_io',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_node_io
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_tok',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.public_share_tokens
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+DO $t12$
+DECLARE
+  r        pg_catalog.record;
+  v_anon   jsonb;
+  v_low    jsonb;
+  v_adm    jsonb;
+  v_xt     jsonb;
+BEGIN
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('core.ai_provider_keys',   'ai:provider:read',    'SALES', 'keys'),
+      ('core.run_node_io',        'run:read',            'SALES', 'io'),
+      ('core.public_share_tokens','portal:token:issue',  'OPS',   'tok')
+    ) AS t(relname, perm, lowrole, tag)
+  LOOP
+    v_anon := pg_catalog.current_setting('t014.g_anon_' || r.tag)::jsonb;
+    v_low  := pg_catalog.current_setting('t014.g_low_'  || r.tag)::jsonb;
+    v_adm  := pg_catalog.current_setting('t014.g_adm_'  || r.tag)::jsonb;
+    v_xt   := pg_catalog.current_setting('t014.g_xt_'   || r.tag)::jsonb;
+
+    -- (a) signed out
+    ASSERT NOT (v_anon->>'ok')::boolean,
+      pg_catalog.format('T12a FAIL (%s): anon read it. anon holds no grant in '
+        'core and never has; if this succeeded the grant layer moved. %s',
+        r.relname, v_anon::text);
+
+    -- (b) same tenant, low role — zero rows, NOT an error. A permission-denied
+    -- here would mean the grant was revoked rather than the policy gating, and a
+    -- revoked grant is a different posture with different consequences for the
+    -- 018 RPC layer that will read these tables as a definer.
+    ASSERT (v_low->>'ok')::boolean,
+      pg_catalog.format('T12b FAIL (%s): a %s principal got an ERROR rather than '
+        'zero rows. The gate is a RESTRICTIVE policy, so the correct refusal is an '
+        'empty result; an error means the SELECT grant is gone and 018''s definer '
+        'reads will break too. %s', r.relname, r.lowrole, v_low::text);
+    ASSERT (v_low->'value')::text = '0',
+      pg_catalog.format('T12c FAIL (%s): a %s principal of the tenant read %s '
+        'row(s). 002 gives %s to other roles and not to this one; tenant '
+        'membership is not authorization here.',
+        r.relname, r.lowrole, (v_low->'value')::text, r.perm);
+
+    -- (c) same tenant, ADMIN — must see its own tenant's row
+    ASSERT (v_adm->>'ok')::boolean AND (v_adm->'value')::text = '1',
+      pg_catalog.format('T12d FAIL (%s): an aal2 ADMIN of the tenant read %s '
+        'row(s), expected 1. A gate that also stops the role it is meant to admit '
+        'is a broken screen, not an authorization. %s',
+        r.relname, COALESCE((v_adm->'value')::text,'ERROR'), v_adm::text);
+
+    -- (d) wrong tenant, same permission
+    ASSERT (v_xt->>'ok')::boolean AND (v_xt->'value')::text = '0',
+      pg_catalog.format('T12e FAIL (%s): an ADMIN of the OTHER tenant read %s of '
+        'this tenant''s rows. The role gate must AND with tenant isolation, not '
+        'replace it. %s', r.relname, COALESCE((v_xt->'value')::text,'ERROR'), v_xt::text);
+  END LOOP;
+
+  -- And the gate is RESTRICTIVE, so a later permissive policy cannot OR it away.
+  FOR r IN
+    SELECT c.relname, p.polname, p.polpermissive, p.polcmd
+      FROM pg_catalog.pg_policy p
+      JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'core'
+       AND c.relname IN ('ai_provider_keys','run_node_io','public_share_tokens')
+       AND p.polname = c.relname || '_role_gate'
+  LOOP
+    ASSERT NOT r.polpermissive,
+      pg_catalog.format('T12f FAIL: core.%s''s role gate is PERMISSIVE. A '
+        'permissive gate ORs with the tenant SELECT policy and gates nothing.',
+        r.relname);
+    ASSERT r.polcmd = '*',
+      pg_catalog.format('T12g FAIL: core.%s''s role gate is not FOR ALL, so it '
+        'decides nothing on the day a write grant lands.', r.relname);
+  END LOOP;
+
+  ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
+            JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname='core' AND p.polname = c.relname || '_role_gate') = 3,
+    'T12h FAIL: the number of role gates on core is not three. If a table was '
+    'added to the gated set, this pin needs a fourth probe column, not a bigger '
+    'number — an ungated sensitive table with a blanket SELECT grant is the '
+    'finding this test exists for.';
+
+  RAISE NOTICE
+    'T12 PASS - ai_provider_keys, run_node_io and public_share_tokens each refuse '
+    'anon, return zero rows to a same-tenant principal without the permission, '
+    'return the tenant''s own row to an ADMIN that has it, and return zero to an '
+    'ADMIN of another tenant who also has it. Three RESTRICTIVE FOR ALL gates.';
+END;
+$t12$;
+
+
 ROLLBACK;
