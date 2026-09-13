@@ -276,6 +276,15 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 20:0x — PR #7 merged (fixed Gitleaks repo-wide); PR #8 open, reviewed
+
+- PR #7 confirmed merged at 0910b9d; ci-gitleaks lane shut down. fix-pr5 has
+  three real CI-fix commits now (still branch fix/pr5, name mismatch
+  unresolved). codex-014-017 detached HEAD confirmed legitimate (Codex's own
+  review checkout of PR #6). PR #8 (ui/states) open under review-pr8; three
+  verification-doc deviations confirmed and logged. Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 19:5x — main CI red since 9fdcb4d; PR #6/#7 open; R-F confirmed live
 
 - Main fails the same four checks as PR #5. PR #6 gated on

@@ -15,6 +15,63 @@
 
 ---
 
+## 2026-09-13 20:0x — PR #7 merged, PR #8 opened and reviewed, two earlier flags resolved
+
+**PR #7 (`ci/gitleaks`) merged.** Confirmed at `0910b9d` — `git log -1
+0910b9d` shows the merge commit and `git merge-base --is-ancestor 0910b9d
+main` confirms it. The `ci-gitleaks` worktree is gone, matching "lane shut
+down." Confirmed the fix actually works repo-wide: main's next CI run
+(34755129255) passes Gitleaks. It still fails Prettier (drift check); Vite
+build and npm audit were not independently re-checked on this run but have
+no reason to have changed. `fix-pr5` is doing the remaining work — three
+commits confirmed via its own `git log`: `0b7221e` (Prettier), `6c84ca0`
+(pin suite timezone), `c4b8a78` (stop the shared artifact-storage quota from
+failing build/test gates) — no PR from it yet.
+
+**Two earlier flags resolved, one still open.** The `fix/main-ci` vs
+`fix/pr5` branch-name mismatch flagged at 19:5x is still unexplained as a
+naming question, but the substantive worry — that the lane hadn't actually
+started fixing CI — is resolved: it has three real fix commits now. The
+`codex-014-017` detached-HEAD worktree flagged as unexplained in an earlier
+report is confirmed legitimate: it is `codex-review-014-017`'s own checkout
+of PR #6's tip (`826bb52`) for its retrofit review, not an orphaned lane.
+
+**PR #8 (`ui/states`) opened** (`fix(screens): empty states, tone ternaries,
+drawer primary and the registry toolbar`, ~19:49), closing four
+verifier-carry-over items. Reported 1389 tests (28 new), local gates green —
+not independently re-run, but the diff shape is consistent: 23 files changed,
+5 of them test files (`gh pr diff 8`). Under independent review by
+`review-pr8` (Sonnet `code-reviewer`) before merge; its own CI is still
+mostly pending as of this check, with Gitleaks, Install and Detect optional
+surfaces passing so far.
+
+**Three deviations confirmed against the actual files, not just the PR
+description:**
+
+1. Verification doc §6 claimed `statusTone.ts` already had maps for all ten
+   tone-ternary vocabularies — false. Only `HRDC_PACKET_PANEL_TONE` of the
+   six names in question pre-existed; `AGENT_TONE`, `SEVERITY_TONE`,
+   `MESSAGE_CATEGORY_TONE` and `HOURS_SAVED_TONE` are new in
+   `apps/web/src/shared/components/kit/statusTone.ts` on `ui/states`, and a
+   fifth, `PARTICIPANT_ATTENDANCE_TONE`, is feature-local in
+   `apps/web/src/features/engagements/attendanceModel.ts`. Approved as
+   reported.
+2. §6's kit-level "give `Drawer` a primary scope of its own" was deferred;
+   `KnowledgeSourcesScreen.tsx` migrated to the `ProviderKeysScreen` pattern
+   instead (a SECONDARY-labelled action standing in for a primary the kit's
+   one-primary rule won't let it declare) — confirmed via the file's own
+   comment explaining the trade-off.
+3. A real defect was fixed in `TnaDetailPage.tsx`: its own comment confirms
+   the old ternary "painted a DANGER constraint" as neutral; it now reads
+   `SEVERITY_TONE[constraint.severity]`.
+
+Carried to other lanes rather than dropped, per PR #8's own listing:
+`EnquiryDetailPage`, `CostingWorksheetPage`, `QuotationsListPage` and three
+M03 `ListToolbar` screens to `cloud/web-swap`; `ClaimPacketScreen` and
+`CollectionsQueueScreen` to `ui/lists`.
+
+---
+
 ## 2026-09-13 19:5x — main CI red since 9fdcb4d, PR #6/#7 open, fix-lane name mismatch, R-F confirmed live
 
 **Main is red, not just PR #5.** Checked `gh run view` on run 34753909066

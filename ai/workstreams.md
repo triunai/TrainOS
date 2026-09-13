@@ -73,16 +73,18 @@ back as of a 19:29 probe (not independently verified here).
 
 **Second review gates PR #6:** `codex-review-014-017` (Codex gpt-5.6-sol
 xhigh, its own shim on port 5435, worktree
-`~/Repos/personal-work/trainos-wt/codex-014-017` — checked out in detached
-HEAD at `826bb52`, "feat(supabase): 014 RLS policies, client grants and the
-core envelope wrappers," which is the tip of `cloud/migrations` at review
-time) runs the retrofit gate on PR #6 and reports MERGE / MERGE-WITH-FIXES /
-BLOCK to `docs/reviews/2026-09-13-codex-retrofit-014-017.md`. PR #6 does not
-merge before that verdict lands. PR #6 also fails Grant Hygiene as of 19:5x —
-confirmed the exact finding: `supabase/tests/test_014_rls_policies_and_client_grants.sql:513`
-defines a `SECURITY DEFINER` function, which the guard flags because a test
-must not be able to create the privilege escalation it exists to check for.
-The review must explain or fix this before MERGE.
+`~/Repos/personal-work/trainos-wt/codex-014-017`, detached HEAD at `826bb52`)
+runs the retrofit gate on PR #6 and reports MERGE / MERGE-WITH-FIXES / BLOCK
+to `docs/reviews/2026-09-13-codex-retrofit-014-017.md`. **Confirmed 2026-09-13
+~20:00: the detached HEAD is expected, not a stray worktree** — it is the
+reviewer's own checkout of PR #6's tip (`826bb52`, "feat(supabase): 014 RLS
+policies, client grants and the core envelope wrappers") for review purposes,
+not a lane that owes a commit. PR #6 does not merge before its verdict lands.
+PR #6 also fails Grant Hygiene as of 19:5x — confirmed the exact finding:
+`supabase/tests/test_014_rls_policies_and_client_grants.sql:513` defines a
+`SECURITY DEFINER` function, which the guard flags because a test must not be
+able to create the privilege escalation it exists to check for. The review
+must explain or fix this before MERGE.
 
 ⚠ **Carried from the paused state, not re-verified this session.** Critic Part
 2 (7 CRITICAL, 29 HIGH against 001–009 as of 2026-09-12) — whether 010–013
@@ -135,23 +137,22 @@ moderate, 1 high, 2 critical in the `vite`/`vite-node` and
 force a breaking `react-router-dom@7.18.3`). PR #5 and PR #6 both inherit
 all four from main; they are not lane-specific defects.
 
-**Fix lane, and a naming mismatch worth flagging.** A lane was redirected to
-fix main's CI first, then merge main into `cloud/web-swap`, reported as
-running on branch `fix/main-ci`. The actual worktree on disk is
-`~/Repos/personal-work/trainos-wt/fix-pr5`, on branch `fix/pr5` (not
-`fix/main-ci`), tracking `cloud/web-swap`, and its last commit as of 19:5x is
-`refactor(web): route the approval screens through the seam` — web-swap
-feature work, not a CI fix. Either the branch was renamed only in the report,
-or the redirection has not actually started yet; resume by checking
-`git log` on that worktree before assuming CI fixes are in progress there.
+**Fix lane, naming mismatch resolved by progress.** The `fix-pr5` worktree
+(branch `fix/pr5`, still not `fix/main-ci` as reported — the name gap is
+unexplained but no longer blocks trusting the lane) has since committed three
+real CI fixes, confirmed by its own `git log`: `0b7221e` formats
+`check-barrels.mjs` for the Prettier gate, `6c84ca0` pins the test suite's
+timezone, and `c4b8a78` stops a shared artifact-storage quota from failing
+the build and test gates. No PR opened from `fix/pr5` yet as of 20:0x.
 
-**PR #7 (`ci/gitleaks`) is not "checks green so far" either.** Gitleaks
-itself now passes (the fix works), but the same three main-red failures —
-Prettier drift, Vite build (artifact quota), npm audit high+ — appear on PR
-#7 too, confirmed via `gh pr checks 7` (run 34754819325). Fixing Gitleaks
-alone does not turn any PR green; Prettier, the dependency audit and the
-artifact-quota setting all need separate fixes regardless of which PR lands
-first. Merge order: web-swap → migrations; where `ci/gitleaks` (PR #7) lands
+**PR #7 (`ci/gitleaks`) merged at `0910b9d`** (confirmed: `git log -1
+0910b9d` shows the merge commit, `git merge-base --is-ancestor 0910b9d main`
+confirms it's on main). The `ci-gitleaks` lane worktree is gone — shut down
+as reported. **Merging it fixed Gitleaks repo-wide**, confirmed directly:
+main's next CI run (34755129255) passes Gitleaks, but still fails Prettier
+(drift check) — the other three main-red items (Prettier, Vite build,
+artifact quota, npm audit) are not yet fixed on main; that is `fix-pr5`'s
+remaining work. Merge order: web-swap → migrations; where `fix/pr5` lands
 relative to those is not yet stated by any lane.
 
 **Refs:** `ai/briefs/2026-09-13-api-phase-plan.md`, `ai/resume-brief.md`,
@@ -196,12 +197,43 @@ states, the ten tone ternaries, the Drawer opening a primary scope, and
 **Scope:** `apps/web/src/shared/components/kit/**` and the feature screens
 each lane touches; no kit additions beyond what `ui/tokens` lands.
 
-**State:** All three launched at 19:25, no commits reported yet. On landing,
-fold each into the kit per CLAUDE.md's consolidation rule rather than leaving
-a per-feature copy.
+**State:** `ui/states` opened PR #8 ("fix(screens): empty states, tone
+ternaries, drawer primary and the registry toolbar") at ~19:49, closing four
+verifier-carry-over items. Reported as 1389 tests (28 new) with local gates
+green; not independently re-run here, but the diff shape is consistent (23
+files changed, 5 of them test files, confirmed via `gh pr diff 8`). Under
+independent review by `review-pr8` (Sonnet `code-reviewer`) before merge. As
+of ~20:0x PR #8's CI is still mostly pending; Gitleaks, Install and Detect
+optional surfaces have passed so far.
+
+**Three deviations from the verification doc, each confirmed against the
+actual files:**
+
+1. Verification doc §6 claimed `statusTone.ts` already had maps for all ten
+   tone-ternary vocabularies. False — confirmed only one of the six new names
+   used (`HRDC_PACKET_PANEL_TONE`) pre-existed anywhere in the kit; four new
+   maps were appended to `apps/web/src/shared/components/kit/statusTone.ts`
+   on `ui/states` (`AGENT_TONE`, `SEVERITY_TONE`, `MESSAGE_CATEGORY_TONE`,
+   `HOURS_SAVED_TONE`), and a fifth, `PARTICIPANT_ATTENDANCE_TONE`, lives
+   feature-local in `apps/web/src/features/engagements/attendanceModel.ts`.
+   Approved as reported.
+2. §6's kit-level "give `Drawer` a primary scope of its own" was deferred;
+   `KnowledgeSourcesScreen.tsx` instead migrated to the `ProviderKeysScreen`
+   pattern (a SECONDARY-labelled action standing in for a solid primary the
+   kit's one-primary rule won't let it declare) — confirmed via the file's
+   own comment explaining exactly this trade-off.
+3. A real defect was fixed in `TnaDetailPage.tsx`: confirmed via the file's
+   own comment that the old ternary "painted a DANGER constraint" as
+   neutral; it now reads `SEVERITY_TONE[constraint.severity]`.
+
+**Carried to other lanes, not dropped — listed at the bottom of PR #8:**
+`EnquiryDetailPage`, `CostingWorksheetPage`, `QuotationsListPage` and three
+M03 `ListToolbar` screens go to `cloud/web-swap` as follow-up;
+`ClaimPacketScreen` and `CollectionsQueueScreen` go to `ui/lists`.
 
 **Refs:** `ai/resume-brief.md` (verifier carry-over section),
-`docs/reviews/2026-09-13-verification.md`.
+`docs/reviews/2026-09-13-verification.md`,
+`apps/web/src/shared/components/kit/statusTone.ts`.
 
 ---
 

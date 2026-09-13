@@ -48,9 +48,23 @@
 > hosted project's REST endpoint directly returned `PGRST106`, `core` is not
 > exposed. See `ai/workstreams.md` for full detail.
 
-> **Last updated:** 2026-09-13 19:5x — main itself is red, not just PR #5;
-> R-F confirmed via a live probe; a lane's branch name does not match its
-> reported name. Nothing from this block has landed yet.
+> **BLAST 13 Sep 20:0x +08** — PR #7 (`ci/gitleaks`) merged at `0910b9d`,
+> confirmed on main; Gitleaks now passes on main's own CI, though Prettier
+> drift, Vite artifact-quota and npm audit still fail there. `fix-pr5` (still
+> on branch `fix/pr5`, not the reported `fix/main-ci`) has three real fix
+> commits now — Prettier, timezone, artifact quota — resolving the earlier
+> "flagged, not yet resolved" concern about that lane's progress, though the
+> branch-name gap itself is unexplained. The `codex-014-017` detached-HEAD
+> worktree is confirmed legitimate: it is `codex-review-014-017`'s own
+> checkout of PR #6's tip for review, not a stray lane. PR #8 (`ui/states`,
+> "fix(screens): empty states, tone ternaries, drawer primary and the
+> registry toolbar") opened, under review by `review-pr8`; three deviations
+> from the verification doc confirmed and logged in `ai/workstreams.md`
+> UI-CARRYOVER, plus carryover items handed to `cloud/web-swap` and
+> `ui/lists`.
+
+> **Last updated:** 2026-09-13 20:0x — PR #7 merged and fixed Gitleaks
+> repo-wide; three main-red items remain; PR #8 open under review.
 
 ### Focus
 
