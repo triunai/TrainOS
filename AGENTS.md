@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Operational instructions for coding agents. The constitution — the design
-principles, the security model and rules R1 to R10 — is in `CLAUDE.md`. This
+principles, the security model and rules R1 to R14 — is in `CLAUDE.md`. This
 file is how to work here.
 
 ## Setup
@@ -27,6 +27,17 @@ Several agents write into this repository at once, on the same branch.
 - **Living docs are edited additively.** Anchor on an existing neighbour line
   and insert whole new lines; never splice mid-line. Prove the footprint with
   `git diff --numstat` — it should show pure insertions on every edited doc.
+- **Never rewrite a commit.** No `--amend`, no `reset`, no `rebase`. R9 stops
+  you taking another lane's staged work; nothing stops you destroying their
+  committed work, and the branch tip is as shared as the index. If a commit is
+  wrong, add one that corrects it. This has already happened here once. (R12)
+- **Verify the artefact, not the message.** `git show` the diff, read the
+  catalog entry, measure the bytes. A commit message is a claim about a file,
+  and this repository contains at least one that was wrong. The same goes for
+  any premise another lane hands you — check it against the tree and say so when
+  it does not hold. (R13)
+- **Raise on a value you do not recognise.** An `else` branch over a vocabulary
+  another lane owns fails silently in whichever direction the else points. (R14)
 - **Re-check where you are before editing after a resume or a compaction.**
   `git status --short --branch`, your cwd, and `ai/hot-state.md`.
 
@@ -79,6 +90,10 @@ One question per file.
 | `ai/hydration-ladder.md` | How deep do I need to read for this task?      |
 | `ai/hot-state.md`        | What changed this session?                     |
 | `ai/state.md`            | What is open, what was decided, what happened? |
+| `ai/workstreams.md`      | What threads exist, and how do I resume one?   |
+| `ai/state-backlog.md`    | What is owed, and what makes it due?           |
+| `ai/findings-log.md`     | What broke, and is it pinned?                  |
+| `ai/project-log.md`      | What happened, and what did we get wrong?      |
 | `CHANGELOG.md`           | What shipped?                                  |
 
 ## Session wrap
@@ -91,6 +106,14 @@ One question per file.
 3. Add a `CHANGELOG.md` entry if something shipped.
 4. Add a line to `ai/hydration-ladder.md` for any new durable doc, in the same
    commit that creates it. A doc nobody can find is a doc nobody has.
+5. Flip the marker and rewrite the `Resume:` line of every thread in
+   `ai/workstreams.md` you touched. A parked thread with a stale `Resume:` is
+   worse than no board, because the next session trusts it.
+6. Any defect you found by RUNNING something goes in `ai/findings-log.md` with
+   its pin, or with a note saying why it has none. No HIGH or CRITICAL closes
+   without a pin.
+7. Anything you got wrong goes in `ai/project-log.md`'s numbered list. The
+   outcome survives in `git log`; the refuted assumption does not.
 
 ## Skills
 

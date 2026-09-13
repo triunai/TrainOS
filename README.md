@@ -94,3 +94,10 @@ a convenience: the API is the authorization boundary.
 `CLAUDE.md` carries the design principles and the engineering rules.
 `AGENTS.md` is how to work in this repo. `ai/hydration-ladder.md` says how deep
 to read before starting.
+
+The living state is in `ai/`, one question per file: `workstreams.md` for what
+is in flight and how to resume it, `hot-state.md` for the current session,
+`state.md` for the decisions, `state-backlog.md` for what is owed,
+`findings-log.md` for what broke and whether it is pinned, and `project-log.md`
+for the journal. `CHANGELOG.md` is what shipped. Per-lane audits live in
+`docs/reviews/`.

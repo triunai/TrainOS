@@ -207,6 +207,51 @@ migration that could not run, a grant that reached `anon`, and an envelope that
 gained a sibling key. When you add a rule to this file, ask what would catch a
 violation, and write that.
 
+### R12 — Never rewrite a commit in a shared worktree
+
+`git commit --amend`, `git reset` and `git rebase` are forbidden here. R9 stops
+you taking another lane's _staged_ work under your own message; nothing in it
+stops you destroying their _committed_ work, and in this repository several
+agents commit to `main` at once. Rewriting the tip takes whatever landed on it
+since you last looked.
+
+If a commit is wrong, add a commit that corrects it. The wrong one staying
+visible is the feature, not the cost — it is how the next reader learns the
+correction rather than reading a history that was tidied into a fiction.
+
+### R13 — Check the file, not the message
+
+A commit message is a claim about a file. Verify the artefact before you rely on
+it: `git show` the diff, read the catalog entry, query the stored value, measure
+the emitted bytes. This session produced a commit whose message described an
+edit its file did not receive, and a mid-line splice that destroyed a heading in
+a file no formatter parses.
+
+The same applies to anything another lane tells you. A premise you were handed
+is a claim; check it against the tree before building on it, and say so when it
+does not hold.
+
+### R14 — The receiving side rejects an unknown value
+
+A two-branch `CASE` or `if/else` over a vocabulary another lane owns fails
+silently toward whichever branch is the `else`. When the other lane changes a
+constant, your code does not break — it quietly does the wrong thing.
+
+```sql
+-- wrong: an unrecognised status becomes a terminal failure
+case when p_status = 'SUCCEEDED' then ... else ...dead_letter... end
+
+-- right: an unrecognised status is an error
+if p_status not in ('SUCCEEDED','FAILED') then
+  raise exception 'unknown effect status: %', p_status;
+end if;
+```
+
+One wrong constant under the first shape would have recorded every delivered
+email as dead-lettered. The durable fix is never "get the constant right" — it
+is to raise, and to pin the seam as a table duplicated verbatim on both sides,
+because prose reads plausibly whichever way round it is written.
+
 ---
 
 ## Documentation system
@@ -216,6 +261,11 @@ violation, and write that.
 | `ai/hydration-ladder.md`                   | How deep do I need to read for this task?               |
 | `ai/hot-state.md`                          | What is actively being worked on right now?             |
 | `ai/state.md`                              | What is open, what was decided, what happened?          |
+| `ai/workstreams.md`                        | What threads exist, and how do I resume one?            |
+| `ai/state-backlog.md`                      | What is owed, by which lane, and what makes it due?     |
+| `ai/findings-log.md`                       | What broke, and is there a test that stops it?          |
+| `ai/project-log.md`                        | What happened, and what did we get wrong?               |
+| `docs/reviews/`                            | Per-lane audits, and what each could not verify         |
 | `CHANGELOG.md`                             | What shipped, product-facing?                           |
 | `AGENTS.md`                                | How do I work in this repo?                             |
 | `docs/architecture/`                       | How the domain, tenancy, actions, money and events work |
