@@ -159,6 +159,8 @@ export function messageForCode(code: ErrorCode): string {
       return "This approval is past its SLA.";
     case "DIFF_CHANGED":
       return "The rendered diff is no longer current. Refresh and decide again.";
+    case "BULK_NOT_PERMITTED":
+      return "Some of those approvals must be decided one at a time.";
     default:
       return "That key was already used with a different request.";
   }
@@ -632,7 +634,13 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>> {
     return this.call<ApprovalBulkDecideResponse>("bulk_decide_approvals", {
-      p_ids: input.ids,
+      /* 011:3407-3419 (062e5e2) — `p_items jsonb`, not `p_ids uuid[]`: a hash
+         per approval cannot travel in an array of ids. Each item is the same
+         diffHash the single decide path sends as `p_expected_diff_hash`. */
+      p_items: input.items.map((item) => ({
+        approvalId: item.approvalId,
+        expectedDiffHash: item.diffHash,
+      })),
       p_decision: input.decision,
       p_note: input.note ?? null,
       p_idempotency_key: input.idempotencyKey,
