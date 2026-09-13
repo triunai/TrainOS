@@ -13,6 +13,7 @@ import {
   AIChip,
   CitationChip,
   DateText,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   Fab,
@@ -33,7 +34,13 @@ import {
   PartialDataBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { readableMessage, toApiError, useActor } from "@/shared/api";
+import {
+  isNotDeployed,
+  notDeployedState,
+  readableMessage,
+  toApiError,
+  useActor,
+} from "@/shared/api";
 import { useEnquiryAction, useEnquiry, useOrganisation, usePatchExtraction } from "./api";
 
 /**
@@ -93,6 +100,12 @@ export function EnquiryDetailPage() {
   }, [enquiry.data, primed]);
 
   if (enquiry.isPending) return <LoadingState rows={8} label="Loading the enquiry" />;
+
+  /* Ahead of the error branch on purpose: a missing RPC is a deployment fact,
+     and the reader can do nothing with "Try again" over one. */
+  if (isNotDeployed(enquiry.error)) {
+    return <EmptyState {...notDeployedState("This enquiry")} />;
+  }
 
   if (enquiry.isError || !enquiry.data) {
     return (

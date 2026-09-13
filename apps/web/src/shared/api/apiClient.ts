@@ -2,6 +2,8 @@ import type {
   ActionRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  EnquiryExtractionPatch,
+  MessageChannel,
   PageRequest,
   ProposalCreateRequest,
   QuotationWrite,
@@ -82,6 +84,12 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     listEnquiries: async (page?: PageRequest) => must(await rpc.listEnquiries(page ?? {})),
     getEnquiry: async (id: string) => must(await rpc.getEnquiry(id)),
+    patchEnquiryExtraction: async (id: string, patch: EnquiryExtractionPatch) =>
+      must(await rpc.patchExtraction(id, patch)),
+
+    listFollowUps: async (page?: PageRequest) => must(await rpc.listFollowUps(page ?? {})),
+    getFollowUpDraft: async (id: string, channel: MessageChannel) =>
+      must(await rpc.getFollowUpDraft(id, channel)),
 
     getOrganisation: async (id: string) => must(await rpc.getOrganisation(id)),
     getOrganisationRelations: async (id: string) => must(await rpc.getOrganisationRelations(id)),
@@ -102,7 +110,6 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
         }),
       ),
     getProposal: async (id: string) => must(await rpc.getProposal(id)),
-
     getQuotation: async (id: string) => must(await rpc.getQuotation(id)),
     /* No options bag on the fixture signature, so the key is derived here — the
        same derivation the hooks use, not a second one. */

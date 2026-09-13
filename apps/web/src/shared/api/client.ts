@@ -16,9 +16,13 @@ import type {
   Contact,
   Enquiry,
   EnquiryDetail,
+  EnquiryExtractionPatch,
+  FollowUp,
   HrdcDeadline,
   KnowledgeSource,
   ListResponse,
+  MessageChannel,
+  MessageDraft,
   Me,
   MeProfile,
   ModelTier,
@@ -116,6 +120,9 @@ export interface TrainOsClient {
   badges(): Promise<Result<BadgeCounts>>;
   listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>>;
   getEnquiry(id: string): Promise<Result<EnquiryDetail>>;
+  patchExtraction(id: string, patch: EnquiryExtractionPatch): Promise<Result<EnquiryDetail>>;
+  listFollowUps(query: PageRequest): Promise<Result<ListResponse<FollowUp>>>;
+  getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>>;
   getOrganisation(id: string): Promise<Result<Organisation>>;
   getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>>;
   getOpportunity(id: string): Promise<Result<Opportunity>>;

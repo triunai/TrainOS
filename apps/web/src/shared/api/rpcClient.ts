@@ -14,11 +14,15 @@ import type {
   Contact,
   Enquiry,
   EnquiryDetail,
+  EnquiryExtractionPatch,
+  FollowUp,
   ErrorCode,
   ErrorDetails,
   HrdcDeadline,
   KnowledgeSource,
   ListResponse,
+  MessageChannel,
+  MessageDraft,
   Me,
   MeProfile,
   ModelTier,
@@ -229,7 +233,9 @@ export function classifyTransportFailure(failure: TransportFailure): ApiError {
   }
 
   if (MISSING_FUNCTION_CODES.has(code)) {
-    return transportError("SERVER", `${failure.message} — endpoint not deployed`, { status: 404 });
+    return transportError("NOT_DEPLOYED", `${failure.message} — endpoint not deployed`, {
+      status: 404,
+    });
   }
 
   if (UNAUTHENTICATED_CODES.has(code)) {
@@ -340,6 +346,9 @@ export const RPC_NAMES = {
     "badge_counts",
     "list_enquiries",
     "get_enquiry",
+    "patch_enquiry_extraction",
+    "list_follow_ups",
+    "get_follow_up_draft",
     "get_organisation",
     "get_opportunity",
     "get_tna",
@@ -453,6 +462,26 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   getEnquiry(id: string): Promise<Result<EnquiryDetail>> {
     return this.call<EnquiryDetail>("get_enquiry", { p_id: id });
+  }
+
+  /**
+   * §4 edit-before-use on one extracted field.
+   *
+   * The patch is a VALUE, not a merge the client computes: the field's
+   * provenance flips to `AI_SUGGESTED` with `editedBy` on the server, and a
+   * client that assembled the new record itself would be inventing the
+   * provenance the chip on that field reads.
+   */
+  patchExtraction(id: string, patch: EnquiryExtractionPatch): Promise<Result<EnquiryDetail>> {
+    return this.call<EnquiryDetail>("patch_enquiry_extraction", { p_id: id, p_patch: patch });
+  }
+
+  listFollowUps(query: PageRequest): Promise<Result<ListResponse<FollowUp>>> {
+    return this.call<ListResponse<FollowUp>>("list_follow_ups", pageArgs(query));
+  }
+
+  getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>> {
+    return this.call<MessageDraft>("get_follow_up_draft", { p_id: id, p_channel: channel });
   }
 
   getOrganisation(id: string): Promise<Result<Organisation>> {
