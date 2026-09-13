@@ -185,7 +185,7 @@ export function DateField({
           max={max}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
-          className={cn(CONTROL, border(errorText !== undefined), "font-mono", FOCUS_RING)}
+          className={cn(CONTROL, border(errorText !== undefined), "tabular-nums", FOCUS_RING)}
         />
       )}
     </Field>

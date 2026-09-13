@@ -14,6 +14,7 @@ import {
   CitationChip,
   DataTable,
   describeActionError,
+  EmptyState,
   ErrorState,
   Fab,
   formatDate,
@@ -27,6 +28,7 @@ import {
   RecordHeader,
   RefChip,
   SecondaryButton,
+  SEVERITY_TONE,
   StatusChip,
   TNA_TONE,
   type ActionError,
@@ -261,6 +263,16 @@ export function TnaDetailPage() {
               rowKey={(gap) => gap.name}
               density="compact"
               stickyHeader={false}
+              /* A returned questionnaire with no gaps in it. The action belongs
+                 to the questionnaire, not to this pane, so the sentence points
+                 at it rather than offering a button that would reopen a
+                 completed TNA from the wrong place. */
+              empty={
+                <EmptyState
+                  title="No competency gaps recorded"
+                  description="The questionnaire came back without a gap against any competency, so there is nothing for the agent to recommend a programme for."
+                />
+              }
             />
           </section>
 
@@ -284,7 +296,11 @@ export function TnaDetailPage() {
               {record.constraints.map((constraint) => (
                 <StatusChip
                   key={constraint.code}
-                  tone={constraint.severity === "WARN" ? "warning" : "neutral"}
+                  /* `severity` is present only when the constraint is at risk,
+                     so an absent one is genuinely neutral. The ternary this
+                     replaces tested WARN alone and painted a DANGER constraint
+                     the same as an unflagged one. */
+                  tone={constraint.severity ? SEVERITY_TONE[constraint.severity] : "neutral"}
                 >
                   {constraint.label}
                 </StatusChip>
@@ -302,6 +318,16 @@ export function TnaDetailPage() {
               title="Recommendations did not load"
               error={toApiError(recommendations.error)}
               onRetry={() => void recommendations.refetch()}
+            />
+          ) : ranked.length === 0 ? (
+            /* The read succeeded and the agent ranked nothing. Distinct from
+               the error above, and it must not wear the AI panel's tint: a
+               tinted frame with an empty body claims a recommendation exists
+               and failed to draw. No action — matching is the agent's job and
+               there is no button here that changes the catalogue. */
+            <EmptyState
+              title="No programme matched"
+              description="The agent found nothing in the catalogue that covers these gaps. Widening the audience or the budget in the questionnaire is what changes this."
             />
           ) : (
             <section className="overflow-hidden rounded-control border border-primary-border">

@@ -28,9 +28,12 @@ export default {
       },
     },
     extend: {
+      /* `--font-ui` / `--font-code` name the ROLE (see `tokens.css`); `sans`
+         and `mono` are Tailwind's own class vocabulary for the same two, the
+         way `bg-card` is. One face per role, no third entry. */
       fontFamily: {
-        sans: ['var(--font-sans, "Inter", system-ui, sans-serif)'],
-        mono: ['var(--font-mono, "JetBrains Mono", ui-monospace, monospace)'],
+        sans: ['var(--font-ui, "Inter", system-ui, sans-serif)'],
+        mono: ['var(--font-code, "JetBrains Mono", ui-monospace, monospace)'],
       },
       colors: {
         /* Surfaces */
@@ -59,11 +62,17 @@ export default {
           disabled: token("ink-disabled"),
         },
 
-        /* The one accent */
+        /* The one accent. `DEFAULT` is the accent as TEXT and as a MARK on the
+           shell's grounds; `solid`/`solid-hover` is the same accent as the FILL
+           under `--on-primary`. Two roles of one colour, split because the dark
+           map has to lift the first and must not lift the second — see the
+           `--primary-solid` note in `tokens.css`. */
         primary: {
           DEFAULT: token("primary"),
           hover: token("primary-hover"),
           border: token("primary-border"),
+          solid: token("primary-solid"),
+          "solid-hover": token("primary-solid-hover"),
           // shadcn primitives say `text-primary-foreground`; TrainOS code says
           // `text-on-primary`. Same token, so a CLI-generated primitive is
           // correct with no edit and no second colour enters the repo.

@@ -36,13 +36,20 @@ import {
   SecondaryButton,
   StatusChip,
   humanise,
+  plural,
   tabsFromViews,
   type Column,
   type FilterChipModel,
   type RowGroup,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, readableMessage, toApiError, type ApiError } from "@/shared/api";
+import {
+  isDomainError,
+  isNotDeployed,
+  notDeployedState,
+  readableMessage,
+  toApiError,
+} from "@/shared/api";
 import {
   useApprovalInbox,
   useApprovalViews,
@@ -70,6 +77,17 @@ const HIGH_VALUE_CHIP: FilterChipModel = {
   label: "Value",
   value: "≥ RM 5,000",
 };
+
+/**
+ * Why the last bulk approve did not go through. One state, because
+ * `ExceptionBanner` allows one banner per page and a refused batch has exactly
+ * one reason.
+ */
+interface BulkRefusal {
+  severity: "INFO" | "WARN" | "DANGER";
+  title: string;
+  subtitle: string;
+}
 
 /**
  * `slaRemainingMinutes` is a server fact — §7 returns it alongside `slaDueAt`
@@ -107,8 +125,7 @@ export function ApprovalInbox() {
   const [highValueOnly, setHighValueOnly] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const [bulkBlockers, setBulkBlockers] = useState<string[] | null>(null);
-  const [bulkError, setBulkError] = useState<ApiError | null>(null);
+  const [bulkRefusal, setBulkRefusal] = useState<BulkRefusal | null>(null);
 
   /* The default view is the server's, not the first in the array. */
   const defaultViewId = views.data?.data.find((view) => view.isDefault)?.id ?? null;
@@ -261,20 +278,90 @@ export function ApprovalInbox() {
 
   const filterChips: FilterChipModel[] = highValueOnly ? [HIGH_VALUE_CHIP] : [];
 
+  /* The value filter narrows the queue the same way a view switch does, so it
+     starts a fresh selection the same way. A row ticked before the narrowing
+     would otherwise stay selected while hidden. */
+  const narrowByValue = (on: boolean) => {
+    setHighValueOnly(on);
+    setSelected(new Set());
+  };
+
   const runBulkApprove = async () => {
-    setBulkBlockers(null);
-    setBulkError(null);
+    setBulkRefusal(null);
+
+    /* ⚠ EVERY SELECTED REF RESOLVES, OR NOTHING IS SENT. `selected` holds refs
+       and outlives `rows`: a refetch drops a row someone else decided, and the
+       old `rows.filter(...)` then sent the rest without a word, so "2 selected"
+       approved one. 011's bulk decide refuses a partial batch because the
+       approver cannot tell which half went through; the same reasoning applies
+       before the request. The selection keeps what is still here, so the next
+       press approves exactly what the bar counts. */
+    const present = new Set(rows.map((row) => row.ref));
+    const gone = [...selected].filter((ref) => !present.has(ref));
+    if (gone.length > 0) {
+      setSelected(new Set([...selected].filter((ref) => present.has(ref))));
+      setBulkRefusal({
+        severity: "WARN",
+        title: `Nothing was approved: ${plural(gone.length, "selected approval")} ${
+          gone.length === 1 ? "is" : "are"
+        } no longer in this queue`,
+        subtitle: `${gone.join(" · ")}. Decided or changed since you selected ${
+          gone.length === 1 ? "it" : "them"
+        }; the rest are still selected.`,
+      });
+      return;
+    }
+
+    /* An APPROVE item must carry the diff hash its row was shown, and
+       `core.bulk_decide_approvals` refuses the batch otherwise. A queue read
+       that carries none — an environment whose approval list predates the
+       field — cannot be bulk approved, so nothing is sent. */
+    const hashless = rows
+      .filter((row) => selected.has(row.ref))
+      .filter((row) => typeof row.diffHash !== "string" || row.diffHash.trim().length === 0);
+    if (hashless.length > 0) {
+      setBulkRefusal({
+        severity: "INFO",
+        title: "Nothing was approved: bulk approve is not available here yet",
+        subtitle:
+          "This environment does not send the change fingerprint an approval must echo back, so the batch would be refused.",
+      });
+      return;
+    }
+
     try {
-      await bulkDecide.mutateAsync({ ids: [...selected], decision: "APPROVE", note: null });
+      /* §7 `POST /v1/approvals/bulk-decide` — one `diffHash` per approval,
+         echoed off the same row the checkbox selected. `rowKey` is `row.ref`,
+         so the selection is resolved back to `{approvalId, diffHash}` through
+         `rows` rather than carrying the hash in `selected` itself. */
+      const items = rows
+        .filter((row) => selected.has(row.ref))
+        .map((row) => ({ approvalId: row.id, diffHash: row.diffHash }));
+      await bulkDecide.mutateAsync({ items, decision: "APPROVE", note: null });
       setSelected(new Set());
     } catch (thrown) {
       /* The refusal IS the screen, which is why this write is awaited rather
-         than toasted. §7 returns the offending refs in `details.blockers`, and
-         naming them beats "something went wrong". */
+         than toasted. `app.bulk_decide` answers `BULK_NOT_PERMITTED` with one
+         row per blocked approval in `details.notBulkApprovable` (011:3558-3571),
+         and naming them beats "something went wrong". */
       const error = toApiError(thrown);
-      const blockers = isDomainError(error) ? error.details?.blockers : undefined;
-      if (blockers && blockers.length > 0) setBulkBlockers(blockers);
-      else setBulkError(error);
+      const blockers =
+        isDomainError(error) && error.code === "BULK_NOT_PERMITTED"
+          ? (error.details?.notBulkApprovable ?? []).map((row) => row.ref)
+          : [];
+      setBulkRefusal(
+        blockers.length > 0
+          ? {
+              severity: "DANGER",
+              title: "Those approvals carry money and must be decided one at a time",
+              subtitle: blockers.join(" · "),
+            }
+          : {
+              severity: "DANGER",
+              title: "That bulk approval did not go through",
+              subtitle: readableMessage(error),
+            },
+      );
     }
   };
 
@@ -303,6 +390,17 @@ export function ApprovalInbox() {
       <div className="flex flex-col">
         {headerRow()}
         <LoadingState rows={7} label="Loading the approval queue" className="px-5" />
+      </div>
+    );
+  }
+
+  /* Before the error branch: `list_approvals` not existing is a fact about
+     this environment, and neither a retry nor a refusal explains it. */
+  if (isNotDeployed(inbox.error)) {
+    return (
+      <div className="flex flex-col">
+        {headerRow()}
+        <EmptyState {...notDeployedState("The approval queue")} />
       </div>
     );
   }
@@ -358,13 +456,13 @@ export function ApprovalInbox() {
         }
         filters={
           <>
-            <SecondaryButton onClick={() => setHighValueOnly((on) => !on)}>
+            <SecondaryButton onClick={() => narrowByValue(!highValueOnly)}>
               {highValueOnly ? "Clear value filter" : "Value ≥ RM 5,000"}
             </SecondaryButton>
             <FilterBar
               filters={filterChips}
-              onRemove={() => setHighValueOnly(false)}
-              onClearAll={() => setHighValueOnly(false)}
+              onRemove={() => narrowByValue(false)}
+              onClearAll={() => narrowByValue(false)}
               shown={rows.length}
               total={total}
             />
@@ -372,26 +470,13 @@ export function ApprovalInbox() {
         }
       />
 
-      {bulkBlockers ? (
+      {bulkRefusal ? (
         <div className="px-5 pb-3">
           <ExceptionBanner
-            severity="DANGER"
-            title="Those approvals carry money and must be decided one at a time"
-            subtitle={bulkBlockers.join(" · ")}
-            action={
-              <SecondaryButton onClick={() => setBulkBlockers(null)}>Dismiss</SecondaryButton>
-            }
-          />
-        </div>
-      ) : null}
-
-      {bulkError ? (
-        <div className="px-5 pb-3">
-          <ExceptionBanner
-            severity="DANGER"
-            title="That bulk approval did not go through"
-            subtitle={readableMessage(bulkError)}
-            action={<SecondaryButton onClick={() => setBulkError(null)}>Dismiss</SecondaryButton>}
+            severity={bulkRefusal.severity}
+            title={bulkRefusal.title}
+            subtitle={bulkRefusal.subtitle}
+            action={<SecondaryButton onClick={() => setBulkRefusal(null)}>Dismiss</SecondaryButton>}
           />
         </div>
       ) : null}

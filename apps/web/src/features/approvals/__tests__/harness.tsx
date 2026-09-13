@@ -14,7 +14,7 @@ import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, type RenderResult } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { fixtureClient, resetStore } from "@trainos/fixtures";
+import { fixtureClient, resetStore } from "@/shared/api";
 import { resetPrimaries } from "@/shared/components/kit";
 
 /** A fresh cache per test, with retries off so a refusal surfaces immediately. */

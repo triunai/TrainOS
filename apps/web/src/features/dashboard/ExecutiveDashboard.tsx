@@ -14,7 +14,7 @@
 
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import type { AgentDaily, DashboardMetric } from "@trainos/contract";
+import type { AgentDaily, ApprovalSummary, DashboardMetric } from "@trainos/contract";
 import {
   AutonomyChip,
   BudgetHeadline,
@@ -28,6 +28,7 @@ import {
   MiniBar,
   MoneyText,
   PairedBars,
+  PartialDataBanner,
   PrimaryButton,
   SecondaryButton,
   StatusChip,
@@ -36,12 +37,13 @@ import {
   type Column,
   type MetricCellProps,
   type PairedBarsSeries,
+  type PartialRead,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { toApiError } from "@/shared/api";
+import { isNotDeployed, toApiError } from "@/shared/api";
 import { navPath } from "@/shared/config/nav";
 import { APPROVALS_PATH } from "@/features/approvals";
-import { useExecutiveDashboard, useProposalsVsWon } from "./api";
+import { useExecutiveDashboard, usePendingApprovals, useProposalsVsWon } from "./api";
 
 /** The period the demo story runs in. */
 const PERIOD = "2026-11";
@@ -116,7 +118,19 @@ export function ExecutiveDashboard() {
   const dashboard = useExecutiveDashboard(PERIOD);
   const chart = useProposalsVsWon(CHART_MONTHS);
 
+  /* An environment that does not serve the dashboard read yet still gets a
+     page: the sections that read it are left out and named in one quiet
+     banner, and the pending rail falls back to the approval list, which the
+     database does serve. Any OTHER failure of the dashboard read is still the
+     page's error state below. */
+  const undeployed = isNotDeployed(dashboard.error);
+  const pending = usePendingApprovals(undeployed);
+
   const data = dashboard.data;
+  const approvalsPending: ApprovalSummary[] | undefined =
+    data?.approvalsPending ?? pending.data?.data;
+  /* The fallback reads one page of five, so its count is the list's total. */
+  const pendingCount = data ? data.approvalsPending.length : (pending.data?.page.total ?? 0);
 
   /* Cells come from the server self-describing: label, value, secondary, delta
      and drill target all travel with the metric. Nothing here knows what
@@ -209,7 +223,7 @@ export function ExecutiveDashboard() {
     );
   }
 
-  if (dashboard.error || !data) {
+  if (!undeployed && (dashboard.error || !data)) {
     /* The query throws an exception WRAPPING the ApiError; unwrap it or every
        refusal reads as a transport failure and gets a retry button. Whether the
        retry is offered is `ErrorState`'s decision, not this screen's — one copy
@@ -230,13 +244,42 @@ export function ExecutiveDashboard() {
 
   const series = chart.data?.series ?? [];
 
+  /* Every section whose read failed is omitted and named here, once. A chart
+     that could not be read is not "no proposals in this window". */
+  const failure = dashboard.error ? toApiError(dashboard.error) : null;
+  const partial: PartialRead[] = [
+    ...(undeployed
+      ? ["the company metrics", "agent activity", "the autonomy mix", "agent spend"].map(
+          (label) => ({ label, error: failure }),
+        )
+      : []),
+    {
+      label: "the proposals report",
+      error: chart.isError ? toApiError(chart.error) : null,
+      retry: () => void chart.refetch(),
+    },
+    {
+      label: "the pending approvals",
+      error: pending.isError ? toApiError(pending.error) : null,
+      retry: () => void pending.refetch(),
+    },
+  ];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {header}
 
-      <div className="px-5">
-        <MetricStrip cells={cells} />
-      </div>
+      {partial.some((read) => read.error) ? (
+        <div className="px-5 pb-2">
+          <PartialDataBanner reads={partial} />
+        </div>
+      ) : null}
+
+      {data ? (
+        <div className="px-5">
+          <MetricStrip cells={cells} />
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-wrap items-start gap-0 pt-3.5">
         {/* ---- Left column ----------------------------------------------- */}
@@ -263,140 +306,154 @@ export function ExecutiveDashboard() {
             />
           ) : null}
 
-          <Section title={`Proposals sent vs won · ${CHART_MONTHS} months`}>
-            {chart.isPending ? (
-              <LoadingState rows={CHART_MONTHS} label="Loading the proposals report" />
-            ) : series.length === 0 ? (
-              <EmptyState
-                title="No proposals in this window"
-                description="Nothing was sent in the last six months, so there is nothing to compare."
-              />
-            ) : (
-              /* The drill link rides in the legend row rather than up beside the
+          {chart.isError ? null : (
+            <Section title={`Proposals sent vs won · ${CHART_MONTHS} months`}>
+              {chart.isPending ? (
+                <LoadingState rows={CHART_MONTHS} label="Loading the proposals report" />
+              ) : series.length === 0 ? (
+                <EmptyState
+                  title="No proposals in this window"
+                  description="Nothing was sent in the last six months, so there is nothing to compare."
+                />
+              ) : (
+                /* The drill link rides in the legend row rather than up beside the
                  caption — the artboard puts it there, and it reads better at the
                  foot of the thing it filters than above it. */
-              <PairedBars
-                label={`Proposals sent versus won over ${CHART_MONTHS} months`}
-                series={CHART_SERIES}
-                points={series.map((point) => ({
-                  key: point.period,
-                  label: formatPeriod(point.period),
-                  values: [point.sent, point.won],
-                }))}
-                action={
-                  <button
-                    type="button"
-                    onClick={() => navigate(navPath("Sales", "Proposals"))}
-                    className="whitespace-nowrap text-[12px] text-primary-hover hover:underline"
-                  >
-                    Open filtered list ›
-                  </button>
-                }
-              />
-            )}
-          </Section>
+                <PairedBars
+                  label={`Proposals sent versus won over ${CHART_MONTHS} months`}
+                  series={CHART_SERIES}
+                  points={series.map((point) => ({
+                    key: point.period,
+                    label: formatPeriod(point.period),
+                    values: [point.sent, point.won],
+                  }))}
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => navigate(navPath("Sales", "Proposals"))}
+                      className="whitespace-nowrap text-[12px] text-primary-hover hover:underline"
+                    >
+                      Open filtered list ›
+                    </button>
+                  }
+                />
+              )}
+            </Section>
+          )}
 
-          <Section
-            title="Agent activity today"
-            link={{ label: "Agent registry", to: navPath("Automation", "Agents") }}
-          >
-            <DataTable
-              label="What each agent did today"
-              columns={agentColumns}
-              rows={data.agentActivity}
-              rowKey={(row) => row.agentId}
-              /* A five-row reporting table on a dashboard, not a list screen
+          {data ? (
+            <Section
+              title="Agent activity today"
+              link={{ label: "Agent registry", to: navPath("Automation", "Agents") }}
+            >
+              <DataTable
+                label="What each agent did today"
+                columns={agentColumns}
+                rows={data.agentActivity}
+                rowKey={(row) => row.agentId}
+                /* A five-row reporting table on a dashboard, not a list screen
                  someone works through: the artboard draws it at 38px rows, and
                  comfortable spacing here buys nothing but scroll. */
-              density="compact"
-              stickyHeader={false}
-              empty={
-                <EmptyState
-                  title="No agent ran today"
-                  description="Agent activity appears here as runs complete."
-                />
-              }
-            />
-          </Section>
+                density="compact"
+                stickyHeader={false}
+                empty={
+                  <EmptyState
+                    title="No agent ran today"
+                    description="Agent activity appears here as runs complete."
+                  />
+                }
+              />
+            </Section>
+          ) : null}
         </div>
 
         {/* ---- Right rail ------------------------------------------------- */}
         <aside className="flex w-[360px] shrink-0 flex-col gap-5 px-5 pb-6">
-          <Section
-            title={`Approvals pending · ${data.approvalsPending.length}`}
-            link={{ label: "Approval inbox", to: APPROVALS_PATH }}
-          >
-            {data.approvalsPending.length === 0 ? (
-              <EmptyState
-                title="Nothing is waiting"
-                description="Every approval has been decided."
-              />
-            ) : (
-              <ul className="flex flex-col">
-                {data.approvalsPending.map((approval) => (
-                  <li key={approval.ref} className="border-t border-divider first:border-t-0">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`${APPROVALS_PATH}/${approval.ref}`)}
-                      className="flex w-full flex-col gap-0.5 py-2.5 text-left hover:text-ink"
-                    >
-                      <span className="text-[13px] font-semibold leading-snug text-ink">
-                        {approval.subject}
-                      </span>
-                      {/* The breach is a chip, not red text: status colour
+          {approvalsPending === undefined ? (
+            pending.isPending && undeployed ? (
+              <LoadingState rows={3} label="Loading the pending approvals" />
+            ) : null
+          ) : (
+            <Section
+              title={`Approvals pending · ${pendingCount}`}
+              link={{ label: "Approval inbox", to: APPROVALS_PATH }}
+            >
+              {approvalsPending.length === 0 ? (
+                <EmptyState
+                  title="Nothing is waiting"
+                  description="Every approval has been decided."
+                />
+              ) : (
+                <ul className="flex flex-col">
+                  {approvalsPending.map((approval) => (
+                    <li key={approval.ref} className="border-t border-divider first:border-t-0">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`${APPROVALS_PATH}/${approval.ref}`)}
+                        className="flex w-full flex-col gap-0.5 py-2.5 text-left hover:text-ink"
+                      >
+                        <span className="text-[13px] font-semibold leading-snug text-ink">
+                          {approval.subject}
+                        </span>
+                        {/* The breach is a chip, not red text: status colour
                           lives on chips only, and it was being spent twice
                           here — on the whole line and again on the words. */}
-                      <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-muted">
-                        {approval.value ? <MoneyText value={approval.value} compact /> : null}
-                        {approval.value ? <span aria-hidden="true">·</span> : null}
-                        {approval.slaBreached ? (
-                          <StatusChip tone="danger">SLA breached</StatusChip>
-                        ) : (
-                          <DateText value={approval.slaDueAt} withTime />
-                        )}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Section>
+                        <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-muted">
+                          {approval.value ? <MoneyText value={approval.value} compact /> : null}
+                          {approval.value ? <span aria-hidden="true">·</span> : null}
+                          {approval.slaBreached ? (
+                            <StatusChip tone="danger">SLA breached</StatusChip>
+                          ) : (
+                            <DateText value={approval.slaDueAt} withTime />
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          )}
 
-          <Section title="Autonomy mix">
-            <ul className="flex flex-col gap-2">
-              {data.autonomyMix.map((slice) => (
-                <li key={slice.level} className="flex items-center gap-3">
-                  <span className="w-[126px] shrink-0 text-[13px] text-ink-secondary">
-                    {humanise(slice.level)}
-                  </span>
-                  {/* Ink for the three rungs a human still drives, accent for
+          {data ? (
+            <>
+              <Section title="Autonomy mix">
+                <ul className="flex flex-col gap-2">
+                  {data.autonomyMix.map((slice) => (
+                    <li key={slice.level} className="flex items-center gap-3">
+                      <span className="w-[126px] shrink-0 text-[13px] text-ink-secondary">
+                        {humanise(slice.level)}
+                      </span>
+                      {/* Ink for the three rungs a human still drives, accent for
                       the one that runs itself — the artboard's own emphasis,
                       and the only place on this screen where a bar is blue. */}
-                  <MiniBar
-                    value={slice.rate}
-                    size="md"
-                    state={slice.level === "AUTONOMOUS" ? "primary" : "neutral"}
-                    label={`${humanise(slice.level)} share`}
-                    valueText={`${Math.round(slice.rate * 100)}%`}
-                  />
-                  {/* `valueText` is the ACCESSIBLE value, not a rendered one.
+                      <MiniBar
+                        value={slice.rate}
+                        size="md"
+                        state={slice.level === "AUTONOMOUS" ? "primary" : "neutral"}
+                        label={`${humanise(slice.level)} share`}
+                        valueText={`${Math.round(slice.rate * 100)}%`}
+                      />
+                      {/* `valueText` is the ACCESSIBLE value, not a rendered one.
                       A bar with no number beside it is unreadable to everyone
                       who is not using a screen reader. */}
-                  <span className="w-9 shrink-0 text-right font-mono text-[12px] text-ink-secondary">
-                    {Math.round(slice.rate * 100)}%
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Section>
+                      <span className="w-9 shrink-0 text-right font-mono text-[12px] text-ink-secondary">
+                        {Math.round(slice.rate * 100)}%
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
 
-          <Section title="Agent spend · November">
-            <BudgetHeadline
-              used={data.agentSpend.spent}
-              limit={data.agentSpend.budget}
-              label="Agent spend against budget"
-            />
-          </Section>
+              <Section title="Agent spend · November">
+                <BudgetHeadline
+                  used={data.agentSpend.spent}
+                  limit={data.agentSpend.budget}
+                  label="Agent spend against budget"
+                />
+              </Section>
+            </>
+          ) : null}
         </aside>
       </div>
     </div>

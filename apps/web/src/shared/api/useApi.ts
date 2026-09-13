@@ -154,10 +154,18 @@ export function useApi(): ApiClient {
   return useContext(ApiContext);
 }
 
-/** The signed-in principal, in the shape the §3 action envelope wants. */
+/**
+ * The signed-in principal, in the shape the §3 action envelope wants.
+ *
+ * Over fixtures the id follows the role toggle through `ACTOR_FOR_ROLE`. Over
+ * Supabase it is `me.id`, which `core.me()` returns as the caller's own
+ * `auth.uid()` — a fixture user id there would name somebody who does not exist
+ * in the database.
+ */
 export function useActor(): Actor {
   const { me } = useMe();
-  return { id: ACTOR_FOR_ROLE[me.role], name: me.name, kind: "HUMAN" };
+  const id = apiMode() === "supabase" ? me.id : ACTOR_FOR_ROLE[me.role];
+  return { id, name: me.name, kind: "HUMAN" };
 }
 
 /* ---- The §3 action envelope ----------------------------------------- */

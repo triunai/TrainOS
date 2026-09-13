@@ -15,6 +15,3687 @@
 
 ---
 
+## 2026-09-13 23:9x — fix-014 closes the freeze-window fixes and the 019 fixture debt at 062e5e2/2edab79; PR #28 and #29 find T1 genuinely unfixed and a live CLIENT-role regression
+
+**`fix-014` pushed `062e5e2` to `origin/cloud/migrations`, then a third
+commit `2edab79`** — confirmed present, not yet a PR. Closes the two
+fixes the freeze was lifted for (the bulk-decide bypass and the
+`p_migration` validation gap, both from PR #26), plus the three items
+this journal already recorded as owed from the 019 split.
+
+**Bulk-decide bypass closed, confirmed exactly against the diff.**
+`core.bulk_decide_approvals` — granted to `authenticated` exactly like
+the single-decide path it sits beside — took no hash argument at all,
+and `app.bulk_decide` forwarded every item as `app.decide_approval(id,
+decision, note, NULL, NULL)`, the hash hardcoded NULL. Confirmed the
+014 comment that previously claimed a guard "both sides enforce...
+cannot be re-disabled by one of them changing" is now corrected in
+place to state plainly that the claim was false, rather than quietly
+deleted — a genuine improvement in honesty over simply removing the
+evidence of the earlier mistake. `p_ids uuid[]` is now `p_items jsonb`,
+an array of `{approvalId, expectedDiffHash}`, confirmed necessary
+because a hash per approval cannot travel in a bare array of ids.
+APPROVE items with a missing or blank hash are refused **before any
+item in the batch is applied**, confirmed as deliberate: a partial bulk
+decide is worse than a refused one, because the approver cannot tell
+which half of the batch went through. Old signatures confirmed dropped
+explicitly on both `app.bulk_decide` and `core.bulk_decide_approvals`,
+in both rollbacks.
+
+**T4/F4's SQL half confirmed closed in the same commit**, since the
+response shape had to change anyway to carry per-item hashes: the
+response is now `{results:[{id,ref,status,effects}]}` rather than
+`{data:[...],count}`. Confirmed this closes two real defects at once —
+the elements previously carried no `id` or `ref` at all, so the inbox
+could not tell which of N approvals got which outcome; and `count`
+being a second top-level key meant `app.ok`'s envelope no longer
+auto-unwrapped on the client, leaving `response.results` `undefined`
+behind a blind cast. New pin T20 confirmed to cover a hashless item
+refused, a repriced approval refused as `DIFF_CHANGED` specifically
+through the bulk door, an unchanged one admitted, and the response
+shape itself.
+
+**`p_migration` validation gap closed, confirmed exactly, and the fix
+reaches further than a simple non-null check.** `NULL` and empty string
+previously produced a policy with no owner stamp the rollback's manifest
+loop could never find. **Worse, and confirmed as the part a plain DROP
+could never have fixed**: there was no three-argument overload to
+resolve to at all, so the old spelling the catalog still taught —
+`app.apply_tenant_policies('core','run_node_io','run:read')` — silently
+bound to the four-argument function with `p_migration='run:read'` and
+`p_permission=NULL`, confirmed reproduced live: an UNGATED policy
+stamped `migration:run:read`. The slot is now typed by its content,
+`^[0-9]{3}$`, confirmed via the diff to refuse `'run:read'`, `NULL`,
+`''`, `'14'`, `'0014'`, and `'migration:014'` alike — and confirmed to
+also cover a NULL stamp on `app.ungate_tenant_policy`, on the stated
+reasoning that removing a gate is the act most worth attributing to
+someone. T16 confirmed to pin every one of these refusal cases.
+
+**Negative result for the log, confirmed word-for-word from the commit
+body, worth preserving exactly**: "dropping an old overload does
+nothing when the old spelling already resolves to the new function by
+defaulted arguments — type the slot by content." A DROP only removes a
+signature that exists; when the _old_ calling convention is simply
+absorbed by the _new_ function's defaulted arguments, there is nothing
+to drop, and the only real fix is validating what actually lands in the
+slot.
+
+**`2edab79` closes the three items this journal already recorded as
+owed from the 019 split, confirmed exactly:**
+
+- `test_014`'s T1c is now scoped to 014-time objects via the existing
+  migration-comment manifest already in place: a table counts only if
+  its policies carry a `migration:0NN` stamp of 017 or earlier; views
+  carry no policy and therefore no stamp, so the four granted views are
+  matched **by name** instead, confirmed to be the same four the
+  assertion's own message already enumerated. A fifth granted view
+  would now be caught as a deliberate edit here rather than silent
+  drift — confirmed as the property worth keeping. 018's T38 confirmed
+  to assert its own three-view delta separately.
+- `test_017` line 87's fixture pipeline flipped to `is_default = false`,
+  confirmed passing now that 019 seeds the real per-tenant default —
+  confirmed nothing in the fixture depended on it being the default in
+  the first place, only on having a `pipeline_id` to reference.
+- **`test_016`'s T7 confirmed KEPT, not weakened — and the commit states
+  exactly why, worth preserving verbatim**: "I own 016's intent here and
+  the clause STAYS... The pin was wrong, not the rollback." `v_seeded`
+  is recomputed to ask the same question 016's own rollback
+  post-condition already asks — of the rows 016 seeded, how many remain
+  unallocated — so pin, rollback, and post-condition now agree by
+  construction rather than by arithmetic that happened to line up
+  before 019's real `PIP` ref allocation exposed the gap between two
+  different populations the pin and the rollback were each counting.
+- **A small, honest correction folded in, confirmed in the diff**: T1's
+  own success `NOTICE` said "118 SELECT grants" against an assertion
+  twenty lines above requiring 121 — a stale number in a success message
+  describing a database two migration packs old. Both counts in the
+  notice are now interpolated, so the notice can never drift from the
+  assertion it's supposed to describe again.
+
+**Validation counts, confirmed unchanged from the prior push**: 18/18
+apply, 17/17 pins pass plus 2 apply-context pins that correctly refuse,
+`lint:sql` 53/53, `check:grants` 0, `check:rpc` 4 pass/0 broken.
+
+---
+
+**Separately, PR #28 confirmed MERGED at `06176b7`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-011-013-rereview.md` — an
+independent re-review of the 011-013 fix commits at `0d9e00c`, with an
+explicit look forward at `eff8084` and `a20e6d8`. Confirmed this review
+predates and is partially superseded by the freeze-window fixes recorded
+above, none of which had landed when this review ran.
+
+**Confirmed clean, four items**: `T2/O2` (the dead effect pipeline),
+`S1(a)` (the reveal-audit short-circuit), `S3` (the `service_role`
+revoke, syntax-verified correct), `T8` (the GUC residue) are all
+confirmed fixed cleanly by this independent pass, cross-checking rather
+than merely repeating the earlier fix commits' own claims.
+
+**T1 confirmed NOT actually fixed, live-reproduced rather than reasoned
+about — the standout finding of this review.** `eff8084`'s own commit
+claimed T1 fixed under that exact name, but the reviewer confirmed its
+diff touches only `test_012`'s pin file, never the migration itself,
+and the new pin asserts only that `app.action_effects` reaches
+`SETTLED` — nothing whatsoever about `core.action_requests.status`.
+Reproduced directly: after a full claim→complete cycle on the replayed
+job, the effect genuinely reaches `SETTLED` (the invoice really was
+pushed on replay) but the parent `core.action_requests` row **stays
+`PARTIALLY_FAILED` forever** — confirmed as the exact original incident
+the finding described in the first place ("TrainOS says it failed,
+forever"). **Confirmed quoted directly, worth keeping verbatim as
+guidance for whoever picks this up next**: "before closing T1 or T5 as
+resolved anywhere, re-run this report's exact §3 live reproduction...
+against whatever commit is actually about to merge — a passing
+`test_012` T15 will not tell you whether it is fixed."
+
+**S1(b) confirmed only partial.** The frozen-column defect is genuinely
+fixed, but the new pairing trigger only fires when `key_fingerprint`
+itself changes — confirmed reproduced live that `key_ref` can be
+changed alone, with no fingerprint change, firing no trigger and
+writing no audit row at all. The practical exploit window is confirmed
+bounded by the unrelated 24-hour reveal ceiling, not immediate — stated
+precisely rather than overstated in either direction.
+
+**REGRESSION confirmed found independently by both review lenses, not
+a single reviewer's idiosyncratic read — a genuine convergence, not a
+restatement.** `CLIENT` is confirmed a valid role in `app.app_role`
+with **zero** rows anywhere in `app.role_permissions`, so the new
+HIGH-1/T3 permission check this same fix pass added now unconditionally
+refuses every CLIENT-initiated action — confirmed live via direct
+catalog query. Whether this is a genuine regression or an undocumented
+product decision is confirmed stated as an open question needing an
+answer before merge, not silently resolved either way by the review.
+
+**S5 confirmed only partially fixed, with the commit's own count wrong.**
+Only 11 sites confirmed converted to `TRNOS`, not the claimed 13,
+confirmed by direct grep against the diff and the resulting file.
+**`REVEAL_AUDIT_MISMATCH` confirmed reachable by an authenticated
+caller**, resolving a genuine disagreement between the two independent
+reviewers (the security pass had concluded neither surviving raise was
+reachable): the orchestrator read `public.ai_provider_key_reveal`'s body
+directly and confirmed it is `SECURITY DEFINER`, performs the exact
+`UPDATE` that fires the trigger itself, with no exception handler around
+it — the file's own "no RPC path can reach it" justification is
+confirmed false specifically for this raise.
+
+**T5 confirmed genuinely fixed at `a20e6d8`**, consistent with this
+journal's own prior recording — this review independently re-derives
+and re-confirms it rather than merely repeating the earlier claim.
+
+**Negative results for the log, both confirmed word-for-word from the
+doc itself.** "A pin named for a finding proved the wrong table" — T1's
+own new pin asserts `app.action_effects`, not `core.action_requests`,
+the table the actual incident happens in; a pin's name is not proof it
+tests what it claims to. "A default-deny permission check needs every
+valid role seeded, or the roles with none are silently locked out" —
+the CLIENT regression's exact mechanism, worth keeping as a standing
+rule for any future permission-catalogue change anywhere in this repo,
+not just this one pack.
+
+**All routed to `fix-014` in the open freeze window; a final 011-013
+pass confirmed reported to follow the re-freeze** — not yet
+independently confirmed by this journal.
+
+---
+
+**PR #29 confirmed MERGED at `8bb95ed`**, one file amended (not newly
+created) — the same 011-013 re-review doc updated to include `eff8084`.
+
+**T5 confirmed live-verified fixed at `eff8084`**: `test_011`'s T18
+passes, confirmed. **A new S7-class dependency noted and worth tracking
+as its own pattern**: T18's own fixture needs migration 016's
+ref-formats provisioning to exist — an undocumented cross-pack
+dependency of the exact same class this migration line has now hit
+multiple times across different packs.
+
+**T1 confirmed STILL not fixed at `eff8084` either**, consistent
+exactly with PR #28's own finding two updates ago — the reviewer
+extended T15's own fixture specifically to re-check this and got the
+identical result: effect `SETTLED`, parent `core.action_requests`
+`PARTIALLY_FAILED`. Routed to `fix-014` alongside the CLIENT regression,
+S1(b), and S5.
+
+**Reported one more `fix-014` push pending for the four 011-013
+residuals, then the re-freeze** — confirmed this journal's own
+`062e5e2`/`2edab79` recording above already closes the two separate
+PR #26 items (the bulk-decide bypass and the `p_migration` gap), which
+are a genuinely different set of findings from these four 011-013
+residuals (T1's `action_requests` reconcile, the CLIENT regression,
+S1(b)'s audit gap, S5's `REVEAL_AUDIT_MISMATCH`) — confirmed the four
+011-013 items are still open as of this check.
+
+**Things worth telling future-me:**
+
+1. A fix commit naming a finding in its own title ("T1 (CRIT)... the
+   replay pin the report asked for") is not proof the finding is
+   closed — this is now the clearest case this session of a commit
+   message's own framing outrunning its actual diff, caught only by an
+   independent reviewer reading the diff and re-running the exact
+   original reproduction rather than trusting the new pin's green
+   result.
+2. A security fix that adds a new default-deny check needs every
+   currently-valid enum value checked against the permission table it
+   reads from, not just the roles the fix's own author had in mind —
+   the CLIENT regression is a textbook case of a control that is
+   correct in isolation and wrong in context, and the fix that closes
+   HIGH-1/T3 correctly needed a companion check ("does every role in
+   the enum have at least one row") that nothing in this pass ran.
+3. "Type the slot by content, not by dropping the old shape" is a
+   reusable principle now demonstrated twice in one migration line (the
+   `p_migration` slot here, and the earlier `dated`-flag-style validation
+   gaps elsewhere) — worth treating as a standing review question for
+   any future required-argument addition to an existing function: what
+   happens when the OLD calling convention's arguments land in the NEW
+   function's slots by position, not by an old signature resolving?
+
+---
+
+## 2026-09-13 23:8x — 019 split lands at 66ad184; the test_014-red discrepancy is resolved as a stale measurement; PR #27 closes the worker heartbeat bug (S4/T16)
+
+**`fix-018` pushed the M4 split to `origin/lane/rpc-018`, tip
+`66ad184`** (via `583249f`, `7307000`) — confirmed via `git ls-tree`
+that `supabase/migrations/019_pipeline_provisioning.sql`,
+`supabase/rollbacks/019_pipeline_provisioning_rollback.sql`, and
+`supabase/tests/test_019_pipeline_provisioning.sql` now exist as real
+files, not just a stated plan. **PR #11 confirmed retitled** to "018
+golden-path RPCs + 019 pipeline provisioning" — the split is reflected
+in the PR's own identity, not just described in its body text.
+
+**019 confirmed self-contained and confirmed carrying everything the
+earlier ruling specified.** The `app.seeded_pipelines` ledger, the four
+seed functions, the trigger, the loud backfill (RAISEs naming every
+tenant it could not seed), both rows in 016's `app.tenant_seed_checks`
+registry, and the full B6 rollback contract — delete exactly the rows
+the seed recorded inserting, refuse with a count and the blocking
+constraint names when live data references any of them, delete nothing
+on refusal. The new pin is confirmed self-contained by design: its own
+tenant, organisation, programme, and engagement, specifically so it
+does not depend on another pack's fixture surviving a future
+reordering. T1 covers provisioning, T2 the loud backfill, T3
+reversibility including the refusal path.
+
+**Proved end to end by execution, confirmed via the commit's own quoted
+transcript, not by reading the mechanism and trusting it**:
+
+```
+tenant inserted   pipelines/steps 2/16, ledger 18 rows
+019 rollback      "18 seeded pipeline/step row(s) removed"
+after             pipelines/steps 0/0, ledger and mechanism gone
+and               INSERT of a default ENGAGEMENT pipeline -> INSERT 0 1
+re-apply          backfill re-seeds the surviving tenant, verify green
+```
+
+**018 confirmed reduced to 48 objects and NO table**, modifying no
+existing table, function, view, policy, or grant. The dependency on 019
+is confirmed stated in 018's own header rather than left implicit —
+`core.navigation` and `core.get_pipeline_config` render stages from
+`core.pipeline_steps`, so a tenant with no rows gets an empty stage
+list regardless of which pack is "responsible" for that emptiness.
+**`V16b`/`V16c` confirmed moved out of 018's own verify block entirely**
+— a verify block checking another migration's object is confirmed, in
+the commit's own words, to "pass vacuously when that migration has not
+been applied," which the commit itself names as the exact class of
+defect R4 was already caught by once in this same pack.
+
+**`test_014` confirmed restored byte-for-byte, verified via the actual
+diff rather than the commit's own characterization of it**: 8
+insertions, 33 deletions — a net reversion. 018's three view grants are
+now asserted only in `test_018`'s T38, by name. **One assertion is
+explicitly left owed to the 014 lane, stated plainly rather than
+worked around, confirmed in the commit's own words: "THIS LEAVES AN
+ASSERTION FOR THE 014 LANE."** `test_014`'s T1c counts LIVE grants via
+`information_schema.table_privileges`, so it reads 124 once 018 is
+applied and fails unless scoped specifically to 014-time objects.
+Confirmed re-derived by execution on the shim, not assumed: 121 at the
+001–017 surface, 124 with 018 applied, a delta of exactly three named
+views (`core.v_organisation_relations`, `core.v_budgets`,
+`core.v_model_tiers`).
+
+**`test_008`/`test_009`'s pipeline-fixture amendments confirmed
+re-attributed to 019 at the line level, moved entirely out of 018's own
+diff.** A genuine pre-existing defect in 009 that this move made
+reachable is fixed alongside it: an unconstrained cross join wrote
+three engagements and kept an arbitrary one, now scoped with an
+explicit `AND pl.name = 'std'`.
+
+**The discrepancy this journal already recorded as open two rounds ago
+is confirmed RESOLVED — and confirmed as a stale-measurement issue
+rather than a genuine contradiction between the two lanes' checks.**
+`fix-018`'s earlier report of `test_014` already red on
+`cloud/migrations` at 001–017 alone is confirmed, in the PR body's own
+correction, to have been "measured against a stale extraction of the
+base (`21ec975`-era)." Re-measured at `0d9e00c`, `test_014` passes
+standalone, "which agrees with the 014 lane's own report" — confirmed
+quoted directly. **`test_014_rollback` refusing while 014 is applied is
+confirmed by design, not a failure** — the same apply-context pin
+pattern this journal has already recorded elsewhere in this migration
+line.
+
+**Two items confirmed still owed to `fix-014`'s own branch, both
+independently verified against scratch copies rather than guessed at**:
+`test_017` line 87 needs `'ENGAGEMENT','Standard delivery', true`
+flipped to `false`, confirmed to pass when applied; `test_016`'s T7b
+needs its `NOT EXISTS (core.ref_sequences)` exclusion dropped, since
+019's seed now triggers a real `PIP` ref allocation the old exclusion
+logic was never written to expect, dropping the matched count from 32
+to 31 — confirmed as a genuinely verified mechanism, with the choice
+between two valid fixes deliberately deferred to 016's own author
+rather than picked unilaterally.
+
+**Counts, confirmed exactly against the PR body's own quoted output.**
+This branch's own 001–019: 18 pass / 1 fail (`test_014`, tracked as B4,
+owed) through a full rollback/re-apply/pins-again cycle, identical
+after. Against `cloud/migrations`'s current base (`0d9e00c`): 17/1 at
+001–017 alone (`test_014_rollback`'s by-design refusal, not a real
+failure), 16/4 at 001–019 — the four confirmed as `test_014`,
+`test_014_rollback`, and the two owed 016/017 amendments, with "those
+three landed it is 19/19" confirmed quoted directly. `lint:sql`
+confirmed 57/57 (up from 53, three new 019 files now counted), `check:
+rpc` 4 pass/0 broken, `check:grants` one pre-existing finding confirmed
+unrelated to this split.
+
+---
+
+**Separately, `PR #27` confirmed MERGED at `963eda8`** (`gh pr view
+27`: mergedAt 2026-09-13T14:18:45Z, base `main`, four files entirely
+under `apps/worker/**`, +180/-10) — **S4/T16, the worker heartbeat
+lease bug, closed.**
+
+**Confirmed the root cause is entirely worker-side, not a database
+defect.** `app.heartbeat_job` (migration 012) already correctly sets
+`visible_after = now() + p_extend`, confirmed by reading the migration
+directly at `012:1747`. The actual bug was `apps/worker/src/loop.ts`
+passing `heartbeatSeconds` instead of `leaseSeconds` as the extend
+argument at **both** heartbeat call sites — the automatic interval
+tick and the handler-exposed manual heartbeat — confirmed exactly in
+the diff. Every beat therefore reset the lease to "now plus one
+heartbeat interval" instead of "now plus the full lease," letting a
+long-running job's lease expire while it was still actively being
+worked, and racing the reaper into reclaiming it out from under the
+worker still holding it. Confirmed no `supabase/**` change was needed,
+consistent with the diff touching only `apps/worker/**`.
+
+**`config.ts` now throws at startup if the configured heartbeat isn't
+strictly shorter than the lease, confirmed in the diff, closing a
+second, independent gap.** The old clamp checked the heartbeat against
+a global maximum (360 seconds) rather than the actual configured lease,
+so a 60-second-lease/300-second-heartbeat configuration was silently
+accepted and would have caused the same double-work even with a
+correctly-fixed extend value.
+
+**Simulation numbers confirmed directly in the test file's own
+comments, not merely asserted in the commit message**: a second
+heartbeat still in flight at t=210 seconds under simulated database
+contention; pre-fix, `visible_after` sits at 200 (already behind
+t=210, letting a concurrent reap wrongly reclaim a still-heartbeating
+job); post-fix, `visible_after` reaches 400 (comfortably covering the
+gap).
+
+**95/95 worker tests confirmed** (up from 90/90 before the fix),
+`npm run typecheck` and `npm run lint` clean, `npm run arch:graph`
+confirmed no dependency-graph violations (340 modules, 1171
+dependencies). Both `fix-worker-heartbeat` and `review-pr27` confirmed
+shut down via `git worktree list`.
+
+**Remaining backlog item from the 011-013 review, confirmed still open
+and correctly scoped rather than silently dropped**: `bulk_decide`'s
+response-shape mismatch (T4/F4) — the SQL side sits inside `fix-014`'s
+currently-open freeze window, the TS side reported routed to a web lane
+afterward.
+
+**Things worth telling future-me:**
+
+1. A discrepancy between two lanes' measurements of the same fact
+   doesn't have to mean one lane made an error — "measured at different
+   moments of a moving target" is a real, benign explanation, and this
+   journal's earlier decision to record the discrepancy as open rather
+   than guessing which side was right turned out to be the correct call:
+   the resolution came from re-measurement, not from picking a side.
+2. A migration pack explicitly stating what it leaves for another lane
+   ("THIS LEAVES AN ASSERTION FOR THE 014 LANE") rather than either
+   fixing it unilaterally or silently leaving a gap is the same pattern
+   this journal already praised for the 016 `dated`-flag ruling — worth
+   noting this is now a recurring, apparently deliberate house style in
+   this migration line, not a one-off.
+3. A bug that looks like it could be in either of two systems (a
+   database function and the client calling it) is worth checking both
+   independently before assuming which side owns the fix — here the SQL
+   side was already correct, and reading the migration directly rather
+   than assuming the bug was somewhere in the newer, more complex layer
+   is what confirmed that quickly.
+
+---
+
+## 2026-09-13 23:7x — PR #26: 014's third-pass residuals genuinely closed, but a live bulk_decide diff-hash bypass reopens HIGH-4; freeze lifted for two named fixes
+
+**PR #26 confirmed MERGED at `664a477`**, one file **amended, not
+newly created** — `docs/reviews/2026-09-13-codex-retrofit-015-017-rereview.md`
+grows a new "Part A" section (confirmed via the diff: +189/-23) covering
+014's third pass at `ff01f2b`, alongside its existing 015/016/017
+content at `bdd49aa` left unchanged. Confirmed this is a legitimate
+amendment to an existing multi-pack review doc, not a violation of the
+one-file review-branch convention this thread's own memory records.
+
+**014's second-pass residuals are all genuinely closed, confirmed by
+adversarial execution rather than by reading the fix and trusting it:**
+
+- **The `run:read` gate expansion, confirmed via direct catalog
+  query**: exactly nine `core` relations carry a RESTRICTIVE policy with
+  `app.has_permission(...)` in BOTH `USING` and `WITH CHECK` — the seven
+  `run:read`-governed tables plus `ai_provider_keys` and
+  `public_share_tokens`. Both counts the fix commit uses ("all seven
+  run:read tables" and "all nine tables the three permissions govern")
+  are confirmed correct and not in tension with each other. Behavioral
+  probes confirmed clean denial (not an error) on every tested role
+  combination.
+- **`app.ungate_tenant_policy()` — already fixed twice before this pass,
+  confirmed to pass a full seven-case adversarial sweep with no third
+  failure mode found.** Genuinely removes a gate; refuses cleanly on an
+  already-ungated table; refuses cleanly on a nonexistent table; safe
+  under case-mismatched identifiers; correctly refuses on both
+  USING-only and WITH-CHECK-only half-gates — a case this review
+  constructed specifically to test the "reads both halves" claim.
+  Confirmed to work by dropping the gated policy BEFORE calling back
+  into the gate function, so the function's own refusal-on-an-existing-
+  gate logic never fires — a real fix, not a relocation of the same
+  order-dependent hazard the earlier `'UNGATE'` string had.
+- **T11a confirmed proven non-tautological two independent ways**:
+  side-by-side, the OLD pin's assertion passes on a database with
+  CRIT-1's defect artificially reintroduced, while the NEW pin's
+  assertion (reading from a GUC captured before the pin's own first
+  GRANT/REVOKE) correctly fails; and end-to-end, planting a real
+  `GRANT DELETE ON public.memberships TO authenticated` on an otherwise-
+  fixed database causes the NEW pin to fail specifically at the new
+  T11a with the correct diagnostic, while the OLD pin's own T11a and
+  T11b0 both still pass on the same regressed database — the defect
+  only surfacing two assertions later, in a behavioral test rather than
+  a privilege assertion.
+- **`core.decide_approval`'s hash requirement confirmed by execution
+  with real request/response envelopes**: a stale hash refuses, the
+  current hash succeeds, no hash (including whitespace-only) now
+  refuses with a named error, and a REJECT with no hash still succeeds
+  — correctly scoped to APPROVE only.
+
+**But 014 is BLOCK this pass on a genuinely new, currently-live defect
+— confirmed exactly, and confirmed the fix commit's own "closed on both
+sides" claim about HIGH-4 is false for the bulk path.** `core.
+bulk_decide_approvals` — granted to `authenticated`, called by the web
+client per its own reachability comment, covering every non-monetary
+bulk-approvable approval type — takes no hash argument at all and
+forwards to `app.bulk_decide`, which calls the underlying decision
+function with the hash **hardcoded NULL**. Since the hash is compared
+only when non-NULL, this is confirmed to be the exact same bypass
+HIGH-4 was originally filed against, still live, on a path the shipped
+`COMMENT` explicitly asserts is closed. **Confirmed the doc's own
+distinction is the load-bearing one**: the blast radius is bounded
+(monetary/money-moving approval types are excluded from bulk decide by
+an existing 011 check), but "bounded" is a different claim from
+"closed," and the shipped comment claims the latter — shipping a false
+closure claim in a security-relevant comment is confirmed, in the doc's
+own words, "the same class of defect CRIT-1's false header premise
+was."
+
+**Second finding, confirmed independently found by three separate
+lenses (thermonuclear, the security pass, and G6) — a genuine
+convergence worth recording as its own kind of evidence, not just
+tallying it as one more finding.** The new required `p_migration`
+argument on `app.apply_tenant_policies` validates its _position_ but
+not its _value_: `NULL`, empty string, and arbitrary text are all
+silently accepted and stamped verbatim into the policy comment. Two
+concrete consequences, both confirmed by execution: (1) `NULL`/`''`
+produce an ownerless policy the rollback's by-name (`migration:014 %`)
+drop cannot find, so it survives a rollback it should not; (2) the OLD
+three-argument calling convention (`schema, table, permission`) still
+resolves, silently binding the intended permission string into the
+_migration_ slot instead — producing an **ungated** policy with no
+error, confirmed as the same "looks correct, nothing raises, gate is
+simply absent" failure shape the `run:read` gate itself was fixed to
+prevent. The migration-catalog's own API reference section is confirmed
+to still document the stale three-argument spelling as current.
+
+**MED, confirmed a genuine improvement over the second pass even though
+the underlying gap remains open.** Seven more sensitive tables
+(`core.evals`, `core.agents`, `core.tier_keys`, `core.model_tiers`,
+`core.routing_matrix_versions`, `core.routing_entries`,
+`core.ai_budgets`) stay blanket-readable under permissions migration
+002 already assigned. Confirmed the catalog now correctly reclassifies
+this remainder as "a GAP, NOT A POSTURE," owned by 018 — a real
+improvement over the second pass, which had rationalized an equivalent
+gap as deliberate. Flagged MED rather than HIGH specifically because it
+is honestly owned now rather than silently missed, unlike N-1's
+original framing.
+
+**Negative result for the log — this thread's own synthesis of the
+finding's substance, not a verbatim quote, but confirmed to match the
+doc's own words exactly on the underlying fact.** "Closed on both sides"
+was asserted from `core.decide_approval`'s single-decide path without
+enumerating every actual caller of the underlying decision function —
+`bulk_decide_approvals` is exactly such a caller, and it was missed.
+Worth a standing check for this migration line specifically: whenever a
+fix pack claims a guard is closed "on all paths" or "on both sides," the
+claim needs to be checked against every real caller of the underlying
+function, not only the path the fix was originally written against.
+
+**Freeze lifted for exactly these two fixes on `fix-014`** (the
+bulk-decide bypass and the `p_migration` validation gap), **reported
+with re-freeze to follow. `fix-018` reported holding its rebase**
+through this window — consistent with this journal's own record that
+the rebase has been deliberately held for a stable base throughout this
+whole session.
+
+**Things worth telling future-me:**
+
+1. A doc amended in place (a new section added to an existing review
+   file, rather than a new file created) is still consistent with the
+   one-file-per-review-branch rule this repo established after the
+   stale-checkout incident — the rule was about not carrying unrelated
+   code changes onto a review branch, not about never touching a
+   previously-merged doc again. Worth keeping that distinction clear so
+   a future amendment doesn't get incorrectly flagged as a convention
+   violation.
+2. "Fixed on both sides" or "closed on all paths" is a claim about every
+   caller of a function, not about the caller the fix was tested
+   against — this is now the second time this session a claim like this
+   needed the actual call graph checked rather than the one path
+   exercised during development (the first being HIGH-4's own earlier,
+   simpler version). Worth treating any "on all paths" claim in a
+   security-relevant comment as a specific, checkable assertion rather
+   than reassuring prose.
+3. Three independent reviewers finding the same defect from different
+   angles (static reading, security reasoning, and live execution) is
+   strong evidence the defect is real and not an artifact of one
+   reviewer's framing — worth treating three-way convergence as
+   qualitatively different evidence from "one reviewer found this and
+   the others didn't contradict it."
+
+---
+
+## 2026-09-13 23:6x — frozen tip moves to a20e6d8 (benign correction); T5 closed end to end with no client change, and the READ-to-DECIDE distinction made precise
+
+**Frozen-tip correction, confirmed benign rather than an error in this
+journal's own prior recording.** `origin/cloud/migrations` now sits at
+`a20e6d8`, one commit past the `eff8084` this journal recorded as frozen
+last entry — reported as one crossed push, not a mistake in what was
+recorded then; `eff8084` genuinely was the tip at the time it was
+checked, and `a20e6d8` is a legitimate, later push built directly on it.
+
+**`a20e6d8` closes T5 end to end.** The mechanism half (the hash
+covering `{effects, value}` because `app.plan_effects` is IMMUTABLE and
+reads no row) landed in `eff8084` already, confirmed in this journal's
+own prior entry. This commit names the canonical form where all three
+parties can find it and pins the specific gap the mechanism exists to
+catch — the part explicitly asked for.
+
+**The client-change question resolved with NO client change needed,
+confirmed by reading the actual source rather than trusting the claim.**
+`apps/web/src/features/approvals/ApprovalDetail.tsx:170` confirmed
+directly: it passes `detail.diffHash` verbatim into the decide call — it
+echoes the hash the server already computed and attached to the
+approval; it never computes a hash itself. The only `hashDiff()`
+function anywhere in the entire repository is confirmed at
+`packages/fixtures/src/client/FixtureClient.ts:3089`, the mock client
+used for fixtures, not the real decision path. The server-side canonical
+form was therefore already the one in force before this commit; the
+commit states that fact explicitly rather than leaving it implied, and
+no client-side hash-agreement mechanism (the commit specifically names
+FNV-1a as the alternative that would have been needed) is required at
+all.
+
+**Canonical form, confirmed written into both migration 011 and the
+pin, not left as tribal knowledge**: SHA-256 over
+`{"effects": app.plan_effects(...), "value": app.action_value(...)}`,
+rendered as jsonb text, computed once at queue time, stored on the
+approval row, exposed on `core.v_approval_requests`, echoed back by the
+client. Confirmed as the deliberate alternative to a client-computed
+hash, which would have needed two implementations of one serialization,
+in two different languages, agreeing forever — exactly the class of
+drift this repo's own standing rules exist to prevent.
+
+**What the echo actually detects, confirmed precisely and worth stating
+exactly rather than loosely as "tamper detection" — a genuine
+precision-of-language correction worth preserving.** Since a value the
+client only returns to the server cannot itself detect a change the
+client made, the guard detects the gap between READ and DECIDE
+specifically: the approver loaded a diff, something else moved the
+underlying record in the meantime, and the hash they echo back no longer
+matches what the row now carries. **New pin `test_011` T19 confirmed to
+pin exactly this, both directions**, via its own sub-assertions: `T19a`
+confirms an APPROVE echoing the hash it just read is admitted when
+nothing moved; `T19b`/`T19b2` confirm a reprice of the quotation in
+between makes the same echo refused, specifically as `DIFF_CHANGED` and
+not some other error. Confirmed as a genuinely new capability: before
+the hash covered `app.action_value`, the repriced case was undetectable
+by construction, because `app.plan_effects` cannot see a quotation at
+all — it only reads the request, not the record being decided on.
+
+**Staging choice explained and confirmed, not merely asserted.** The
+test approval is staged directly rather than routed through
+`app.perform_action`, because `QUOTATION_APPLY` is confirmed the only
+action type in the whole system whose `value_source` is `QUOTATION` —
+the only one whose value actually reads the record being edited — and
+in this fixture set it dispatches straight to `EXECUTING` because the
+tenant carries no matching policy row. Routing through `perform_action`
+would have turned this pin into a test of policy seeding (already
+covered elsewhere by T16/T17) and would never have reached the guard
+this pin exists to test.
+
+**Fixture requirement confirmed and worth flagging for future pin
+authors, exactly as reported and confirmed directly in the diff**: real
+`auth.sessions` rows at `aal2` are required for BOTH the requester and
+the approver, because `app.aal2_verified()` reads the session table
+directly rather than trusting a claim in a token. Any future pin
+touching a money-moving action and its decision needs both sides'
+sessions seeded, not just one — a concrete, reusable fact for whoever
+writes the next money-path pin in this repo.
+
+**Inherent limit for the log, confirmed directly in migration 011's own
+comment at line 76, not this fix's shortcoming**: `PROPOSAL_SEND` is
+seeded with `value_source = NONE`, so this entire hash mechanism cannot
+detect a record change for that specific action type — a property of
+which action types have a value worth hashing in the first place, not a
+gap this fix left open.
+
+**Validation counts confirmed unchanged from `eff8084`**: 18/18 apply,
+17/17 pins pass plus 2 apply-context pins that correctly refuse,
+`lint:sql` 53/53, `check:grants` 0, `check:rpc` 4 pass/0 broken —
+consistent with this commit touching exactly one file, the test file
+itself, confirmed via the diff stat.
+
+**Things worth telling future-me:**
+
+1. "The frozen tip moved" is not automatically a correction to anything
+   this journal got wrong — a frozen designation is a snapshot of "what
+   is true right now," and a later legitimate push simply supersedes it.
+   Worth distinguishing, in the log itself, between "I was wrong" and
+   "the world moved after I checked," since conflating the two would
+   wrongly cast doubt on a correct prior entry.
+2. "The client doesn't need to change" is a stronger, more useful claim
+   than "the client already agrees with the server," and the difference
+   was only visible by reading the actual call site rather than reasoning
+   about what a diff-hash mechanism generally requires. Grepping for the
+   one function name that would prove or disprove a hidden client-side
+   implementation (`hashDiff`) is a cheap, high-value check whenever a
+   fix claims "no client change needed."
+3. Precisely naming what a security mechanism catches (a READ-to-DECIDE
+   race, not tampering) rather than reaching for the nearest generic
+   label ("integrity check," "tamper detection") is worth the extra
+   sentence — a future reader deciding whether this mechanism covers
+   their new scenario needs the precise claim, not the closest-sounding
+   one.
+
+---
+
+## 2026-09-13 23:5x — fix-014 pushes eff8084, reported FROZEN as the merge candidate; 017's own SST-fix regression closed; final whole-branch re-review dispatched
+
+**`fix-014` pushed `eff8084` to `origin/cloud/migrations`**, confirmed
+as the current tip — **reported FROZEN as the merge candidate**, and
+confirmed nothing has landed on this branch since this check. Fixes
+017's own retrofit BLOCK from PR #25's re-review, T1 and T5 from the
+011-013 review, and two residuals in 015 and 016.
+
+**017's retrofit BLOCK fixed, confirmed exactly — and the commit states
+plainly, in its own words, that this fix pack caused it, not that it
+was inherited or pre-existing.** Reproduced twice by building 001–016,
+inserting one ordinary quotation, and applying 017. **Two walls, in the
+order they actually block, both confirmed directly against the diff:**
+
+1. The `margin_rate` precision guard tested `scale(margin_rate) > 4`.
+   `margin_rate` is `GENERATED` by a numeric division, and PostgreSQL
+   numeric division always produces scale 20 regardless of the actual
+   value — confirmed via the commit's own concrete example: a margin of
+   exactly 0.41 is stored as `0.41000000000000000000`. The guard was
+   therefore unconditionally true and refused an apply that would have
+   lost nothing. It now asks the question its own prose always claimed
+   to ask — whether rounding would actually CHANGE the value — so
+   0.28571 still refuses (rounding it would lose precision) and 0.41
+   does not (rounding it changes nothing).
+2. With that wall cleared, the backfill `UPDATE` queued migration 007's
+   `DEFERRABLE` constraint triggers on `core.quotations`. They fire at
+   COMMIT; this file is one transaction; and the `SET NOT NULL` that
+   follows hit `55006 cannot ALTER TABLE "quotations" because it has
+pending trigger events`. `SET CONSTRAINTS ALL IMMEDIATE` now drains
+   the queue first. **Confirmed as a deliberate design choice, stated
+   directly in the commit**: the NOT NULLs are kept rather than
+   downgraded to `NOT VALID` CHECKs, because these two columns are the
+   tax position on a customer document, and a `NOT VALID` CHECK is
+   enforced by nothing until somebody validates it.
+
+**New pin confirmed present**, `test_017_applies_over_existing_
+quotations.sql`, run over a 001-016 database already holding a
+quotation. It refuses rather than passing vacuously if that state was
+not set up — because, confirmed quoted directly from the commit, "every
+defect above is invisible on an empty table, which is exactly why a
+green suite did not catch either."
+
+**T1 fixed, confirmed exactly**: `test_012`'s new T15 fails a job to
+death through the real lease path, replays the dead letter, completes
+the replacement, and requires the effect to reach `SETTLED`. Confirmed
+genuinely discriminating, not merely present: against the pre-fix SQL,
+the effect is still `DEAD_LETTERED` after the replay, and the completion
+reports into `report_effect_result`'s silent early return — the exact
+mechanism T1 (from the 011-013 review, already recorded in this journal)
+describes.
+
+**T5 fixed, confirmed exactly, with a genuine negative result about the
+pin design itself worth keeping precise rather than folding into "fixed
+and pinned."** `app.plan_effects` is confirmed `IMMUTABLE`
+(`provolatile 'i'`, measured directly against the function) and reads
+no row: it derives only from the action type, target ref, and payload —
+all columns of the request itself, none of which can change after it is
+written. The fresh hash therefore equalled the stored one **by
+construction**, and `DIFF_CHANGED` was structurally unreachable, not
+merely untested by any existing pin. The hash now covers
+`{effects, value}`; `app.action_value` supplies the value half; both
+call sites are confirmed to build it identically, stated in the commit
+as necessary "or every approve breaks." **`test_011`'s new T18 is
+confirmed to both measure the volatility AND edit a quotation, requiring
+the hash to actually move** — the commit states directly that a
+structural assertion alone would have passed against the broken
+version, because the expression itself was never the defect; a
+quotation fixture was added specifically so this half of the pin
+executes rather than skips, since a skipped assertion inside a pin about
+an unreachable guard is confirmed to be the same vacuous-pass failure
+mode twice over. **Cross-checked against HIGH-4's earlier fix, exactly
+as this thread's own prior round asked**: `test_014`'s fixture computed
+the stored hash the old way and had to move with it — confirmed it
+does, directly in the diff.
+
+**015's dead assertion moved, confirmed exactly.** The overload
+assertion `bdd49aa` added earlier was genuinely dead code: the
+command-resolution loop above it always aborts first, because
+`to_regproc` returns NULL for an ambiguous bare name, so the check that
+actually names the real cause never ran. Moved above that loop,
+confirmed verified by creating a second overload and watching the new
+assertion fire with the correct message this time. The backwards
+"keep the DROP in step with the signature" comment is confirmed
+removed, since following it would reopen the exact hazard the DROP
+exists to prevent.
+
+**016's two residuals closed, confirmed exactly.** The rollback's
+disclosed residue criterion named `dated` while the actual predicate
+never tested it; the text now matches the predicate and states why
+`dated` is deliberately excluded — it is the one derived attribute an
+operator legitimately corrects, and including it in the residue check
+would strand a corrected row. `app.tenant_seed_checks` now has RLS
+**enabled and FORCED with no policy**, matching every comparable `app`
+config table in the repo — confirmed via new pin `test_016` T8, which
+pins both the posture and that `provision_tenant` can still read the
+table despite the force.
+
+**Validation counts, confirmed exactly against the commit's own
+numbers**: 18/18 apply, 17/17 pins pass **plus 2 apply-context pins
+that correctly refuse** — confirmed as a distinct, deliberate pin
+category from the 17 (pins designed to refuse outside their required
+database state, not failed assertions), rollback 017→014 clean, R1-R4
+pass, re-apply clean, `lint:sql` 53/53 (up from 52, the new pin now
+counted), `check:grants` 0, `check:rpc` 4 pass/0 broken.
+
+**Open HIGHs named rather than silently carried forward, confirmed as
+genuinely distinct dispositions.** T4/F4 (`bulk_decide`'s response-shape
+mismatch, needs a coordinated web+SQL change) stays on the backlog as
+this journal already recorded. **S4 (the worker heartbeat lease bug) is
+now a named, active lane, confirmed via `git worktree list`**:
+`trainos-wt/fix-worker-heartbeat` exists on branch
+`fix/worker-heartbeat`, scoped to `apps/worker` only, not yet pushed to
+origin.
+
+**Final whole-branch re-review reported dispatched, confirmed not yet
+landed.** Targeting `docs/reviews/2026-09-13-pr6-final.md` with a
+stated "PR #6 MAY MERGE / BLOCKED" first line — confirmed via a direct
+search that this file does not yet exist anywhere in the repo,
+consistent with "dispatched" rather than a claim that a verdict already
+exists.
+
+**`fix-018` reported doing the 019 split next, then its single final
+rebase against this now-frozen base** — consistent with this journal's
+own prior record that the split is pending and the rebase has been
+deliberately held for exactly this reason: `eff8084` being frozen is
+what that held rebase has been waiting on.
+
+**Things worth telling future-me:**
+
+1. This is the second migration-line defect this session caused by a
+   fix pack's own fix (017's SST-fix-introduces-a-blocker, and CRIT-2's
+   frozen-column discovery two rounds ago) — both were found only by
+   actually running the fix against a realistic database state, and
+   both are stated in their own commit messages as "I caused this,"
+   not softened into passive voice. Worth treating "the fix's own commit
+   admits it introduced a new problem" as a trustworthy signal in
+   itself, not a red flag about the author.
+2. Two walls blocking the same scenario, discovered one behind the
+   other, means fixing the first without checking whether the fixture
+   now reaches a second is dangerous — the same commit correctly held
+   off on declaring victory after wall 1 and kept pushing until it hit
+   wall 2, which is the right instinct whenever a "the guard has always
+   been true/false" bug is found; those rarely travel alone.
+3. A pin whose new half doesn't execute (skips instead of running) is
+   functionally identical to not having written that half at all — T18
+   needing an actual quotation fixture to exercise its edit-and-recheck
+   half, rather than relying on the existing fixture set, is the same
+   lesson as PR #24's list-RPC pins needing fixtures that actually page
+   past a boundary. A pin's line count is not evidence it exercises
+   anything; whether its fixture reaches the code path is.
+
+---
+
+## 2026-09-13 23:4x — fix-018 closes B4 and B6 at 1f300e9; M4's honest non-fix and the pending 019 split confirmed still owed
+
+**`fix-018` pushed three more commits to `origin/lane/rpc-018`, tip
+`1f300e9`** (via `c21c70f`, `558e0d2`) — confirmed present, closing B4
+and B6, and confirmed honestly documenting M4's status rather than
+resolving it.
+
+**B4 closed, confirmed exactly against the diff.** `test_014`'s exact
+SELECT-grant count stays at 121 — not moved to 124 as the earlier push
+had it — with 018's three views excluded from the count **by name**
+rather than the count being widened or softened to accommodate them.
+018's own delta is now asserted separately in `test_018`'s new **T38**,
+confirmed via the pin's own sub-assertions: `T38a` checks `anon` cannot
+SELECT the three views, `T38b` checks `authenticated` holds no WRITE
+privilege on them, `T38c` checks `authenticated` CAN select them, `T38d`
+checks the delta is exactly 3 — "SELECT only, none for `anon`," confirmed
+precisely rather than paraphrased. Measured on the shim, not asserted:
+001–017 with 018 absent passes `test_014` at 121; 001–018 applied passes
+with live counts 121/124.
+
+**Framing confirmed directly from the commit's own words, worth
+keeping**: this is not a defect 018 invented. The same file's `T1a`
+already read "116 tables, 113 from 014 + 3 from 017" before 018 touched
+anything, so `test_014` has not been standalone-runnable since 017's own
+amendment pass three migrations ago — 018 stops extending a
+three-migration-old pattern rather than starting one. A follow-up is
+marked in the file itself: once `fix-014`'s COMMENT manifest lands, the
+three-name exclusion should become a filter on that manifest instead of
+three names someone has to remember to keep current by hand.
+
+**B6 closed, confirmed by execution, not merely by reading the
+mechanism.** A new table, `app.seeded_pipelines` — the header's "creates
+no table" claim is corrected in the same commit — records every row the
+seed actually inserted. The seed is `ON CONFLICT (id) DO NOTHING`, so a
+row that already existed under the same derived id (the seeds lane's own
+fixtures) is never inserted and is never recorded, closing the exact
+case the old "keep everything" rollback design was protecting by
+construction rather than by hoping nobody hits the edge. `app.
+unseed_pipelines()` deletes exactly those ledger rows, steps before
+pipelines, and **refuses with the count and the blocking constraint
+names** when live data references any of them — deleting nothing when it
+refuses, because a half-reversed seed is confirmed, in the commit's own
+words, to be worse than an unreversed one.
+
+**Proved by running it, confirmed via the commit's own quoted
+transcript, not by reading the mechanism and trusting it works:**
+
+```
+tenant inserted        pipelines/steps 2/16, ledger 18
+rollback               "18 seeded pipeline/step row(s) removed"
+after                  pipelines/steps 0/0, ledger table gone
+and                    INSERT of a default ENGAGEMENT pipeline: INSERT 0 1
+```
+
+That last line is confirmed to be B6's actual original complaint, now
+closed: a default `ENGAGEMENT` pipeline insert, previously permanently
+blocked by `pipelines_one_default_uq` after any rollback, now succeeds.
+
+**R4 rewritten, confirmed exactly.** It previously queried `pg_trigger`
+for 016's ref-format trigger — unrelated to the pipeline seed entirely —
+while its own comments and closing `RAISE NOTICE` both announced a
+pipeline-row check that had never actually been written. R4 now
+**re-derives 018's own ids independently and counts the surviving rows
+in both tables**, rather than trusting the ledger's own bookkeeping to
+grade itself — confirmed as the stronger design, since it asks the
+question from outside the mechanism that is supposed to answer it. New
+pin **T39** confirmed to cover ledger accuracy, the refusal path
+(naming `engagements_pipeline_fk` when an engagement references a seeded
+pipeline, deleting nothing), and the clear path (removing the seed
+exactly, leaving a hand-made pipeline standing).
+
+**Seed-check registration confirmed, correctly guarded**: both seeded
+relations are registered in `app.tenant_seed_checks` (016's completeness
+guard) wherever that registry exists — this is the fourth provisioning
+trigger on `public.tenants`, and an unregistered one is exactly the
+silent failure that registry exists to catch. Since the registry is not
+on this branch's own base, the registration is guarded on the table's
+existence, with T39 asserting it where present and the obligation
+recorded in the catalog where it is not.
+
+**B5 confirmed still in effect from the earlier `5612e65` push, not a
+new fix this round**: the transaction wrapper making the backfill
+all-or-nothing is unchanged by these three commits.
+
+**Every fix confirmed to ship the fixture that would have caught it,
+per the PR body's own table — a direct, concrete response to the
+independent review's own sharpest point, quoted exactly: "238/238
+passing did not vouch for B1, B3, H2, H3 or H4."** T31 (a fourth
+enquiry and two more follow-ups reaching an exact page-size multiple,
+catching H2/H3), T32 (a saved view plus a foreign-tenant view, catching
+B3), T33 (a disabled routing row, catching H1), T34 (a cross-tenant
+provenance row, catching M1), T35 (a tenant missing its `PIP` ref
+format, catching M5), T37 (an empty-body PUT on a `TRAINING_EXEMPT`
+quotation, catching H4), T39 (an engagement pointing at a seeded
+pipeline plus a hand-made one, catching B6's refusal path and
+over-deletion) — every one confirmed present in the diff, not merely
+claimed in the table.
+
+**M4 confirmed still NOT fixed, per the standing ruling — and the
+catalog now states this honestly rather than papering over it, which is
+itself worth recording as a good practice.** The trigger stays in 018
+for tonight; the catalog states plainly, confirmed word-for-word, that
+it "does not belong here and why it landed here" —
+`core.navigation` and `core.get_pipeline_config` are 018's and render
+stages from `core.pipeline_steps`, with nothing in 001–017 seeding a
+row, so the two endpoints this pack exists to deliver would return an
+empty stage list for every tenant without it. Confirmed stated plainly:
+"a reason, not a justification; the split is owed."
+
+**The 019-split ruling this thread already recorded is confirmed still
+pending, being applied now, not yet landed** — no `019_*` migration file
+exists anywhere in the repo as of this check, consistent with the
+catalog's own "the split is owed" language rather than a claim that it
+has happened.
+
+**Counts, confirmed exactly against the PR body's own quoted output.**
+Against this branch's own 001–017: 18/18 through a full
+rollback→re-apply→pins-again→rollback-again cycle, confirmed idempotent
+on the second rollback. Against `origin/cloud/migrations`'s current base
+(`0d9e00c`): 16/2 with 018 absent (the pre-existing `test_014`/
+`test_014_rollback` red state this thread already recorded as an open
+discrepancy with `fix-014`), 13/6 with 018 applied, identical 13/6 after
+a rollback/reapply cycle — the cycle itself is clean even though the
+base it's measured against isn't yet green.
+
+**The rebase is confirmed deliberately not done, stated as a deliberate
+choice rather than a delay.** `cloud/migrations` has moved three times
+during this work (`21ec975`→`bdd49aa`→`0d9e00c`) and the lane owner is
+holding the final rebase until the base is frozen, with two specific
+follow-ups already identified and recorded for that rebase: `test_014`
+will conflict and needs the three-view exclusion re-applied against
+`fix-014`'s own already-rewritten file; and confirming `put_quotation`
+still stands down against `cloud/migrations`'s own newer 017 trigger.
+
+**Things worth telling future-me:**
+
+1. A catalog entry that states plainly "this doesn't belong here, and
+   here is why it landed here anyway" is more useful to the next reader
+   than either fixing the scope problem prematurely under time pressure
+   or hiding it behind a clean-looking header — confirmed as the second
+   time this session a lane chose honest non-resolution over a rushed
+   fix (the first was B4's own earlier deferral before this round closed
+   it).
+2. A rollback ledger that records exactly what a seed inserted (rather
+   than trusting a global count or an unrelated trigger check) turns "did
+   the rollback undo the right thing" from a code-reading question into
+   a data-reading question — R4's rewrite here is a reusable pattern
+   worth remembering for any future reversible-seed design in this repo.
+3. Holding a rebase deliberately, with the two specific conflicts it
+   will produce already named in writing, is a cheaper way to track a
+   moving merge target than repeatedly rebasing against every intermediate
+   commit of a branch still being fixed — worth noting as the pattern
+   that avoided wasted rebase cycles this session, contrasted with how
+   much churn tracking `cloud/migrations`'s moving tip has otherwise cost
+   the spine this session.
+
+---
+
+## 2026-09-13 23:3x — fix-014 closes PR #24's 011-013 findings at 0d9e00c; BYOK rotation had never worked at all, worse than reviewed; a third CRIT found and closed
+
+**`fix-014` pushed two commits to `origin/cloud/migrations`, tip
+`0d9e00c`** (via `2bac9bf`) — confirmed present, not yet a PR. Addresses
+PR #24's 011-013 findings. Every fix reproduced live first, each with a
+pin confirmed to fail against the pre-fix SQL before it passes.
+
+**CRIT-1 (T2/O2) fixed, confirmed exactly.** `app.apply_effects` now
+calls `app.enqueue_effect_jobs`, with an explicit existence check so an
+011-without-012 database gets a stated error rather than "function does
+not exist." T16 confirmed to walk the entire seam end to end — perform,
+approve, then CLAIM the job the way the worker actually would, on the
+stated reasoning that a row the worker cannot take is the same outage
+one indirection further down than the enqueue itself.
+
+**CRIT-2 (S1) fixed, and confirmed genuinely WORSE than the original
+review found — a real severity escalation on inspection, not a
+restatement of the same finding.** Fixing the reveal-audit trigger's
+short-circuit (the documented fix) exposed a second, entirely
+independent blocker the review never found: `key_fingerprint` sat in the
+table's own frozen-column set, so rotation's own
+`key_fingerprint = p_fingerprint` write raised `IMMUTABLE_COLUMN` for
+**every** key, revealed or not. BYOK rotation had never succeeded once,
+for any key — not merely blocked on previously-revealed keys, as the
+original review's finding believed. The frozen-column list was
+internally inconsistent with itself: `key_ref`, the other half of "the
+material changed," was never in the frozen set to begin with. The fix
+unfreezes the column and re-expresses the protection as what is
+actually true of a rotation: the fingerprint may change only when
+`key_ref` changes in the same statement. T14 walks set→reveal→rotate and
+confirms an unpaired fingerprint write is still refused.
+
+**T1 fixed — a third CRIT, on top of the two the review already
+named, confirmed exactly.** `app.replay_dead_letter` copies `effect_id`
+onto the replacement job after the original dead-lettering had already
+moved that effect to `DEAD_LETTERED`, and `app.report_effect_result`
+returns early, silently, on `SETTLED`/`DEAD_LETTERED` — so a genuinely
+successful replay was recorded as a permanent failure in the ledger,
+uncorrectable later since `PARTIALLY_FAILED` reconciliation is guarded
+`AND status='EXECUTING'`, a state the action had already left by the
+time the replay succeeded. The replay now reopens the effect to
+`DISPATCHED` and clears `last_error` first — the same state
+`apply_effects` leaves an effect in when it first hands it to the queue,
+which is what this row genuinely is again after a successful replay.
+
+**HIGH-1 (T3) fixed, confirmed exactly, with a genuine negative result
+worth keeping precise rather than folding into "fixed" and moving on.**
+Measured directly against a freshly provisioned tenant: 19 of 22 action
+types have a policy row; three (`ENQUIRY_ARCHIVE`, `OPPORTUNITY_CONVERT`,
+`TNA_RECOMMENDATION_ACCEPT`) have none at all, so for those three the
+no-policy fall-through to bare `EXECUTING` was the only path that
+existed. `app.action_types` gains `required_permission`, seeded for all
+22 from migration 002's own permission catalogue, checked immediately
+after the action type is known for HUMAN and CLIENT actors (agents are
+governed by the autonomy grant instead, not a role permission).
+**The first version of this check ran AFTER payload validation, and the
+pin itself caught the leak this created**: an unauthorized `SALES` probe
+of `PAYMENT_RECORD` came back with `{"field":"amount","reason":
+"REQUIRED"}` — the action's own payload schema, handed to a caller who
+had no right to attempt it at all. `T17c3` now pins specifically that
+the corrected version leaks nothing.
+
+**S5 fixed, confirmed exactly.** All thirteen of 013's `42501`
+authorization refusals now raise `TRNOS` instead, closing the
+session-expiry misrender the original finding named. Two raises
+deliberately keep `42501`, with the file stating why: those two guard
+against a direct table write, not a caller through an RPC, and no RPC
+path can ever reach them.
+
+**S3 fixed, with the confirmation gap stated honestly rather than
+claimed as verified.** `service_role` is now in the revoke list for the
+five BYOK definer functions. Confirmed directly in the commit's own
+words: this genuinely cannot be proven on the local shim, which has no
+Supabase `ALTER DEFAULT PRIVILEGES` bootstrap, so `service_role` holds
+no EXECUTE either way and the pin is identical before and after the fix.
+The fix is correct regardless — revoking a privilege nobody holds costs
+nothing — but hosted confirmation is recorded as owed, not claimed.
+
+**S7 fixed, confirmed exactly.** Both the 012 and 013 pin headers now
+state the 001-014 dependency as a dependency **of the pin**, not of the
+migration — 012 and 013 themselves apply and verify cleanly with
+nothing after them. This is the precise distinction the catalog needed
+and previously lacked.
+
+**T8 folded in, confirmed present**: `app.effect_applier` is now cleared
+at the end of `apply_effects`, closing a real residue risk this thread
+had not previously flagged: inside `bulk_decide`'s loop, a second
+approval's effects could otherwise run with the first approval's
+applier still named. Catalog corrections folded: 011's function count
+corrected to 28 (already confirmed three independent ways by PR #24's
+own review), catalog rows for 011/012/013 carry an amendment note dated
+13 Sep.
+
+**Deliberately deferred to the backlog rather than silently dropped,
+confirmed by their absence from both commits' diffs — neither touches
+anything under `apps/**` or `packages/**`**: `bulk_decide`'s
+response-shape mismatch (T4/F4, needs a coordinated web-and-SQL change,
+not a migration-only fix), the worker heartbeat lease bug (S4, lives
+entirely in `apps/worker`), and whether 013 stays permanently without
+consumers (T11, a product ruling about whether to build a
+`SupabaseKeyStore`/`SupabaseRoutingConfig`, not a defect a migration fix
+can close). **T5's diff-hash guard finding (`DIFF_CHANGED` can
+mathematically never fire) is routed to `fix-014` as an active item
+now, confirmed distinct from the deferred-to-backlog set above** — not
+deferred, actively queued.
+
+**Validation counts, confirmed exactly**: 18/18 forward apply from a
+dropped database, 17/17 pins pass (post-rollback pin correctly refusing
+counts as a pass), rollback 017→014 clean, R1-R4 pass, re-apply clean,
+17/17 pins pass again, `lint:sql` 52/52, `check:grants` 0, `check:rpc`
+4 pass/0 broken.
+
+**Re-review reported dispatched** — not yet independently confirmed by
+this thread; a report to verify next round.
+
+**Things worth telling future-me:**
+
+1. Fixing the documented cause of a defect can expose a second,
+   independent defect blocking the exact same outcome — CRIT-2 here is
+   the clearest case this session: the reveal-audit trigger fix was
+   necessary but not sufficient, and only trying the actual fix against
+   a real rotation attempt surfaced the frozen-column wall behind it.
+   "The review's documented cause is fixed" and "the feature now works"
+   are different claims whenever a second, unrelated wall exists.
+2. A permission check placed after input validation instead of before
+   it isn't just an ordering nitpick — it's an information-disclosure
+   bug in its own right (an unauthorized caller learns the shape of an
+   action they can't perform), and this is exactly the kind of defect
+   that only running the check in the wrong order, then reading what
+   comes back, reveals. A code review reading the two branches in
+   isolation would likely see both as "does the right check" without
+   noticing which one runs first.
+3. "Deferred to backlog" and "actively routed to fix-014 now" are
+   different dispositions for findings that could both plausibly be
+   called "not fixed in this commit" — keeping them visibly distinct
+   (T5 routed now vs. T4/S4/T11 deferred) matters for whoever picks up
+   `fix-014` next, so they don't have to re-derive which of the
+   remaining items is actually queued.
+
+---
+
+## 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES; 017 NEW BLOCK — the SST fix itself breaks retrofit onto a database with existing quotations
+
+**PR #25 confirmed MERGED at `15eed1b`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-015-017-rereview.md` — an Opus
+thermonuclear + security re-review of fix commit `bdd49aa` specifically.
+**Confirmed this reviewed `bdd49aa`, NOT `ff01f2b`**: the doc states
+plainly that `git diff --stat 21ec975..bdd49aa` touches no `014` file,
+so the three items assigned to 014's own next push (the `run:read` gap,
+T11a's tautology, the pin header mismatch) are explicitly out of scope
+here and marked pending — consistent with this thread's own separate
+record that those three items landed in `ff01f2b` instead, a different
+commit reviewed by a different pass.
+
+**015 MERGE-WITH-FIXES, confirmed exactly.** The `DROP FUNCTION` guard
+genuinely works, proven by execution in both directions: correctly
+pinned to the old signature, it catches a simulated future signature
+change; "kept in sync" per the file's own comment, it reopens the
+hazard. **But the new exact-overload-count verify assertion is dead
+code, confirmed directly by execution**: an earlier `to_regproc`-based
+check in the same verify block always aborts first, with the same
+misleading message, whether zero or two overloads exist — the new
+assertion never actually runs. The fix's own comment claiming this
+assertion "earns its place... names the real cause" is confirmed false,
+by execution, not merely by reading it skeptically. The mechanism that
+genuinely covers the real exposure is the new pin's T6, not this
+assertion.
+
+**016 MERGE-WITH-FIXES, confirmed exactly by execution on both arms.**
+Against the OLD rollback, an operator's hand-configured format is
+destroyed and the rollback reports OK. Against the NEW rollback, the
+same operator row survives, the allocated row survives, and only the
+disclosed residue (a byte-identical hand-made row) is deleted — no more,
+no less. **Residual finding, confirmed present and worth keeping
+precise**: the rollback's own disclosure claims the residue criterion is
+"prefix, entity, and dated," but the actual `WHERE` clause the DELETE
+and the post-condition both use never checks `dated` — the disclosed
+residue is narrower than reality, and an operator row differing only in
+its `dated` flag gets deleted contrary to what the file tells the
+reader. Also confirmed: the new `app.tenant_seed_checks` registry table
+— itself a genuinely better abstraction than the hardcoded check it
+replaces — has no `ENABLE`/`FORCE ROW LEVEL SECURITY` at all, unlike
+every comparable global `app` reference table in the repo. Not
+exploitable today (schema-wide grants already block client access), but
+the one place this repo's own standard backstop was skipped.
+
+**017 BLOCK — NEW, caused by the SST fix itself, confirmed as the most
+consequential finding in this pass.** The CRITICAL SST defect is
+genuinely fixed, confirmed by direct execution against both arms: the
+OLD code produces the exact zero-tax-no-policy-trace row on an insert
+touching no SST column; the NEW code resolves a real rate, reason, and
+policy reference on the identical insert. **But 017 cannot be applied to
+any database that already holds a quotation row.** The new SST
+backfill's `UPDATE` queues two `DEFERRABLE INITIALLY DEFERRED`
+constraint triggers migration 007 already put on `core.quotations`; they
+stay pending until COMMIT; and the file's own new `ALTER TABLE ... SET
+NOT NULL` then refuses to run while any trigger event is pending on that
+table, failing with `SQLSTATE 55006` — confirmed reproduced twice, not
+transient, since the whole file is one transaction and a retry starts
+from the same state. Confirmed this defect did not exist before this
+fix: the identical fixture applies cleanly under the OLD 017. This
+breaks exactly the "retrofit onto a non-empty database" case 017's own
+header claims to support; re-applying 017 onto an already-017 database
+works fine because the backfill then matches zero rows.
+
+**A second, pre-existing wall found the same way, confirmed present
+unchanged since `21ec975` — not this fix's fault, but blocking the same
+scenario.** `017:226`'s `pg_catalog.scale(margin_rate) > 4` guard checks
+a column that is `GENERATED ALWAYS AS` a division of two numerics, and
+PostgreSQL numeric division always produces scale 20 regardless of the
+actual values — so this guard fires on every non-null quotation,
+unconditionally, whether or not rounding would change anything. Both
+walls block the same "database with a live quotation" scenario and are
+confirmed as worth fixing together.
+
+**N-1 (HIGH), confirmed exactly by direct execution.** The PDPA rollback
+guard's quotation sentinel is "any row where `sst_reason IS NOT NULL`,"
+and this same fix pack makes `sst_reason` NOT NULL on every row —
+confirmed that 015/016/017 now have **no rollback path at all** on any
+database holding a single quotation, without deleting every quotation
+first. The guard's own comment ("on an empty database, which is where a
+rollback is actually exercised, this costs nothing") does not hold for
+this one sentinel the way it does for the guard's other three
+conditions.
+
+**N-2 (HIGH), confirmed exactly — the same false-header-claim class
+that hid the original CRIT-1, now recurring a third time.** 016's header
+still says "no table" despite now creating `app.tenant_seed_checks`;
+017's header still says "two new functions" and names no trigger despite
+now having at least five functions and two triggers; the catalog still
+cites a stale `test_017` assertion count.
+
+**Both premise corrections re-confirmed by direct execution, not merely
+re-quoted from the fix commit's own claim.** 015's original "fails
+invisibly with a green-looking cron table" framing was overstated — the
+pre-fix verify block already aborted, via `to_regproc` returning NULL
+for an ambiguous name, just with a misleading message rather than no
+message at all. 017's policy-count check is genuinely `228→234→228`
+— confirmed by a clean 001-017 apply measuring exactly 234, and rolling
+017 back alone returning exactly 228 — not the original review's
+inverted `<>222`.
+
+**Negative result for the log — this thread's own framing rather than a
+verbatim quote, but the substance confirmed directly in the doc's own
+words** ("this defect did not exist before this fix, it was introduced
+by it... the break is specifically the retrofit/non-empty-database case
+the file's own header argues it must support"): **a fix that passes
+clean on an empty shim can still fail on retrofit-onto-existing-data,
+and this is now true of two separate defects in the same file for the
+exact same underlying reason.** Worth a standing rule for every future
+pack in this migration line: a pack that backfills existing rows needs
+its own pin that applies the migration over a database already holding
+the rows it backfills, not only over an empty one — an empty-shim pass
+is necessary but demonstrably not sufficient evidence for this class of
+defect.
+
+**Confirmed and worth keeping on record rather than losing in the pass**:
+the new pin's T6 (015) and T7 (016) are confirmed, by direct execution,
+to pass against BOTH the old and the new code — they assert correct
+invariants but do not actually discriminate old from new, so they are
+not regression tests for the findings they cite, even though having them
+is not wrong. 017's own T11 (the SST behavioral test) is confirmed the
+one genuinely discriminating regression test in this entire fix pack —
+it fails cleanly against OLD 017 and passes against NEW 017.
+
+**Routed to `fix-014`, confirmed as stated. Codex `gpt-5.6-sol` still
+owed, not substituted.**
+
+**Operational note, reported and independently confirmed consistent
+with this thread's own record of the `core` schema.** The user is
+currently on the hosted project's Data API settings page. `core` cannot
+be exposed there until migration 001 actually creates it — confirmed
+directly by reading the file, `CREATE SCHEMA IF NOT EXISTS core` is at
+`001:171` — and nothing has been applied to any hosted project yet, per
+every check this session. Advised: disable "Automatically expose new
+tables" before anything is applied, since that setting would conflict
+with 014's own explicit, narrower grants once 014 lands.
+
+**Things worth telling future-me:**
+
+1. A review scoped to one specific commit, with an explicit statement of
+   which later commits it does NOT cover, is more useful than a review
+   that silently reviews "the tip" without saying so — this doc's own
+   `git diff --stat` check of exactly what it reviewed is what let this
+   thread confirm without ambiguity that it and `ff01f2b`'s own review
+   cover disjoint, non-overlapping changes rather than one superseding
+   the other.
+2. A fix for one CRITICAL defect can introduce an unrelated new BLOCK in
+   the same file, in the same pass — "the CRITICAL is fixed" and "this
+   pack is now mergeable" are different claims, and this is the second
+   time this session a 017-adjacent fix needed exactly this distinction
+   made explicit (the first was 018's H4 fix superseding itself against
+   017's own new trigger).
+3. Two test pins that assert something true are not automatically
+   regression tests for the finding they're named after — T6 and T7
+   passing against both old and new code is a quiet failure mode of pin
+   design worth checking for specifically: does this pin FAIL against
+   the code this finding describes, not just PASS against the fixed
+   code.
+
+---
+
+## 2026-09-13 23:1x — fix-018 clears PR #20's thermo BLOCK at 5612e65; M4 measured (4 pins, not 2); 019 split and B4 rulings made, not yet coded; test_014-red discrepancy open
+
+**`fix-018` pushed `5612e65` to `origin/lane/rpc-018`** — confirmed via
+PR #11's own body, section "Review fixes — thermonuclear BLOCK cleared."
+Seven commits on top of `fc9550c` close every finding from PR #20's
+thermo-018 review. Every fix carries a pin confirmed, by the PR body's
+own quoted output, to fail against the pre-fix SQL before it passes —
+not asserted, actually shown for each one.
+
+**B1/H2/H3 fixed (pin T31, commit `9530e5b`).** The five list RPCs'
+opposite pagination bugs (one counting after the keyset clause so
+`page.total` shrank across pages, four deciding "next page" from an
+arithmetic comparison that holds on every exact-multiple last page) are
+closed by two extracted shared helpers, `app._keyset_scope` and
+`app._next_cursor`, which all five RPCs now call. Confirmed via the
+quoted pre-fix failure text: `page.total shrank across pages: 4 then 2`.
+**A second, genuinely new defect found only by running the pin, not
+named in the original review**: `list_follow_ups` applied bare column
+names against a three-way join where two joined tables both carry `id`,
+`status` and `created_at` columns, so any paged or status-filtered call
+raised `column reference "id" is ambiguous` — a 500, not a refusal,
+latent only because nothing had ever paged that particular list before.
+
+**B3 fixed (pin T32, commit `efe87d4`).** Confirmed via the quoted
+pre-fix probe: `list_proposals(p_view=>...)` returned every proposal in
+the tenant, silently, with nothing in `appliedFilters` telling the
+caller their view had been ignored — exactly the failure the file's own
+§5 forbids in its own words. `list_enquiries` and `list_approvals`
+gained the same object gate, confirmed they had lacked it before (an
+`ENQUIRY` view resolved against `list_approvals` and applied enquiry
+filters to approval columns).
+
+**H1 fixed (pin T33, commit `67ace2d`).** Confirmed via the quoted
+pre-fix failure: `regenerate_proposal_section` inserted a `RUNNING` run
+row and enqueued nothing, forever — five presses left five orphan runs
+and an unchanged section. Now routed through migration 012's event path
+(`app.emit_event` into a new `app.event_subscriptions` row) rather than
+011's action envelope, confirmed as a deliberate scope decision: 011's
+`app.perform_action` gates on `app.action_types`, which has no entry for
+regenerating a section, and 018 is not permitted to add one to 011's
+global catalog (that would be a 001–017 edit). `REGENERATE_NOT_ROUTED`
+now refuses loudly if the enqueue didn't actually land, closing off the
+path back to silently returning 200 on nothing.
+
+**M1 fixed (pin T34, commit `fdc937b`), plus one new finding filed
+elsewhere, not 018's to close.** The cross-tenant provenance read is
+fixed. Found while pinning: `core.provenance.subject_table`'s foreign-key
+allowlist (`core.provenance_subjects`, nine rows) does not contain
+`approval_requests`, so `get_approval`'s `modelAgreement` jury badge
+cannot match a row on any database as shipped — the §17 badge is
+unreachable, not merely unpinned. The provenance query itself is fixed;
+the allowlist gap is filed against whichever pack owns §17.
+
+**M5 fixed (pin T35, commit `5f02f5a`).** Confirmed via the quoted
+pre-fix log: a tenant the backfill couldn't seed was left with zero
+pipeline configuration while the migration printed "018 completed" as
+if nothing were wrong. The loop now lives in a function rather than an
+inline `DO` block — an assertion about a `DO` block's own behavior
+cannot be written, which is exactly why nothing caught this before —
+and it visits every tenant before raising once, naming every tenant it
+could not seed.
+
+**B2 and B5 fixed (commit `5612e65`).** The same-commit catalog hard
+rule and a transaction wrapper on both the forward migration and its
+rollback, confirmed present in the diff.
+
+**H5/M8 fixed (commit `3abf572`).** Four provably-unfalsifiable
+assertions (a self-comparison masquerading as a check, two
+never-distinct primary keys compared for equality, a check sitting below
+a branch that already excluded its own input, a fixture filter matching
+zero rows unconditionally) are each replaced with the assertion it was
+actually reaching for, confirmed via the diff's own before/after table.
+The vacuous-pass class is closed structurally, not just patched at the
+four found sites: every extraction site now routes through one helper
+that raises on a non-success envelope.
+
+**H4 fixed, then superseded — confirmed exactly, worth recording as a
+genuine "the fix became unnecessary mid-flight" case rather than a
+defect.** `put_quotation`'s tax-treatment rewrite is fixed to run only
+when the treatment is absent or the price moved. But `origin/cloud/
+migrations`'s own 017 has since grown its own `trg_quotations_resolve_sst`
+trigger — the better half of the same underlying fix — so 018's check is
+now "does the trigger exist," not a version check, confirmed as
+deliberate given the branch is unrebased against two different versions
+of 017 that both currently exist.
+
+**M2 and M7 explicitly deferred, not silently dropped.** M2 needs a
+change to migration 002 outside this pack's stated non-goals, filed
+against that lane. M7 is a refactor of a 311-line writer's entire
+validation loop, not a defect fix, and is filed rather than attempted
+under this pass.
+
+**M4 measured with a number attached, confirmed exactly against the PR
+body's own table — the blast radius is larger than the original review
+could see, because the merge target has moved.** `origin/cloud/
+migrations` has newer, larger versions of 014 through 017 than this
+branch's own base (`fc9550c`), and applying 018 on top of the CURRENT
+014–017 turns **four** currently-green pins red, not the two this branch
+already amends: `test_008` and `test_009` (already amended here, but
+against their _older_ versions — will need re-checking against the
+current ones on rebase), plus **`test_016` and `test_017`, newly
+affected and outside this branch's stated non-goals**, both failing on
+`pipelines_one_default_uq`.
+
+**RULING, recorded here as a decision being made now, confirmed not yet
+implemented in code — no `019_*` migration file exists anywhere in the
+repo as of this check.** The per-tenant pipeline seed leaves migration
+018 and becomes its own pack, `019_pipeline_provisioning` — the trigger,
+the backfill, a registry row, B6's rollback contract, and the four
+fixture amendments — to be built in the same PR #11 lane going forward.
+
+**B4 ruling, also recorded as a decision, also not yet implemented.**
+018's current fix moves `test_014`'s own SELECT-grant count assertion
+from 121 to 124 — explicitly flagged in the PR body itself as a
+rebase-conflict risk, since `fix-014`'s own rewritten `test_014` (this
+thread's own PR #23/`ff01f2b` entries above) still expects 121. The
+ruling: 018 is not to edit `test_014` at all going forward; `test_018`
+should assert its own three-grant delta instead — the same "don't edit a
+file you don't own" principle `fix-014` already applied when it left
+015–017's amendments to their own files.
+
+**Open discrepancy, confirmed present in the PR body's own validation
+log, not resolved here — a question routed back to `fix-014`, not an
+error on either side to silently pick a winner for.** `fix-018`'s own
+run against `origin/cloud/migrations`'s CURRENT 001–017 (no 018 applied
+at all) reports `PASS=16 FAIL=2`, naming `test_014` and
+`test_014_rollback` as **already red** on that branch — timestamped
+after `ff01f2b` (21:46 vs. 21:41), which is this thread's own most
+recent confirmation of "17/17 pins pass" from `fix-014`. Both claims are
+independently true readings of what each lane actually checked; which
+one (if either) is stale has not been reconciled. `fix-018` has asked
+for the exact failing text, which is the right next step rather than
+guessing.
+
+**Things worth telling future-me:**
+
+1. "All N blockers fixed" in a PR body's own headline and "one of those
+   N is deferred, deliberately, with the window named" three sections
+   later in the SAME document are not a contradiction to silently
+   resolve one way — both sentences are true on their own terms (four of
+   five ORIGINAL blockers are fixed; the fifth, B4, is deferred with a
+   named reason), and recording both, plainly, is more useful than
+   picking the headline or the caveat as "the real answer."
+2. A ruling that names a future artifact (a migration number, a pack
+   name) is not the same claim as that artifact existing — checking
+   `git ls-tree` for it before recording it as done is cheap and this is
+   now the second time this session it mattered (the 016 `dated` ruling
+   was the first).
+3. Two lanes each reporting a clean pin count against what looks like
+   the same target can both be right if they ran against different
+   moments of a moving branch — `fix-018`'s discrepancy with `fix-014`
+   is a timing question first, a correctness question second, and it's
+   worth checking commit timestamps before assuming either side made a
+   mistake.
+
+---
+
+## 2026-09-13 23:0x — fix-014 folds in PR #23's 014 re-review items at ff01f2b; N-1 fully closed, T11a fixed, HIGH-4 closed both sides
+
+**`fix-014` pushed `ff01f2b` to `origin/cloud/migrations`** — confirmed
+present on the remote, not yet opened as a PR. Folds in everything PR
+#23's re-review (docs/reviews/2026-09-13-codex-retrofit-014-rereview.md)
+and the thermonuclear pass raised.
+
+**N-1 closed in full, confirmed against the migration's own `VALUES`
+list, not just the commit's prose claim.** All seven `run:read`-governed
+tables — `runs`, `run_nodes`, `run_node_io`, `run_events`,
+`run_state_cards`, `run_checkpoints`, `run_snapshots` — are now gated,
+not just `run_node_io` as the earlier fix left it. Together with the two
+tables the original HIGH-1 fix already gated under their own
+permissions, **nine tables across three permissions are now gated
+total**, matching the commit's own count exactly. The catalog no longer
+frames the ungated remainder as a deliberate posture; confirmed
+word-for-word it now states: "the rest is a gap, not a posture." Worth
+recording as the second time this session a catalog's "deliberate
+posture" framing for an ungated table turned out to need correcting once
+someone actually re-examined it rather than trusting the prose.
+
+**T11a's tautology closed, confirmed exactly against the diff.** The
+assertion now reads the shipped privilege set into a variable _before_
+any GRANT or REVOKE in the file runs, rather than checking privilege
+state after the pin's own probe already mutated it. This closes
+precisely the false-pass PR #23 found: the pre-fix database's actual
+`has_table_privilege(...,'DELETE')` reads `true`, and the new assertion
+reads that state directly rather than the pin's own post-probe residue.
+
+**Pin header range corrected**: the file now states explicitly why the
+migration header's own 001-014 figures and the pin's 001-017 figures are
+both correct, rather than one silently contradicting the other the way
+PR #23 found.
+
+**Structural fixes, confirmed against the diff:**
+
+- Policy-comment stamping now takes `p_migration` as a required
+  argument rather than caller-supplied prose — closes F1's
+  split-ownership finding. 017 now passes `'017'` explicitly.
+- The `'UNGATE'` magic string is replaced by a named function,
+  `app.ungate_tenant_policy()` — closes F3.
+- Gate detection now reads both `polqual` and `polwithcheck` — closes
+  F5.
+- T16 now exercises six branches, confirmed via the diff's own updated
+  pin text.
+
+**Negative result for the log, confirmed word-for-word from the commit
+body and worth keeping verbatim: "two dead escapes on one control in one
+night."** `app.ungate_tenant_policy()`'s first version had the exact
+same class of bug as the `'UNGATE'` string it replaced — it called back
+into the very refusal it exists to bypass, so it was dead on arrival
+too, found only by running it rather than by reading it. Fixed by
+dropping the gated policy first, before routing through anything that
+could refuse.
+
+**HIGH-4 closed on both sides, confirmed exactly.** PR #17, already
+merged to main, made the client always send `p_expected_diff_hash`.
+`core.decide_approval` now refuses an APPROVE that carries no hash at
+all — `T15c` is flipped from asserting the old defect to asserting the
+refusal — and `T15d` confirms a REJECT without a hash still works, so
+the fix didn't overcorrect into refusing every decision without a hash.
+
+**N-9 closed**: `apply_tenant_policies` now refuses a permission every
+role holds (which would have let `dashboard:read` be accepted as a
+no-op gate, turning the whole mechanism into decoration) rather than
+only checking that the permission exists.
+
+**N-8 narrowed rather than fixed, confirmed stated as such rather than
+silently left as a loose end.** The share-token gate restores only the
+role half of migration 002's original intent; adding the scope half
+needs an owner column migration 007 never gave the table
+(`created_by_id` is text, not a user id) — a schema change, not a
+predicate change, stated in both the file and the catalog with an owner
+named.
+
+**Correction, confirmed as a crossed message rather than new
+information requiring a spine correction of its own**: an earlier report
+characterized 015-017's fix slices as "still open." This thread had
+already independently confirmed those slices landed in `bdd49aa` two
+updates ago (see the 22:4x block above) — nothing here contradicts that,
+it was a reporting mix-up on the other side, not a fact this thread got
+wrong.
+
+**Validation counts, confirmed exactly**: 18/18 forward apply, 17/17
+pins pass (post-rollback pin correctly refusing counts as a pass),
+rollback 017→014 clean, R1-R4 pass, re-apply clean, 17/17 pins pass
+again, nine gated tables measured, `lint:sql` 52/52, `check:grants` 0,
+`check:rpc` 4 pass/0 broken. `test_014`'s own grant-count assertion
+confirmed unchanged at 121.
+
+**Next on `fix-014`, reported: the 011-013 amendments** (PR #24's
+findings) — not yet independently confirmed by this thread; a report to
+verify next round.
+
+**Things worth telling future-me:**
+
+1. A "deliberate posture" label in a catalog is worth treating as a
+   claim to re-examine, not a settled fact — this is the second time
+   this session such a label turned out to be provenance dressed up as
+   a decision (the first was N-1 itself, before this fix; this entry
+   records the fix closing it).
+2. The same structural bug shape recurring twice in one control (the
+   original `'UNGATE'` dead branch, then the replacement function
+   calling back into its own refusal) is worth a standing suspicion
+   whenever a security mechanism's fix is "replace the broken thing with
+   a differently-shaped version of the same idea" — running the
+   replacement, not just reading it, is what caught the second one.
+3. A tautological assertion and a false-pass are the same failure mode
+   wearing different names; the fix here (reading state into a variable
+   before any mutation happens) is a reusable pattern worth remembering
+   for any future pin that needs to assert "what the migration itself
+   produced" rather than "what the test harness's own probes left
+   behind."
+
+---
+
+## 2026-09-13 22:5x — PR #24 (011-013) BLOCK; severity count corrected to 3 CRIT/7 HIGH/13 MED, not 2/4/9; fixes routed to fix-014
+
+**PR #24 confirmed MERGED at `b9bca03`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-011-013.md` — an Opus
+thermonuclear + security review of migrations 011, 012 and 013, at
+commit `e20e1ba` on `origin/main`. **011–013 confirmed already on
+`main`** — their migration files exist there directly, not gated behind
+a PR the way 014–018 are — though nothing has been applied to any hosted
+project. **VERDICT: BLOCK.**
+
+**Severity count correction, confirmed directly against the findings
+table rather than the doc's own headline framing: 3 CRIT, 7 HIGH, 13 MED
+and 5 LOW (28 rows total), not the "2 CRIT, 4 HIGH, 9 MED, 5 LOW" first
+reported.** Counted every row of the table by its severity column
+directly, not summarized from prose. The verdict's own prose headlines
+only two CRITs as "confirmed by live execution," which is accurate on
+its own narrow terms, but a third row — **T1** — is independently
+CRIT-severity in the same table and was left out of the report entirely:
+`app.replay_dead_letter` copies `effect_id` onto a replacement job after
+the original dead-lettering already marked the effect `DEAD_LETTERED`,
+so `report_effect_result` on a _successful_ replay hits
+`IF v_effect.status IN ('SETTLED','DEAD_LETTERED') THEN RETURN;` — a
+silent no-op — and an invoice that actually got pushed successfully on
+replay stays recorded as permanently failed in the ledger, with no
+supported way to correct it later (`PARTIALLY_FAILED` is guarded
+`AND status='EXECUTING'`). This finding is static-only (thermo pass,
+not independently executed this round), but static-only is not the same
+claim as lower-severity — the table itself rates it CRIT, and it belongs
+in any severity count of this review.
+
+**The two CRITs that were live-reproduced, confirmed exactly, not just
+quoted:**
+
+1. Nothing outside the test pin calls `app.enqueue_effect_jobs` —
+   confirmed by a repo-wide grep across `apps/`, `packages/`, all
+   migrations and rollbacks: the only non-definition call site is
+   `supabase/tests/test_012_events_outbox_and_jobs.sql`. Every external
+   effect (email, invoice push, reminder, broadcast) is written
+   `DISPATCHED` and then silently never enqueued as a job, forever.
+2. BYOK key rotation is permanently blocked on exactly the key that was
+   just revealed — reproduced live against the G6 shim: `ai_provider_key_set`
+   → `ai_provider_key_reveal` → `ai_provider_key_rotate` on the same
+   `provider_ref` raises `42501 REVEAL_AUDIT_REQUIRED` forever, because
+   the reveal-audit trigger's short-circuit condition
+   (`NEW IS NOT DISTINCT FROM OLD`) is false for a timestamp-to-NULL
+   transition, and rotate never sets the GUC the trigger then demands.
+   `test_013` never exercises a successful rotate, which is why no pin
+   caught it.
+
+Neither CRIT is exercised by the existing pins, confirmed directly, which
+is why "13/13 and 14/14 all pins pass" is true and does not contradict
+either finding.
+
+**HIGH-1, confirmed exactly**: `app.has_permission` is called exactly
+once in all of migration 011 (inside `decide_approval`). On the HUMAN
+path, if no `core.action_policies` row matches, dispatch falls through to
+bare `EXECUTING` with no permission check at all — reachable today for
+several action types with no policy row at all (`ENQUIRY_ARCHIVE`,
+`OPPORTUNITY_CONVERT`, `TNA_RECOMMENDATION_ACCEPT`), and 014's wrapper
+performs no re-validation on top.
+
+**Six more HIGH findings not in the original summary, confirmed present
+in the table:** a worker heartbeat that sets the lease absolutely rather
+than extending it, so the first heartbeat can shorten the effective
+window and race the reaper into a double-send under load; `bulk_decide`'s
+response shape not matching what the web contract's own type expects
+(`results` silently `undefined` at runtime); an approval diff-hash guard
+that hashes only immutable columns of the request itself, so
+`DIFF_CHANGED` can mathematically never fire regardless of what changed
+underneath; `service_role` execute-grant exposure on the five BYOK
+functions that can be neither confirmed nor ruled out on this local
+harness (it doesn't model Supabase's platform-level default-privilege
+bootstrap); every one of 013's authorization refusals raising
+`insufficient_privilege` instead of the repo's own error-code convention,
+which the web client's own code list misclassifies as a session-expiry
+error rather than a permission refusal; and an idempotency request-hash
+omitting confidence/reasoning/evidence fields, so a retry with a
+materially downgraded confidence value silently inherits the original
+high-autonomy execution path.
+
+**Catalog/pin-honesty findings, confirmed live rather than trusted:** the
+012/013 pins genuinely require migration 014's grants to be applied,
+contrary to the catalog's own "001–013" claim — confirmed by the
+orchestrator running `test_012`/`test_013` against 001–013 alone first
+(both failed for exactly this reason) before passing cleanly once 014
+was applied. **This is the same pattern this thread already recorded for
+014's own pin** (needing 001–017 despite its header saying 001–014) —
+worth naming as a recurring class of defect across this whole migration
+line, not three unrelated incidents. The catalog's "twenty-seven
+functions" claim for 011 is also wrong; 28 is confirmed correct three
+independent ways (the migration header, the revoke list, and 011's own
+`$verify$` block).
+
+**Confirmed clean, worth keeping on record so it isn't lost if any of
+these packs gets rewritten:** the 011/014 envelope seam (011 returns raw
+jsonb by design, wrapped by 014's `app.ok()` calls) is a genuine,
+intentional, correctly-implemented design, not a catalog oversight; 013's
+BYOK secrecy mechanism holds under adversarial reading (no RPC ever
+returns raw key material, the 24-hour reveal ceiling is a real UPDATE
+predicate rather than check-then-act); every `search_path=''` pin holds
+exactly across all three packs (011 28/28, 012 31/31, 013 29/29).
+
+**Could not verify, stated in the doc's own words:** the FORCE-RLS/
+definer degradation direction is unmeasurable in any local harness — the
+local superuser owns everything and bypasses RLS, so no local execution
+can confirm which of roughly 80 definer functions in these packs would
+degrade open vs. closed on a real Supabase project where the migration
+owner lacks BYPASSRLS; `app.aal2_verified`'s behavior against a real
+GoTrue-managed `auth.sessions` could not be confirmed against the
+harness's hand-built stub.
+
+**Codex `gpt-5.6-sol` did not land** — two attempts, both unsuccessful
+(killed ~1 minute in on the first; no retrievable output on the second),
+independently confirmed as the same hard quota block until 14 Sep 00:29,
+recorded as owed rather than substituted. **The two Opus passes ran
+independently and were disjoint on 30 of 32 raw findings**, confirmed
+exactly against the doc's own count — only one real overlap (a
+loose S2↔T7-adjacent connection at the 012 idempotency-key site).
+
+**Fixes reported routed to `fix-014` as in-place amendments on
+`cloud/migrations`, then re-review** — not yet independently confirmed
+by this thread; a report to verify next round. **001–013 confirmed
+applied to no hosted project**, consistent with every prior check this
+session; hosted apply for this whole migration line stays gated on PR
+#6's eventual clean verdict.
+
+**Things worth telling future-me:**
+
+1. A verdict's own prose headline ("two CRIT findings") is a summary, not
+   a ground truth — the findings table it summarizes is the actual
+   source, and this is now the second time this session a report's
+   severity framing diverged from what the underlying table says (PR #20
+   was the first). Count the table directly before repeating a headline
+   count anywhere in the spine.
+2. "Static-only, not independently executed" describes how a finding was
+   confirmed, not how severe it is — T1 is exactly as CRIT as the two
+   live-reproduced findings even though nobody ran it this pass, and
+   filtering a severity count by "which ones got executed" quietly
+   drops real risk from the record.
+3. The same class of catalog/pin-range defect (a pin's stated dependency
+   range being narrower than what it actually needs) has now shown up
+   independently in 014's own pin and in 012/013's pins — worth treating
+   as a systemic pattern across this migration line's authorship, not
+   three coincidences, and worth a standing check before any future pack
+   claims a dependency range.
+
+---
+
+## 2026-09-13 22:4x — PR #23 (014 re-review) MERGE-WITH-FIXES; fix-014 pushes 015-017 fixes at bdd49aa; new human ruling needed on 016's dated refs
+
+**PR #23 confirmed MERGED at `db0ec94`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-014-rereview.md` — an Opus
+thermonuclear + security re-review of the fix-014 lane's seven 014
+commits (`d9834b7` through `21ec975`), with G6 executed comparing the
+OLD (`826bb52`) and NEW (`21ec975`) SQL directly against the same pins.
+**VERDICT: MERGE-WITH-FIXES.**
+
+**Both original CRITICALs confirmed genuinely closed by execution, not
+just by reading the diff.** G6 ran the actual DELETE attack directly
+against the OLD database (`DELETE 1; rows_left 0` — the escalation
+succeeds) and the NEW database (refused at `42501`). The rollback now
+reproduces migration 002's five-table grant set verbatim, checked by a
+new pin against all seven privilege types in both directions, and G6
+reproduced the exact sixteen-line failure text from the OLD rollback
+before confirming all four assertions pass against the NEW one,
+including a full round trip through a 017-applied rollback refusal.
+
+**New HIGH (N-1), confirmed exactly**: the `run:read` permission this fix
+pack uses to gate `core.run_node_io` actually governs **seven** `core`
+tables from migration 013 (`runs, run_nodes, run_node_io, run_events,
+run_state_cards, run_checkpoints, run_snapshots`). This fix pack gates
+one. `run_state_cards` is confirmed worse off than the gated table — its
+own 013 header concedes it is not subject to the 30-day redaction sweep
+`run_node_io` gets, and may carry client text verbatim; `run_snapshots`
+holds every tool call's raw output for every run in the tenant. **Not a
+regression** — the gap existed at `826bb52` too, and the original review
+happened to name only the one table it checked — but the catalog's own
+"deliberate posture" language (110 of 113 core tables keep blanket
+tenant-scoped SELECT; the other two are named the same data class as
+`run_node_io` and NOT gated) is a provenance argument, not a security
+one, and is exactly the rationalized-gap pattern this gate exists to
+catch.
+
+**Two defects found only by running the pin, not reading it — the most
+consequential new finding in this pass:**
+
+1. **T11a is a tautology.** It `REVOKE`s DELETE on `public.memberships`
+   one statement before asserting the absence of that same privilege —
+   asserting something the pin itself just guaranteed, not something the
+   migration guarantees. Run against the original, defective `826bb52`
+   database, T11a **still passes**. Only T11b (the behavioral delete
+   attempt) actually catches CRIT-1. The fix pack's claim that either
+   layer alone would catch this is not true for the grant-layer half as
+   written: a future regression that reintroduced the grant AND removed
+   the policy would still show T11a passing.
+2. **The pin's own header contradicts its own assertions.** Line 5 says
+   "run against the complete 001-014 set." Lines 235 and 258 assert
+   counts (116 policy pairs, 121 SELECT grants) that only a 001-**017**
+   database can produce — confirmed by G6 running the pin against a
+   clean 001-014-only stack, exactly as the header instructs, and getting
+   an immediate `T1a FAIL: ... found 113`. Not this review's error — the
+   file's own, and every PASS claimed anywhere in the fix pack's commit
+   messages was necessarily measured against 001-017, not 001-014.
+
+**Corroboration across independent lenses, confirmed present rather than
+merely claimed**: a separate thermonuclear-lens pass (structural,
+BLOCK-on-structural-grounds only) landed on some of the same coupling
+from a different angle — F5 independently found the same `polqual`-only
+gate-detection gap the security pass's N-11 already named from execution;
+F1 and F8 are genuinely new structural findings about ownership splits
+and hardcoded one-off checks that will need editing again for 018.
+
+**Codex `gpt-5.6-sol` still hard quota-blocked until 14 Sep 00:29,
+recorded as owed, not substituted.** Could-not-verify, stated in the
+doc's own words: migrations 003, 005, 006, 008, 009, 010, 012 were not
+re-verified beyond what 014 touches or claims, so whether other
+`run:read`-style mismatches exist elsewhere in the pack is still open;
+frontend/worker consumers of the changed grant/policy shapes were not
+traced — Codex's specific brief, still not run against this pack.
+
+---
+
+**Separately, `fix-014` pushed 015–017's fixes to `origin/cloud/migrations`
+at `bdd49aa`** — confirmed present on the remote, **not yet opened as a
+PR to main**. Closes the assigned findings from
+`docs/reviews/2026-09-13-codex-retrofit-015-017.md` (PR #18's review).
+**015 MERGE-WITH-FIXES, 016 and 017 BLOCK, closed**, confirmed against
+the commit body:
+
+- **015**: explicit `DROP FUNCTION` before `CREATE`, an exact overload
+  assertion, a `to_regprocedure` check on the signature the cron command
+  actually calls (T6). Premise corrected, confirmed word-for-word: the
+  finding said the trap "fails invisibly with a green-looking cron
+  table" — measured instead that 015's existing command check ALREADY
+  aborts (`to_regproc` returns NULL for an ambiguous bare name), just
+  with a misleading error pointing at the wrong cause; the real exposure
+  is a LATER migration adding the overload.
+- **016**: the rollback's unqualified `DELETE FROM core.ref_formats
+WHERE NOT EXISTS (allocated)` is now scoped to rows matching 016's own
+  `pg_trigger` derivation (prefix, entity, width), confirmed end-to-end
+  that a hand-configured format survives a real rollback removing all 32
+  seeded rows. A preflight now refuses rolling 016 back while 017 is
+  applied, the same reasoning as 014's.
+- **017**: (a) the CRITICAL SST default-zero-tax trap is fixed — the NOT
+  NULL DEFAULT pair is gone, replaced by a BEFORE INSERT OR UPDATE
+  trigger resolving from policy plus a guarded backfill refusing rather
+  than guessing for pre-policy quotations. (b) The false NOT
+  VALID/VALIDATE lock-safety claim is corrected to an honest statement of
+  the real lock window; not split, recorded as owed. (c) The unguarded
+  `VALIDATE` on `evaluation_responses_overall_score_range` now counts and
+  refuses first rather than aborting mid-flight. (d) The rollback's false
+  "none is customer data" claim is corrected with a guard counting the
+  PDPA register, retention policies, consent purpose and SST columns.
+  (e) T3b/T5b, previously never executing against an empty fixture, now
+  run against a named nine-row chain and assert the actual arithmetic.
+- **Finding #19 closed via a registry**: `app.tenant_seed_checks` (new in
+  016), seeded with 011's and 016's expectations, consulted by the
+  provisioning completeness guard; 017 registers its own check-key seed.
+  **Finding #5 closed**: RLS assertions added on the three new tables,
+  reading the breach register directly as another tenant and requiring
+  zero rows, rather than only probing through a definer function.
+- **Second premise correction, confirmed word-for-word**: the original
+  review's post-rollback policy count claim (`< 220`, "228 minus six
+  should leave 222," recommending `<> 222`) is wrong in both directions —
+  014 leaves 228, 017 takes it to 234, rolling 017 back returns to 228.
+  Now derived from the catalog rather than hardcoded.
+- **Deliberately not done, recorded as open rather than silently
+  dropped**: 017's single 1,340-line transaction was not split (a
+  pack-shape change, owed). **The original review's finding #2 — 016's
+  hardcoded `dated` ref-prefix list conflicts with
+  `docs/architecture/01-domain-model.md` on several prefixes (`OPP`,
+  `FUP`, `ENG`, `SES`), and refs are immutable once allocated, so a wrong
+  value ships a permanent per-tenant defect — was explicitly left for a
+  HUMAN ruling.** The original review itself flagged this as "not
+  independently confirmed by the security pass" and worth a manual
+  re-check given the severity; added to `ai/state.md`'s Backlog as a new
+  OPEN item rather than resolved here.
+- **Validation counts, confirmed exactly**: 18/18 forward apply, 17/17
+  pins pass (the post-rollback pin correctly refusing while 017 is
+  applied counts as a pass), rollback 017→014 clean, post-rollback pin
+  R1-R4 pass, re-apply clean, 17/17 pins pass again, `lint:sql` 52/52,
+  `check:grants` 0. `test_014`'s own grant-count assertion confirmed
+  unchanged at 121, consistent with PR #23's own G6 citations above.
+
+**Re-review of 015–017 against `bdd49aa` reported dispatched** — not yet
+independently confirmed by this thread; a report to verify next round.
+
+**Things worth telling future-me:**
+
+1. A green pin suite and a closed CRITICAL are not the same claim as "the
+   pin file itself is trustworthy" — T11a passing against both the
+   patched and the unpatched database is exactly the failure mode a
+   tautological assertion produces, and it only showed up because G6 ran
+   the pin against the OLD database on purpose, not because anyone read
+   the assertion text more carefully.
+2. A test file's own header range claim ("run against 001-014") can be
+   stale evidence of what it actually requires — the two are supposed to
+   be the same fact, and here they silently diverged the moment later
+   packs' data became load-bearing for its own counts.
+3. Two independent reviewers converging on the same underlying coupling
+   from different angles (a security-severity framing and a
+   structural-maintainability framing) is stronger evidence than either
+   alone — worth treating "different lenses agree" as a signal in its own
+   right, not just tallying finding counts.
+4. A finding explicitly marked "not independently confirmed" by the
+   original reviewer is a flag to route to a human, not a flag to accept
+   or dismiss on a later pass's own authority — `fix-014` got this right
+   by declining to guess at the `dated` ref-prefix question.
+
+---
+
+## 2026-09-13 22:3x — PR #22 independently confirms all 6 of 018's Blockers with real G6 execution; two nuances on B4 and B6
+
+**PR #22 confirmed MERGED at `279edc3`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-018.md` — an independent review of
+018 plus the actual G6 execution the static thermonuclear pass never ran.
+Reviewed at the same tip as PR #21, `fc9550c`. **VERDICT: BLOCK, agreeing
+with the thermo report, and all 6 Blockers independently confirmed** with
+fresh `fc9550c` citations rather than trusted from the earlier report —
+headings confirmed present for B1 through B6, each marked "CONFIRMED."
+
+**G6 confirmed run for real this time**: 18/18 pins pass on a full
+reset-and-apply, and pass again through a rollback→reapply→pin cycle,
+twice. Confirmed explicitly, worth repeating verbatim: this does NOT
+clear B1, B3, H2, H3 or H4 — the doc's own words: "the pin suite's
+fixtures are too narrow to have ever caught B1/B3/H2/H3/H4 on their own."
+Execution passing is not the same claim as the code being correct.
+
+**Two genuine nuances found by executing rather than only reading, both
+confirmed exactly:**
+
+- **B4** — reproducing the claimed standalone `test_014` failure found it
+  actually fails one assertion earlier than the original report cited, at
+  `T1a` (`v_pairs = 116`), not the grant-count assertion. Tracing that
+  number directly against `origin/cloud/migrations` at 018's own base
+  commit (before 018 touches anything) found the "116" figure already
+  there — this specific failure predates 018 by one full pack, introduced
+  by 017's own amendment pass, recorded in that pack's own catalog
+  history. This lowers the "018 introduced a new defect" framing but does
+  NOT clear B4: `test_014` genuinely still isn't self-contained after
+  either 017 or 018, and 018 additionally pushed the grant-count assertion
+  further (121→124, the original citation) into a file it doesn't own,
+  when it had the option of asserting its own three-grant delta inside
+  `test_018` instead. Both things are true at once: an older, unrelated
+  defect exists, and 018 made the same class of problem worse rather than
+  fixing it.
+- **B6** — the reviewer independently ran the actual scenario rather than
+  only reading it: inserted a real tenant, confirmed the trigger seeds 2
+  pipelines/16 steps, ran the rollback, confirmed the rows survive while
+  the trigger and functions are dropped, confirmed a post-rollback tenant
+  correctly gets zero pipelines. The data-preservation design itself is
+  empirically correct and confirmed NOT a design defect — keeping
+  FK-referenced rows on rollback is the right call. The defect B6 names
+  stands regardless: R4 checks the wrong trigger (016's ref-format
+  trigger, unrelated to the pipeline seed) and would not fire if a future
+  edit broke the row-preservation behavior it claims to guard. Today's
+  behavior is correct; the safety net for tomorrow is checking the wrong
+  object.
+
+**Codex slot confirmed still owed until 14 Sep 00:29**, with named
+priorities for the re-run, confirmed exactly: the pipeline-seed
+trigger/backfill/id-collision safety, and the ten client-derived RPCs
+against `apps/web/src/shared/api/rpcClient.ts` — the doc states plainly
+neither of the two static passes attempted either. `codex-review-018`'s
+worktree confirmed shut down (gone from disk).
+
+**Things worth telling future-me:**
+
+1. Running a scenario, not just reading a claim about it, is what
+   surfaced both nuances here — the B4 assertion-line discrepancy and the
+   B6 "right behavior, wrong guard" split would not have shown up from a
+   text-only re-read of the earlier thermo report.
+2. "Does not clear B1/B3/H2/H3/H4" needs to be recorded next to any green
+   pin-suite number from this point forward — an 18/18 pass is evidence
+   about execution, not about the severity table, and the two are easy to
+   conflate in a compressed status line.
+3. A defect predating the PR under review by one full pack is not the
+   same claim as "this PR is clean of it" — 018 still owns making the
+   grant-count assertion worse even though it didn't originate the
+   underlying number.
+
+---
+
+## 2026-09-13 22:2x — PR #21 adds Blocker B6 to 018; fix-014's work confirmed complete and pushed; Codex quota-blocked, no 014 verdict yet
+
+**PR #21 confirmed MERGED at `3fb8ea8`**, 35 additions/2 deletions, one
+file — a follow-up appended to the same `docs/reviews/2026-09-13-thermo-018.md`
+review. **018's verdict is now 6 Blocker, 5 High, 8 Medium, 6 Low**,
+confirmed exactly in the doc's own updated severity table (up from 5/5/8/6
+recorded two updates ago).
+
+**New Blocker B6, confirmed word-for-word against the doc: the 018
+pipeline seed is not rollback-reversible.** The rollback deliberately
+keeps the seeded `core.pipelines`/`core.pipeline_steps` rows, and the
+stated reason is a good one: `core.engagement_step_states` carries
+composite foreign keys onto those rows, and the seeds lane's fixtures
+share the derived ids, so deleting them would take the fixture world with
+it. The consequence, confirmed, is that rolling back 018 does not and
+cannot restore the prior state — `pipelines_one_default_uq` (the partial
+unique index on `(tenant_id, object) WHERE is_default`) still rejects a
+default `ENGAGEMENT` pipeline for every tenant after the rollback runs,
+and the original 008/009 fixtures this PR had to edit stay broken in
+their original form, with no supported way to undo the seed at all once
+the rollback has removed the mechanism.
+
+**The assertion meant to cover this does not exist, confirmed directly
+against the pin file.** `R4`'s own comments say "what stays is the DATA,
+and R4 asserts exactly that," and again "and so are the pipeline rows
+themselves" — but R4's actual body only queries `pg_trigger` for 016's
+trigger and never once reads `core.pipelines` or `core.pipeline_steps`.
+Two comments and a closing `RAISE NOTICE` all announce a check that was
+never written — the doc names this "the same overclaiming pattern as H1
+and H5," both already recorded in this log.
+
+**Ruling, routed to `fix-018`, confirmed:** record the seeded ids
+explicitly and make the rollback delete exactly those rows when
+unreferenced elsewhere, refusing loudly rather than silently keeping them
+when they are referenced; make `R4` assert the real `core.pipelines` /
+`core.pipeline_steps` rows rather than a `pg_trigger` proxy that proves
+nothing about them.
+
+⚠ **Process note, recorded as reported since it is a fleet-operations
+incident with no git trace to independently check:** a reviewer's
+worktree was pruned while it was still actively amending its branch. It
+recovered without losing work only because the branch had already been
+pushed before the prune. **New standing rule, worth carrying into every
+future multi-lane blast:** never prune a worktree before its lane has
+confirmed shutdown, no matter how idle it appears from the outside.
+
+---
+
+**Separately, and a larger update: `fix-014`'s work is confirmed complete
+and pushed to `origin/cloud/migrations` at tip `21ec975`** (six commits —
+`d9834b7`, `260ee64`, `7f18c68`, `d8778be`, `ab6a8f7`, `e3a871c`, rebased
+onto `564dd64`), documented in PR #6's own body under a new section,
+"Review fixes — migration 014." Confirmed directly against the commits
+and PR body, not just the summary table:
+
+- **CRIT-1 fixed**: a new `RESTRICTIVE FOR DELETE` policy,
+  `memberships_no_client_delete USING (false)`, confirmed present under
+  that exact name in `d9834b7`. The grant block now restates 002's three
+  privileges (SELECT/INSERT/UPDATE) verbatim, with `REVOKE DELETE`
+  stated explicitly rather than merely omitted, so a later `GRANT ALL`
+  has something concrete to undo.
+- **CRIT-2 fixed**: a new pin file,
+  `test_014_rollback_restores_002_grants.sql`, with assertions `R1`–`R4`,
+  confirmed present, checking the rollback restores 002's original grant
+  set rather than certifying a broken zero-privilege state as the correct
+  outcome.
+- **HIGH-1 fixed for exactly three named tables** — `ai_provider_keys`,
+  `run_node_io`, `public_share_tokens` — via `test_014` T12, confirmed
+  with four sub-cases in the diff, `T12a` through `T12d` (anon / wrong
+  role / tenant role / aal2 ADMIN), the "four-way" check. Deliberately
+  left unfixed for the other 110 tables — a named, stated posture in PR
+  #6's own body, not an oversight discovered later.
+- **HIGH-2 fixed** (the nullable-tenant `WITH CHECK` laxity, T13),
+  **HIGH-3 fixed** (a false header claim about pre-014 grants, corrected
+  against a measured 001–013 baseline), **HIGH-4 deferred DB-side** (T15
+  pins the SQL half and is written to fail once the client half is fixed
+  — that client half already merged as PR #17). All MED findings
+  confirmed fixed. The `check:grants` `pg_temp` exemption confirmed
+  landed in `scripts/check-grants.mjs`, `check:grants` now reports 0
+  findings.
+
+**Three more defects found by executing the fix rather than by reading
+it, confirmed exactly against PR #6's own body:**
+
+1. Rolling 014 back while 017 was still applied destroyed three things
+   at once: the blanket `REVOKE ALL` took 017's grants with nothing to
+   restore them, while the rollback's post-condition certified zero
+   privilege as correct (CRIT-2's exact defect, one schema over); 017's
+   six unstamped tenant policies survived the manifest loop; and the
+   derived manifest count disagreed with the stamped set by exactly six
+   (measured: 228 stamped vs. 234 derived). Now refused outright, with
+   the rollback aborting and naming the required order in its own error
+   message.
+2. `app.apply_tenant_policies('core', 'run_node_io')` — a bare
+   two-argument call, the same shape as three calls 017 already makes —
+   would have silently replaced an existing gated isolation policy with
+   an ungated one. Now refuses a two-argument call against an
+   already-gated table, offering a literal `'UNGATE'` string as a
+   deliberate, greppable escape hatch, confirmed exercised by six
+   branches in a new `T16` (three-argument gate, two-argument-against-
+   gated refuses, re-passing keeps, a different permission replaces,
+   `UNGATE` removes, an unknown permission is refused).
+3. `001:232` was found to independently grant `USAGE ON SCHEMA core` to
+   `anon`, `authenticated` **and** `service_role` — 014's header had
+   claimed `anon` "never had USAGE on `core` to begin with," and the
+   rollback revoked it from `authenticated` as though 014 had granted it.
+   Both were wrong, confirmed by measuring the actual `core` nspacl on a
+   001–013 database. This is CRIT-2's exact class of defect, a third
+   time. 014 now declares the `anon` revoke as the real privilege it
+   takes away, and the rollback restores it; pinned by `R3`.
+
+Also confirmed: `app.apply_tenant_policies`'s own `'UNGATE'` escape from
+fix #2 above was itself found broken by a subsequent probe, not a
+reading — its literal was excluded from the branch that sets the gate but
+not the one that refuses, so every `UNGATE` call raised instead of
+ungating. Fixed in the same push (`e3a871c`); an untested branch in a
+security control is confirmed treated as the defect, not merely the
+missing feature.
+
+**Validation counts, confirmed exactly against PR #6's own table**:
+forward apply 18/18 with 0 errors; all 18 pins 17 pass/0 fail (the
+post-rollback pin correctly _refuses_ while 014 is still applied, which
+counts as a pass); rollback 017→016→015→014 4/4, dropping 228 stamped
+policies; post-rollback pin `R1`–`R4` pass; re-apply 014→017 4/4; all 18
+pins again 17 pass/0 fail/1 correct refusal; an out-of-order rollback
+attempt (014 while 017 applied) refuses with the required order named;
+`check:grants` 0 findings; `lint:sql` 52/52 parsed; `check:rpc` 4
+pass/watch, 0 broken.
+
+⛔ **BLOCKER, confirmed verbatim from PR #6's own body: the second
+required reviewer slot is OWED, not filled, and no verdict has been
+substituted for it.** Codex `gpt-5.6-sol` was dispatched alongside the
+Opus thermonuclear pass (which itself independently ran, returned BLOCK
+on its first revision, found five NEW defects the first review could not
+have seen because the fix introduced them, and had all five fixed in
+`ab6a8f7` — items 1 and 2 above are two of those five) and came back hard
+quota-blocked. The literal message, confirmed: "usage limit … try again
+at Sep 14th, 2026 12:29 AM." PR #6's own body states plainly what is
+specifically uncovered without Codex: the cross-package consumer trace —
+every caller of everything the diff touches across `apps/**` and
+`packages/**`, not just `supabase/**` — which is exactly what a structural
+pass is worst at and Codex is best at. `npm run check:rpc`'s 4 pass/0
+broken bounds but does not discharge that trace. PR #6 explicitly asks
+for a Codex re-run once quota resets, before this merges.
+
+**Fallback in effect per the user's ruling, Kimi confirmed unavailable
+(already established earlier this session):** all remaining reviews on
+this migration line run as Opus thermonuclear plus a security pass, with
+the Codex slot recorded as owed rather than silently dropped or silently
+substituted without saying so — 014's re-review
+(`codex-review-014-017`), 018's (`codex-review-018`, finalizing from its
+own inspection), and 011–013's (`codex-review-011-013`). **015–017's own
+fix work is confirmed still open on `fix-014`**, not yet pushed as of
+this check — only 014 itself has a completed, pushed fix so far.
+
+**One thing worth telling future-me:** "the fix is pushed" and "the fix
+is reviewed" are different claims, and a fix that already survived one
+independent adversarial pass (the Opus thermonuclear one, which found
+five real defects in the first revision) can still be missing the OTHER
+required reviewer entirely. Recording "fixed" without recording "one of
+two required verdicts is outstanding, and here is exactly why" would have
+made this line look more ready to merge than it is.
+
+---
+
+## 2026-09-13 22:1x — PR #20 merged, 018 BLOCK from a thermonuclear pass; the report's severity list was wrong and dropped two real Blockers
+
+**PR #20 confirmed MERGED at `c7efb8a`**, one file
+(`docs/reviews/2026-09-13-thermo-018.md`), base `main` — the review-branch
+rule held again. Thermonuclear review of PR #11 (018) at `fc9550c`.
+**VERDICT: BLOCK**, confirmed verbatim, severity counts confirmed exactly:
+5 Blocker, 5 High, 8 Medium, 6 Low.
+
+⚠ **Correction, and worth being precise about on a migration line this
+safety-sensitive: the report's list of "5 blockers" mixed severity
+levels, and two real Blockers were omitted entirely.** Read directly
+against the doc's own B1–B5 / H1–H5 / M1–M8 headings rather than the
+summary paraphrase:
+
+**What actually IS Blocker-severity, confirmed by heading and text:**
+
+- **B1**: one 4,857-line migration file holds five near-identical copies
+  of one list engine
+  (`list_enquiries`/`list_approvals`/`list_follow_ups`/`list_proposals`/`list_quotations`).
+  Confirmed via a diffed 25-line block between `list_proposals` and
+  `list_quotations` where only two lines differ. B1's own text explicitly
+  cross-references the pagination bugs as consequences — "has already
+  cost correctness twice, in opposite directions — see H2 and H3" — not
+  as part of its own severity.
+- **B3**: `list_follow_ups`, `list_proposals` and `list_quotations` all
+  declare `p_view text DEFAULT NULL` and never read it — a saved-view
+  filter silently discarded. Confirmed via the doc's own concrete
+  failing call: `core.list_proposals(p_view => 'SV-MINE')` returns every
+  proposal in the tenant with `success: true` and no error. The file's
+  own forbidden-case language at `018:869-872` calls exactly this out:
+  "never an ignored clause: ignoring a filter shows rows the reader
+  explicitly asked to exclude."
+
+**What the report called a "blocker" but is actually High or Medium,
+confirmed by heading:**
+
+- The "opposite pagination bugs" are **H2** (`list_enquiries` counts
+  after the cursor clause, so `page.total` shrinks per page) and **H3**
+  (the other four hand back a cursor past the end on an exact-multiple
+  page) — both High, not Blocker, and both already cross-referenced from
+  B1 rather than independently blocker-rated.
+- "`regenerate_proposal_section` enqueues nothing" is **H1**, High.
+- "`core.provenance` read without `tenant_id`" is **M1**, Medium — and
+  confirmed NOT reachable today: the doc states `subject_id` is always
+  tenant-scoped upstream. A materially softer finding than "blocker"
+  suggested.
+- "the pipeline backfill swallows a foreign-key violation into a
+  WARNING" is **M5**, Medium.
+
+**Two real Blockers were not in the report at all, and one of them
+matters for the whole migration line, not just 018:**
+
+- **B4**, the more serious omission: 018 edits **014's own pin**, moving
+  its exact grant-count assertion from `v_grants = 121` to `124` because
+  018 adds three view grants. Confirmed by reading the exact reproduced
+  failure in the doc: applying 001–014 alone and running `test_014` now
+  fails with `"expected 124 SELECT grants ... Found 121."` **014's pin
+  only passes once a LATER migration (018) has also been applied** — the
+  doc's own words: "A pin that only passes once a _later_ migration has
+  been applied is no longer a pin." This needs tracking against
+  `fix-014`'s eventual fix for 014's CRITICAL findings: that fix must not
+  reintroduce or silently depend on this ordering problem.
+- **B5**: 018 has no `BEGIN`/`COMMIT` transaction wrapper on either the
+  forward migration or its rollback, confirmed via `grep` returning
+  nothing for either file, and confirmed every other migration across
+  014–017 does wrap. This matters specifically because 018 is not pure
+  DDL — its tenant backfill loop writes `core.pipelines` and
+  `core.pipeline_steps` rows across every tenant, and a failure partway
+  through leaves helpers created, some RPCs created, some tenants
+  seeded and others not, with nothing to roll back to.
+
+**Confirmed clean, verbatim from the doc's own "What is right" section —
+these hold up and matter if 018 gets a substantial rewrite rather than a
+patch:** tenant scoping is disciplined (every join tenant-correlated,
+every table read filtered through `app.require_tenant_id()`, M1 the sole
+non-reachable exception); no error is swallowed into `app.ok` (all 18
+exception handlers traced — every one either re-raises, returns
+`app.err`, or sets a variable leading to an explicit refusal two branches
+later; the one true swallow is M5, and it lives in a `DO` block, not an
+RPC); the rollback is inventory-correct (all 47 created objects dropped,
+nothing from 001–017 destroyed, drop order is exact reverse dependency
+order, no `CASCADE`, and the one non-018 drop — `core.decide_approval`'s
+four-argument signature — is confirmed signature-qualified and cannot
+touch 014's five-argument function); yielding the three gate wrappers to
+014 rather than shipping a second copy is exactly the divergence
+discipline CLAUDE.md asks for.
+
+**Pin-honesty findings (H5), confirmed exactly, not just the summary
+numbers:** 239 labelled `RAISE EXCEPTION` assertions (not 228 — the doc
+itself notes 228 is actually 014's RLS policy count, cited in error
+elsewhere in this spine's own history). Four confirmed provably
+unfalsifiable: a comparison of a GENERATED column against the exact
+expression that generates it (`x <> x`); a comparison of two distinct
+primary keys for equality, which can never happen since `id` is the
+primary key; a code check on a path a prior line already restricted to a
+different code; a fixture filter matching a pattern the fixture's two
+lines can never contain. Roughly thirty more confirmed to pass
+vacuously: they extract `-> 'data'` from a response without first
+asserting `success`, so a refused call evaluates to `NULL` and takes the
+same "pass" branch as a genuinely correct one — the doc names the correct
+pattern already used elsewhere in the same file, just not applied
+consistently. `core.get_proposal` and `core.get_quotation` confirmed
+never invoked by the pin at all — appearing only in comments and one
+metadata sweep.
+
+⚠ **Negative result, confirmed exactly as reported: an assertion count is
+not evidence of coverage.** Four of 239 could not fail under any input
+regardless of what the migration does; roughly thirty more could not
+fail specifically on an error response. Neither gap would ever surface
+from the count alone — only from reading what each assertion actually
+tests.
+
+**Lane `fix-018`** (Opus, worktree
+`~/Repos/personal-work/trainos-wt/fix-018`, branch `fix/018-review`)
+confirmed active on `lane/rpc-018`, tip `fc9550c`. Shim port reported as
+5438, not independently verified. The Codex 018 report folds in when it
+lands.
+
+**One thing worth telling future-me:** a severity label is part of the
+finding, not decoration on it — "Blocker" and "High" carry different
+consequences for what can merge and in what order, and compressing five
+items of mixed severity into "the 5 blockers" makes a High finding read
+as more urgent than it is while making an actual Blocker (B4, which
+breaks a DIFFERENT pack's own pin) invisible entirely. When a report
+gives exact severity counts, check the count against the labelled
+findings one by one rather than trusting a prose summary to have
+preserved the mapping.
+
+---
+
+## 2026-09-13 22:0x — PR #18 merged (second D-012 pass now formal), finding #19, "nineteen" pin edits confirmed wrong
+
+**PR #18 confirmed MERGED at `4162a4d`**, adding exactly one file
+(`docs/reviews/2026-09-13-codex-retrofit-015-017.md`), base `main`, merge
+parent `62097b1` — this session's own earlier push. **The new
+review-branch rule held**: cut from `main`, one doc file, nothing to go
+stale this time. The second D-012 pass this log already recorded from a
+branch-only commit two updates ago is now formally landed, not merely
+confirmed-but-unmerged. Verdicts unchanged: 015 MERGE-WITH-FIXES, 016
+BLOCK, 017 BLOCK.
+
+**`564dd64` (the `provision_tenant` `p_id` amendment) confirmed reviewed
+separately and sound**, quoted directly from the report: "the forward
+migration and the `564dd64` amendment are both sound and independently
+verified." 016's BLOCK rests entirely on its rollback defect, already
+recorded, and is unaffected by the amendment.
+
+**New finding #19, from a genuine thermonuclear pass — the skill became
+available mid-session — confirmed exactly against the review doc, not
+just quoted from the summary.** 017 adds a third tenant-provisioning
+trigger, `app.seed_compliance_check_keys`, mirroring 016's
+`seed_ref_formats` pattern almost line-for-line. `app.provision_tenant`'s
+completeness guard is never updated to also verify check-keys were
+seeded — the exact failure mode that guard exists to catch (a tenant that
+looks provisioned but is missing something a later table needs) is now
+unguarded for this table too. Found by comparing the two files' structure
+directly, not by running any code. Routed to `fix-014` with a request for
+a registerable per-pack check rather than a fourth one-off fix, since 018
+adds a fourth such trigger (the pipeline-stage one this log already
+tracks) and three independently-copied seed-trigger patterns (011, 016, 017) was already one too many before 018 made it four.
+
+**Also confirmed from the same thermonuclear pass:** 017's 1,340-line
+single transaction is flagged as a maintainability/decomposition problem
+independent of its already-found defects — deferred, with a catalog note
+requested rather than fixed inline.
+
+⚠ **The "nineteen" pin-edit figure, repeated in this log across several
+earlier blocks as a live fact, is confirmed wrong.** Recounted three
+times against three different bases — most recently against `origin/main`
+as instructed — same result every time: 14 hunks over 10 files, all
+legitimate, none a weakened assertion, two recomputed counts
+independently re-verified correct by execution. The report's own likely
+explanation, worth keeping: `main` already carries 014's content by this
+point, so there is nothing further to find there beyond what crossing
+from 014's own tip already identified — the "nineteen" figure was simply
+the lane's own count from when it made the edits, never independently
+verified until now. Corrected in place in `ai/workstreams.md` everywhere
+this spine had repeated "nineteen" as a current figure; the historical
+mentions in this append-only log are left as an accurate record of what
+was reported at the time, with this block serving as the correction going
+forward.
+
+`codex-review-014-017` (the original lane and worktree) stays alive for
+the re-review once `fix-014` pushes a fix covering all four packs
+(014–017), not just 014.
+
+**One thing worth telling future-me:** a number repeated across several
+consecutive log entries without being independently re-derived can
+calcify into a fact nobody re-checks, purely because it kept showing up.
+"Nineteen" survived three separate mentions in this spine before anyone
+actually recounted it against the files. The fix isn't re-verifying every
+repeated number forever — it's noticing when a figure has never once been
+independently recounted, only re-quoted, and treating that as reason
+enough to check it the next time it comes up in a safety-relevant
+context.
+
+---
+
+## 2026-09-13 21:5x — GitHub Actions down on billing (confirmed), PR #16 final with SST landed, PR #11 pipeline seed shipped (only DEAL_CHAIN blocked)
+
+⛔ **GitHub Actions has been unavailable on every branch, `main` included,
+since roughly 20:36–20:40 on 13 Sep — confirmed directly, not taken on
+the report.** `gh api
+repos/PARALLELPARADIGMS/alex-project/check-runs/103725755232/annotations`
+returns the literal message: "The job was not started because recent
+account payments have failed or your spending limit needs to be
+increased. Please check the 'Billing & plans' section in your settings."
+Confirmed independently on the most recent push to `main`: every job in
+that run completed in 0–3 seconds carrying the identical annotation, most
+never starting at all (duration `0s`). `gh run list --branch main` shows
+the pattern beginning in exactly this window. Org billing endpoints
+require `admin:org`, which the available token does not have — **this
+needs the user directly, in GitHub's Billing & plans for
+`PARALLELPARADIGMS`.** Noted as a likely proximate cause, not confirmed:
+`Vitest (unit)` alone has been running roughly 14 minutes per push across
+roughly twenty pushes tonight.
+
+**Policy in effect until this is fixed:** remaining merges (#6, #11, #16,
+and any report PRs) proceed on the lane's own local gate output plus an
+independent review verdict, each recorded here with "CI unavailable,
+billing" rather than a CI run reference. PR #15 stays draft regardless —
+its blocker (the Radix-menu test timeout) is unrelated to CI
+availability.
+
+**PR #16 confirmed final at head `f8d00fc`, 10 commits, lane shut down,
+merges right after PR #6.** The SST fix flagged as unlanded two updates
+ago, then confirmed queued one update ago, has now genuinely landed —
+confirmed directly, closing the loop through all three states by
+measurement rather than trust at any step. `quotationsSql` now resolves
+SST via `app.resolve_tax_policy()` rather than a literal, matching the
+stated reasoning exactly: tax-policy ids are `gen_random_uuid()` per
+database, so a hardcoded literal could never match one across
+environments. Resolves to `SST-G-TRAINING-8`, 800 bps,
+`STANDARD_RATED` today, confirmed exactly in the diff's own comments.
+Three new pins confirmed present and matching their descriptions
+precisely: `T7d` (the stored rate matches what the resolver returns for
+that tenant/date), `T7e` (the cited tax-policy id matches the resolver's,
+not a wrong-but-plausible one), `T7f` (an exempt override fails
+`quotations_exempt_needs_reason` by name rather than the seed silently
+storing an unjustified exemption). Spot-checked `QUO-2026-0184`:
+`sell_price_sen` confirmed `1850000` in the raw INSERT; the SST amount
+and gross price are resolved/generated columns rather than literals in
+this file, but the arithmetic is internally consistent with the reported
+148,000 SST and 1,998,000 gross (1,850,000 × 8%). Two USER DECISIONs
+remain open in the PR body, both already tracked in this log: the
+realised 29% margin has no column anywhere (T5 pins the absence on
+purpose), and the fixture world's action-policy ids collide with two of
+tenant provisioning's 22 under a frozen `action_type`.
+
+⚠ **Correction to this log's own prior entry: the pipeline stage seed was
+NOT blocked — only the `DEAL_CHAIN` pipeline object specifically stays
+blocked, and the earlier finding overstated the scope of what was
+actually gated.** Confirmed directly at PR #11's new head `fc9550c`: the
+seed shipped as a fourth AFTER INSERT trigger on `public.tenants`
+(`trg_tenants_z_seed_pipelines`), confirmed present, deliberately named
+to sort after 016's ref-format trigger alphabetically — resolving the
+exact ordering trap this log previously recorded as a blocker, rather
+than working around it or leaving it open. Ships with a backfill (36 rows
+over two tenants, 0 rows moved on re-run, per the report — not
+independently re-run here) and a new `T30` pin. Ids use the md5
+expression this log already has on record from the previous
+pipeline-stage-id correction; the abandoned "v5 if `uuid-ossp`, else md5"
+branch is confirmed fully dropped from the code, and `uuid-ossp` is
+confirmed never created anywhere across 001–017. **What remains genuinely
+blocked, confirmed narrowly rather than broadly:** only the `DEAL_CHAIN`
+pipeline object itself, because 004's own CHECK constraint still cannot
+store it as a value — divergence 14.2 in the newly-added
+`docs/architecture/09` §14 pins that it still cannot be inserted,
+confirmed present at that exact section number.
+
+**PR #11 now confirmed at exactly 7 files** — `docs/architecture/09`, the
+018 forward migration, its rollback, `test_008`, `test_009`, `test_014`,
+`test_018`, confirmed via `gh pr diff 11` — at head `fc9550c`. Three of
+the seven confirmed as real fixes, not incidental diffs:
+
+1. `test_008` and `test_009` now seed `is_default = false` for their
+   local pipeline fixtures, because 018 now seeds every tenant a genuine
+   default pipeline via the trigger above, and a test-local one no longer
+   needs the flag to avoid `pipelines_one_default_uq`.
+2. `test_009`'s engagement-creation query is confirmed to have carried a
+   real, previously-undetected defect: an **unconstrained cross join over
+   `core.pipelines`**. With 018's seed, a tenant now owns three pipelines
+   rather than one, so without a predicate the INSERT wrote three
+   engagement rows and `RETURNING ... INTO v_eng` kept whichever one
+   happened to come last — meaning every assertion downstream of it was
+   measuring an arbitrary row, not the intended one. Confirmed via the
+   diff's own comment describing exactly this mechanism and calling it "a
+   latent defect now fixed" — real independent value from the rebase, not
+   busywork.
+3. `test_014`'s exact grant count moved `121 → 124`, confirmed via the
+   diff's own comment stating both numbers directly, framed as "CHANGED
+   BY 018, and the exactness is the point."
+
+`docs/architecture/09` gained a full §14 enumerating ten divergences
+between the RPC spec and what 018 actually built, confirmed present,
+including 14.2 (`DEAL_CHAIN`, above) and 14.10 (`core.me_profile()`,
+still unbuildable for lack of an HR table, already tracked in this log).
+The 018 rollback drops the seed trigger and deliberately keeps
+already-seeded rows rather than deleting them, confirmed. `lane/rpc-018`'s
+own worktree confirmed shut down; both 018 reviewers (`codex-review-018`
+and its detached-HEAD counterpart) re-pinned to `fc9550c`.
+
+**One thing worth telling future-me:** a "blocked" finding needs the same
+scope discipline as any other claim. The earlier entry correctly
+identified three real obstacles (the Q10 ambiguity, the missing
+`outcome` column, the trigger-ordering trap) but then concluded the
+whole feature was blocked, when in fact the lane had already solved two
+of the three obstacles and only the genuinely unresolved one — a schema
+question needing the user — remained. A list of real blockers is not the
+same claim as "therefore nothing shipped."
+
+---
+
+## 2026-09-13 21:4x — second D-012 pass BLOCKs all of 014–017 (not on main yet), scratchpad collision, SST discrepancy resolved
+
+**Second D-012 review pass confirmed via `git show` on branch
+`review/codex-014-017`, commit `5a5655c` — explicitly NOT on main, no PR
+open for it yet.** Recorded with that caveat prominent, since everything
+below is verified against a branch, not a mergeable, reviewable PR.
+Verdict, confirmed exactly: **014 BLOCK (unchanged), 015
+MERGE-WITH-FIXES, 016 BLOCK, 017 BLOCK**, quoting the review directly:
+"None of the four packs may merge as currently written. 015 is the
+closest to ready."
+
+**015, confirmed:** central safety claim holds — exactly two
+`cron.schedule()` calls (`trainos_reap_jobs` every 30s,
+`trainos_reap_cron_history` daily) and zero `net.http_post`/`net.http_get`
+calls anywhere in the file. One real gap: `app.reap_jobs_all_tenants` has
+no overload-count guard in its own verify block, the same G3-trap class
+this repo's skill exists to catch — a later migration adding a defaulted
+parameter would silently create an ambiguous overload.
+
+**016, confirmed:** the forward migration's `pg_trigger`-derived seeding
+mechanism is real, not faked — both reviewers verified this independently.
+BLOCKED entirely on its rollback: `DELETE FROM core.ref_formats WHERE NOT
+EXISTS (allocated)` is unqualified across the whole table, so it deletes
+every unallocated ref_format row in the database, including ones an
+operator configured by hand before 016 ever ran — not only the rows 016
+itself seeded. This is confirmed the identical class of defect that
+blocked 014's rollback.
+
+**017, confirmed the highest blast-radius pack in the PR, with four
+serious findings:**
+
+1. **CRITICAL** — SST is meant to be resolved from policy per ruling R-C,
+   never a column default, but every quotation is stamped `sst_rate=0,
+sst_reason='STANDARD_RATED'` with no trigger and no write-path call to
+   `app.resolve_tax_policy()` anywhere. Every taxable quotation is
+   silently under-taxed at zero.
+2. The file runs as one transaction start to finish. Its header claims
+   `ADD CONSTRAINT NOT VALID` + `VALIDATE` avoids a long lock, but inside
+   a single transaction `VALIDATE` still holds the same lock to commit —
+   the claimed safety property does not exist as implemented; it is
+   operationally identical to a plain `ADD CONSTRAINT`.
+3. An unguarded `VALIDATE` on `evaluation_responses_overall_score_range`
+   has no pre-flight row-count check, and the file's own header concedes
+   a legacy 4.5-point Likert score is accepted today — this aborts
+   `VALIDATE` on any database carrying one such row, with no row
+   identified in the error.
+4. The rollback's header claims only non-customer data is lost. The body
+   actually drops `core.data_breach_register` (a statutory PDPA s.12B
+   register), `data_retention_policies`, consent-evidence columns from
+   `contact_consents`, and the SST columns from already-issued quotations
+   — confirmed the "no customer data" claim is false as stated.
+
+Also confirmed: catalog pin `T3b` never executes — its fixture selects
+`FROM core.engagements LIMIT 1` against a table with zero rows in that
+pin, so the dependent `IF FOUND` is false and the assertion it claims to
+prove silently never runs. The review's own words: "the same
+false-catalog-claim mechanism that hid 014's defect, reproduced here."
+
+**Pin-edit audit confirmed: 14 hunks across 10 files, all legitimate
+adaptations** to 016's provisioning trigger and 017's new tables — none a
+weakened assertion, and two recomputed counts independently re-verified
+correct by execution.
+
+**`check:grants` ruling confirmed: the `pg_temp` SECURITY DEFINER flag on
+`test_014:513` is a false positive.** `pg_temp` objects cannot persist an
+escalation past their own transaction; the standing fix is a
+`check:grants` exemption for `pg_temp.*`, not a change to the test.
+
+**G6 confirmed run clean on all 17 migrations** — forward, all pins,
+rollback 017→015, re-apply, all clean. This proves internal consistency
+only, exactly as the first pass already established; several of today's
+findings are specifically NOT pin-detectable, including the lock-safety
+claim, which is false for structural reasons no pin could ever catch.
+
+**Everything is routed to `fix-014`, which now covers all four packs
+(014–017), not just 014.** Hosted apply stays gated on the eventual clean
+verdict for all of them.
+
+⚠ **Negative result, and a genuine pattern rather than a coincidence:
+two packs in the same PR (014 and 016) shipped rollbacks that destroy
+state they never created and assert the broken result as correct.** The
+same failure mode landing twice in one day, in two different migrations
+authored by the same lane, is worth a standing checklist line rather than
+two separate findings: **"a rollback restores PRIOR state, not empty
+state."** Added to the migration-authoring/review checklist.
+
+**Two smaller items, both resolved rather than left open:**
+
+- The SST discrepancy flagged in the previous block is resolved, not a
+  false report either way: the team lead's own follow-up confirms the fix
+  (quote at 017's default policy `SST-G-TRAINING-8`, pinned against the
+  policy row) "is applied next by the seeds lane" — matching exactly what
+  this log found by reading `quotationsSql` directly and seeing no
+  `sst_rate` change yet. Recorded as queued, not landed, as of `e1dca98`.
+- A scratchpad collision: the session scratchpad is shared across lanes,
+  and `lane/seeds` and `lane/rpc-018` both wrote a `pr-body.md` at its
+  root, briefly leaking PR #11's description into PR #16 before it was
+  caught and fixed. Recorded as reported (this is a fleet/filesystem
+  incident, not something in git history to independently verify). **New
+  convention for every future multi-lane blast this spine records:**
+  lane-specific scratch files go under `<scratchpad>/<lane-name>/`, never
+  the scratchpad root.
+
+**One thing worth telling future-me:** when a review pass lands on a
+branch with no PR yet, read it anyway rather than waiting — the findings
+are real regardless of packaging, and recording "confirmed, not yet on
+main" is more useful to the next session than waiting for a PR number
+that may not exist for a while. The caveat belongs at the top of the
+entry, not buried, so nobody mistakes a branch-only review for a merged
+one.
+
+---
+
+## 2026-09-13 21:3x — PR #17 merged, PR #11 rebased with five confirmed findings, an SST fix reported but not found in the diff
+
+**PR #17 confirmed MERGED at `e20e1ba`.** Line references checked, not
+taken on trust: `011:2598` (rpc argument), `011:2784` (`DIFF_CHANGED`
+detail keys), `011:2775` (APPROVE-only guard) are all real lines in the
+migration. Both lanes (`fix-approval-hash` and its reviewer) confirmed
+genuinely shut down — worktrees gone from disk, not just reported.
+
+**A caveat worth carrying forward rather than letting the green suite
+speak for itself:** the conformance test's "rpc" side runs through an
+oracle transport into the fixture client, not a real Postgres connection.
+No test anywhere in this repository executes migration 011's actual
+`RAISE` path for `DIFF_CHANGED`. A green conformance suite here proves the
+two client shapes agree with each other; it does not prove the database
+guard fires. That proof is what the first hosted-mode run after 014
+applies is for.
+
+**PR #11 (018) confirmed rebased onto `cloud/migrations`**, not `main` —
+checked via `gh pr view 11 --json baseRefName` directly. Now 30 RPCs, 3
+views (`v_budgets`, `v_model_tiers`, plus `v_organisation_relations`), 11
+helpers, 228 assertions, per the report, not independently re-run (needs
+the shim). Merges after PR #6; reviewed separately by `codex-review-018`
+(its own shim, port 5437). `lane/rpc-018`'s worktree confirmed shut down.
+
+**Five findings from the rebase, each confirmed directly against the
+diff:**
+
+1. 014 and 018 both created the three action-envelope gate wrappers
+   (`perform_action`, `decide_approval`, `bulk_decide_approvals`) with
+   different arity. `CREATE OR REPLACE FUNCTION` matches on the argument
+   list, so the two did not replace one another — they became overloads
+   differing by a defaulted trailing argument, and every short call
+   became ambiguous. Confirmed via the migration's own comment, which
+   quotes the exact verify-time error it caught: "core.decide_approval
+   has 2 definitions, expected exactly 1." 014 keeps its five-argument
+   version (the one exposing `p_expected_diff_hash`); 018 drops its own
+   four-argument one, confirmed via an explicit `DROP FUNCTION IF EXISTS`
+   in the diff.
+2. Migration 017 left SST half-wired: `core.quotations.sst_rate` and
+   `sst_reason` are plain columns defaulting to 0 and `'STANDARD_RATED'`
+   with no trigger behind them, confirmed in the diff. 018's
+   `put_quotation` now resolves the real rate via
+   `app.resolve_tax_policy` on the write path. The table-level fix (a
+   trigger, so paths other than this one RPC are covered too) is routed
+   to `fix-014` in PR #6 rather than fixed here.
+3. `core.provenance.origin` is immutable at the schema level, confirmed;
+   the contract's origin flip is derived in the read projection instead
+   of being written.
+4. **A premise correction, confirmed by reading the script itself rather
+   than trusting the claim:** `npm run check:rpc` does not detect a
+   missing RPC. `scripts/check-rpc-contract.mjs`'s own header states its
+   three checks are envelope shape, forbidden casts, and type source — it
+   never reads `RPC_NAMES` and has no notion of function existence. A
+   missing function surfaces only as `PGRST202` at runtime. Recorded as a
+   genuine gap: "check:rpc existence gate" added to the backlog.
+5. The pipeline stage seed for new tenants is blocked on a real
+   architecture decision, not busywork: doc 01 §9 Q10's `DEAL_CHAIN`
+   ambiguity is unresolved, `core.pipeline_steps` has no `outcome` column
+   for R16's terminal WON/LOST states (needing an `ALTER` on 004), and a
+   provisioning trigger would break two existing tests plus hit an
+   alphabetical AFTER-trigger ordering trap. Consistent with what the
+   SEEDS thread already records: 018 ships no per-tenant pipeline seed,
+   and the fixture world owns its own pipeline rows instead.
+
+**PR #16 now at 9 commits, not the reported `900995a` — but the gap is
+inert, confirmed.** The two commits on top of `900995a` are the id-formula
+commit itself and a docs-only follow-up whose own message states plainly:
+"Only the comments change. Every id, every row and every assertion is
+byte for byte what 900995a emitted, which is what --check reports." So
+the report's head was accurate at the time and nothing behavioral changed
+since.
+
+**The pipeline-stage-id rule was corrected by measurement, and both the
+wrong version and the right one are worth keeping — this is exactly the
+kind of negative result this log exists for.** The originally proposed
+rule ("UUIDv5 if `uuid-ossp` is installed, else md5") would have produced
+different ids on the shim versus a hosted project if the extension's
+availability ever differed between them — a determinism rule that isn't
+actually deterministic across environments is worse than no rule. A plain
+`'pipeline:' || stage_key` key also collides, because `WON` is a step
+name shared by more than one pipeline; the real uniqueness is on
+`(tenant, pipeline, step_key)`, not `step_key` alone. Both defects were
+caught before shipping. Final rule, confirmed exactly in the current
+diff: `md5(tenant_id::text || 'pipeline:' || object)::uuid` for the
+pipeline row, and the same expression with `|| ':' || step_key` appended
+for each step. `uuid-ossp` is confirmed not installed anywhere in
+001–017, so the abandoned fallback path was never actually available to
+begin with. Two new pins, `T2k` and `T2l`, confirmed present and matching
+exactly, including `T2l`'s failure message spelling out the full
+expression.
+
+**Confirmed exactly three trainers are accredited, not four.** `TRN-0024`
+Noora Idris carries `FALSE`/`NULL` across `ttt_certified`, `ttt_ref`,
+`ttt_valid_to`, `hrd_tdf`, `hrd_tdf_valid_to` in the current row —
+confirmed directly in the SQL values, consistent with (and slightly more
+precise than) what was already on record.
+
+⚠ **The SST ruling reported as corrected is NOT yet reflected in the
+committed diff — checked directly, not assumed resolved because it was
+reported.** Searched `quotationsSql` at the current head (`e1dca98`)
+directly: it still writes no `sst_rate` or `sst_reason` field at all,
+relying on 017's column defaults — the exact state the report says was
+fixed to `SST-G-TRAINING-8` at 8%. Two explanations are equally possible
+— the implementing commit hasn't been pushed yet, or it landed somewhere
+this search didn't cover — and neither is assumed; this is recorded as an
+open discrepancy for the next check to resolve, not silently corrected in
+either direction. The narrower remaining USER DECISION, as reported,
+survives regardless: whether tenant `akademi-perdana` is Education-Act
+exempt is a policy-row decision, not a seed-code change.
+
+**One thing worth telling future-me:** a report that says "corrected" is
+a claim about intent, not a claim this log should accept without opening
+the diff. Every other claim in this same message checked out precisely;
+the SST one is the one exception, and finding it required actually
+grepping the seed file rather than trusting the pattern that everything
+else in the message was accurate.
+
+---
+
+## 2026-09-13 21:2x — trainer TDF entry re-corrected (a later commit superseded the last correction), PR #15 confirmed blocked, PR #17 confirmed
+
+**Re-correction, not a new mistake: the trainer HRD-TDF entry from the
+previous block was itself superseded by a later commit, and this block
+re-checks it against the current head rather than trusting either
+report.** The previous block correctly read the commit it checked and
+found `hrd_tdf = false` on all four trainers. A further commit, `f5aa04a`
+("call provision_tenant with p_id, keep TDF accreditation true"), changed
+this: the three genuinely TDF-accredited trainers now carry `hrd_tdf =
+true`, with `hrd_tdf_valid_to` reusing that trainer's own TTT
+certification expiry rather than any invented date — confirmed directly
+in the diff: `hrd_tdf: trainer.hrdTdf`, `hrd_tdf_valid_to: trainer.hrdTdf
+? trainer.tttValidTo : null`, `hrd_tdf_ref: null`. The file's own comment
+explains the reuse: the same three trainers hold both accreditations, so
+the seed states one real convention (reuse the TTT date) rather than
+fabricating a second, independent one. Three new pins confirm this is
+enforced, not just commented: `T2h` (exactly 3 trainers carry `hrd_tdf`),
+`T2i` (none lapsed at the fixture clock, 2026-11-14), and `T2j`, whose own
+"FAIL (good news)" framing is worth quoting — it is designed to fail the
+day a real, independent TDF expiry date arrives in the fixture, which is
+exactly when the reuse convention should be retired. Both this entry and
+the one it supersedes were correct readings of the commit each checked;
+neither check was sloppy. The actual lesson is procedural: confirm a PR's
+current head before restating a finding that was true of an earlier one,
+especially on a fast-moving branch that gained a commit between two
+verification passes minutes apart.
+
+**PR #16 confirmed at head `f5aa04a`, 7 commits, still targeting 001–017,
+merging right after PR #6.** One more commit is still coming, per the
+report: deterministic pipeline stage ids shared between `lane/seeds` and
+`lane/rpc-018`. Kept explicitly unconfirmed here, per direct instruction:
+it is a ruling agreed between two lanes, not yet code on either side, and
+recording it as landed before either lane pushes would be exactly the
+same mistake as trusting a stale reviewer checkout.
+
+**PR #15 confirmed BLOCKED, not merely draft-in-progress — checked
+directly against a live failing CI run, not taken on the report.** On run
+`34757075746`, even with `testTimeout` raised to `30_000`,
+`knowledge.test.tsx`'s "keeps Check and Re-ingest out of every row" and
+`pipeline.test.tsx`'s "offers every other stage in the card's menu" both
+failed with the literal message "Test timed out in 30000ms." (The third
+test named in the original diagnosis, `RowActionMenu`, was not among the
+failures on this specific run — recorded as observed, not chased
+further.) The refined diagnosis matches what this spine already had on
+record: a CPU-bound spin inside `findBy*`'s `asyncAct` wrapper while
+floating-ui keeps scheduling position work for the open menu, fixable by
+a raw poll plus a synchronous `getByRole`, not by any timeout value. The
+fixer's refusal to write that rewrite without first reproducing it is the
+right call, not foot-dragging. `npm audit (high+)` passes cleanly on this
+same run, confirming the toolchain upgrade's audit-clearing purpose works
+independently of the test-timeout blocker.
+
+**Negative result, now doubly confirmed: "raise the timeout" is a dead
+lever for this specific failure.** 15 seconds failed on the runner; 30
+seconds also failed on the runner. Both attempts are now on record so a
+future pass does not try a third timeout bump before doing the
+poll-based rewrite the diagnosis actually calls for.
+
+**A small discrepancy worth naming rather than silently resolving:**
+`fix-pr5`'s lane is reported shut down, but its worktree
+(`~/Repos/personal-work/trainos-wt/fix-pr5`, still checked out on branch
+`chore/vite7-vitest3`) is still present on disk as of this check. "Lane
+shut down" (the orchestration state) and "worktree removed" (the
+filesystem state) are different claims, and only the first was made.
+
+**PR #17 (`fix(web): decideApproval sends the expected diff hash`)
+confirmed open, 3 commits, matching its description precisely.** Closes
+the client half of migration 014's HIGH finding #6. Confirmed in the
+diff: `ApprovalRequest.diffHash` and a required
+`ApprovalDecideRequest.diffHash` added to the contract; a new
+`DIFF_CHANGED` error code, confirmed mapped to HTTP `409` in
+`ERROR_STATUS` (alongside `AGENT_PAUSED` and `IDEMPOTENT_REPLAY`, the same
+family); `rpcClient.decideApproval` now sends `p_expected_diff_hash`; the
+fixture client enforces the identical guard on `APPROVE` only, matching
+migration 011's own scope exactly; a new conformance test proves both
+clients refuse a stale hash and accept a fresh one identically. **1504
+tests confirmed exactly**: the PR's own test plan states "1118 + 189 +
+107 + 90 tests, all passing," which sums to 1504. Under review by
+`review-pr17`.
+
+---
+
+## 2026-09-13 21:1x — PR #13 merged, seeds now on 001–017 with a real RLS pin, a reported ruling corrected as backwards
+
+**PR #13 confirmed MERGED at `47d56e1`.** Its own CI run still shows `CI
+Summary`, Grant Hygiene and npm audit as `fail`, checked directly — it
+merged carrying the two inherited main-red failures this log already
+tracks, not because they resolved first. Not a defect in PR #13's diff.
+
+**PR #16 (seeds) retargets 001–017.** A 6th commit
+("feat(supabase): target 001-017, provision through 016, pin RLS
+visibility") landed on top of the original five. It adds **T10**, the
+pin's only assertion that measures what the product actually serves
+rather than what the superuser loader can see: it impersonates Alex
+Selvarajah via `authenticated` role and his JWT claims, then counts
+landmark rows back through migration 014's live RLS policies. Confirmed
+verbatim in the pin's own literal: `{"organisations":6,"engagements":10,
+"participants":136,"certificates":78,"invoices":10,"approval_requests":7,
+"pipeline_steps":16}`. The same query as a fabricated member of a
+different tenant must read 0 organisations and 0 participants — also
+confirmed verbatim (`T10c`). Every other assertion (T0–T9) runs as the
+migration role, which is a superuser on the shim and sees past RLS
+entirely; T10 is the one check standing between "the rows exist" and "the
+app can actually read them."
+
+**`cloud/migrations` resumed at the seeds lane's request, pushed
+`564dd64`.** `app.provision_tenant` gains `p_id uuid DEFAULT NULL`, with
+an explicit `DROP FUNCTION IF EXISTS app.provision_tenant(text,text,text)`
+ahead of the new `CREATE OR REPLACE` — confirmed mandatory by reading the
+migration's own comment, not assumed from the commit message: a bare
+`CREATE OR REPLACE` with a changed parameter list creates a second
+overload rather than replacing the function, and with both overloads
+carrying defaults that cover a two- and three-argument call, every
+existing caller — the pack's own test included — would fail with
+`function app.provision_tenant(unknown, unknown) is not unique`. The
+comment states this was reproduced on the shim before the line was
+written, not assumed. The rollback drops both the pre- and
+post-amendment signatures, so a database that was rolled back and forward
+around the amendment can't strand either one. Four new assertions land in
+`test_016`: the returned id and the stored row both carry the supplied
+value; supplying an id does not bypass provisioning; explicit `NULL`
+still generates one; a duplicate id is refused by the primary key rather
+than silently attaching a new tenant to another tenant's rows.
+
+⚠ **A ruling reported to this log was backwards, and it matters which
+direction: confirmed directly against the file, not taken on trust.** The
+report said the four accredited trainers "get invented hrd_tdf expiry +
+reference (synthetic fixture, 017's CHECK requires it)." The file does the
+opposite: all four get `hrd_tdf = false`, `hrd_tdf_valid_to = null`,
+`hrd_tdf_ref = null`, even though three of them are TDF-accredited in the
+underlying fixture data — specifically BECAUSE 017's
+`trainers_hrd_tdf_needs_expiry` CHECK refuses `hrd_tdf = true` without a
+valid-to date, and the seed has no genuine one to supply. The file's own
+comment: "A wrong boolean that the pin asserts and the PR names beats a
+fabricated expiry." The seed chose a known-wrong value over inventing a
+compliance-sensitive date an auditor could later act on — the
+conservative direction, not the fabricating one. Corrected in
+`ai/workstreams.md`'s SEEDS thread with the direction stated explicitly,
+since "backwards" is easy to silently re-invert on the next pass if only
+the fact ("invents an expiry" vs "doesn't") is corrected without also
+recording which way is actually safer and why.
+
+**Pipeline step ids, checked rather than assumed identical to 018's.**
+Confirmed deterministic in the generator:
+`uuidFor(childKey(\`pipeline:${object}\`, "step", stage.key))`— close to
+but not literally the reported`(tenant_id, 'pipeline:'||stage_key)`
+formula. The claim that 018 computes an identical formula was not
+confirmed and could not be: 018's own pipeline-stage seed is still an
+open follow-up per an earlier entry in this log, so there is no 018-side
+code yet to compare against. Recorded as unconfirmed rather than assumed
+true because it sounded plausible.
+
+**New USER DECISION queued:** SST treatment of the three fixture
+quotations, currently `STANDARD_RATED` at 0%, against Malaysian training
+often being exempt under the seeded Education Act policy — not resolved
+here. Two more open items from PR #16: the seed's check keys overwrite two
+provisioning-created positions (mechanism not independently traced), and
+the action-policy scheme collision already tracked in an earlier entry.
+
+**`fix-pr5`'s diagnosis of the three slow Radix-menu tests confirmed
+precise, not a guess — read directly from the branch's own new code
+comment.** Measured: the menu item lands in the DOM 13ms after the
+keypress, and a synchronous `getByRole` against it costs 1ms. The 6–9
+seconds each test actually takes is spent inside the `findBy*` wrapper's
+`asyncAct`, while floating-ui keeps scheduling position work for the open
+menu — none of it is Radix, none of it is the UI being slow. The real fix
+(swap those `findBy*` awaits for a settle plus a synchronous `getByRole`,
+returning roughly 21 seconds to the suite) is left for its own change
+because it touches three files outside this branch's remit. The 15-second
+timeout was a guess and it failed on the runner; `testTimeout` is now
+`30_000`, stated explicitly in the comment as "a ceiling for a hung test,
+not a budget."
+
+---
+
+## 2026-09-13 21:0x — PR #14 merged (main red on Grant Hygiene only), PR #16 seeds open, fix-approval-hash lane, new review-branch rule
+
+**014's file staying on `main` via PR #12 is intentional, confirmed by
+ruling: nothing applies to any hosted project without the user's own hand
+regardless of what sits in `supabase/migrations/`, and PR #6's eventual
+merge simply supersedes the copy already there (same content, no drift
+risk).** Recorded so the earlier flag on this doesn't linger as an open
+question.
+
+**New rule for review lanes, worth carrying forward as a standing
+practice, not just a one-time fix:** a review-report branch is cut from
+`main` and carries exactly one doc file — never cut from the PR under
+review. This is precisely the mechanism behind the "015-017 don't exist"
+error corrected in the previous block: a review branch cut from the PR's
+own tip has no reason to `git fetch` again once checked out, so a later
+push to that PR goes invisible to the review. Cutting from `main` instead
+means the review worktree was never tracking the PR branch in the first
+place, so there's no stale-fetch failure mode to have. Already told to
+`codex-review-014-017` for its continuation.
+
+**PR #14 (`ci/audit-scope`) confirmed MERGED** — was reported "open
+awaiting checks" minutes earlier in a prior message; real time passing
+between report and check, not a wrong report. Confirmed the fix
+genuinely works: `npm audit --omit=dev --audit-level=high` passes on
+main's live CI run, checked directly (`gh run view` on the run
+immediately following the merge). **Main is now red on exactly one job,
+Grant Hygiene, confirmed on that same live run**: `test_014_..._sql:513`
+defines the `SECURITY DEFINER` function this spine has tracked since
+migration 014 was first reviewed, and since that file lives on `main` via
+PR #12 (see above), `check:grants` fails there too, the same way it always
+did on PR #6 itself. The fix arrives with `fix-014`.
+
+**New lane `fix-approval-hash`** (Sonnet, worktree
+`~/Repos/personal-work/trainos-wt/fix-approval-hash`, branch
+`fix/approval-diff-hash`, not yet pushed to origin — confirmed via `git
+worktree list`) is doing the client half of 014's review HIGH finding #6:
+`decideApproval` now sends `p_expected_diff_hash`, closing the silent
+no-op the review found. The DB-side half of that same finding stays with
+`fix-014`.
+
+**`fix-014` hit a real operational failure worth recording as a negative
+result:** its first shim run collided with a foreign postmaster already
+holding port 5436, and that first run silently applied migrations 001–017
+into the wrong Postgres cluster before the mistake was caught. The lane
+now asserts `data_directory` before every run rather than trusting the
+port number alone to mean "this is my shim." Pin shim ports in
+`postgresql.conf` and assert the data directory — a port number alone is
+not proof of cluster identity when multiple Postgres instances can be
+running on a machine.
+
+**PR #16 (`lane/seeds`, `feat(supabase): fixture world seed, wipe and
+pin`) confirmed open.** Fixture world for tenant `akademi-perdana`:
+confirmed 5 commits, 17 files, 9920 total additions (`gh pr view 16 --json
+files`), of which 4560 lines are in the four `supabase/seeds/*.sql` parts
+plus the wipe and pin files — the reported "3,848 lines" figure was not
+reproduced exactly by this count, most likely a different exclusion set
+(comments, blank lines, or a narrower file selection); not disputed
+further since every other figure checked out. Confirmed matching by
+filename: four parts (tenant/parties, sales/money,
+delivery/compliance/finance, AI-ops/agents) plus a wipe script and a pin.
+Generated by a committed `emit-seed.ts` generator with a `--check` flag
+CI can use to prove the generator and its emitted SQL agree, confirmed in
+the diff. On the shim: seed exit 0, pin passes, wipe leaves 0 fixture
+rows, re-seed passes, `lint:sql` 45/45 — all as reported, not
+independently re-run here (needs the shim). Idempotence proof confirmed
+as a genuinely stronger technique than usual: `pg_stat_xact_all_tables`
+measured inside the same re-seed transaction reports 0 rows
+inserted/updated/deleted across 98 tables, which is a transaction-local
+synchronous measurement of this exact run rather than a delayed
+collector's estimate.
+
+**Three rulings from PR #16, recorded as decisions:**
+
+1. No single-file runner exists on purpose — `lint:sql` rejects `\i`
+   includes, so run order lives in the part headers and the seeds README
+   instead.
+2. The fixture world's one below-floor case (ENG-0198, realised margin
+   29% against a 35% floor) has no column anywhere in 001–013 to hold it.
+   Logged as a schema gap for the migrations backlog rather than invented;
+   the pin deliberately asserts the column is STILL MISSING, so it fails
+   loudly and on purpose the day a migrations lane adds one.
+3. The fixture world's own 13 action policies (its own naming scheme)
+   collide with tenant provisioning's 22 policies under a frozen
+   `action_type` value — confirmed via the PR's own commit message:
+   inserting the tenant already fires
+   `app.seed_action_policies_on_tenant()`, and the seed deliberately does
+   not also insert `core.action_policies`. Reconciling the two lists is a
+   migrations-lane item and needs the user's word on which scheme wins;
+   flagged rather than guessed at.
+
+Twenty-two schema gaps total are enumerated in PR #16's own body (the
+margin-floor column is one). Added as a "seed schema gaps" sub-item to
+`ai/workstreams.md`'s SUPABASE SCHEMA thread, pointing at PR #16 rather
+than duplicating the list.
+
+**PR #13 (`ui/knowledge-tone-rename`) confirmed open**, but not cleanly
+"awaiting checks" — `gh pr checks 13` shows two currently failing, Grant
+Hygiene and npm audit (high+), both inherited main-red items from before
+PR #14's and `fix-014`'s fixes land, not defects in PR #13's own diff. PR
+#15 stays DRAFT, confirmed, explicitly not intended for merge.
+
+---
+
+## 2026-09-13 20:5x — correcting this log's own 20:4x claim: 015–017 were never missing, a reviewer's stale checkout said they were
+
+**"015-017 do not exist" was wrong, and this log repeated it as fact two
+updates ago.** The D-012 review's own body said "`git log --all` over the
+whole repo finds no `015_`, `016_`, or `017_` file ever committed, on any
+branch," and the 20:4x entry above recorded that verbatim as an established
+finding. It was not established — it was a reviewer working from a stale
+checkout. Confirmed by exact timestamp: `git log --format="%ai" -1 <sha>`
+on `5e7c4bc` (015), `5d0f31c` (016) and `52caf6b` (017) gives 19:35:49,
+19:42:56 and 19:59:54 on 13 September — all committed to `cloud/migrations`
+**before** the review's own findings document was committed at 20:08:39
+(`eb5b43e`). The reviewer's worktree was detached at `826bb52` — 014's
+commit, from 19:30:03 — and never ran `git fetch` afterward, so by the time
+it wrote its findings, three more packs had already been pushed to the
+remote branch that its local checkout simply couldn't see. That is a
+tooling gap in the review's own process, not a fact about the repository.
+
+**The error compounds a mistake this log already flagged once this
+session.** Two updates ago, this log corrected itself for accepting "014-017
+all landed" on the strength of commit headlines without checking the
+actual diff. This time the diff HAD been checked — `gh pr diff 6` in an
+earlier pass genuinely showed all three files present — and the mistake was
+different: a second, contradicting claim arrived from what looked like a
+more authoritative source (a formal security review, VERDICT BLOCK) and
+got recorded without being weighed against evidence already in hand. The
+review's authority on the SECURITY findings (which are real and confirmed)
+does not transfer to every factual claim inside the same document.
+
+**What remains true and unchanged:** migration 014's two CRITICAL findings
+are real, independently confirmed against the SQL in this session, and
+still block PR #6. What was wrong is narrower: 015-017 were never absent,
+they were simply never reviewed — for a mundane git-fetch reason, not
+because they didn't exist.
+
+**Two active lanes now, both confirmed via `git worktree list`:**
+
+- `fix-014` (Opus, worktree `~/Repos/personal-work/trainos-wt/fix-014`,
+  branch `fix/014-review`, its own shim on port 5436) is fixing 014's
+  CRIT/HIGH findings directly in the migration file, writing pins that
+  fail against the pre-fix SQL so the fix is provably load-bearing rather
+  than asserted. Confirmed in progress: an uncommitted edit to
+  `014_rls_policies_and_client_grants.sql` sitting in the worktree as of
+  this check. Codex re-reviews after.
+- `codex-review-014-017`'s continuation (worktree
+  `~/Repos/personal-work/trainos-wt/codex-pass2`, detached HEAD at
+  `52caf6b` — 017's own tip, confirming this checkout fetched correctly)
+  now reviews 015-017 plus the nineteen pin edits from the first pass, into
+  a separate report.
+
+**PR #5 and two new CI PRs, all confirmed:**
+
+- PR #5 confirmed 17 of 18 checks green at merge time (`gh pr checks 5`):
+  the only red was npm audit (high+), and `CI Summary` itself passed,
+  confirming `continue-on-error` genuinely kept it from blocking the merge.
+  `Vitest (unit)` took 14m21s on the runner, confirmed exactly — worth its
+  own follow-up regardless of the audit question.
+- PR #14 (`fix(ci): make the npm audit gate block on what ships`, branch
+  `ci/audit-scope`, open) confirmed: its diff removes `continue-on-error:
+true` and switches the command to `npm audit --omit=dev
+--audit-level=high`, with the three dev-only advisories named in a
+  comment exactly as reported (`GHSA-fx2h-pf6j-xcff` vite,
+  `GHSA-5xrq-8626-4rwp` vitest, `GHSA-82fw-gwwq-j7x9`
+  `@vitest/mocker`/`@vitest/coverage-v8`), plus a note that production
+  scope is clean at high+ except two moderate react-router advisories that
+  need their own major-version work.
+- PR #15 (`chore(toolchain): vite 7 + vitest 3 (dev-only audit
+advisories)`, branch `chore/vite7-vitest3`, **draft**) confirmed real;
+  its latest commit, `test(web): state the timeout three Radix-menu tests
+have always needed`, confirms the previously-reported 15-second timeout
+  fix is in progress.
+
+**Merge order, confirmed and recorded plainly:** PR #6 merges only after
+BOTH the 014 fix and the 015-017 review land clean verdicts. PR #11 (018)
+merges only after its own, separate Codex review. Hosted apply stays gated
+on PR #6's eventual MERGE verdict and R-F (`core` exposed on the hosted
+project), whichever lands last.
+
+**One thing worth telling future-me, and it's about process, not SQL:**
+a claim inside an authoritative document is not automatically authoritative
+itself. This review's two CRITICAL security findings were independently
+re-derived from the SQL in this session and are solid. Its incidental claim
+about which files exist was not re-derived — it was trusted because it sat
+inside the same document as the solid findings, and it contradicted
+something this session had already personally verified minutes earlier.
+The fix for next time isn't "trust reviews less" — it's "when a new claim
+contradicts your own prior verification, that contradiction is itself a
+finding, and it gets checked before either claim gets repeated."
+
+---
+
+## 2026-09-13 20:4x — 014 BLOCKED by D-012 review, 015–017 never reviewed; PR #5 and PR #10 both merged
+
+**Correction to this log's own 20:3x entry above: "014–017 land on PR #6"
+was premature, and the error is significant enough to name plainly.** That
+entry recorded PR #6 as complete on the strength of 4 commits and a
+self-reported pin pass rate, and did not catch that the D-012 security
+review had not yet run — or that at review time, PR #6 contained ONLY
+migration 014. PR #12 (`docs(reviews): D-012 dual adversarial review — PR
+#6, migration 014 (BLOCK)`) merged at `02240e6`, confirmed, with **VERDICT
+BLOCK**, and its own body states directly: "`git log --all` over the whole
+repo finds no `015_`, `016_`, or `017_` file ever committed, on any branch"
+at the time of review. Those three packs exist in PR #6's diff now
+(confirmed via `gh pr diff 6`) but were pushed after or during the review
+and **have never been reviewed by anyone.**
+
+**Migration 014's two CRITICAL findings, confirmed directly against the SQL,
+not just quoted from the review:**
+
+1. `014:625` grants **DELETE** on `public.memberships`. Migration 002
+   granted only SELECT/INSERT/UPDATE. 002's self-escalation guard
+   (`memberships_no_self_edit`, `002:763`) is UPDATE-only, so an aal2 ADMIN
+   can `DELETE` their own membership row and `INSERT` a replacement with a
+   higher role — the guard never sees a DELETE+INSERT pair. This also
+   destroys 002's required soft-delete audit trail for any membership an
+   ADMIN deletes this way.
+2. The 014 rollback runs `REVOKE ALL ON ALL TABLES IN SCHEMA public FROM
+authenticated, anon, PUBLIC`, which strips migration 002's ORIGINAL
+   grants (which 014 never touched) rather than restoring pre-014 state.
+   The rollback's own post-condition then asserts zero client privilege on
+   `public` as the CORRECT restored state, so a broken rollback cannot fail
+   loudly — it silently leaves login/profile/team reads broken against a
+   database the header claims is "restored to the state 013 left."
+
+Five more HIGH/MED findings in the full doc
+(`docs/reviews/2026-09-13-codex-retrofit-014-017.md`): all 114 `core`
+tables get blanket tenant-scoped SELECT with no role/permission check
+beyond tenant membership, exposing `core.ai_provider_keys` (ADMIN-only per
+002), `core.public_share_tokens`, and `core.run_node_io` (full agent
+prompt/completion text) to any authenticated principal in-tenant; the web
+client never sends `p_expected_diff_hash` to `core.decide_approval`, making
+the approval optimistic-concurrency check a silent no-op on every call
+today; and the migration header/catalog both state the wrong policy and
+relation counts versus the actual DDL.
+
+**G6 (full execute-before-apply) passed and this does NOT clear the
+BLOCK — the review is explicit about why.** All 14 migrations applied
+cleanly, all 14 pins passed, the 014 rollback succeeded, re-apply and
+re-pin were clean. None of that touches the actual findings: no pin
+exercises the DELETE-then-INSERT escalation, none check that the rollback
+restores `public.*` grants, none probe whether a low-privilege role can
+read a sensitive table. The pin suite proves the SQL matches its own
+(incomplete) test plan, not that the test plan covers what the product
+actually needs authorized.
+
+**Two housekeeping notes from the review, both worth carrying forward.**
+The mandated "thermonuclear" reviewer skill
+(`.claude/skills/thermo-nuclear-code-quality-review/SKILL.md`) does not
+exist anywhere in this environment or in `~/.claude/skills`; a substitute
+adversarial pass (`security-reviewer`, opus) was run in its place and
+independently converged on both CRITICALs, so the gate's "both must land"
+bar was met in substance if not by the letter. Separately, the Grant
+Hygiene failure this spine already recorded against
+`test_014_..._sql:513` (a test defining its own `SECURITY DEFINER`
+function) is very likely a false positive: the function lives in
+`pg_temp`, session-local, dropped when the pin's transaction rolls back,
+so it cannot escalate anything outside the test — flagged in the review for
+a one-line `check:grants` allowlist exception rather than dismissed.
+
+**Separately, found while verifying — not announced by any lane report —
+two more PRs merged:**
+
+- **PR #5 (`cloud/web-swap`) confirmed MERGED** at `3faa627`. Enquiries →
+  proposals → approvals through the `TrainOsClient` seam, plus every CI fix
+  this spine tracked earlier (Prettier, the timezone pin, the
+  artifact-quota `continue-on-error`), plus the ten new `RPC_NAMES` entries
+  `lane/rpc-018` is implementing, are all on main now.
+- **PR #10 (`ui/lists`) confirmed MERGED** at `47298f4`, head `92679c4`
+  after a pre-merge rebase onto main — 1061 web tests at merge time (up
+  from the pre-rebase 1009). `ui-lists` worktree confirmed shut down. **All
+  three UI carry-over PRs (#8, #9, #10) are on main.**
+
+**Three findings that surfaced during PR #10's rebase, each confirmed
+directly against the current source:**
+
+1. The claim-packet's severity ternary hid a real defect: `deadlineSeverity
+=== "INFO" ? "neutral" : "warning"` is a two-branch ternary over a
+   FOUR-member `Severity`, so `DANGER` and `ALERT` both rendered as
+   "warning" — confirmed via the file's own comment. Now reads the kit's
+   `SEVERITY_TONE`.
+2. Collections' 60/30-day overdue thresholds were invented in the screen
+   for a cadence the business actually configures in Settings, which the
+   screen already reads via `GET /v1/collections/rules` — a rung change
+   (e.g. 20/45 days) would have left the chips silently answering for the
+   old numbers. Replaced with an `overdueTone()` helper that grades off the
+   rungs' own `requiresApprovalFromRole` and `autonomy` fields, confirmed
+   directly in the current source.
+3. `apps/web/src/features/hrdc/tone.ts` was deleted after the rebase —
+   confirmed absent from the tree — in favour of the kit's `SEVERITY_TONE`
+   PR #8 had just landed. Concept duplication avoided at merge time.
+
+**New follow-up (g), confirmed directly, and it explains why finding #1
+above has no visible effect yet.** `StatusChip` on an accent `RecordHeader`
+card renders `ACCENT_TONE` and ignores the `tone` prop entirely — confirmed
+at `apps/web/src/shared/components/kit/StatusChip.tsx:118`:
+`onAccent ? ACCENT_TONE : TONE[tone]`. The claim-packet header is `accent`
+and never passes `plainWhenCollapsed`, so the card stays permanently shown
+and the claim-window severity chip has never actually been visible on
+screen — an urgent and a routine claim window render identical pixels
+today, even after the ternary fix above corrected the underlying logic.
+`ui-lists` deliberately wrote no DOM test for this, and said why directly
+in `hrdc.test.tsx`'s own comment: "A DOM assertion here would therefore
+pass against the ternary, against the map, and against a tone of 'success'
+— which is a test that proves nothing," raised as a ruling request instead
+of a fix. Also noted: PR #10's screenshots (opened 11:52) predate PR #9's
+token merge (11:54) and do not reflect the `--primary-solid` split or the
+`SELECTED_TINT` rebind.
+
+**Three things worth telling future-me:**
+
+1. **"N commits with the right headlines" is not the same evidence as "N
+   packs actually exist and were reviewed."** The 20:3x entry trusted `gh
+pr view 6 --json commits` — four commit headlines naming 014 through
+   017 — without a single `gh pr diff 6 | grep "^diff --git"` to confirm
+   the files were actually there, and without checking whether any review
+   had run at all. A commit message is a claim the author makes about their
+   own commit; it is not verification of the commit's contents, and it is
+   nowhere close to verification that a security reviewer looked at it.
+2. **"017 was written" and "017 was reviewed" are different facts, and a
+   spine that conflates them will tell a hosted-apply lane the wrong thing
+   at exactly the moment it matters most.** 015–017 existing in a diff is
+   necessary but nowhere near sufficient for the hosted-apply gate this
+   thread itself defined.
+3. **A lane's own execution proof (pins passing, G6 clean) is not the same
+   claim as a security reviewer's approval, even when both are called
+   "verification."** This session already knew this in the abstract
+   (CLAUDE.md's execution-protocol rule about separate review passes) but
+   still let a pin-pass-rate stand in for a review verdict for one full
+   spine update before the review actually landed and said otherwise.
+
+---
+
+## 2026-09-13 20:3x — 014–017 land on PR #6 (4/4 packs), 018 becomes PR #11, hosted-apply hard rule confirmed machine-enforced
+
+**PR #6 confirmed complete: 4 commits, 014 through 017.** `gh pr view 6`
+lists them in order: 014 RLS policies/client grants/core envelope wrappers,
+015 cron schedules, 016 tenant provisioning, 017 baseline amendment.
+Assertions per pack as reported: 014×51, 015×13, 016×15, 017×39. 17/17 pins
+pass from a clean shim, including a full reverse rollback to zero relations
+— not independently re-run here, since that needs the shim running.
+
+**014–017 execution findings — negative results for the log, several
+confirmed directly in the diff:**
+
+1. `app.require_tenant_id` was ungranted, so RLS policies errored instead of
+   denying — confirmed via the PR's own comment: "no policy in 001-013 used
+   it — 014 is the first to grant it." A silent deny-by-error-instead-of-
+   empty-result is exactly the class of defect a security review exists to
+   catch.
+2. `rule_set_versions` lacked its tenant index.
+3. `budget_status` and `model_tier_status` views were found ungrantable and
+   deferred to 018.
+4. `SET LOCAL` was refused inside a non-volatile function.
+5. The `ADD CONSTRAINT IF NOT EXISTS` trap — a known Postgres footgun this
+   spine has already hit twice before this session — was hit a third time.
+6. Shim caveat: `pg_cron` and `pg_net` are stubs in the local shim, so 015's
+   job _registration_ is pinned but _firing_ is unverified until hosted.
+7. Deferred work, not lost: the pipeline seed moves to 018; tax/HRD rows
+   are PROPOSED pending a Finance verifier; four retention reapers await
+   approved policy rows; four AI-ops columns await a runtime vocabulary
+   that does not exist yet. Codex second pass requested on 015–017 and on
+   nineteen edits made retroactively to earlier (001–013) pins.
+
+**018 becomes PR #11** (`feat(supabase): 018 golden-path RPC pack`, branch
+`lane/rpc-018`), confirmed open: 3 commits, 3 files (migration + rollback +
+test — this repo's standard per-pack shape), 4955 additions total.
+
+**018 findings, confirmed directly against the diff, not just the report:**
+
+1. 23 of 24 `RPC_NAMES` implemented. `me_profile` (the 24th) is confirmed
+   NOT implemented — the migration's own comment says so directly: it needs
+   an HR table for eleven required fields that don't exist yet. One view,
+   nine `app.*` helpers, 160 pin assertions plus 28 in-migration verify
+   steps. `check:rpc` 0 BROKEN, `check:grants` OK, `lint:sql` 42/42, all
+   reported — not independently re-run. Shim rebuilt from `initdb` on port
+   5433 with a hand-written platform shim (four Supabase roles, `auth.*`,
+   a storage stub, a realtime publication).
+2. **R-C resolved by verification, independently confirmed by `grep`:**
+   `core.tax_policies` and `app.resolve_tax_policy` genuinely do not exist
+   anywhere across migrations 001–013, and 018 does not need them because
+   `Quotation` carries no tax field at all.
+3. A real keyset-cursor paging bug was found by the pack's own pin and
+   fixed: under a DESCENDING sort, taking the array's `max` sort key for
+   the next cursor picks the wrong end of the page, so page two repeated
+   page one's tail — confirmed via the migration's own comment naming the
+   exact mechanism and the test that caught it.
+4. `SET CONSTRAINTS IMMEDIATE` fires nothing inside a PL/pgSQL
+   subtransaction; replaced with an explicit read-back.
+5. `DEAL_CHAIN` is confirmed a genuine, deliberately unpapered-over
+   contract/schema divergence: 004's own CHECK constraint allows
+   `ENGAGEMENT | OPPORTUNITY | PACKET`, while the contract's
+   `PIPELINE_OBJECTS` wants `ENGAGEMENT | DEAL_CHAIN | OPPORTUNITY`. The
+   migration's own comment states the reasoning for not aliasing one onto
+   the other: "inventing an alias would hide a schema/contract disagreement
+   that has to be settled in 003/004, not here" — and it pins a test that
+   fails loudly if the divergence is ever silently resolved rather than
+   deliberately reconciled.
+6. Doc 09's `search_path` pin asserts a string PostgreSQL never actually
+   stores — this is [[postgres-search-path-footgun]] surfacing again, the
+   quoted-list form being a silent no-op.
+
+⚠ **Hard rule, and this time confirmed machine-enforced, not just stated.**
+Every `core` table is `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL
+SECURITY` with zero policies until 014's policies exist. FORCE removes the
+table owner's RLS exemption, so on any project whose definer-function owner
+is not `BYPASSRLS`, every read in 018 returns **ZERO ROWS, silently, as an
+empty list, not an error** — until 014 lands. The local shim's `postgres`
+role IS a superuser, which is the only reason 018's own pins all pass there
+regardless of 014's state. Confirmed by reading the migration's own test
+file directly: it asserts this as its very first check and raises the
+literal notice **"018 MUST NOT be applied to a hosted project before 014"**
+if it ever detects a FORCE-RLS table with no covering policy. This is now
+the single most load-bearing ordering constraint on the whole hosted-apply
+path, and it will catch a premature apply on its own rather than depending
+on anyone remembering the rule. Follow-up slice requested for
+`lane/rpc-018`: implement PR #5's ten new RPC names, rebase on
+`cloud/migrations`, and add the pipeline stage seed.
+
+---
+
+## 2026-09-13 20:2x — PR #8 merged, main-red recount (five not four), a correction to this log's own 20:1x entry
+
+**PR #8 confirmed MERGED at `a4ea833`** (`gh pr view 8`: mergedAt
+2026-09-13T11:55:41Z), after `review-pr8`'s MERGE verdict. The reviewer ran
+its own gates in an isolated worktree pinned to `6dfd281` — confirmed as the
+lane's actual tip from the worktree list recorded two updates ago — reporting
+typecheck clean and 1004 tests, a different number from the lane's own
+self-reported 1389 (28 new); recorded as two separate counts from two
+separate checks, not reconciled into one. The reviewer's recount of 8
+replaced tone ternaries (not 10, the other two going to `ui/lists`) matches
+what this thread already recorded independently. `ui-states` worktree
+confirmed shut down. Two of the three UI carry-over PRs (#8, #9) are on main;
+only #10 remains under review.
+
+**Main-red was five failing checks on `9fdcb4d`, not four.** Re-checked run
+34753909066 job-by-job rather than trusting the earlier pass: Vitest (unit)
+also failed, with five wall-clock/timezone-dependent test failures
+(`DateText.test.tsx`, `ClientProposalPage.test.tsx`, `knowledge.test.tsx`,
+`AttendanceCapturePage.test.tsx` ×2) — every one an assertion written
+against a Malaysian wall clock with the runner's timezone left unpinned.
+This was missed in the earlier count of main-red items and is corrected
+here. None of the five came from PR #5's own diff, confirmed by their
+presence on `9fdcb4d` itself.
+
+**`fix-pr5`'s work is confirmed IN PR #5's own commit history, not a
+separate branch that merges in later.** `gh pr view 5 --json commits` lists
+the three fix commits directly. Confirmed each fix landed as described:
+`apps/web/vitest.config.ts` on `origin/cloud/web-swap` sets `TZ:
+"Asia/Kuala_Lumpur"` with a comment citing the same tenant default used
+elsewhere in the schema; `.github/workflows/ci.yml` sets `continue-on-error:
+true` on the `upload-artifact` step with a comment stating the quota is
+account-level and "must not be able to report a green build as a red one."
+Confirmed on PR #5's own latest CI run (34755634781): Gitleaks, Prettier and
+Vite build now pass; Vitest was still running at last check, not yet
+resolved either way.
+
+**npm audit ruling: only the coarse half is live.** The reported plan was to
+scope the CI step to `npm audit --omit=dev --audit-level=high`, note the
+three advisory ids (`GHSA-fx2h-pf6j-xcff` vite, `GHSA-5xrq-8626-4rwp`
+vitest, `@vitest/coverage-v8`) in a comment as dev-only, and land the
+vite-7-and-vitest-3 upgrade as a separate draft PR. What's actually on
+`cloud/web-swap` right now: the `deps-audit` job gained `continue-on-error:
+true` on the unchanged `npm audit --audit-level=high` command — no
+`--omit=dev`, no id comment. No `chore(toolchain): vite 7 + vitest 3` PR
+exists on GitHub yet (`gh pr list --state all` checked directly). Recorded
+as a plan not yet fully executed, not a false report — the coarser mitigation
+that IS live achieves the same immediate goal (main stays green) by a
+blunter means.
+
+**Correction to this log's own 20:1x entry above.** That entry said the
+MoneyText kit follow-up should be dropped entirely — too broad, based on
+confirming only the kit component itself. The correct picture, per the team
+lead and independently confirmed by reading the files: `MoneyText` is fixed
+(PR #9's `5f01e57`), but two screens carry their own `font-mono` wrappers
+that never routed through it, so the kit fix never reached them.
+`InvoiceDetailScreen.tsx` hardcodes `font-mono` at ten call sites (confirmed
+at `a4ea833`) — this closes as a side effect of PR #10's `DataTable`
+conversion, since that's exactly the table being replaced.
+`ExecutiveDashboard.tsx` hardcodes it at three call sites (confirmed
+directly at lines 91, 349, 385) with no lane assigned — this stays open as a
+screen-level item, tracked as verification doc §5 item 5 / §7 row 9, not a
+kit follow-up. `ai/workstreams.md` UI-CARRYOVER corrected in place.
+
+**Two things worth telling future-me:**
+
+1. **A "the kit is fixed" claim needs checking at every call site, not just
+   the kit.** `MoneyText` had zero `font-mono` left in it, which is true and
+   was verified — but two screens had grown their own parallel `font-mono`
+   styling that never went through the shared component at all, so fixing
+   the shared component fixed nothing for them. The lesson isn't "verify the
+   file the report names" — it's "grep for the actual symptom
+   (`font-mono` near a money/numeric value) across the tree, because the
+   defect and the component are not the same scope."
+2. **A CI run that "fails" can still be job-by-job re-examined for a check
+   nobody mentioned.** Vitest (unit) was sitting in the same `gh run view`
+   output used to find the other four main-red failures, twice, before it
+   was actually read all the way through. The habit that would have caught
+   it the first time: read every job row in a failing run, not just the
+   ones a report already names.
+
+---
+
+## 2026-09-13 20:1x — PR #9 merged (was reported open), PR #10 confirmed with six deviations
+
+**PR #9 (`ui/tokens`) already merged.** `gh pr view 9` shows `state: MERGED`,
+merged at 11:54:52Z as `ed3c337`, now on main. Reported to this thread as
+"open... under review by review-pr9"; by the time it was checked it had
+landed — the review evidently passed. Confirmed 3 commits (matches); files
+35, not 33 as reported (minor, not disputed — every substantive claim was
+accurate). Confirmed no feature screen touched: all 35 files are under
+`kit/`, `styles/`, `tailwind.config.ts`, or `docs/reviews/`.
+
+**Verified word-for-word against `docs/reviews/2026-09-13-verification.md`
+at `ed3c337`:**
+
+- Row 1b: muted text on a selected row now reads 6.54:1 light / 6.69:1 dark
+  (was 4.36:1). Mechanism: `SELECTED_TINT` rebinds `--ink-muted` to
+  `--ink-secondary` for its own subtree via `[--ink-muted:var(--ink-secondary)]`,
+  so every descendant follows without a per-call-site change.
+- Row 1c: `--on-primary` on solid primary now reads 4.82:1 dark (was 3.24:1).
+  Mechanism: new `--primary-solid` / `--primary-solid-hover` tokens carry
+  `#1F5BFF` in both themes, used only at the four call sites that paint the
+  accent as a fill under text; `--primary` keeps every text/mark use.
+- Contrast suite: confirmed exactly "49 cases, was 33" in
+  `tokens.contrast.test.ts`'s own gate table.
+- Mono-caps, confirmed exact on all four cited routes: `/dashboard` 29→11,
+  `/sales/enquiries` 34→21, `/compliance/hrd-corp` 22→12, `/finance/invoices`
+  36→22. Mechanism: `MONO_LABEL` (nine kit components) became `SECTION_LABEL`,
+  and `MoneyText` dropped `font-mono`, keeping `tabular-nums`.
+- `/training/participants` "x275" confirmed real (it's the literal count in
+  the route table) and confirmed a false violation, exactly as reported: the
+  doc's own re-measurement finds 350 of 354 counted runs are `PAR-…`/
+  `CERT-…` record references, which brief §1 keeps in mono on purpose —
+  "there is no kit lever on them and there should not be one."
+- Two defects confirmed recorded, not fixed, for the stated reason (owning
+  file outside this lane's allowed set): `--on-primary` on `--danger` is
+  2.22:1 dark — the alias is in `tailwind.config.ts` (this lane's file), the
+  call site is `shared/components/ui/toast.tsx` (a shadcn primitive, not
+  this lane's). `shared/components/ui/button.tsx` has zero importers
+  anywhere in the app, confirmed independently via `git grep` — a dead
+  second button vocabulary beside kit `Button`.
+
+**PR #10 (`ui/lists`) confirmed open**, 5 commits and 17 files, both exact.
+"1009 passing, 110 files" confirmed verbatim in the PR's own Validation
+section (not independently re-run). Under review by `review-pr10`. All six
+deviations confirmed against the actual diff:
+
+1. Invoice totals moved to a `<dl>` under the table rather than table rows —
+   confirmed via the file's own "DECISIONS §7" comment: kit `DataTable` has
+   no footer, and a summary is not a line item.
+2. The AI tier-assignment matrix lost its sticky first column and its
+   staged-row `bg-ai-tint` converting to `DataTable` — confirmed via the
+   diff's own "TWO THINGS THE CONVERSION COSTS" comment; no kit prop exists
+   for either, and the tint specifically is AI-hue territory CLAUDE.md
+   reserves, so it couldn't be improvised back.
+3. `tsconfig.strict.json` gained exactly three new paths, confirmed in the
+   diff: `compliance/registers.ts`, `ClaimPacketsScreen.tsx`,
+   `InvoicesListScreen.tsx`.
+4. Collections' `ListToolbar` sits above the DETAIL pane, not the table,
+   because it spans the full width of a master/detail grid — confirmed via
+   the PR body's own reasoning that constraining it to the table column
+   would stack two bands, exactly what §10b forbids. Kept as-is.
+5. `HRDC_RULE_CHANGES_PATH` still carries the identical "leaf opens the
+   record" defect that `HRDC_PACKET_PATH` had before this lane fixed it —
+   confirmed via the file's own updated comment, which states this directly
+   and marks it "NOT this pass's."
+
+**One queued kit follow-up is already resolved, not open.** Follow-up (a),
+"`MoneyText` hardcodes `font-mono` at `Money.tsx:32,43`," was fixed as part
+of PR #9 (`5f01e57`, "labels take the UI font, numbers take tabular
+figures") — confirmed by reading current `Money.tsx` on main: both lines use
+`tabular-nums`, `font-mono` appears nowhere in the file. PR #10's own body
+independently corroborates this (it removed eight now-redundant
+`tabular-nums` props and explicitly scoped the kit-level fix to "the kit
+lane, not this one"). Whoever next works the kit follow-up list should drop
+(a) rather than redo it; (b)–(f) remain open as reported.
+
+**One thing worth telling future-me:** a report that a PR is "open under
+review" is a snapshot, not a fact — by the time the doc spine gets to verify
+it, the state may have already moved on. Always re-check `state`/`mergedAt`
+directly rather than assuming the reported lifecycle stage still holds; this
+is the second time in one session a PR's actual state (open vs. checks vs.
+merged) differed from what was reported, both times because real time had
+passed between the report and the check, not because the report was wrong
+when written.
+
+---
+
+## 2026-09-13 20:0x — PR #7 merged, PR #8 opened and reviewed, two earlier flags resolved
+
+**PR #7 (`ci/gitleaks`) merged.** Confirmed at `0910b9d` — `git log -1
+0910b9d` shows the merge commit and `git merge-base --is-ancestor 0910b9d
+main` confirms it. The `ci-gitleaks` worktree is gone, matching "lane shut
+down." Confirmed the fix actually works repo-wide: main's next CI run
+(34755129255) passes Gitleaks. It still fails Prettier (drift check); Vite
+build and npm audit were not independently re-checked on this run but have
+no reason to have changed. `fix-pr5` is doing the remaining work — three
+commits confirmed via its own `git log`: `0b7221e` (Prettier), `6c84ca0`
+(pin suite timezone), `c4b8a78` (stop the shared artifact-storage quota from
+failing build/test gates) — no PR from it yet.
+
+**Two earlier flags resolved, one still open.** The `fix/main-ci` vs
+`fix/pr5` branch-name mismatch flagged at 19:5x is still unexplained as a
+naming question, but the substantive worry — that the lane hadn't actually
+started fixing CI — is resolved: it has three real fix commits now. The
+`codex-014-017` detached-HEAD worktree flagged as unexplained in an earlier
+report is confirmed legitimate: it is `codex-review-014-017`'s own checkout
+of PR #6's tip (`826bb52`) for its retrofit review, not an orphaned lane.
+
+**PR #8 (`ui/states`) opened** (`fix(screens): empty states, tone ternaries,
+drawer primary and the registry toolbar`, ~19:49), closing four
+verifier-carry-over items. Reported 1389 tests (28 new), local gates green —
+not independently re-run, but the diff shape is consistent: 23 files changed,
+5 of them test files (`gh pr diff 8`). Under independent review by
+`review-pr8` (Sonnet `code-reviewer`) before merge; its own CI is still
+mostly pending as of this check, with Gitleaks, Install and Detect optional
+surfaces passing so far.
+
+**Three deviations confirmed against the actual files, not just the PR
+description:**
+
+1. Verification doc §6 claimed `statusTone.ts` already had maps for all ten
+   tone-ternary vocabularies — false. Only `HRDC_PACKET_PANEL_TONE` of the
+   six names in question pre-existed; `AGENT_TONE`, `SEVERITY_TONE`,
+   `MESSAGE_CATEGORY_TONE` and `HOURS_SAVED_TONE` are new in
+   `apps/web/src/shared/components/kit/statusTone.ts` on `ui/states`, and a
+   fifth, `PARTICIPANT_ATTENDANCE_TONE`, is feature-local in
+   `apps/web/src/features/engagements/attendanceModel.ts`. Approved as
+   reported.
+2. §6's kit-level "give `Drawer` a primary scope of its own" was deferred;
+   `KnowledgeSourcesScreen.tsx` migrated to the `ProviderKeysScreen` pattern
+   instead (a SECONDARY-labelled action standing in for a primary the kit's
+   one-primary rule won't let it declare) — confirmed via the file's own
+   comment explaining the trade-off.
+3. A real defect was fixed in `TnaDetailPage.tsx`: its own comment confirms
+   the old ternary "painted a DANGER constraint" as neutral; it now reads
+   `SEVERITY_TONE[constraint.severity]`.
+
+Carried to other lanes rather than dropped, per PR #8's own listing:
+`EnquiryDetailPage`, `CostingWorksheetPage`, `QuotationsListPage` and three
+M03 `ListToolbar` screens to `cloud/web-swap`; `ClaimPacketScreen` and
+`CollectionsQueueScreen` to `ui/lists`.
+
+---
+
+## 2026-09-13 19:5x — main CI red since 9fdcb4d, PR #6/#7 open, fix-lane name mismatch, R-F confirmed live
+
+**Main is red, not just PR #5.** Checked `gh run view` on run 34753909066
+(triggered by `9fdcb4d`, "docs(state): pack v3 merged") directly: it fails
+Gitleaks, Prettier (drift check), Vite build and npm audit (high+) — the same
+four PR #5 fails. Every PR opened since inherits all four regardless of its
+own diff. A lane (Opus) was redirected to fix main's CI first, then merge
+main into `cloud/web-swap`, reportedly on branch `fix/main-ci`.
+
+**Naming mismatch found while verifying.** The actual worktree is
+`~/Repos/personal-work/trainos-wt/fix-pr5`, on branch `fix/pr5` (tracking
+`cloud/web-swap`), not `fix/main-ci`. Its tip commit as of this check is
+`refactor(web): route the approval screens through the seam` — web-swap
+feature work, not a CI fix. Recorded as-is rather than assuming either the
+report or the branch is wrong; whoever resumes this should check that
+worktree's log before assuming CI repair has started there.
+
+**PR #6 (`cloud/migrations`, "feat(supabase): migrations 014–017") is open**
+and gated on `codex-review-014-017` (Codex gpt-5.6-sol xhigh, its own shim on
+port 5435) reporting MERGE / MERGE-WITH-FIXES / BLOCK to
+`docs/reviews/2026-09-13-codex-retrofit-014-017.md`; it does not merge before
+that verdict. It also fails Grant Hygiene — confirmed the exact finding:
+`supabase/tests/test_014_rls_policies_and_client_grants.sql:513` defines a
+`SECURITY DEFINER` function, which `check:grants` flags because a test must
+not be able to create the privilege escalation it is meant to check for. The
+review must explain or fix this.
+
+**PR #7 (`ci/gitleaks`, "ci: run gitleaks binary directly, no license
+needed") is open.** Gitleaks itself now passes on it — the fix works — but
+`gh pr checks 7` (run 34754819325) shows the same three main-red failures
+(Prettier, Vite build, npm audit) still present. The report that PR #7's
+"checks [are] green so far" is wrong by the same margin as PR #5's report
+was; fixing one gate does not clear the other three, which are repo-wide, not
+lane-specific.
+
+**R-F confirmed by direct probe, not just reported.** Got the hosted
+project's URL and publishable key from the Supabase MCP
+(`get_project_url`, `get_publishable_keys` for `balzmmsmrawzmefkavte`) and
+called its REST endpoint myself with `Accept-Profile: core`. Response was
+exactly `PGRST106`: `"Only the following schemas are exposed: public,
+graphql_public."` This matches the report precisely — `core` is genuinely
+not exposed, and it is the one thing actually blocking the first hosted
+apply once 014 clears review.
+
+**Two things worth telling future-me:**
+
+1. A status report and the underlying evidence can each be individually true
+   and still add up to a wrong overall claim. "PR #5 is green except
+   Gitleaks" and "PR #7's checks are green so far" were both probably true at
+   the instant Gitleaks was the freshest signal someone looked at — but
+   `gh pr checks` for both PRs had three more failures sitting in the same
+   output the whole time. Read the full check list, not the most recent job.
+2. A lane's reported branch name is not guaranteed to match what is on disk.
+   `fix/main-ci` does not exist; `fix/pr5` does, tracking a different intent
+   (web-swap fixes) than what was reported (main CI fixes). Worth a `git
+worktree list` / `git log` check before trusting a branch name in a status
+   report, the same way a commit hash or a CI claim gets checked.
+
+---
+
+## 2026-09-13 19:4x — PR #5/#6 open, RPC gap found, seeds and codex-review lanes, repo-name note
+
+**PR status (verified, not taken on trust).** PR #5 (`cloud/web-swap`) and PR
+#6 (`cloud/migrations`) are both open against `PARALLELPARADIGMS/alex-project`.
+The team lead reported PR #5's gates as "green except Gitleaks"; checking
+`gh pr checks 5` against run 34754549631 directly found that claim wrong —
+four checks fail, not one:
+
+1. **Gitleaks** — as reported: `gitleaks-action@v2` errors `missing gitleaks
+license` because the repo is an organisation repo and has no
+   `GITLEAKS_LICENSE` secret. `ci-gitleaks` (worktree `trainos-wt/ci-gitleaks`,
+   branch `ci/gitleaks`) is swapping the action for the pinned binary.
+2. **Prettier (drift check)** — real, unrelated drift in
+   `apps/web/scripts/check-barrels.mjs`; not mentioned in the report.
+3. **npm audit (high+)** — 8 real vulnerabilities (5 moderate, 1 high, 2
+   critical) in the `vite`/`vite-node` and `react-router`/`react-router-dom`
+   chains; `npm audit fix --force` would force a breaking
+   `react-router-dom@7.18.3` and needs a deliberate decision, not an
+   autofix; not mentioned in the report.
+4. **Vite build** — the build step itself passes; only the
+   `actions/upload-artifact@v4` step fails, on "Artifact storage quota has
+   been hit," a GitHub Actions account-level limit rather than a code
+   defect; not mentioned in the report.
+
+**RPC gap (confirmed).** PR #5 diffs in ten `RPC_NAMES` entries in
+`apps/web/src/shared/api/rpcClient.ts` with no SQL behind them:
+`patch_enquiry_extraction`, `list_follow_ups`, `get_follow_up_draft`,
+`list_proposals`, `add_proposal_section`, `put_proposal_section`,
+`regenerate_proposal_section`, `list_quotations`, `get_rate_card`,
+`get_audit`. `lane/rpc-018` is now implementing all ten as part of 018,
+marking "spec derived from client" wherever `docs/architecture/09` has no
+spec for one.
+
+**New lanes.** `seeds` (Opus, worktree `trainos-wt/seeds`, branch
+`lane/seeds`, shim port 5434): `supabase/seeds` fixture world, wipe script
+and pin, per the user's 19:27 goal "write seeds too for test purposes."
+`codex-review-011-013` (Codex gpt-5.6-sol xhigh via `codex-rescue`, worktree
+`trainos-wt/codex-011-013`, branch `review/codex-011-013`): D-012
+adversarial review of packs 011–013 to
+`docs/reviews/2026-09-13-codex-retrofit-011-013.md`; fallback order if Codex
+is unavailable is Kimi (not installed locally, effectively skipped) then a
+second Opus reviewer. Codex quota reported back at a 19:29 probe — not
+independently re-verified here.
+
+**Repo-name correction.** The GitHub repo is `PARALLELPARADIGMS/alex-project`,
+confirmed via `git remote -v`. "trainos" is only the local directory name and
+the `@trainos/*` npm package scope — nothing in the repo's GitHub identity.
+Recorded here and in `ai/workstreams.md`'s CI thread so a future session does
+not search GitHub for "trainos" and conclude the repo does not exist.
+
+**Also found, unprompted:** the CI AND BRANCH PROTECTION thread in
+`ai/workstreams.md` was itself stale — it said the pipeline "has never
+executed," which stopped being true once PR #5 and PR #6 started running
+seventeen jobs each. Corrected in place. Separately, branch protection on
+`main` cannot be configured at all on the repo's current plan/visibility:
+`gh api repos/.../branches/main/protection` returns 403 "Upgrade to GitHub
+Pro or make this repository public to enable this feature" — a decision for
+the user, not an implementation gap.
+
+**One thing worth telling future-me:** a lane's own status report is not
+verification. The team lead's "gates green except Gitleaks" was probably
+copied from Gitleaks being the most recently-seen failure rather than a full
+check of the run — three other real failures were sitting in the same `gh pr
+checks` output the whole time.
+
+---
+
+## 2026-09-13 19:35 — correction: worktree paths for the 19:25 blast
+
+The 19:25 entry below named `lane/rpc-018`, `ui/tokens`, `ui/lists` and
+`ui/states` as worktree lanes but did not record the worktree paths, and its
+HEAD claim (a "chore: prettier pass" commit on top of `9fdcb4d`) was wrong —
+the formatter pass produced nothing to commit and `9fdcb4d` was HEAD.
+Correcting per the team lead: all four run under
+`~/Repos/personal-work/trainos-wt/{rpc-018,ui-tokens,ui-lists,ui-states}` on
+branches `lane/rpc-018`, `ui/tokens`, `ui/lists`, `ui/states` respectively,
+each opening a PR to main. `ai/workstreams.md`, `ai/hot-state.md` and
+`ai/resume-brief.md` have been updated in place with the paths since none of
+them are append-only.
+
+---
+
+## 2026-09-13 19:25 — headless blast (API phase + UI carry-over)
+
+**Recovery context.** A network outage at ~16:00 killed the local migrations
+lane mid-014 and the first cloud migrations lane; nothing of 014–017 landed and
+no dirty SQL was left. By 19:05, PR #1 (routing) and PR #2 (worker) had merged
+to main, and `cloud/opus-pass` (PR #3) and `cloud/pack-v3` (PR #4) had also
+merged. This block records the six lanes running as of 19:25, launched by the
+orchestrator on top of that recovery.
+
+**Cloud lanes (continuing from 19:05, no PR yet):**
+
+- `cloud/migrations` — migrations 014–017 from a fresh shim. Owner files:
+  `supabase/migrations/014*` through `017*`.
+- `cloud/web-swap` — enquiries → proposals → approvals swapped from
+  `@trainos/fixtures` onto the `TrainOsClient` seam. Owner files:
+  `apps/web/src/features/{enquiries,proposals,approvals}/**`.
+
+**Worktree lanes (launched 19:25):**
+
+- `lane/rpc-018` — the 018 RPC pack. Owner files: `supabase/migrations/018*`.
+- `ui/tokens` — kit contrast tokens plus mono-uppercase reduction. Owner
+  files: `apps/web/src/shared/components/kit/**` (tokens only).
+- `ui/lists` — HRD Corp + Invoices list leaves, Collections §10b conformance,
+  zebra on two hand-rolled tables. Owner files:
+  `apps/web/src/features/{hrdc,invoices,collections}/**`.
+- `ui/states` — nine empty states, ten tone ternaries, Drawer primary scope,
+  `ListToolbar` on the agent registry. Owner files: feature screens named in
+  `ai/resume-brief.md`'s verifier carry-over section.
+
+**User rulings recorded at 19:23:** go for 018; go for the first hosted apply
+after migration 014 passes `migration-retrofit-qa`; region Singapore confirmed
+by the user and by the hosted project itself (`balzmmsmrawzmefkavte`,
+ap-southeast-1, ACTIVE_HEALTHY, zero migrations applied, reachable via the
+Supabase MCP so the apply lane uses `apply_migration` rather than psql plus a
+DB secret). Still open for the user: exposing `core` in the dashboard (R-F),
+n8n in the proposal, and the four UI rulings tracked in `ai/resume-brief.md`.
+
+**Pruned from workstreams (both ✅ DONE, "Resume: Nothing"):**
+
+- **UI SCREENS** — twenty-seven screens across fourteen features (closed
+  2026-09-12). All fourteen features declared their own route array in
+  `FEATURE_ROUTES`; every screen was built from the kit and read only
+  `@trainos/fixtures`, never a real API response. Superseded by CONSOLIDATION.
+  Refs: `apps/web/src/features/**`, `apps/web/src/routes/routes.tsx`,
+  `docs/research/09-design-pack-inventory.md`, `D-114`, `D-116`.
+- **CONSOLIDATION** — one data seam, closed by `d4ae83d` (2026-09-13 10:40).
+  Thirteen modules had grown their own copy of the client hook in four
+  incompatible shapes; `shared/api/useApi.ts` is now the only one and
+  `ApiProvider` is mounted at the root. The load-bearing fix was `toApiError`
+  misclassifying a thrown `ContractError` (a policy refusal) as a transport
+  `UNKNOWN`, which put a retry button on a 403 — pinned as `B-012`. What
+  remained (two `StandInField.tsx` stand-ins) lives on in KIT DUPLICATE SWEEP,
+  which stays active in `ai/workstreams.md`. Refs:
+  `apps/web/src/shared/api/useApi.ts`, `apps/web/src/shared/api/errors.ts`,
+  `d4ae83d`, `af92507`, `D-115`, `B-012`.
+
+**Things worth telling future-me:**
+
+1. The `.env.local` the api-phase plan (`ai/briefs/2026-09-13-api-phase-plan.md`)
+   references does not exist at the repo root as of 19:25 — do not assume a
+   lane can read it without first checking.
+2. `pg_isready` against `/tmp:5432` reports no shim running as of 19:25, so
+   whichever migrations lane runs next must start one per
+   `supabase/HANDOFF.md` rather than assuming the shim from an earlier session
+   is still up.
+
+---
+
 ## 2026-09-13 — consolidation, and the doc spine backfilled
 
 **Consolidation (web).** `ActionOutcome` deleted from finance and hrdc, both now

@@ -7,11 +7,11 @@
  * reaches `decideApproval` and renders what came back.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { APPROVAL_AURORA } from "@trainos/contract";
-import { fixtureClient } from "@trainos/fixtures";
+import { fixtureClient } from "@/shared/api";
 import { ApprovalDetail } from "../ApprovalDetail";
 import { APPROVAL_DETAIL_PATTERN, APPROVALS_PATH, approvalPath } from "../paths";
 import { render } from "@testing-library/react";
@@ -249,5 +249,53 @@ describe("M02-S02 approval detail", () => {
        retried, so no retry button may appear on one. */
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(screen.getByRole("button", { name: "Back to the inbox" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * What the screen sends against a real database, where the route's REF is not
+ * the id `core.decide_approval(p_approval_id uuid, …)` takes, and where an
+ * approval payload may not carry the `diffHash` an APPROVE must echo back.
+ */
+describe("M02-S02 approval detail · deciding against the database", () => {
+  beforeEach(() => {
+    resetFixtures();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("decides by the approval's id from the loaded detail, not the route ref", async () => {
+    const user = userEvent.setup();
+    const { id } = await fixtureClient.getApproval(APPROVAL_AURORA);
+    expect(id).not.toBe(APPROVAL_AURORA);
+    const decide = vi.spyOn(fixtureClient, "decideApproval");
+    renderDetail();
+
+    await user.click(await screen.findByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(decide).toHaveBeenCalled());
+    expect(decide.mock.calls[0]?.[0]).toBe(id);
+  });
+
+  it("withholds Approve and says why when the payload carries no diffHash", async () => {
+    const user = userEvent.setup();
+    const original = fixtureClient.getApproval.bind(fixtureClient);
+    vi.spyOn(fixtureClient, "getApproval").mockImplementation(async (id: string) => {
+      const detail = await original(id);
+      return { ...detail, diffHash: undefined as unknown as string };
+    });
+    const decide = vi.spyOn(fixtureClient, "decideApproval");
+    renderDetail();
+
+    const approve = await screen.findByRole("button", { name: "Approve" });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText("Approving is not available here yet")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+
+    await user.keyboard("a");
+    await user.click(approve);
+    expect(decide).not.toHaveBeenCalled();
   });
 });

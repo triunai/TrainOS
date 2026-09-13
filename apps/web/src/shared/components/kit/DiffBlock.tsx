@@ -1,6 +1,6 @@
 import type { DiffLine } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The diff block — "if you approve, this happens".
@@ -38,7 +38,7 @@ export function DiffBlock({ lines, title = "If you approve", className }: DiffBl
         className,
       )}
     >
-      <h3 className={MONO_LABEL}>{title}</h3>
+      <h3 className={SECTION_LABEL}>{title}</h3>
       <ul className="flex flex-col gap-1">
         {lines.map((line, index) => {
           const op = OP[line.op];

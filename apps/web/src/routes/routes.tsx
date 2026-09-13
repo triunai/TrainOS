@@ -4,6 +4,7 @@ import { AppShell } from "@/shared/components/layout";
 import { LoadingState } from "@/shared/components/states";
 import { ALL_NAV_ROUTES, DEFAULT_ROUTE_PATH } from "@/shared/config/nav";
 import { agentsRoutes } from "./agents.routes";
+import { authRoutes } from "./auth.routes";
 import { approvalsRoutes } from "./approvals.routes";
 import { dashboardRoutes } from "./dashboard.routes";
 import { devRoutes } from "./dev.routes";
@@ -30,6 +31,8 @@ import { complianceRoutes } from "./compliance.routes";
 import { tasksRoutes } from "./tasks.routes";
 import { reportsRoutes } from "./reports.routes";
 import { settingsRoutes } from "./settings.routes";
+import { PrincipalLayout } from "./PrincipalLayout";
+import { PublicLayout } from "./PublicLayout";
 
 /**
  * The route table is GENERATED from the navigation tree. There is no second
@@ -46,7 +49,10 @@ import { settingsRoutes } from "./settings.routes";
  *
  * Route-level role guards are deliberately NOT here yet. The nav is filtered by
  * role, but a filtered rail is a convenience, not a boundary — the API decides.
- * Guards land with the real session, wrapping the element, not the path.
+ *
+ * The SESSION guard is here, wrapping the element, not the path: every route
+ * that needs a principal sits under `PrincipalLayout`, and the account routes
+ * (`auth.routes.tsx`, supabase mode only) sit beside it.
  */
 
 const PlaceholderPage = lazy(() =>
@@ -101,16 +107,24 @@ const FEATURE_ROUTES = [
  * nesting it under `AppShell` would put a sidebar, a search field and a
  * notification bell in front of someone with no account. Another public screen
  * adds an entry to `portalRoutes` rather than a second mount point here.
+ *
+ * They sit under `PublicLayout`, OUTSIDE `PrincipalLayout`: a client has no
+ * session and no `Me`, and the session guard would send them to sign-in.
  */
 const PUBLIC_ROUTES = [...portalRoutes];
 
 export function AppRoutes() {
   return (
     <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<Navigate to={DEFAULT_ROUTE_PATH} replace />} />
+      {authRoutes.map((route) => (
+        <Route key={route.path} path={route.path} element={route.element} />
+      ))}
 
-        {/* Feature routes come FIRST and deliberately so. React Router scores
+      <Route element={<PrincipalLayout />}>
+        <Route element={<AppShell />}>
+          <Route index element={<Navigate to={DEFAULT_ROUTE_PATH} replace />} />
+
+          {/* Feature routes come FIRST and deliberately so. React Router scores
             two identical paths the same and breaks the tie on declaration
             order, so a real screen mounted after the generated list would lose
             to `PlaceholderPage` on its own path.
@@ -118,41 +132,44 @@ export function AppRoutes() {
             Each feature declares its own array in `<feature>.routes.tsx` and
             adds one line here. That is the whole contract — nothing else in
             this file changes as screens land. */}
-        {FEATURE_ROUTES.map((route) => (
-          <Route key={route.path} path={route.path} element={route.element} />
-        ))}
+          {FEATURE_ROUTES.map((route) => (
+            <Route key={route.path} path={route.path} element={route.element} />
+          ))}
 
-        {ALL_NAV_ROUTES.map((route) => (
+          {ALL_NAV_ROUTES.map((route) => (
+            <Route
+              key={route.path}
+              path={route.path}
+              element={
+                <Suspense fallback={<LoadingState label={`Loading ${route.label}`} />}>
+                  <PlaceholderPage route={route} />
+                </Suspense>
+              }
+            />
+          ))}
+
+          {import.meta.env.DEV
+            ? devRoutes.map((route) => (
+                <Route key={route.path} path={route.path} element={route.element} />
+              ))
+            : null}
+
           <Route
-            key={route.path}
-            path={route.path}
+            path="*"
             element={
-              <Suspense fallback={<LoadingState label={`Loading ${route.label}`} />}>
-                <PlaceholderPage route={route} />
+              <Suspense fallback={<LoadingState label="Loading" />}>
+                <NotFoundPage />
               </Suspense>
             }
           />
-        ))}
-
-        {import.meta.env.DEV
-          ? devRoutes.map((route) => (
-              <Route key={route.path} path={route.path} element={route.element} />
-            ))
-          : null}
-
-        <Route
-          path="*"
-          element={
-            <Suspense fallback={<LoadingState label="Loading" />}>
-              <NotFoundPage />
-            </Suspense>
-          }
-        />
+        </Route>
       </Route>
 
-      {PUBLIC_ROUTES.map((route) => (
-        <Route key={route.path} path={route.path} element={route.element} />
-      ))}
+      <Route element={<PublicLayout />}>
+        {PUBLIC_ROUTES.map((route) => (
+          <Route key={route.path} path={route.path} element={route.element} />
+        ))}
+      </Route>
     </Routes>
   );
 }

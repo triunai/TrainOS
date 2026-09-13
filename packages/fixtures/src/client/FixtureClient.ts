@@ -290,6 +290,7 @@ const toApprovalRow = (approval: FixtureApproval): ApprovalRequest => ({
     : {}),
   slaBreached: approval.slaBreached,
   status: approval.status,
+  diffHash: approval.diffHash,
   bulkApprovable: approval.bulkApprovable,
   urgencyGroup: approval.urgencyGroup,
 });
@@ -1007,6 +1008,15 @@ export class FixtureClient {
     body: ApprovalDecideRequest,
     options: RequestOptions = {},
   ): Promise<ApprovalDecideResponse> {
+    /* 014:1287-1297 (11508ed): `core.decide_approval` refuses a hashless
+       APPROVE itself, before `app.decide_approval` looks anything up, because
+       011 compares the hash only when one is sent. Without this the hashless
+       APPROVE below reached the stale-hash branch and answered DIFF_CHANGED. */
+    if (body.decision === "APPROVE" && !body.diffHash?.trim()) {
+      throw validationFailed("an APPROVE must carry the diff hash the approver was shown", {
+        fields: [{ field: "diffHash", reason: "REQUIRED" }],
+      });
+    }
     const approval = byIdOrRef(this.#store.approvals, id);
     if (!approval) throw notFound("Approval", id);
     if ((body.decision === "REJECT" || body.decision === "REQUEST_CHANGES") && !body.note) {
@@ -1021,6 +1031,19 @@ export class FixtureClient {
           `${approval.ref} was already decided; the diff no longer applies.`,
           { diffChanged: true, diff: approval.diff },
         );
+      }
+      /**
+       * §7 finding #6 (docs/reviews/2026-09-13-codex-retrofit-014-017.md):
+       * the same optimistic-concurrency guard `011:2781-2787` applies on
+       * `APPROVE` only — a REJECT or REQUEST_CHANGES does not act on the
+       * diff, so a stale hash there is not a conflict.
+       */
+      if (body.decision === "APPROVE" && body.diffHash !== approval.diffHash) {
+        throw new ContractError("DIFF_CHANGED", "the rendered diff is stale", {
+          diffChanged: true,
+          diff: approval.diff,
+          diffHash: approval.diffHash,
+        });
       }
       const decidedBy = this.#actor();
       const effects: Effect[] = body.decision === "APPROVE" ? approval.diff.map(toEffect) : [];
@@ -1062,27 +1085,88 @@ export class FixtureClient {
     });
   }
 
-  /** §7 `409` if any id carries a monetary value, i.e. `bulkApprovable: false`. */
+  /**
+   * §7 `409` if any id carries a monetary value, i.e. `bulkApprovable: false`.
+   *
+   * 011:3407-3419 (062e5e2) mirrored here: `body.items` carries one
+   * `expectedDiffHash` per approval, because a bulk APPROVE has to enforce the
+   * same optimistic-concurrency guard `decideApproval` enforces on the single
+   * path — a hash per approval cannot travel in an array of ids. Both refusals
+   * below happen BEFORE any item is applied, in item order matching the SQL's
+   * own pre-checks: a partial bulk decide is worse than a refused one, because
+   * the approver cannot tell which half went through.
+   */
   async bulkDecideApprovals(
     body: ApprovalBulkDecideRequest,
     options: RequestOptions = {},
   ): Promise<ApprovalBulkDecideResponse> {
     return this.#write(options, body, 200, () => {
-      const rows = body.ids.map((id) => {
-        const approval = byIdOrRef(this.#store.approvals, id);
-        if (!approval) throw notFound("Approval", id);
-        return approval;
+      /* `app.bulk_decide`'s refusal order (011 at 11508ed), so a batch mixing
+         failure modes refuses on the same one on both clients:
+           empty items          3462-3468
+           duplicate ids        3474-3483
+           missing APPROVE hash 3497-3511
+           not found            3550-3556
+           not bulk-approvable  3558-3571
+           stale hash           per item, via decide_approval, from 3573
+         The idempotency check between the hash and not-found checks
+         (3514-3548) is `#write`'s, which runs it before everything here — so
+         a key reused with a different, invalid body is the one case that refuses
+         differently. The stale hash is pre-scanned rather than raised mid-loop:
+         011 relies on the transaction rolling back the items already applied,
+         and a fixture has no transaction. */
+      if (body.items.length === 0) {
+        throw validationFailed("items must be a non-empty array", {
+          reason: "INVALID_APPROVAL_IDS",
+        });
+      }
+      if (new Set(body.items.map((item) => item.approvalId)).size !== body.items.length) {
+        throw validationFailed("items must be a non-empty set of distinct approvalId values", {
+          reason: "INVALID_APPROVAL_IDS",
+        });
+      }
+      if (body.decision === "APPROVE") {
+        const missingFor = body.items
+          .filter((item) => !item.diffHash || item.diffHash.trim() === "")
+          .map((item) => item.approvalId);
+        if (missingFor.length > 0) {
+          throw validationFailed(
+            "every APPROVE item must carry the diff hash the approver was shown",
+            { fields: [{ field: "expectedDiffHash", reason: "REQUIRED" }], missingFor },
+          );
+        }
+      }
+      const rows = body.items.map((item) => {
+        const approval = byIdOrRef(this.#store.approvals, item.approvalId);
+        if (!approval) throw notFound("Approval", item.approvalId);
+        return { item, approval };
       });
-      const blocked = rows.filter((approval) => !approval.bulkApprovable);
+      const blocked = rows.filter(({ approval }) => !approval.bulkApprovable);
       if (blocked.length > 0) {
         throw new ContractError(
-          "AGENT_PAUSED",
-          "One or more selected approvals carry a monetary value and must be decided individually.",
-          { blockers: blocked.map((approval) => approval.ref) },
+          "BULK_NOT_PERMITTED",
+          "one or more approvals may not be decided in bulk",
+          {
+            notBulkApprovable: blocked.map(({ approval }) => ({
+              id: approval.id,
+              ref: approval.ref,
+              reason: approval.value ? "MONETARY_VALUE" : "MONEY_MOVING_TYPE",
+            })),
+          },
         );
       }
+      if (body.decision === "APPROVE") {
+        const stale = rows.find(({ item, approval }) => item.diffHash !== approval.diffHash);
+        if (stale) {
+          throw new ContractError("DIFF_CHANGED", "the rendered diff is stale", {
+            diffChanged: true,
+            diff: stale.approval.diff,
+            diffHash: stale.approval.diffHash,
+          });
+        }
+      }
       const decidedBy = this.#actor();
-      const results = rows.map((approval) => {
+      const results = rows.map(({ approval }) => {
         const effects: Effect[] = body.decision === "APPROVE" ? approval.diff.map(toEffect) : [];
         approval.status =
           body.decision === "APPROVE"
@@ -2630,6 +2714,7 @@ export class FixtureClient {
       slaRemainingMinutes: policy.slaMinutes,
       slaBreached: false,
       status: "PENDING",
+      diffHash: hashDiff(diff),
       /** Server-decided: false for any action carrying a monetary value. */
       bulkApprovable: value === undefined,
       urgencyGroup: policy.slaMinutes <= 240 ? "TODAY" : "THIS_WEEK",
@@ -3059,6 +3144,27 @@ const toEffect = (line: DiffLine): Effect => ({
   ...(line.ref ? { ref: line.ref } : {}),
   description: line.description,
 });
+
+/**
+ * A short, stable digest of a rendered diff — the fixture stand-in for
+ * `011:2635`'s `sha256(...)` on `app.plan_effects(...)`.
+ *
+ * Not cryptographic: the only properties `decideApproval`'s guard needs are
+ * that the same diff always digests the same way and a different diff
+ * (almost certainly) digests differently, which FNV-1a already gives at this
+ * size. Mirrors the digest `apps/web/src/shared/api/idempotency.ts` uses for
+ * idempotency keys, kept local rather than shared because the two packages
+ * do not otherwise depend on each other.
+ */
+function hashDiff(diff: readonly DiffLine[]): string {
+  const input = JSON.stringify(diff);
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `diff_${hash.toString(36)}`;
+}
 
 /** Kept so the unused-import checker sees these contract types are load-bearing. */
 export type { AutonomyLevel, Badge, GovernedActionType, Timestamp };

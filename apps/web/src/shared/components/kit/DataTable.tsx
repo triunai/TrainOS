@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 import { EmptyState } from "@/shared/components/states";
-import { FOCUS_RING } from "./tokens";
+import { FOCUS_RING, SECTION_LABEL, SELECTED_TINT } from "./tokens";
 import type { Density } from "./FilterBar";
 
 /**
@@ -217,8 +217,13 @@ export function DataTable<Row>({
                        column heading is a label. Tracked uppercase mono is also
                        half of the combination §9 names as the thing that reads
                        as generated. Every screen already passes a sentence-case
-                       label, so this is the whole migration. */
-                    "whitespace-nowrap px-3 py-2 font-sans text-[12px] font-medium text-ink-muted",
+                       label, so this is the whole migration.
+
+                       The style itself now lives in `SECTION_LABEL`: this head
+                       migrated first and held the rule as a literal, and a rule
+                       with two homes is the divergence CLAUDE.md forbids. */
+                    "whitespace-nowrap px-3 py-2",
+                    SECTION_LABEL,
                     column.align === "right" && "text-right",
                   )}
                 >
@@ -304,7 +309,10 @@ function TableBlock<Row>({
             /* The group caption is a header too, so it takes the same
                typography as the column heads: UI font, sentence case as the
                screen passed it, muted ink. */
-            className="border-b border-t border-divider bg-surface px-3 py-1.5 text-left font-sans text-[12px] font-medium text-ink-muted"
+            className={cn(
+              "border-b border-t border-divider bg-surface px-3 py-1.5 text-left",
+              SECTION_LABEL,
+            )}
           >
             <span className="inline-flex items-center gap-2">
               {block.caption}
@@ -335,7 +343,24 @@ function TableBlock<Row>({
               /* The 6% AI tint. Never a fill: the row still reads as a row, and
                  the chip in it is what says why it is marked. */
               suggested && !selected && "bg-ai-tint",
-              selected && "bg-ai-tint-2 shadow-[inset_2px_0_0_rgb(var(--primary))]",
+              /* A selected row raises its own muted floor (verification row
+                 1b). `--ai-tint-2` is the selected row AND the active-nav
+                 tint, and `--ink-muted` on it measures 4.36:1 in light — under
+                 AA, and only in light, because the dark pair is 4.55:1.
+
+                 Lightening the tint is not the fix: it would land 0.9 L* from
+                 `--ai-tint` and the suggested row and the selected row would
+                 stop being two surfaces. Retargeting the cells one by one is
+                 not the fix either — the muted ink is inside the CELL
+                 RENDERERS a screen passes, which this component never sees.
+
+                 So the row rebinds the token for its own subtree:
+                 `--ink-muted` resolves to `--ink-secondary` (6.54:1 light,
+                 6.69:1 dark) inside a selected row. Every `text-ink-muted`
+                 descendant follows, in both themes, with no call site knowing.
+                 It is a scope, not a second colour: nothing new enters the
+                 palette and the unselected rows are untouched. */
+              selected && cn(SELECTED_TINT, "shadow-[inset_2px_0_0_rgb(var(--primary))]"),
               onRowClick && "cursor-pointer hover:bg-surface-hover",
             )}
           >
@@ -407,7 +432,8 @@ export function BulkActionBar({ count, children, onClear, className }: BulkActio
     <div
       role="status"
       className={cn(
-        "flex flex-wrap items-center gap-3 border-b border-primary-border bg-ai-tint-2 px-4 py-2",
+        SELECTED_TINT,
+        "flex flex-wrap items-center gap-3 border-b border-primary-border px-4 py-2",
         className,
       )}
     >

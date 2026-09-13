@@ -1,0 +1,24 @@
+title = "trainos gitleaks config"
+
+# Extend gitleaks' built-in default ruleset rather than redefining rules.
+[extend]
+useDefault = true
+
+# Known false positives from the default `generic-api-key` rule: these are
+# plain test-fixture identifiers, not credentials. Scoped as tightly as
+# gitleaks allows (exact match text via regexTarget = "match") so this does
+# not mask unrelated secrets that happen to live in the same files later.
+
+[[allowlists]]
+description = "supabase/tests/test_012_events_outbox_and_jobs.sql: idempotency_key test fixture label 't012-fresh-body', not a credential"
+regexTarget = "match"
+regexes = [
+  '''delivery\.idempotency_key = 't012-fresh-body'''',
+]
+
+[[allowlists]]
+description = "apps/web/src/shared/components/layout/__tests__/useNavSelection.test.ts: nav breadcrumb test fixture key 'Sales/Enquiries', not a credential"
+regexTarget = "match"
+regexes = [
+  '''childKey: "Sales/Enquiries"''',
+]

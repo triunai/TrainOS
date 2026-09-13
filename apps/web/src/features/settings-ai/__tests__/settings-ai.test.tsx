@@ -63,6 +63,39 @@ describe("M20-S20 · AI models, tiers and routing", () => {
     expect(pane.contains(screen.getByRole("alert"))).toBe(false);
   });
 
+  /* ---- the kit's table, not a hand-rolled one ------------------------ *
+   *
+   * The matrix drew its own `<table>` with six mono-caps `<th>`, so it lost the
+   * zebra stripe built into `DataTable` and carried tracked uppercase mono on
+   * every heading — half of the combination brief §9 names as the thing that
+   * reads as generated. Both are asserted, because a test that only counts rows
+   * and radios passes either way.
+   */
+
+  it("draws the matrix headings in the UI font, not tracked uppercase mono", async () => {
+    renderScreen(<AiModelsScreen />);
+    const matrix = await screen.findByRole("table", { name: "Action type to tier assignment" });
+
+    for (const header of within(matrix).getAllByRole("columnheader")) {
+      expect(header.className).toContain("font-sans");
+      expect(header.className).not.toContain("font-mono");
+      expect(header.className).not.toContain("uppercase");
+    }
+  });
+
+  it("recovers the zebra stripe the hand-rolled matrix had lost", async () => {
+    renderScreen(<AiModelsScreen />);
+    const matrix = await screen.findByRole("table", { name: "Action type to tier assignment" });
+
+    const bodyRows = within(matrix)
+      .getAllByRole("row")
+      .filter((row) => within(row).queryAllByRole("cell").length > 0);
+
+    expect(bodyRows).toHaveLength(12);
+    expect(bodyRows[0]?.className).not.toContain("bg-surface/60");
+    expect(bodyRows[1]?.className).toContain("bg-surface/60");
+  });
+
   it("stages exactly two edits — the action types routed to the degraded and capped tiers", async () => {
     renderScreen(<AiModelsScreen />);
     expect(await screen.findByText("2 unsaved")).toBeInTheDocument();

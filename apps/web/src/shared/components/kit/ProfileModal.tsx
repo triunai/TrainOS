@@ -2,7 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 import { Avatar } from "./TopbarPieces";
-import { FOCUS_RING } from "./tokens";
+import { FOCUS_RING, SECTION_LABEL } from "./tokens";
 
 /**
  * The profile modal. Kit.dc.html §07, "Profile modal · 960".
@@ -37,7 +37,7 @@ export interface ProfileModalProps {
   onClose: () => void;
 
   name: string;
-  /** Rendered uppercase in the identity chip. */
+  /** Rendered as written in the identity chip — sentence case, UI font. */
   roleLabel: string;
   /** "Akademi Perdana · Klang Valley". */
   orgAndLocation: string;
@@ -87,9 +87,7 @@ const CHIP_TONE = {
 function Card({ field }: { field: ProfileField }) {
   return (
     <div className="flex flex-col gap-0.5 rounded-[10px] border border-divider bg-surface px-3.5 py-3">
-      <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted">
-        {field.label}
-      </span>
+      <span className={SECTION_LABEL}>{field.label}</span>
       <span
         className={cn(
           "truncate text-[14px]",
@@ -161,7 +159,10 @@ export function ProfileModal({
               />
               <span
                 aria-hidden="true"
-                className="absolute bottom-1.5 right-1.5 flex h-10 w-10 items-center justify-center rounded-pill border-[3px] border-surface bg-primary text-[15px] text-on-primary"
+                /* A fill carrying `--on-primary`, so it takes the fill token
+                   rather than the text one — same reason as `Button`'s
+                   `primary`. */
+                className="absolute bottom-1.5 right-1.5 flex h-10 w-10 items-center justify-center rounded-pill border-[3px] border-surface bg-primary-solid text-[15px] text-on-primary"
               >
                 ◎
               </span>
@@ -172,7 +173,7 @@ export function ProfileModal({
             </Dialog.Title>
 
             <div className="pl-7">
-              <span className="inline-block rounded-pill bg-ai-tint px-2.5 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-primary-hover">
+              <span className="inline-block rounded-pill bg-ai-tint px-2.5 py-1 text-[11px] font-semibold text-primary-hover">
                 {roleLabel}
               </span>
             </div>
@@ -269,7 +270,7 @@ export function ProfileModal({
                 <span
                   key={chip.label}
                   className={cn(
-                    "rounded-pill px-2.5 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.06em]",
+                    "rounded-pill px-2.5 py-1 text-[11px] font-semibold",
                     CHIP_TONE[chip.tone ?? "neutral"],
                   )}
                 >
@@ -279,9 +280,7 @@ export function ProfileModal({
             </div>
 
             <div className="mt-auto flex flex-wrap items-center gap-3.5 border-t border-divider pt-5">
-              <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
-                Data scope
-              </span>
+              <span className={SECTION_LABEL}>Data scope</span>
               <ScopeSelect value={dataScope.clients} />
               <ScopeSelect value={dataScope.teams} muted />
               <button

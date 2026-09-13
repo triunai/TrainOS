@@ -57,6 +57,29 @@ export function loadConfig(env: Env = process.env): WorkerConfig {
   assertNotAnonKey(env);
 
   const leaseSeconds = int(env.WORKER_LEASE_SECONDS, 300, 1, MAX_LEASE_SECONDS);
+  // Comfortably inside the lease. A heartbeat that fires at the lease
+  // boundary races the reaper and loses about half the time (S4).
+  const heartbeatSeconds = int(
+    env.WORKER_HEARTBEAT_SECONDS,
+    Math.max(15, Math.floor(leaseSeconds / 3)),
+    5,
+    MAX_LEASE_SECONDS,
+  );
+  // T16: the clamp above bounds WORKER_HEARTBEAT_SECONDS against the global
+  // MAX_LEASE_SECONDS, not the configured lease, so a 60s-lease/300s-heartbeat
+  // configuration was silently accepted and did the work S4 warns about — and
+  // the default formula bypasses that clamp entirely for a tiny lease (e.g.
+  // leaseSeconds=10 still defaults to 15). This is the runtime invariant that
+  // actually matters: whatever produced the two numbers, the heartbeat must
+  // be strictly inside the lease, or a long job's lease can expire while it
+  // is still heartbeating.
+  if (heartbeatSeconds >= leaseSeconds) {
+    throw new Error(
+      `WORKER_HEARTBEAT_SECONDS (${heartbeatSeconds}) must be strictly less than ` +
+        `WORKER_LEASE_SECONDS (${leaseSeconds}): a heartbeat that reaches or exceeds ` +
+        "the lease can let it expire while the job is still being worked",
+    );
+  }
   const config: WorkerConfig = {
     workerId: env.WORKER_ID?.trim() || defaultWorkerId(),
     databaseUrl,
@@ -67,14 +90,7 @@ export function loadConfig(env: Env = process.env): WorkerConfig {
     batchSize: int(env.WORKER_BATCH_SIZE, 5, 1, 1000),
     concurrency: int(env.WORKER_CONCURRENCY, 4, 1, 64),
     leaseSeconds,
-    // Comfortably inside the lease. A heartbeat that fires at the lease
-    // boundary races the reaper and loses about half the time.
-    heartbeatSeconds: int(
-      env.WORKER_HEARTBEAT_SECONDS,
-      Math.max(15, Math.floor(leaseSeconds / 3)),
-      5,
-      MAX_LEASE_SECONDS,
-    ),
+    heartbeatSeconds,
     idleSleepMs: int(env.WORKER_IDLE_SLEEP_MS, 2_000, 100, 300_000),
     errorSleepMs: int(env.WORKER_ERROR_SLEEP_MS, 5_000, 100, 300_000),
     pacingMs: int(env.WORKER_PACING_MS, 0, 0, 60_000),

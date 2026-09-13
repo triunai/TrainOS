@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { fixtureClient } from "@trainos/fixtures";
+import { fixtureClient } from "@/shared/api";
 import { currentPrimaries } from "@/shared/components/kit";
 import { EnquiryInboxPage } from "../EnquiryInboxPage";
 import { EnquiryDetailPage } from "../EnquiryDetailPage";

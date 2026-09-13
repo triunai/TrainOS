@@ -15,7 +15,7 @@ export {
   AI_GLYPH,
   AI_POPOVER_BG,
   FOCUS_RING,
-  MONO_LABEL,
+  SECTION_LABEL,
   PEAK_BG,
   WARNING_ACCENT_BG,
 } from "./tokens";
@@ -127,6 +127,7 @@ export {
 /* ---- Chips: the only place status colour lives (Kit §02, §10) -------- */
 export { StatusChip, type StatusChipProps, type StatusTone } from "./StatusChip";
 export {
+  AGENT_TONE,
   APPROVAL_TONE,
   BINDING_FLOOR_TONE,
   BUDGET_TONE,
@@ -136,9 +137,11 @@ export {
   ENGAGEMENT_TONE,
   ENQUIRY_TONE,
   FOLLOW_UP_TONE,
+  HOURS_SAVED_TONE,
   HRDC_PACKET_PANEL_TONE,
   INVOICE_TONE,
   LIFECYCLE_TONE,
+  MESSAGE_CATEGORY_TONE,
   MONITOR_TONE,
   OPPORTUNITY_TONE,
   ORGANISATION_TONE,
@@ -149,6 +152,7 @@ export {
   QUOTATION_TONE,
   RULE_TONE,
   RUN_TONE,
+  SEVERITY_TONE,
   SYNC_TONE,
   TIER_STATUS_TONE,
   TNA_TONE,
@@ -219,6 +223,7 @@ export {
   type ExternalMinimalShellProps,
   type LanguageToggleProps,
 } from "./ExternalMinimalShell";
+export { AuthShell, GoogleGlyph, type AuthShellProps } from "./AuthShell";
 
 /* ---- Data table (Kit §08) ------------------------------------------- */
 export {

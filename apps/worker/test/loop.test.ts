@@ -194,6 +194,139 @@ describe("JobRunner.runOnce", () => {
   });
 });
 
+describe("JobRunner heartbeat lease extension (S4)", () => {
+  it("extends the lease by the full lease duration, not just the heartbeat interval", async () => {
+    // 012's heartbeat_job sets visible_after = now() + p_extend. The extend
+    // argument therefore has to be the lease length, not how often we beat —
+    // passing the heartbeat interval resets the expiry to "now + a sliver",
+    // which is shorter than what the original claim already granted.
+    const transport = new FakeTransport()
+      .on("app.claim_jobs", [fakeJob({ job_type: "OUTBOX_PUBLISH" })])
+      .on("app.heartbeat_job", [])
+      .on("app.complete_job", []);
+    let finish: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const { runner } = runnerFor(
+      transport,
+      {
+        OUTBOX_PUBLISH: async () => {
+          await blocked;
+          return succeed;
+        },
+      },
+      { leaseSeconds: 300, heartbeatSeconds: 100 },
+    );
+
+    vi.useFakeTimers();
+    try {
+      const runOncePromise = runner.runOnce();
+      await vi.advanceTimersByTimeAsync(100_000); // exactly one heartbeat tick
+      finish();
+      await runOncePromise;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(transport.paramsFor("app.heartbeat_job")[3]).toBe(300);
+  });
+
+  it("ctx.heartbeat() also extends by the full lease duration", async () => {
+    const transport = new FakeTransport()
+      .on("app.claim_jobs", [fakeJob({ job_type: "AGENT_RUN_SLICE" })])
+      .on("app.heartbeat_job", [])
+      .on("app.complete_job", []);
+    const { runner } = runnerFor(
+      transport,
+      {
+        AGENT_RUN_SLICE: async (ctx) => {
+          await ctx.heartbeat();
+          return succeed;
+        },
+      },
+      { leaseSeconds: 300, heartbeatSeconds: 100 },
+    );
+
+    await runner.runOnce();
+
+    expect(transport.paramsFor("app.heartbeat_job")[3]).toBe(300);
+  });
+
+  it("simulates a job running past one lease, with a heartbeat delayed by DB contention, and proves a concurrent reap does not reclaim it", async () => {
+    // Reproduces the S4 race directly. lease=300s, heartbeat=100s. The first
+    // heartbeat lands instantly; the second is slow (20s of simulated DB
+    // contention), so at t=210s only the FIRST heartbeat's extension is in
+    // effect. With the bug (extend = heartbeatSeconds), that first heartbeat
+    // set visible_after to 200s at t=100 — already behind t=210 — so a
+    // concurrent reap tick wrongly reclaims a job that is still actively
+    // heartbeating. With the fix (extend = leaseSeconds), the first
+    // heartbeat pushes visible_after to 400s, comfortably covering the gap
+    // while the second heartbeat is still in flight.
+    const leaseSeconds = 300;
+    const heartbeatSeconds = 100;
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    let visibleAfterMs = leaseSeconds * 1_000; // what claim_jobs granted at t=0
+    let heartbeatCalls = 0;
+
+    try {
+      const transport = new FakeTransport()
+        .on("app.claim_jobs", [fakeJob({ job_type: "OUTBOX_PUBLISH" })])
+        .on("app.heartbeat_job", (params) => {
+          heartbeatCalls += 1;
+          const extendSeconds = params[3] as number;
+          const apply = () => {
+            visibleAfterMs = Date.now() + extendSeconds * 1_000;
+          };
+          if (heartbeatCalls === 2) {
+            // The second heartbeat is slow to land — DB contention, GC pause,
+            // or plain network latency. A production reaper tick does not wait.
+            return new Promise<unknown[]>((resolve) => {
+              setTimeout(() => {
+                apply();
+                resolve([]);
+              }, 20_000);
+            });
+          }
+          apply();
+          return [];
+        })
+        .on("app.reap_jobs", () => [{ reaped: Date.now() > visibleAfterMs ? 1 : 0 }])
+        .on("app.complete_job", []);
+
+      let finish: () => void = () => {};
+      const blocked = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const { runner } = runnerFor(
+        transport,
+        {
+          OUTBOX_PUBLISH: async () => {
+            await blocked;
+            return succeed;
+          },
+        },
+        { leaseSeconds, heartbeatSeconds },
+      );
+
+      const runOncePromise = runner.runOnce();
+      await vi.advanceTimersByTimeAsync(100_000); // t=100s: first heartbeat fires and lands
+      await vi.advanceTimersByTimeAsync(100_000); // t=200s: second heartbeat starts, 20s from landing
+      await vi.advanceTimersByTimeAsync(10_000); // t=210s: second heartbeat still in flight
+
+      const reaped = await runner.reap();
+      expect(reaped).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(20_000); // let the slow heartbeat land
+      finish();
+      await runOncePromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("JobRunner.reap", () => {
   it("sweeps expired leases and accumulates the count", async () => {
     const transport = new FakeTransport().on("app.reap_jobs", [{ reaped: 3 }]);

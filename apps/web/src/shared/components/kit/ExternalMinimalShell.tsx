@@ -42,7 +42,7 @@ export function ExternalMinimalShell({
       <header className="flex h-topbar shrink-0 items-center gap-3 px-4">
         <span
           aria-hidden="true"
-          className="flex h-[26px] w-[26px] items-center justify-center rounded-[6px] bg-avatar font-mono text-[11px] text-on-primary"
+          className="flex h-[26px] w-[26px] items-center justify-center rounded-[6px] bg-avatar text-[11px] font-semibold text-on-primary"
         >
           {mark ?? orgName.slice(0, 1).toUpperCase()}
         </span>
@@ -91,7 +91,7 @@ export function LanguageToggle({
           aria-pressed={option === value}
           onClick={() => onChange?.(option)}
           className={cn(
-            "px-2 py-1 font-mono text-[11px] first:rounded-l-control last:rounded-r-control",
+            "px-2 py-1 text-[11px] font-medium first:rounded-l-control last:rounded-r-control",
             option === value
               ? "bg-ai-tint-2 text-primary-hover"
               : "text-ink-muted hover:bg-surface-hover",

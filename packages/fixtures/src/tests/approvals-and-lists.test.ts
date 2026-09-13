@@ -46,7 +46,11 @@ describe("the approval inbox", () => {
 describe("deciding one approval", () => {
   it("returns effects that match the rendered diff, line for line", async () => {
     const detail = await api.getApproval(APPROVAL_AURORA);
-    const decision = await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const decision = await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
 
     expect(decision.status).toBe("APPROVED");
     expect(decision.effects).toHaveLength(detail.diff.length);
@@ -60,7 +64,12 @@ describe("deciding one approval", () => {
   });
 
   it("applies what the diff promised", async () => {
-    await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const detail = await api.getApproval(APPROVAL_AURORA);
+    await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
     const proposal = await api.getProposal(PROPOSAL_AURORA);
     expect(proposal.status).toBe("SENT");
     const opportunity = await api.getOpportunity("OPP-0512");
@@ -68,20 +77,79 @@ describe("deciding one approval", () => {
   });
 
   it("requires a note to reject", async () => {
+    const detail = await api.getApproval(APPROVAL_AURORA);
     await expect(
-      api.decideApproval(APPROVAL_AURORA, { decision: "REJECT", note: null }),
+      api.decideApproval(APPROVAL_AURORA, {
+        decision: "REJECT",
+        note: null,
+        diffHash: detail.diffHash,
+      }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED", http: 422 });
   });
 
   it("409s a second decision on an approval that already moved", async () => {
-    await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const detail = await api.getApproval(APPROVAL_AURORA);
+    await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
     await expect(
-      api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null }),
+      api.decideApproval(APPROVAL_AURORA, {
+        decision: "APPROVE",
+        note: null,
+        diffHash: detail.diffHash,
+      }),
     ).rejects.toMatchObject({ http: 409, details: { diffChanged: true } });
   });
 
+  /**
+   * §7 finding #6 (docs/reviews/2026-09-13-codex-retrofit-014-017.md): the
+   * fixture oracle must enforce the same optimistic-concurrency guard
+   * `011:2781-2787` does, or the guard is provably dead as soon as the client
+   * omits — or gets wrong — the hash it renders.
+   */
+  /**
+   * 014:1287-1297 (11508ed): `core.decide_approval` refuses an APPROVE with a
+   * missing or blank hash as VALIDATION_FAILED, before `app.decide_approval`
+   * runs, so before not-found too. 011 compares the hash only when it is
+   * non-NULL, which is why the wrapper has to. The fixture answered a hashless
+   * APPROVE with DIFF_CHANGED, a different code, status and details bag.
+   */
+  it("refuses a hashless APPROVE as the wrapper does, before looking the approval up", async () => {
+    const refusal = {
+      code: "VALIDATION_FAILED",
+      http: 422,
+      message: "an APPROVE must carry the diff hash the approver was shown",
+      details: { fields: [{ field: "diffHash", reason: "REQUIRED" }] },
+    };
+    await expect(
+      api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null, diffHash: "  " }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      api.decideApproval("APV-0000-0000", { decision: "APPROVE", note: null, diffHash: "" }),
+    ).rejects.toMatchObject(refusal);
+    const after = await api.getApproval(APPROVAL_AURORA);
+    expect(after.status).toBe("PENDING");
+  });
+
+  it("refuses to approve against a diff hash that no longer matches", async () => {
+    await expect(
+      api.decideApproval(APPROVAL_AURORA, {
+        decision: "APPROVE",
+        note: null,
+        diffHash: "stale-hash",
+      }),
+    ).rejects.toMatchObject({ code: "DIFF_CHANGED", http: 409, details: { diffChanged: true } });
+  });
+
   it("drops the badge count as approvals are cleared", async () => {
-    await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const detail = await api.getApproval(APPROVAL_AURORA);
+    await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
     const badges = await api.getBadges();
     expect(badges.approvals).toBe(6);
   });
@@ -89,36 +157,169 @@ describe("deciding one approval", () => {
 
 describe("bulk decisions", () => {
   it("approves rows that carry no money", async () => {
+    const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
+    const attendance = await api.getApproval(APPROVAL_ATTENDANCE);
     const result = await api.bulkDecideApprovals({
-      ids: [APPROVAL_RULE_CHANGE, APPROVAL_ATTENDANCE],
+      items: [
+        { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+        { approvalId: APPROVAL_ATTENDANCE, diffHash: attendance.diffHash },
+      ],
       decision: "APPROVE",
     });
     expect(result.results).toHaveLength(2);
     expect(result.results.every((row) => row.status === "APPROVED")).toBe(true);
   });
 
+  /**
+   * 011:3558-3571 (11508ed): `BULK_NOT_PERMITTED`, with one `{id, ref, reason}`
+   * per blocked row under `notBulkApprovable`. The fixture used to raise
+   * `AGENT_PAUSED` with `blockers: [ref]`, a code and a field name the
+   * database never sends.
+   */
   it("409s as soon as one selected row carries a monetary value", async () => {
+    const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
+    const aurora = await api.getApproval(APPROVAL_AURORA);
     await expect(
-      api.bulkDecideApprovals({ ids: [APPROVAL_RULE_CHANGE, APPROVAL_AURORA], decision: "APPROVE" }),
-    ).rejects.toMatchObject({ http: 409, details: { blockers: [APPROVAL_AURORA] } });
+      api.bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+          { approvalId: APPROVAL_AURORA, diffHash: aurora.diffHash },
+        ],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject({
+      code: "BULK_NOT_PERMITTED",
+      http: 409,
+      message: "one or more approvals may not be decided in bulk",
+      details: {
+        notBulkApprovable: [{ id: aurora.id, ref: APPROVAL_AURORA, reason: "MONETARY_VALUE" }],
+      },
+    });
   });
 
   it("leaves every row untouched when the bulk is refused", async () => {
-    await api
-      .bulkDecideApprovals({ ids: [APPROVAL_RULE_CHANGE, APPROVAL_AURORA], decision: "APPROVE" })
-      .catch(() => undefined);
     const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
-    expect(ruleChange.status).toBe("PENDING");
+    const aurora = await api.getApproval(APPROVAL_AURORA);
+    await api
+      .bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+          { approvalId: APPROVAL_AURORA, diffHash: aurora.diffHash },
+        ],
+        decision: "APPROVE",
+      })
+      .catch(() => undefined);
+    const after = await api.getApproval(APPROVAL_RULE_CHANGE);
+    expect(after.status).toBe("PENDING");
   });
 
   it("writes the rule with the circular's effective date, not today's", async () => {
-    await api.bulkDecideApprovals({ ids: [APPROVAL_RULE_CHANGE], decision: "APPROVE" });
+    const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
+    await api.bulkDecideApprovals({
+      items: [{ approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash }],
+      decision: "APPROVE",
+    });
     const rule = await api.getComplianceRule("HRD-022");
     expect(rule.status).toBe("ACTIVE");
     expect(rule.effectiveFrom).toBe("2027-01-01");
     const superseded = await api.getComplianceRule("HRD-015");
     expect(superseded.status).toBe("SUPERSEDED");
     expect(superseded.supersededById).toBe("HRD-022");
+  });
+
+  /**
+   * 011:3462-3468 (11508ed): `app.bulk_decide` refuses an empty `p_items` as
+   * its FIRST check. The fixture resolved `{results: []}`, so a bulk approve of
+   * nothing reported success here and would be refused by the database.
+   */
+  it("refuses an empty batch the way the database does, before any other check", async () => {
+    await expect(
+      api.bulkDecideApprovals({ items: [], decision: "APPROVE" }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      http: 422,
+      message: "items must be a non-empty array",
+      details: { reason: "INVALID_APPROVAL_IDS" },
+    });
+  });
+
+  /**
+   * 011:3474-3483 (11508ed): `app.bulk_decide` counts DISTINCT approval ids
+   * against the array length and refuses a batch naming one approval twice,
+   * AHEAD of the missing-hash check. The fixture applied the approval twice and
+   * returned two results.
+   */
+  it("refuses a batch that names one approval twice, ahead of the missing-hash check", async () => {
+    const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
+    const refusal = {
+      code: "VALIDATION_FAILED",
+      http: 422,
+      message: "items must be a non-empty set of distinct approvalId values",
+      details: { reason: "INVALID_APPROVAL_IDS" },
+    };
+    await expect(
+      api.bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+        ],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject(refusal);
+    /* A hashless duplicate still refuses as a duplicate: 011 checks ids first. */
+    await expect(
+      api.bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: "" },
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+        ],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject(refusal);
+    const after = await api.getApproval(APPROVAL_RULE_CHANGE);
+    expect(after.status).toBe("PENDING");
+  });
+
+  /**
+   * 011:3407-3479 (062e5e2): `core.bulk_decide_approvals` refuses an APPROVE
+   * item with no hash BEFORE any item in the batch is applied — the fixture
+   * oracle enforces the same order, or the guard is dead as soon as a caller
+   * omits the hash on just one row of a batch.
+   */
+  it("refuses an APPROVE item with no diff hash, before applying any item in the batch", async () => {
+    const attendance = await api.getApproval(APPROVAL_ATTENDANCE);
+    await expect(
+      api.bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: "" },
+          { approvalId: APPROVAL_ATTENDANCE, diffHash: attendance.diffHash },
+        ],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      http: 422,
+      details: { missingFor: [APPROVAL_RULE_CHANGE] },
+    });
+    const after = await api.getApproval(APPROVAL_ATTENDANCE);
+    expect(after.status).toBe("PENDING");
+  });
+
+  /**
+   * §7 finding #6 (docs/reviews/2026-09-13-codex-retrofit-014-017.md), through
+   * the bulk door: a repriced approval refuses `DIFF_CHANGED` here exactly as
+   * `decideApproval` refuses it on the single path, and nothing in the batch
+   * is applied.
+   */
+  it("refuses a stale diff hash through the bulk door, before applying any item", async () => {
+    await expect(
+      api.bulkDecideApprovals({
+        items: [{ approvalId: APPROVAL_RULE_CHANGE, diffHash: "stale-hash" }],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject({ code: "DIFF_CHANGED", http: 409, details: { diffChanged: true } });
+    const after = await api.getApproval(APPROVAL_RULE_CHANGE);
+    expect(after.status).toBe("PENDING");
   });
 });
 

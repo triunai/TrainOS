@@ -7,6 +7,7 @@ import {
   BudgetBar,
   ContentCard,
   DataTable,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatMoney,
@@ -252,6 +253,87 @@ export function AiModelsScreen() {
     );
   }
 
+  /**
+   * The assignment matrix, as kit columns.
+   *
+   * One column per tier, each holding the radio that routes this action type to
+   * it, plus the ladder and the jury. The action type keeps the first column;
+   * it is no longer a `<th scope="row">`, because `DataTable` draws data cells
+   * and the kit is not this pass's to extend.
+   *
+   * NO `variant: "code"` anywhere. A tier name and an action type are labels,
+   * not machine values — brief §1 keeps mono for refs, versions and hashes.
+   */
+  const matrixColumns: Column<RoutingEntry>[] = [
+    {
+      key: "actionType",
+      label: "Action type",
+      width: "220px",
+      accessor: (entry) => {
+        const stagedTier = staged.get(entry.actionType);
+        return (
+          <span className="flex flex-col gap-0.5">
+            <span className="text-[13px] text-ink">{humanise(entry.actionType)}</span>
+            {stagedTier ? (
+              <span className="text-[11px] text-primary-hover">
+                staged: {tierLabel(entry.tier)} → {tierLabel(stagedTier)}
+              </span>
+            ) : null}
+          </span>
+        );
+      },
+    },
+    ...TIER_KEYS.map((key) => ({
+      key,
+      label: tierLabel(key),
+      width: "72px",
+      accessor: (entry: RoutingEntry) => (
+        <span className="flex justify-center">
+          <input
+            type="radio"
+            name={`routing-${entry.actionType}`}
+            checked={(staged.get(entry.actionType) ?? entry.tier) === key}
+            aria-label={`Route ${humanise(entry.actionType)} to ${tierLabel(key)}`}
+            onChange={() =>
+              setStaged((previous) => {
+                const next = new Map(previous);
+                if (key === entry.tier) next.delete(entry.actionType);
+                else next.set(entry.actionType, key);
+                return next;
+              })
+            }
+            className="h-3.5 w-3.5 accent-[rgb(var(--primary))]"
+          />
+        </span>
+      ),
+    })),
+    {
+      key: "escalationLadder",
+      label: "Escalation ladder",
+      width: "184px",
+      accessor: (entry) => (
+        <span className="text-[12px] text-ink-secondary">
+          {entry.escalationLadder.map(tierLabel).join(" → ")}
+        </span>
+      ),
+    },
+    {
+      key: "jury",
+      label: "Jury",
+      width: "148px",
+      accessor: (entry) => (
+        <div className="flex flex-col items-start gap-1">
+          <JuryChip policy={entry.jury} />
+          {/* The mode word, because §4 asks this column to render the jury
+              OBJECT and not a boolean. The full sentence — quorum, triggers,
+              whether it ever blocks — is on the chip's title, from the kit's own
+              `describeJuryPolicy`, so the two cannot disagree. */}
+          <span className="text-[11px] text-ink-muted">{humanise(entry.jury.mode)}</span>
+        </div>
+      ),
+    },
+  ];
+
   const entriesToApply: RoutingEntry[] = routingRows
     .filter((entry) => staged.has(entry.actionType))
     .map((entry) => ({ ...entry, tier: staged.get(entry.actionType) as TierKey }));
@@ -374,6 +456,15 @@ export function AiModelsScreen() {
             rows={tierRows}
             rowKey={(tier) => tier.key}
             stickyHeader
+            /* Tiers are infrastructure the server publishes; this console reads
+               them and never creates one, so the empty state carries no action.
+               Saying where they come from is the useful half. */
+            empty={
+              <EmptyState
+                title="No model tiers published"
+                description="Tiers come from the deployment's own configuration. Until one is published there is nothing for the assignment matrix below to route to."
+              />
+            }
           />
         </ContentCard>
       </div>
@@ -405,112 +496,44 @@ export function AiModelsScreen() {
             jury.
           </p>
 
-          {/* The matrix gets its own scroll pane in both directions. Twelve rows
-              by nine tier columns does not fit 900px and does not fit the
-              content card's width either. */}
-          <div className="max-h-[440px] overflow-auto rounded-card border border-border">
-            <table
-              aria-label="Action type to tier assignment"
-              className="w-full min-w-[1120px] border-collapse text-left"
-            >
-              <thead className="sticky top-0 z-10 bg-surface">
-                <tr>
-                  <th
-                    scope="col"
-                    className="sticky left-0 z-10 bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                  >
-                    Action type
-                  </th>
-                  {TIER_KEYS.map((key) => (
-                    <th
-                      key={key}
-                      scope="col"
-                      className="px-2 py-2 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                    >
-                      {tierLabel(key)}
-                    </th>
-                  ))}
-                  <th
-                    scope="col"
-                    className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                  >
-                    Escalation ladder
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                  >
-                    Jury
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {routingRows.map((entry) => {
-                  const stagedTier = staged.get(entry.actionType);
-                  const current = stagedTier ?? entry.tier;
+          {/* The kit's table, not a hand-rolled one. This drew its own `<table>`
+              with six mono-caps `<th>`, so it lost the zebra stripe built into
+              `DataTable` and put tracked uppercase mono on every heading — half
+              of the combination brief §9 names as the thing that reads as
+              generated.
 
-                  return (
-                    <tr key={entry.actionType} className={stagedTier ? "bg-ai-tint" : undefined}>
-                      <th
-                        scope="row"
-                        className="sticky left-0 z-10 border-t border-divider bg-card px-3 py-2 text-[13px] font-normal text-ink"
-                      >
-                        <span className="flex flex-col gap-0.5">
-                          <span>{humanise(entry.actionType)}</span>
-                          {stagedTier ? (
-                            <span className="text-[11px] text-primary-hover">
-                              staged: {tierLabel(entry.tier)} → {tierLabel(stagedTier)}
-                            </span>
-                          ) : null}
-                        </span>
-                      </th>
+              The scroll pane stays: twelve rows by nine tier columns does not
+              fit 900px and does not fit the content card either. DataTable's
+              own wrapper takes it through `className`.
 
-                      {TIER_KEYS.map((key) => (
-                        <td key={key} className="border-t border-divider px-2 py-2 text-center">
-                          <input
-                            type="radio"
-                            name={`routing-${entry.actionType}`}
-                            checked={current === key}
-                            aria-label={`Route ${humanise(entry.actionType)} to ${tierLabel(key)}`}
-                            onChange={() =>
-                              setStaged((previous) => {
-                                const next = new Map(previous);
-                                if (key === entry.tier) next.delete(entry.actionType);
-                                else next.set(entry.actionType, key);
-                                return next;
-                              })
-                            }
-                            className="h-3.5 w-3.5 accent-[rgb(var(--primary))]"
-                          />
-                        </td>
-                      ))}
+              The empty state is ui-states', kept through the conversion. It
+              moves from a hand-rolled branch around the `<table>` to the kit's
+              own `empty` slot, which renders it in the table's place inside the
+              same pane — which is exactly what that lane's note said it wanted.
 
-                      <td className="border-t border-divider px-3 py-2">
-                        <span className="font-mono text-[11px] text-ink-secondary">
-                          {entry.escalationLadder.map(tierLabel).join(" → ")}
-                        </span>
-                      </td>
-
-                      <td className="border-t border-divider px-3 py-2">
-                        <div className="flex flex-col items-start gap-1">
-                          <JuryChip policy={entry.jury} />
-                          {/* The mode word, because §4 asks this column to
-                              render the jury OBJECT and not a boolean. The
-                              full sentence — quorum, triggers, whether it ever
-                              blocks — is on the chip's title, from the kit's
-                              own `describeJuryPolicy`, so the two cannot
-                              disagree. */}
-                          <span className="text-[11px] text-ink-muted">
-                            {humanise(entry.jury.mode)}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+              TWO THINGS THE CONVERSION COSTS, recorded rather than hidden:
+              the first column was `position: sticky` and no longer is, because
+              the kit has no sticky-column prop and the kit is not this pass's
+              to change; and the staged row's `bg-ai-tint` is gone. That tint
+              said an AGENT had something to say about the row, and a staged
+              edit is a human's — CLAUDE.md reserves the AI hue and the ✦ for
+              the agent. The per-row "staged: X → Y" caption and the "N unsaved"
+              chip in the card header carry the same fact as a text label, which
+              is what the brief asks for anyway. */}
+          <DataTable
+            label="Action type to tier assignment"
+            columns={matrixColumns}
+            rows={routingRows}
+            rowKey={(entry) => entry.actionType}
+            density="compact"
+            className="max-h-[440px] overflow-auto rounded-card border border-border"
+            empty={
+              <EmptyState
+                title="Nothing is routed yet"
+                description="No action type has been assigned a tier. Until one is, every run falls back to the deployment default rather than to a choice made here."
+              />
+            }
+          />
         </ContentCard>
       </div>
     </div>

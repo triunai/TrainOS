@@ -39,5 +39,8 @@
     "src/vite-env.d.ts",
     // Graduates go below, one path per line, newest last.
     "src/shared/components/layout/useNavSelection.ts",
+    "src/features/compliance/registers.ts",
+    "src/features/compliance/ClaimPacketsScreen.tsx",
+    "src/features/finance/InvoicesListScreen.tsx",
   ],
 }

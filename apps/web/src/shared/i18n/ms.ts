@@ -29,6 +29,12 @@ export const ms: Messages = {
   "shell.language": "Bahasa",
   "shell.collapseSidebar": "Kecilkan bar sisi",
   "shell.expandSidebar": "Besarkan bar sisi",
+  "shell.resetDemo": "Tetapkan semula data demo",
+
+  "demo.resetTitle": "Tetapkan semula data demo?",
+  "demo.resetBody":
+    "Setiap perubahan dalam pelayar ini — keputusan, suntingan, rekod baharu — dibuang dan set data demo dipulihkan. Demo orang lain tidak terjejas.",
+  "demo.resetConfirm": "Tetapkan semula data demo",
 
   "help.documentation": "Dokumentasi",
   "help.gettingStarted": "Panduan permulaan",

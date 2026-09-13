@@ -1,7 +1,7 @@
 import type { RunStateCard } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { CostBudgetBar, TokenBudgetBar } from "./BudgetBar";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The state-card panel. Kit.dc.html §10, and its reason for existing, verbatim:
@@ -115,7 +115,7 @@ export function StateCardPanel({ stateCard, fluid, className }: StateCardPanelPr
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-1.5">
-      <h3 className={MONO_LABEL}>{title}</h3>
+      <h3 className={SECTION_LABEL}>{title}</h3>
       {children}
     </section>
   );

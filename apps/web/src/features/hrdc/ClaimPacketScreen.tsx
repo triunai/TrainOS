@@ -10,12 +10,14 @@ import {
   DateText,
   describeActionError,
   DocumentChecklistRow,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   humanise,
   LoadingState,
   MoneyText,
   PACKET_TONE,
+  SEVERITY_TONE,
   PrimaryButton,
   RecordHeader,
   RuleCheckRow,
@@ -113,7 +115,18 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
             <StatusChip tone={PACKET_TONE[data.status]} live>
               {humanise(data.status)}
             </StatusChip>
-            <StatusChip tone={data.deadlineSeverity === "INFO" ? "neutral" : "warning"}>
+            {/* The KIT's severity map, not a two-branch ternary over it.
+                `Severity` has four members and the ternary had two, so DANGER
+                and ALERT both came out "warning" — a claim window the server
+                was calling urgent rendered as merely worth a look. R14: the
+                receiving side must not fold a vocabulary it does not own down
+                to whichever branch is the `else`.
+
+                `?? "neutral"` is not redundant beside a typed exhaustive
+                record: several contract fields carry a severity as a bare
+                `string`, so a value the types promise cannot arrive still can,
+                and a chip must not be undefined-toned when it does. */}
+            <StatusChip tone={SEVERITY_TONE[data.deadlineSeverity] ?? "neutral"}>
               {`Claim window · ${data.daysRemaining} days left`}
             </StatusChip>
           </>
@@ -189,6 +202,15 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
             title={`Required documents · ${present} of ${data.requiredDocuments.length}`}
             actions={<CompletenessBar value={data.completeness} className="w-40" />}
           >
+            {/* A packet whose scheme requires nothing rendered an EMPTY card
+                with a "0 of 0" title and no sentence — indistinguishable from a
+                checklist that failed to load. */}
+            {data.requiredDocuments.length === 0 ? (
+              <EmptyState
+                title="This scheme requires no documents"
+                description="HRD Corp lists no supporting evidence for this claim, so there is nothing to attach before it is filed."
+              />
+            ) : null}
             {data.requiredDocuments.map((document) => (
               <DocumentChecklistRow
                 key={document.type}
@@ -221,9 +243,14 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
 
           <ContentCard title="Submission log">
             {data.submissionLog.length === 0 ? (
-              <p className="py-2 text-[13px] text-ink-muted">
-                Nothing has happened to this packet yet.
-              </p>
+              /* The kit's EmptyState, not a bare `<p>`. An empty section that
+                 writes its own sentence in its own type is how nine of these
+                 drifted apart: the reader learns a different shape for
+                 "nothing here" on every screen that has one. */
+              <EmptyState
+                title="Nothing has happened to this packet yet"
+                description="Submitting the grant, assembling the packet and filing the claim all land here, newest last."
+              />
             ) : (
               <ol className="flex flex-col">
                 {data.submissionLog.map((entry) => (

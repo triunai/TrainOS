@@ -117,7 +117,7 @@ export function AIChip({
       ) : null}
       {text}
       {withConfidence ? (
-        <span className="font-mono text-[11px]">· {Math.round(confidence * 100)}%</span>
+        <span className="tabular-nums text-[11px]">· {Math.round(confidence * 100)}%</span>
       ) : null}
       {resolved === "executed" ? (
         <span className="rounded-[3px] border border-primary px-1 font-mono text-[9px] tracking-[0.08em]">

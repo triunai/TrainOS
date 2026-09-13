@@ -37,7 +37,12 @@ import {
   useEngagementAction,
   usePipelineConfig,
 } from "./api";
-import { joinAttendance, markLabel, type ParticipantAttendance } from "./attendanceModel";
+import {
+  joinAttendance,
+  markLabel,
+  PARTICIPANT_ATTENDANCE_TONE,
+  type ParticipantAttendance,
+} from "./attendanceModel";
 
 /**
  * M09-S02 · engagement detail. The operational spine of a delivered programme:
@@ -478,7 +483,7 @@ function ParticipantsCard({
       key: "status",
       label: "Status",
       accessor: (row) => (
-        <StatusChip tone={row.status === "COMPLETE" ? "neutral" : "warning"}>
+        <StatusChip tone={PARTICIPANT_ATTENDANCE_TONE[row.status]}>
           {humanise(row.status)}
         </StatusChip>
       ),

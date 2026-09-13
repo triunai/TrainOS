@@ -5,6 +5,8 @@ import { APPROVAL_AURORA, PROPOSAL_AURORA, QUOTATION_AURORA } from "@trainos/con
 import { ProposalBuilderPage } from "../ProposalBuilderPage";
 import { CostingWorksheetPage } from "../CostingWorksheetPage";
 import { needsReview, originLabel } from "../sections";
+import { floorBreachOf } from "../api";
+import { ApiErrorException, ContractError } from "@/shared/api";
 import { currentPrimaries } from "@/shared/components/kit";
 import { renderScreen } from "@/test/renderScreen";
 
@@ -262,5 +264,48 @@ describe("section provenance helpers", () => {
       }),
     ).toBe("AI-assisted · edited");
     expect(originLabel({ n: 6, title: "x" })).toBe("Template");
+  });
+});
+
+/**
+ * The floor-price banner has to survive the seam swap.
+ *
+ * `floorBreachOf` used to test `isContractError`, which is the FIXTURE
+ * package's own class. The identical refusal raised by `core.put_quotation` as
+ * SQLSTATE `TRNOS` arrives as an `ApiErrorException` carrying a `DomainError`,
+ * fails that test, and the banner that explains which floor binds — the whole
+ * point of M07-S03 — simply stops appearing. Both shapes are pinned here
+ * because only one of them is reachable from the fixture build, which is
+ * exactly why the other one was allowed to break.
+ */
+describe("floorBreachOf narrows a refusal from either client", () => {
+  const DETAILS = {
+    floorPrice: { amount: 1_753_846, currency: "MYR" },
+    resultingMarginRate: 0.12,
+    requiresPolicy: "APV-02",
+    absoluteFloorPrice: { amount: 1_500_000, currency: "MYR" },
+    marginFloorPrice: { amount: 1_753_846, currency: "MYR" },
+    bindingFloorBasis: "MARGIN",
+  } as const;
+
+  it("reads the fixture client's thrown ContractError", () => {
+    const thrown = new ContractError("FLOOR_PRICE_BREACH", "Below the floor.", { ...DETAILS });
+    expect(floorBreachOf(thrown)).toEqual(DETAILS);
+  });
+
+  it("reads the RPC client's ApiErrorException carrying the same domain error", () => {
+    const thrown = new ApiErrorException({
+      kind: "domain",
+      code: "FLOOR_PRICE_BREACH",
+      message: "Below the floor.",
+      status: 422,
+      details: { ...DETAILS },
+    });
+    expect(floorBreachOf(thrown)).toEqual(DETAILS);
+  });
+
+  it("leaves a refusal that is not a floor breach to the generic surface", () => {
+    expect(floorBreachOf(new ContractError("FORBIDDEN", "No."))).toBeNull();
+    expect(floorBreachOf(null)).toBeNull();
   });
 });

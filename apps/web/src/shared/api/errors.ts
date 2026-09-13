@@ -31,9 +31,27 @@ export interface DomainError {
   approvalRequestId?: string;
 }
 
-/** Transport failure codes. Deliberately small and closed. */
+/**
+ * Transport failure codes. Deliberately small and closed.
+ *
+ * `NOT_DEPLOYED` is the one that is not a fault at all. PostgREST answers
+ * `PGRST202`/`PGRST106`/`PGRST205` — and Postgres `42883`/`42P01` — when the
+ * function, the schema or the table it was asked for does not exist. That is a
+ * DEPLOYMENT fact about this environment, not an outage and not a refusal, and
+ * it is the app's normal state for every RPC the migrations lane has not landed
+ * yet. Folded into `SERVER` it reads as "TrainOS is down" and draws a retry
+ * button over a configuration setting; as its own code a screen can render the
+ * "not deployed" state instead. Classified on CODE, never on message text.
+ */
 export type TransportErrorCode =
-  "NETWORK" | "TIMEOUT" | "ABORTED" | "MALFORMED" | "UNAUTHENTICATED" | "SERVER" | "UNKNOWN";
+  | "NETWORK"
+  | "TIMEOUT"
+  | "ABORTED"
+  | "MALFORMED"
+  | "UNAUTHENTICATED"
+  | "NOT_DEPLOYED"
+  | "SERVER"
+  | "UNKNOWN";
 
 export interface TransportError {
   kind: "transport";
@@ -105,6 +123,8 @@ export function readableMessage(error: ApiError): string {
       return "The request took too long. Try again.";
     case "UNAUTHENTICATED":
       return "Your session has expired. Sign in again.";
+    case "NOT_DEPLOYED":
+      return "This part of TrainOS is not available in this environment yet.";
     default:
       return "Something went wrong. Try again.";
   }

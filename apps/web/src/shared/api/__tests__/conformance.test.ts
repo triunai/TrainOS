@@ -12,30 +12,19 @@ import {
 import { ContractError, createFixtureClient, isContractError } from "@trainos/fixtures";
 
 import { createRpcApiClient, type ApiClient } from "../apiClient";
-import { isDomainError } from "../errors";
+import { isDomainError, toApiError } from "../errors";
 import { classifyTransportFailure, createRpcClient, unwrapEnvelope } from "../rpcClient";
 import { __setTransportForTests } from "../supabase";
-import type { RpcTransport, TransportResponse } from "../transport";
+import { oracleTransport, toPageRequest, type Args, type Oracle } from "./oracleTransport";
 
 /**
- * ONE set of cases, run against BOTH clients.
+ * The golden path, run against BOTH clients.
  *
- * The fixture client is the oracle: it implements the contract against an
- * in-memory store and every screen in the app is built on its answers. The RPC
- * client is the thing being checked, driven through the SAME port production
- * uses, with a double standing in for PostgREST.
- *
- * WHAT THIS ACTUALLY PROVES. The double answers each RPC by asking the oracle
- * and then wrapping the answer the way `app.ok()` would, and refuses the way
- * `RAISE … USING ERRCODE = 'TRNOS'` would. So the two clients differ only by
- * the envelope round trip: serialise, unwrap, classify, adapt. If the unwrap
- * rule mis-handles a shape, if a domain refusal comes back classified as
- * transport, or if the adapter drops a field, the two answers stop matching and
- * the case fails — with no hosted database anywhere in the loop.
- *
- * WHAT IT CANNOT PROVE. That the SQL exists, that it returns this shape, or
- * that RLS lets the caller see it. Those are the migrations lane's, and they
- * need a database. This suite pins the seam, not the server.
+ * The harness — the oracle-backed transport, the `app.ok()` envelope, the
+ * raised `TRNOS` refusal and the §1 query grammar — lives in
+ * `./oracleTransport`, because the three per-feature suites run on the same
+ * one. What stays here is the golden path itself: the reads §11 names, the
+ * write path, and the classification rules every feature depends on.
  */
 
 /** The §3 request the action-gate case sends, as a value both clients get. */
@@ -45,46 +34,6 @@ const ARCHIVE_ENQUIRY = {
   payload: { reason: "Duplicate of an earlier enquiry." },
   requestedBy: { id: USER_AMIRAH, name: "Amirah", kind: "HUMAN" },
 } as const;
-
-type Oracle = ReturnType<typeof createFixtureClient>;
-
-/**
- * `app.ok()`, in TypeScript: exactly `{success, data}` and never a third key.
- *
- * Written out rather than imported so the test states the envelope it expects
- * independently of the code under test. A change to the unwrap rule that also
- * changed this helper would prove nothing.
- */
-const okEnvelope = (data: unknown): TransportResponse => ({
-  data: { success: true, data },
-  error: null,
-});
-
-/**
- * A `RAISE EXCEPTION … USING ERRCODE = 'TRNOS', DETAIL = '<jsonb>'` as
- * supabase-js would surface it.
- *
- * This is the shape 011 actually produces — it refuses by raising, not by
- * returning `app.err()`. Getting this double wrong in the other direction is
- * how a policy refusal ends up classified as a transport failure with a retry
- * button on it.
- */
-const raised = (error: ContractError): TransportResponse => ({
-  data: null,
-  error: {
-    message: error.message,
-    code: "TRNOS",
-    details: JSON.stringify({
-      code: error.code,
-      ...(error.details ?? {}),
-      ...(error.approvalRequestId === undefined
-        ? {}
-        : { approvalRequestId: error.approvalRequestId }),
-    }),
-  },
-});
-
-type Args = Record<string, unknown>;
 
 /** Each RPC the suite exercises, answered by the oracle. */
 const FUNCTIONS: Record<string, (args: Args, oracle: Oracle) => Promise<unknown>> = {
@@ -110,48 +59,6 @@ const FUNCTIONS: Record<string, (args: Args, oracle: Oracle) => Promise<unknown>
       { idempotencyKey: String(args.p_idempotency_key) },
     ),
 };
-
-/** The §1 query grammar, back out of the RPC arguments the client built. */
-function toPageRequest(args: Args): { page?: { size?: number } } {
-  const page = args.p_page;
-  if (typeof page !== "object" || page === null) return {};
-  const size = (page as { size?: unknown }).size;
-  return typeof size === "number" ? { page: { size } } : {};
-}
-
-/**
- * The `core` schema, standing in for PostgREST.
- *
- * It satisfies `RpcTransport` structurally — no cast, which is what E2 is
- * asking for and also what makes this a test of the real code path rather than
- * of an asserted shape.
- */
-function fakeCore(oracle: Oracle): RpcTransport {
-  return {
-    rpc: async (name, args) => {
-      const serve = FUNCTIONS[name];
-      if (serve === undefined) {
-        return {
-          data: null,
-          error: { message: `Could not find the function core.${name}`, code: "PGRST202" },
-        };
-      }
-      try {
-        return okEnvelope(await serve(args, oracle));
-      } catch (thrown) {
-        if (isContractError(thrown)) return raised(thrown);
-        throw thrown;
-      }
-    },
-    from: () => ({
-      select: () => {
-        const response: TransportResponse = { data: [], error: null };
-        const settled = Promise.resolve(response);
-        return Object.assign(settled, { match: () => settled });
-      },
-    }),
-  };
-}
 
 describe("the unwrap rule", () => {
   it("unwraps a lone `data`", () => {
@@ -197,7 +104,7 @@ describe("the two clients answer the same", () => {
   beforeEach(() => {
     oracle = createFixtureClient({ latencyMs: 0, actorId: USER_AMIRAH });
     fixtures = createFixtureClient({ latencyMs: 0, actorId: USER_AMIRAH });
-    __setTransportForTests(fakeCore(oracle));
+    __setTransportForTests(oracleTransport(oracle, FUNCTIONS));
     rpc = createRpcApiClient(createRpcClient());
   });
 
@@ -271,11 +178,18 @@ describe("the two clients answer the same", () => {
     expect(thrown).toBeInstanceOf(Error);
   });
 
-  /** An endpoint with no RPC at all fails by name rather than answering empty. */
-  it("an unimplemented method rejects by name", async () => {
+  /**
+   * An endpoint with no RPC at all fails by name rather than answering empty —
+   * and as NOT_DEPLOYED, so the screen draws the not-available state rather
+   * than a retryable "Something went wrong". The name rides on the ApiError's
+   * message; the exception's own message is the reader's sentence.
+   */
+  it("an unimplemented method rejects by name, as not deployed", async () => {
     const thrown = await rpc.getExecutiveDashboard().catch((e: unknown) => e);
     expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toContain("getExecutiveDashboard()");
+    const error = toApiError(thrown);
+    expect(error).toMatchObject({ kind: "transport", code: "NOT_DEPLOYED" });
+    expect(error.message).toContain("getExecutiveDashboard()");
   });
 });
 
@@ -304,7 +218,7 @@ describe("error classification", () => {
       hint: "Only the following schemas are exposed: public, graphql_public",
     });
     expect(error.kind).toBe("transport");
-    expect(error).toMatchObject({ code: "SERVER", status: 404 });
+    expect(error).toMatchObject({ code: "NOT_DEPLOYED", status: 404 });
     expect(error.message).toContain("not deployed");
   });
 
@@ -314,6 +228,6 @@ describe("error classification", () => {
       message: "Could not find the table 'public.tenants' in the schema cache",
       code: "PGRST205",
     });
-    expect(error).toMatchObject({ kind: "transport", code: "SERVER", status: 404 });
+    expect(error).toMatchObject({ kind: "transport", code: "NOT_DEPLOYED", status: 404 });
   });
 });

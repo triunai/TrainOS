@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import type { Role } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
-import { Drawer, KeyboardShortcut } from "@/shared/components/kit";
+import { ConfirmDialog, Drawer, KeyboardShortcut } from "@/shared/components/kit";
+import { isDemoPersistenceEnabled, resetDemoData } from "@/shared/api";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
 import { ROLE_LABEL, SHELL_ROLES } from "@/shared/config/roles";
 import { useMe } from "@/shared/hooks/useMe";
@@ -39,6 +40,11 @@ import { APP_VERSION, VERSION_LINE } from "./version";
  * is still one click away in the help drawer and the profile modal. There is
  * no collapse chevron down here: the control that closes the rail is at the top
  * of it, beside the name (63888e5 put it here, and nobody found it).
+ *
+ * "Reset demo data" is here for the same reason Help is: it is about the tool,
+ * not a record. It exists only on a page that keeps demo changes in the
+ * browser (fixtures mode), and it asks first — the confirm is the kit's
+ * `ConfirmDialog`, not a second primary button in the rail.
  */
 
 const ROW =
@@ -68,6 +74,7 @@ export function SidebarFooter({ collapsed = false }: { collapsed?: boolean }) {
   const { pathname } = useLocation();
   const [helpOpen, setHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
 
   /* Pre-filled so the first reply is not "which version, and where were you?".
      A mailto rather than a form: there is no issue endpoint yet, and a dead
@@ -109,7 +116,20 @@ export function SidebarFooter({ collapsed = false }: { collapsed?: boolean }) {
         {label(t("shell.shortcuts"))}
       </button>
 
-      {import.meta.env.DEV ? (
+      {isDemoPersistenceEnabled() ? (
+        <button
+          type="button"
+          onClick={() => setResetOpen(true)}
+          title={collapsed ? t("shell.resetDemo") : undefined}
+          className={rowClass}
+        >
+          <Glyph>↺</Glyph>
+          {label(t("shell.resetDemo"))}
+        </button>
+      ) : null}
+
+      {/* Absent in supabase mode: there the role is the session's, not a toggle. */}
+      {import.meta.env.DEV && setRole ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             className={rowClass}
@@ -199,6 +219,15 @@ export function SidebarFooter({ collapsed = false }: { collapsed?: boolean }) {
           <p className="font-mono text-[11px] text-ink-muted">{VERSION_LINE}</p>
         </div>
       </Drawer>
+
+      <ConfirmDialog
+        open={resetOpen}
+        onCancel={() => setResetOpen(false)}
+        onConfirm={() => resetDemoData()}
+        title={t("demo.resetTitle")}
+        description={t("demo.resetBody")}
+        confirmLabel={t("demo.resetConfirm")}
+      />
 
       <Drawer
         open={shortcutsOpen}

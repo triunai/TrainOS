@@ -215,6 +215,7 @@ export type FixtureApproval = ApprovalDetail & {
 export const approvals: FixtureApproval[] = [
   {
     id: "apv_0768",
+    diffHash: "diff_0768_v1",
     ref: APPROVAL_DISCOUNT,
     policyId: POLICY_DISCOUNT,
     actionType: "DISCOUNT_APPROVE",
@@ -251,6 +252,7 @@ export const approvals: FixtureApproval[] = [
   },
   {
     id: "apv_0771",
+    diffHash: "diff_0771_v1",
     ref: APPROVAL_AURORA,
     policyId: POLICY_PROPOSAL_SEND,
     actionType: "PROPOSAL_SEND",
@@ -326,6 +328,7 @@ export const approvals: FixtureApproval[] = [
   },
   {
     id: "apv_0772",
+    diffHash: "diff_0772_v1",
     ref: APPROVAL_REMINDER,
     policyId: POLICY_REMINDER_SEND,
     actionType: "REMINDER_SEND",
@@ -360,6 +363,7 @@ export const approvals: FixtureApproval[] = [
   },
   {
     id: "apv_0773",
+    diffHash: "diff_0773_v1",
     ref: APPROVAL_RULE_CHANGE,
     policyId: POLICY_RULE_CHANGE,
     actionType: "RULE_CHANGE_APPROVE",
@@ -394,6 +398,7 @@ export const approvals: FixtureApproval[] = [
   },
   {
     id: "apv_0774",
+    diffHash: "diff_0774_v1",
     ref: APPROVAL_ATTENDANCE,
     policyId: POLICY_ATTENDANCE_APPROVE,
     actionType: "ATTENDANCE_APPROVE",
@@ -427,6 +432,7 @@ export const approvals: FixtureApproval[] = [
   },
   {
     id: "apv_0775",
+    diffHash: "diff_0775_v1",
     ref: APPROVAL_TRAINER_BOOK,
     policyId: POLICY_TRAINER_BOOK,
     actionType: "TRAINER_BOOK",
@@ -452,6 +458,7 @@ export const approvals: FixtureApproval[] = [
   },
   {
     id: "apv_0776",
+    diffHash: "diff_0776_v1",
     ref: APPROVAL_BUDGET_CAP,
     policyId: POLICY_BUDGET_CAP_RAISE,
     actionType: "BUDGET_CAP_RAISE",

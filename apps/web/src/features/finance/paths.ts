@@ -9,8 +9,14 @@ import { INVOICE_AURORA } from "@trainos/contract";
  * hangs from.
  *
  * The pack draws M13-S02 as a record screen and the nav tree has no list above
- * it. Rather than invent a list the pack never specified, the leaf opens the
- * invoice the pack itself is drawn from and `/:invoiceRef` opens any other.
+ * it. The leaf used to open the invoice the pack is drawn from, which put a
+ * record on a list route: Finance › Invoices landed on INV-2026-0311 and the
+ * breadcrumb ended at a reference. `INVOICES_PATH` is now the invoices list and
+ * `/:invoiceRef` opens one record.
+ *
+ * The default below is what the record route falls back to when the parameter
+ * is absent, and naming it here keeps a route, a link and a test from
+ * disagreeing about which invoice that is.
  */
 
 export const INVOICES_PATH = "/finance/invoices";

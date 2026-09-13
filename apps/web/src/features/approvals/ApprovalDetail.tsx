@@ -60,7 +60,7 @@ import {
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, toApiError } from "@/shared/api";
+import { isDomainError, isNotDeployed, notDeployedState, toApiError } from "@/shared/api";
 import { useApproval, useApprovalAudit, useApprovalInbox, useDecideApproval } from "./api";
 import { APPROVALS_PATH, approvalPath } from "./paths";
 
@@ -102,7 +102,12 @@ export function ApprovalDetail() {
 
   const approval = useApproval(ref);
   const audit = useApprovalAudit(ref);
-  const decide = useDecideApproval(ref);
+  /* The decide takes the approval's ID. The route carries its REF, which
+     `core.decide_approval(p_approval_id uuid, …)` cannot parse (22P02); the
+     fixture client accepts either, which is why fixtures never showed it. The
+     buttons only render once the detail has loaded, so the id is always there
+     by the time a decision is sent. */
+  const decide = useDecideApproval(approval.data?.id ?? ref);
 
   /* The queue rail. The same grouped read the inbox uses, so the rail and the
      inbox can never disagree about what is next. */
@@ -127,6 +132,11 @@ export function ApprovalDetail() {
   const detail = approval.data;
   const decided = decide.data;
   const pending = detail?.status === "PENDING" && decided === undefined;
+  /* An APPROVE must echo the diff hash it was shown, and the database refuses
+     one without it. A payload that carries none — an environment whose
+     approval read predates the field — cannot be approved from here, so the
+     button says so instead of sending a request that is certain to fail. */
+  const canApprove = typeof detail?.diffHash === "string" && detail.diffHash.trim().length > 0;
 
   /* A · R · C, the pack's keystrokes. Bound only while the approval is still
      open, so a decided record cannot be decided twice by a stray key. */
@@ -150,14 +160,25 @@ export function ApprovalDetail() {
   }, [pending]);
 
   const submit = (decision: ApprovalDecision) => {
+    /* The buttons that call `submit` render only while `pending` is true,
+       which already implies `detail` is loaded — this is for the type
+       checker, not a reachable branch. */
+    if (!detail) return;
+    if (decision === "APPROVE" && !canApprove) return;
     const needsNote = NEEDS_NOTE.includes(decision);
     if (needsNote && note.trim().length === 0) {
       setArmed(decision);
       return;
     }
     /* Fire-and-forget, per CLAUDE.md R3: the mutation carries
-       `meta.toastOnError`, so a refusal is never silent. */
-    decide.mutate({ decision, note: needsNote ? note.trim() : null });
+       `meta.toastOnError`, so a refusal is never silent.
+
+       `diffHash` is the hash off THIS detail read — echoing it back is what
+       lets `core.decide_approval`'s optimistic-concurrency guard
+       (`011:2781-2787`) tell a decision made against the diff still shown
+       here from one made against a diff that has since changed underneath
+       it. See finding #6, docs/reviews/2026-09-13-codex-retrofit-014-017.md. */
+    decide.mutate({ decision, note: needsNote ? note.trim() : null, diffHash: detail.diffHash });
     setArmed(null);
   };
 
@@ -165,6 +186,14 @@ export function ApprovalDetail() {
     return (
       <div className="flex flex-col">
         <LoadingState rows={8} label="Loading the approval" className="px-5" />
+      </div>
+    );
+  }
+
+  if (isNotDeployed(approval.error)) {
+    return (
+      <div className="flex flex-col">
+        <EmptyState {...notDeployedState("This approval")} />
       </div>
     );
   }
@@ -251,7 +280,7 @@ export function ApprovalDetail() {
       <SecondaryButton onClick={() => submit("REQUEST_CHANGES")} disabled={decide.isPending}>
         Request changes
       </SecondaryButton>
-      <PrimaryButton onClick={() => submit("APPROVE")} disabled={decide.isPending}>
+      <PrimaryButton onClick={() => submit("APPROVE")} disabled={decide.isPending || !canApprove}>
         {decide.isPending ? "Deciding…" : "Approve"}
       </PrimaryButton>
     </>
@@ -489,6 +518,14 @@ export function ApprovalDetail() {
             />
           ) : null}
 
+          {pending && !canApprove ? (
+            <ExceptionBanner
+              severity="INFO"
+              title="Approving is not available here yet"
+              subtitle="This environment does not send the change fingerprint an approval must echo back, so an approve would be refused. Reject and request changes still work."
+            />
+          ) : null}
+
           {recomputed ? (
             <ExceptionBanner
               severity="WARN"
@@ -536,7 +573,9 @@ export function ApprovalDetail() {
           <Block title={audit.data ? `Audit trail · ${audit.data.data.length}` : "Audit trail"}>
             {audit.isPending ? <LoadingState rows={2} label="Loading the audit trail" /> : null}
 
-            {audit.isError ? (
+            {isNotDeployed(audit.error) ? (
+              <EmptyState className="px-0 py-6" {...notDeployedState("The audit trail")} />
+            ) : audit.isError ? (
               <ErrorState
                 className="px-0 py-6"
                 title="The audit trail did not load"

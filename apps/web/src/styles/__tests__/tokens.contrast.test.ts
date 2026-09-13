@@ -228,45 +228,137 @@ describe("L1 reads as its own plane against the card it sits on", () => {
   });
 });
 
-/* ── The one pair that does not pass ──────────────────────────────────── */
+/* ── The solid primary: the fill is a token of its own ────────────────── */
 
-describe("KNOWN GAPS — recorded here so they cannot go quiet", () => {
+describe("the one solid button clears AA in both themes", () => {
   /*
-   * Each assertion below states that a pair is STILL below AA. They go red the
-   * moment someone fixes the underlying defect, which is the prompt to delete
-   * the case. None of them is fixable inside this file: the values are right,
-   * the call sites pair them wrongly.
+   * WAS THE LAST KNOWN GAP. `--primary` was the fill AND the accent as text,
+   * and the dark map lifts it to #4C82FF so the accent can be read on #171C25
+   * — which put `--on-primary` on the fill at 3.24:1. The fill is now
+   * `--primary-solid`, which is the brand hex in both themes.
+   *
+   * These cases are the contract that keeps the split honest: if someone ever
+   * "tidies" the fill back onto `--primary`, or lifts the fill for dark the way
+   * the text token is lifted, the label goes under AA and this goes red.
    */
 
-  /* 1 — CLOSED. `Sidebar.tsx` `PARENT_LIT` read `text-primary` on this tint
-     where the other five consumers read `text-primary-hover`, and on the dark
-     map that outlier measured 4.05:1. It now reads `text-primary-hover` like
-     the rest, so the pair the rail actually composes is asserted as PASSING in
-     "sidebar text clears AA on both of its backdrops" above. Nothing is
-     asserted about `--primary` on this tint any more: the value is fine, it is
-     simply not the token that belongs here.
-
-     2 — the solid primary button in dark. `--primary` is asked to be a fill
-     that carries near-white text AND text that sits on tints; clearing the
-     first needs it darker, clearing the second needs it lighter, and no single
-     value does both. Splitting it into a fill blue and a text blue is the fix,
-     and it spans Button and every `text-primary` call site. */
-  it("the dark solid primary's label is still below AA", () => {
-    expect(contrast("dark", "on-primary", "primary")).toBeLessThan(AA_TEXT);
+  it.each(themes)("%s: --on-primary on the solid fill", (theme) => {
+    expect(contrast(theme, "on-primary", "primary-solid")).toBeGreaterThanOrEqual(AA_TEXT);
   });
 
-  /* 3 — light only. `--ai-tint-2` is also the selected DATA ROW
-     (`DataTable.tsx`), and a muted cell on a selected row measures 4.36:1.
-     Lightening the tint is not the fix: it would land 0.9 L* from `--ai-tint`
-     and the two AI surfaces would collapse into one. A selected row should
-     raise its muted cells to `--ink-secondary` (6.6:1) instead. */
-  it("muted text on a selected row is still below AA in light", () => {
+  it.each(themes)("%s: --on-primary on the solid fill, hovered", (theme) => {
+    expect(contrast(theme, "on-primary", "primary-solid-hover")).toBeGreaterThanOrEqual(AA_TEXT);
+  });
+
+  it.each(themes)("%s: the resting fill reads as a control on every ground", (theme) => {
+    /* CLAUDE.md's 3:1 floor for a non-text affordance. The button's boundary is
+       what says "control" before the label is read, so it is measured against
+       each ground a primary button actually sits on: the page, a card, and the
+       recessed L1 surface a toolbar sits in. The HOVER fill is deliberately not
+       here — it is under the reader's cursor with a 6.5:1 label on it, not a
+       resting edge they have to find. */
+    for (const ground of ["canvas", "card", "surface"] as const) {
+      expect(contrast(theme, "primary-solid", ground)).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    }
+  });
+
+  it("the fill is theme-stable, and that is the mechanism, not a coincidence", () => {
+    /* The whole split rests on the dark map NOT redefining these two. A dark
+       override would reintroduce exactly the conflict that was removed. */
+    expect(DARK_OVERRIDES["--primary-solid"]).toBeUndefined();
+    expect(DARK_OVERRIDES["--primary-solid-hover"]).toBeUndefined();
+    expect(rgb("dark", "primary-solid")).toEqual(rgb("light", "primary-solid"));
+    expect(rgb("light", "primary-solid")).toEqual(rgb("light", "primary"));
+  });
+
+  it("the accent as TEXT is still lifted for dark, which is why the split exists", () => {
+    /* The other half of the same contract: `--primary` must stay readable on
+       the dark card. If it were darkened to serve the fill, every link and mark
+       would fail instead — which is the trade the split removes. */
+    expect(contrast("dark", "primary", "card")).toBeGreaterThanOrEqual(AA_TEXT);
+    expect(contrast("light", "primary", "card")).toBeGreaterThanOrEqual(AA_TEXT);
+  });
+});
+
+/* ── The selected surface ─────────────────────────────────────────────── */
+
+describe("a selected row is readable in both themes", () => {
+  /*
+   * WAS A KNOWN GAP, light only: `--ink-muted` on `--ai-tint-2` is 4.36:1.
+   * `SELECTED_TINT` rebinds `--ink-muted` to `--ink-secondary` inside the
+   * selected subtree, so the pair the reader actually sees is the second one
+   * below. The first is kept as the REASON — it records why the rebinding is
+   * there, and it goes red the day someone changes the tint enough to make the
+   * scope unnecessary, which is the prompt to delete the scope with it.
+   */
+
+  it("light muted ink on the raw tint is why SELECTED_TINT exists", () => {
     expect(contrast("light", "ink-muted", "ai-tint-2")).toBeLessThan(AA_TEXT);
-    expect(contrast("light", "ink-secondary", "ai-tint-2")).toBeGreaterThanOrEqual(AA_TEXT);
   });
 
-  it("light has no accent conflict", () => {
-    expect(contrast("light", "primary", "ai-tint-2")).toBeGreaterThanOrEqual(AA_TEXT);
-    expect(contrast("light", "on-primary", "primary")).toBeGreaterThanOrEqual(AA_TEXT);
+  it.each(themes)("%s: the raised floor a selected row actually paints", (theme) => {
+    expect(contrast(theme, "ink-secondary", "ai-tint-2")).toBeGreaterThanOrEqual(AA_TEXT);
+    expect(contrast(theme, "ink", "ai-tint-2")).toBeGreaterThanOrEqual(AA_TEXT);
+  });
+
+  it.each(themes)("%s: the SUGGESTED row needs no raising", (theme) => {
+    /* `--ai-tint` is the other AI surface, and muted ink clears AA on it
+       unaided — 4.61:1 light, 5.09:1 dark. Asserted so that a future nudge to
+       either tint cannot quietly put the suggested row where the selected row
+       was. */
+    expect(contrast(theme, "ink-muted", "ai-tint")).toBeGreaterThanOrEqual(AA_TEXT);
+  });
+
+  it.each(themes)("%s: the two AI surfaces stay two surfaces", (theme) => {
+    /* The reason lightening `--ai-tint-2` was rejected as the fix for row 1b:
+       at parity the selected row and the suggested row become one surface and
+       the table loses a state. They sit 2.15 L* apart in light and 4.19 in
+       dark; the floor below is the distance, not the direction. */
+    const delta = Math.abs(lightness(theme, "ai-tint") - lightness(theme, "ai-tint-2"));
+    expect(delta).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each(themes)("%s: the selection rule reads as an affordance", (theme) => {
+    /* The 2px inset rule is `--primary` and is the only non-text mark that says
+       "this row is selected" to a reader who cannot see the tint. */
+    expect(contrast(theme, "primary", "ai-tint-2")).toBeGreaterThanOrEqual(AA_NON_TEXT);
+  });
+});
+
+/* ── Type: the two roles the tokens name ──────────────────────────────── */
+
+describe("the type tokens name a role each", () => {
+  /* Brief §1 asks for `--font-ui` / `--font-code` by name, and the split is the
+     whole mono-reduction rule made checkable: if the two ever resolve to the
+     same stack the rule has no teeth, and if `tailwind.config.ts` stops reading
+     them the tokens are decoration. */
+  const TYPE = withoutComments.match(/--font-ui:\s*([^;]+);[\s\S]*?--font-code:\s*([^;]+);/);
+
+  it("defines both roles, once, in the light map", () => {
+    expect(TYPE).not.toBeNull();
+    expect(TYPE?.[1]).toMatch(/Inter/);
+    expect(TYPE?.[2]).toMatch(/JetBrains Mono/);
+  });
+
+  it("does not theme-swap a typeface", () => {
+    expect(DARK_OVERRIDES["--font-ui"]).toBeUndefined();
+    expect(DARK_OVERRIDES["--font-code"]).toBeUndefined();
+  });
+
+  it("is what Tailwind's two families actually read", () => {
+    const config = readFileSync(
+      ["tailwind.config.ts", "apps/web/tailwind.config.ts"]
+        .map((candidate) => resolve(process.cwd(), candidate))
+        .find(existsSync) ?? "",
+      "utf8",
+    );
+    expect(config).toMatch(/sans:\s*\['var\(--font-ui/);
+    expect(config).toMatch(/mono:\s*\['var\(--font-code/);
+    /* The old names are gone, not aliased. Two names for one face is the
+       divergence CLAUDE.md calls a defect. */
+    expect(config).not.toMatch(/--font-sans/);
+    expect(config).not.toMatch(/--font-mono\b/);
+    expect(withoutComments).not.toMatch(/--font-sans/);
+    expect(withoutComments).not.toMatch(/--font-mono\s*:/);
   });
 });

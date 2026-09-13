@@ -31,8 +31,28 @@ export {
 export type { ApiClient } from "./apiClient";
 export { createRpcApiClient } from "./apiClient";
 
-/** The oracle's own type, re-exported so no module reaches past this barrel. */
+/**
+ * The oracle itself — its type, the singleton, and the store reset.
+ *
+ * Re-exported as VALUES and not only as a type, because "no module reaches past
+ * this barrel" has to hold for the tests too. A feature test that imports
+ * `fixtureClient` from `@trainos/fixtures` is a feature that knows which client
+ * is mounted behind the seam, and it is one search-and-replace away from being
+ * the reason the swap cannot happen. Here, the same test asks the data boundary
+ * for the oracle and keeps working whichever client production mounts.
+ *
+ * `resetStore` is part of the same surface: the fixture store is a mutable
+ * singleton, so a test that decides an approval leaves it decided for the next
+ * one.
+ *
+ * `ContractError` and `isContractError` come through here for a sharper reason
+ * than tidiness. They are the CONTRACT's refusal, not the fixture client's, and
+ * a module that imports them from the fixture package is a module that believes
+ * a refusal is something the oracle does. It is not: `core.put_quotation`
+ * raises the same refusal as SQLSTATE `TRNOS`, and `toApiError` narrows both.
+ */
 export type { FixtureClient } from "@trainos/fixtures";
+export { ContractError, fixtureClient, isContractError, resetStore } from "@trainos/fixtures";
 
 /** The typed RPC surface and its Supabase implementation. */
 export type {
@@ -46,6 +66,18 @@ export type {
 } from "./client";
 export { SupabaseRpcClient, createRpcClient, unwrapEnvelope } from "./rpcClient";
 export { apiMode, isSupabaseConfigured } from "./supabase";
+
+/** The auth port. Identity comes from here and from `getMe()`; nothing else. */
+export { getAuth, type AuthOutcome, type AuthPort, type AuthUser } from "./auth";
+
+/** The hosted demo's per-browser memory. Switched on from `main.tsx` in fixtures mode only. */
+export {
+  enableDemoPersistence,
+  isDemoPersistenceEnabled,
+  readDemoRole,
+  resetDemoData,
+  writeDemoRole,
+} from "./demoPersistence";
 
 export {
   ApiErrorException,
@@ -64,6 +96,8 @@ export {
   type TransportError,
   type TransportErrorCode,
 } from "./errors";
+
+export { isNotDeployed, notDeployedState, type NotDeployedState } from "./notDeployed";
 
 export { useOrganisationDirectory, type OrganisationDirectory } from "./useOrganisationDirectory";
 export { useOpportunityIndex, type OpportunityIndex } from "./useOpportunityIndex";

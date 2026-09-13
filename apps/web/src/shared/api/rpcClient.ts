@@ -5,6 +5,7 @@ import type {
   ApprovalDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AuditEntry,
   ApprovalRequestRef,
   BadgeCounts,
   Budget,
@@ -14,11 +15,15 @@ import type {
   Contact,
   Enquiry,
   EnquiryDetail,
+  EnquiryExtractionPatch,
+  FollowUp,
   ErrorCode,
   ErrorDetails,
   HrdcDeadline,
   KnowledgeSource,
   ListResponse,
+  MessageChannel,
+  MessageDraft,
   Me,
   MeProfile,
   ModelTier,
@@ -33,7 +38,9 @@ import type {
   Programme,
   ProgrammeDelivery,
   Proposal,
+  ProposalSectionRegenerateResponse,
   Quotation,
+  RateCard,
   RuleChangeSet,
   SavedView,
   Template,
@@ -50,6 +57,8 @@ import type {
   DecideInput,
   ProposalInput,
   QuotationInput,
+  SectionInput,
+  SectionWriteInput,
   TrainOsClient,
 } from "./client";
 import { fail, ok, transportError, type ApiError, type DomainError, type Result } from "./errors";
@@ -113,6 +122,9 @@ const MISSING_FUNCTION_CODES = new Set(["PGRST202", "PGRST106", "PGRST205", "428
 /** PostgREST's JWT rejections, plus Postgres' own privilege refusal. */
 const UNAUTHENTICATED_CODES = new Set(["PGRST301", "PGRST302", "42501"]);
 
+/** Any RFC 4122 layout; the database generates v4 but the check need not care. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -148,6 +160,10 @@ export function messageForCode(code: ErrorCode): string {
       return "That agent is paused.";
     case "SLA_BREACHED":
       return "This approval is past its SLA.";
+    case "DIFF_CHANGED":
+      return "The rendered diff is no longer current. Refresh and decide again.";
+    case "BULK_NOT_PERMITTED":
+      return "Some of those approvals must be decided one at a time.";
     default:
       return "That key was already used with a different request.";
   }
@@ -209,6 +225,45 @@ export function unwrapEnvelope(body: unknown): Result<unknown> {
   return ok(keys.length === 1 && keys[0] === "data" ? rest.data : rest);
 }
 
+/**
+ * The contract's audit resource type, in the database's spelling.
+ *
+ * The contract addresses a trail by its ROUTE SEGMENT — `/v1/approvals/{id}/audit`,
+ * plural and lowercase, which is also the fixture store's key. The database
+ * keys it by AGGREGATE TYPE: `core.audit_entries.subject_type` is CHECKed
+ * `^[A-Z][A-Z0-9_]*$` (012:598) and written as the singular entity upper-cased
+ * (`app.aggregate_type_for`, 012:1010). Sent as-is, `approvals` can never match
+ * a row, and the trail is empty rather than an error — which is why nobody saw
+ * it. The rule is derived rather than listed so a new record type needs no entry
+ * here: singular, kebab to snake, upper-cased. A value already in UPPER_SNAKE
+ * passes through untouched.
+ */
+export function aggregateTypeOf(resourceType: string): string {
+  if (/^[A-Z][A-Z0-9_]*$/.test(resourceType)) return resourceType;
+  return resourceType.replace(/s$/, "").replace(/-/g, "_").toUpperCase();
+}
+
+/**
+ * A view read's failure. The same split, with one difference: `42501`.
+ *
+ * On an RPC, `42501` is the database refusing a principal with no tenant, and
+ * sign-in reads it as "not linked", so it stays `UNAUTHENTICATED`. On a VIEW it
+ * is a GRANT that has not shipped — a view is checked against the invoker for
+ * every function in its body, and `v_organisation_relations`, `v_budgets` and
+ * `v_model_tiers` call `app.*` helpers `authenticated` cannot execute (018:706,
+ * 018:4705-4706). Drawn as "Your session has expired" it sent a signed-in reader
+ * to sign in again; it is a deployment fact, so it reads as one. A signed-out
+ * reader never reaches a view read — the session guard answers first.
+ */
+export function classifyViewFailure(failure: TransportFailure): ApiError {
+  if (failure.code === "42501") {
+    return transportError("NOT_DEPLOYED", `${failure.message} — view grant not deployed`, {
+      status: 404,
+    });
+  }
+  return classifyTransportFailure(failure);
+}
+
 /** A supabase-js failure, split into the domain and transport branches. */
 export function classifyTransportFailure(failure: TransportFailure): ApiError {
   const code = failure.code ?? "";
@@ -229,7 +284,9 @@ export function classifyTransportFailure(failure: TransportFailure): ApiError {
   }
 
   if (MISSING_FUNCTION_CODES.has(code)) {
-    return transportError("SERVER", `${failure.message} — endpoint not deployed`, { status: 404 });
+    return transportError("NOT_DEPLOYED", `${failure.message} — endpoint not deployed`, {
+      status: 404,
+    });
   }
 
   if (UNAUTHENTICATED_CODES.has(code)) {
@@ -340,16 +397,26 @@ export const RPC_NAMES = {
     "badge_counts",
     "list_enquiries",
     "get_enquiry",
+    "patch_enquiry_extraction",
+    "list_follow_ups",
+    "get_follow_up_draft",
     "get_organisation",
     "get_opportunity",
     "get_tna",
     "get_tna_recommendations",
     "create_proposal",
+    "list_proposals",
     "get_proposal",
+    "add_proposal_section",
+    "put_proposal_section",
+    "regenerate_proposal_section",
+    "list_quotations",
     "get_quotation",
     "put_quotation",
+    "get_rate_card",
     "list_approvals",
     "get_approval",
+    "get_audit",
     "get_policy",
     "get_pipeline_config",
     "get_contact",
@@ -427,8 +494,24 @@ export class SupabaseRpcClient implements TrainOsClient {
       const message = thrown instanceof Error ? thrown.message : "Request failed";
       return fail(transportError("NETWORK", message, { cause: thrown }));
     }
-    if (response.error !== null) return fail(classifyTransportFailure(response.error));
+    if (response.error !== null) return fail(classifyViewFailure(response.error));
     return ok(asList((response.data ?? []) as T[]));
+  }
+
+  /**
+   * The UUID a uuid-keyed view is matched on, from whatever the caller holds.
+   *
+   * `v_organisation_relations` and `v_contact_consent_current` key their rows
+   * by uuid, but the screens hold REFS — a route segment, `organisationRef` — and
+   * a ref in a uuid `.match()` is 22P02, which reads as a server fault. The
+   * record's own RPC already accepts id or ref, so it resolves one to the other;
+   * a value that is already a uuid costs no round trip.
+   */
+  private async uuidOf(rpc: string, idOrRef: string): Promise<Result<string>> {
+    if (UUID.test(idOrRef)) return ok(idOrRef);
+    const record = await this.call<{ id: string }>(rpc, { p_id: idOrRef });
+    if (record.error !== null) return fail(record.error);
+    return ok(record.data.id);
   }
 
   me(): Promise<Result<Me>> {
@@ -455,6 +538,26 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<EnquiryDetail>("get_enquiry", { p_id: id });
   }
 
+  /**
+   * §4 edit-before-use on one extracted field.
+   *
+   * The patch is a VALUE, not a merge the client computes: the field's
+   * provenance flips to `AI_SUGGESTED` with `editedBy` on the server, and a
+   * client that assembled the new record itself would be inventing the
+   * provenance the chip on that field reads.
+   */
+  patchExtraction(id: string, patch: EnquiryExtractionPatch): Promise<Result<EnquiryDetail>> {
+    return this.call<EnquiryDetail>("patch_enquiry_extraction", { p_id: id, p_patch: patch });
+  }
+
+  listFollowUps(query: PageRequest): Promise<Result<ListResponse<FollowUp>>> {
+    return this.call<ListResponse<FollowUp>>("list_follow_ups", pageArgs(query));
+  }
+
+  getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>> {
+    return this.call<MessageDraft>("get_follow_up_draft", { p_id: id, p_channel: channel });
+  }
+
   getOrganisation(id: string): Promise<Result<Organisation>> {
     return this.call<Organisation>("get_organisation", { p_id: id });
   }
@@ -464,8 +567,10 @@ export class SupabaseRpcClient implements TrainOsClient {
    * empty list. The contract types this endpoint as a record, not a collection.
    */
   async getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>> {
+    const uuid = await this.uuidOf("get_organisation", id);
+    if (uuid.error !== null) return fail(uuid.error);
     const rows = await this.view<OrganisationRelations>(VIEW_READS.organisationRelations, {
-      organisation_id: id,
+      organisation_id: uuid.data,
     });
     if (rows.error !== null) return fail(rows.error);
     const first = rows.data.data[0];
@@ -495,12 +600,66 @@ export class SupabaseRpcClient implements TrainOsClient {
     });
   }
 
+  listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>> {
+    return this.call<ListResponse<Proposal>>("list_proposals", pageArgs(query));
+  }
+
   getProposal(id: string): Promise<Result<Proposal>> {
     return this.call<Proposal>("get_proposal", { p_id: id });
   }
 
+  addSection(id: string, input: SectionInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("add_proposal_section", {
+      p_id: id,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  putSection(id: string, n: number, input: SectionWriteInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("put_proposal_section", {
+      p_id: id,
+      p_n: n,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  /**
+   * A fresh generation, and the run that produced it.
+   *
+   * Not idempotent by key on purpose: a second "Regenerate" is a second
+   * request for a new draft, and replaying the first response would hand the
+   * reader the text they just rejected.
+   */
+  regenerateSection(id: string, n: number): Promise<Result<ProposalSectionRegenerateResponse>> {
+    return this.call<ProposalSectionRegenerateResponse>("regenerate_proposal_section", {
+      p_id: id,
+      p_n: n,
+    });
+  }
+
+  /**
+   * §6 every quotation, priced.
+   *
+   * An RPC rather than a §8 view read, and not because of the page envelope
+   * alone: `quotation:read` is withheld from OPS, and the refusal has to be
+   * the server's. A view with RLS on it answers an unauthorised reader with an
+   * EMPTY LIST, which the screen would draw as "no quotations" — a refusal
+   * rendered as a fact about the data.
+   */
+  listQuotations(query: PageRequest): Promise<Result<ListResponse<Quotation>>> {
+    return this.call<ListResponse<Quotation>>("list_quotations", pageArgs(query));
+  }
+
   getQuotation(id: string): Promise<Result<Quotation>> {
     return this.call<Quotation>("get_quotation", { p_id: id });
+  }
+
+  rateCard(): Promise<Result<RateCard>> {
+    return this.call<RateCard>("get_rate_card");
   }
 
   putQuotation(id: string, input: QuotationInput): Promise<Result<Quotation>> {
@@ -525,16 +684,43 @@ export class SupabaseRpcClient implements TrainOsClient {
       p_approval_id: id,
       p_decision: input.decision,
       p_note: input.note,
+      /* 011:2598,2781-2787 — the optimistic-concurrency guard this call must
+         not silently defeat. See finding #6,
+         docs/reviews/2026-09-13-codex-retrofit-014-017.md. */
+      p_expected_diff_hash: input.diffHash,
       p_idempotency_key: input.idempotencyKey,
     });
   }
 
   bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>> {
     return this.call<ApprovalBulkDecideResponse>("bulk_decide_approvals", {
-      p_ids: input.ids,
+      /* 011:3407-3419 (062e5e2) — `p_items jsonb`, not `p_ids uuid[]`: a hash
+         per approval cannot travel in an array of ids. Each item is the same
+         diffHash the single decide path sends as `p_expected_diff_hash`. */
+      p_items: input.items.map((item) => ({
+        approvalId: item.approvalId,
+        expectedDiffHash: item.diffHash,
+      })),
       p_decision: input.decision,
       p_note: input.note ?? null,
       p_idempotency_key: input.idempotencyKey,
+    });
+  }
+
+  /**
+   * §2 `GET /v1/{resourceType}/{id}/audit`.
+   *
+   * `resourceType` is a plain string because the contract keys the trail by
+   * one: `approvals::{ref}`, `proposals::{ref}`. Narrowing it to a union here
+   * would be a shape this client invented, and E3 exists to stop exactly that.
+   *
+   * The approval IS the resource on M02-S02, not the thing it acts on: the
+   * trail an approver needs is how this decision reached them.
+   */
+  audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>> {
+    return this.call<ListResponse<AuditEntry>>("get_audit", {
+      p_resource_type: aggregateTypeOf(resourceType),
+      p_id: id,
     });
   }
 
@@ -591,8 +777,10 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<Contact>("get_contact", { p_id: id });
   }
 
-  getContactConsent(id: string): Promise<Result<ListResponse<ChannelConsent>>> {
-    return this.view<ChannelConsent>(VIEW_READS.contactConsent, { contact_id: id });
+  async getContactConsent(id: string): Promise<Result<ListResponse<ChannelConsent>>> {
+    const uuid = await this.uuidOf("get_contact", id);
+    if (uuid.error !== null) return fail(uuid.error);
+    return this.view<ChannelConsent>(VIEW_READS.contactConsent, { contact_id: uuid.data });
   }
 
   listProgrammes(): Promise<Result<ListResponse<Programme>>> {

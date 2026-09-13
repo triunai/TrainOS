@@ -78,7 +78,7 @@ export function NotificationBell({ unread = 0, onOpen, className }: Notification
       {has ? (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute -right-1 -top-0.5 rounded-pill border border-danger-border bg-danger-fill px-1 font-mono text-[10px] font-semibold leading-4 text-danger"
+          className="pointer-events-none absolute -right-1 -top-0.5 rounded-pill border border-danger-border bg-danger-fill px-1 text-[10px] font-semibold tabular-nums leading-4 text-danger"
         >
           {unread > 99 ? "99+" : unread}
         </span>
@@ -109,7 +109,7 @@ export function Avatar({ name, size = 32, kind = "human", className }: AvatarPro
       title={name}
       style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.34)) }}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-pill font-mono text-on-primary",
+        "inline-flex shrink-0 items-center justify-center rounded-pill font-semibold text-on-primary",
         kind === "agent" ? "bg-surface text-ink-secondary ring-1 ring-border" : "bg-avatar",
         className,
       )}

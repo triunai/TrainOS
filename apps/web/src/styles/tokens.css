@@ -73,6 +73,39 @@
   --primary-border: 203 216 255; /* #CBD8FF  accent border */
   --on-primary: 255 255 255; /* #FFFFFF  label on a solid primary button */
 
+  /* The SOLID FILL, split out of `--primary` (verification row 1c).
+     ------------------------------------------------------------------------
+     One token was being asked to do two contradictory jobs. `--primary` is
+     TEXT and MARKS on the shell's own grounds — a link, a selected dot, an
+     `accent-primary` checkbox, a focus ring — so on the dark map it is lifted
+     to #4C82FF to clear 4.5:1 against #171C25. `--primary` was ALSO the fill
+     under a near-white label, and there that same lift is the defect:
+     `--on-primary` #F2F5FF on #4C82FF measures 3.24:1. Darkening the token
+     fixes the fill and breaks the text; lightening it does the reverse. No
+     single value does both, so the fill becomes its own token.
+
+     THE FILL IS THE BRAND HEX, IN BOTH THEMES, and is deliberately NOT
+     redefined in the dark map below. This is not a fourth accent and not a new
+     colour: it is #1F5BFF, the one accent CLAUDE.md names, painted at the one
+     place the rule is about — "solid blue means a human triggered it". A
+     promise that changes colour between themes is a weaker promise.
+
+     Measured, dark theme:
+       --on-primary on the fill          4.82:1  (AA text, was 3.24:1)
+       the fill against --card           3.25:1  (non-text floor 3:1)
+       the fill against --canvas         3.39:1
+       the fill against --surface        3.01:1
+     Light is unchanged in appearance: the fill is the value `--primary`
+     already carried there, and white on it is 5.25:1.
+
+     The HOVER deepens in both themes rather than lifting in dark, for the same
+     reason: lifting is what puts the label under AA. #1849D6 carries
+     `--on-primary` at 6.51:1 light and dark. Its own separation from the dark
+     card drops to 2.41:1, which is a hover state under the reader's cursor
+     with a 6.5:1 label on it, not a resting boundary they have to find. */
+  --primary-solid: 31 91 255; /* #1F5BFF  fill of the one solid button */
+  --primary-solid-hover: 24 73 214; /* #1849D6  that fill, hovered */
+
   /* ---- AI surfaces (6% tint + the glyph + a label; never a solid fill) - */
   --ai-tint: 244 247 255; /* #F4F7FF  AI surfaces */
   --ai-tint-2: 235 241 255; /* #EBF1FF  selected row, active nav, active pill */
@@ -196,9 +229,26 @@
   /* ---- Identity ------------------------------------------------------- */
   --avatar-surface: 24 26 31; /* #181A1F  charcoal circle, light initials */
 
-  /* ---- Typography (§1.3) ---------------------------------------------- */
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* ---- Typography (§1.3, and the tightening brief §1) ------------------ *
+   * TWO ROLES, NOT TWO FONTS. The names say what a face is FOR, which is the
+   * whole point of the brief's §1: `--font-ui` carries everything a person
+   * reads as language — labels, table headings, section captions, sidebar
+   * captions, metric captions, money and counts — and `--font-code` carries
+   * only machine-ish values a person may have to transcribe or match
+   * character by character: record references (`PRG-0031`), versions, hashes,
+   * tool names, diffs, error codes, `⌘K`.
+   *
+   * A NUMBER IS NOT A MACHINE VALUE. `RM 214,300` is money a human reads, and
+   * §1 is explicit that numbers align with `tabular-nums` rather than with a
+   * monospace face. Reaching for `font-mono` to line a column up is the single
+   * commonest way mono spreads across a screen, and `tabular-nums` on the UI
+   * font does the same job without changing the voice.
+   *
+   * The Tailwind class names stay `font-sans` and `font-mono` — that is
+   * Tailwind's own vocabulary, the way `bg-card` is — and `tailwind.config.ts`
+   * reads these two tokens. */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* ---- Geometry (§1.4) — 8px grid with a 4px half-step ---------------- */
   --radius-control: 8px;

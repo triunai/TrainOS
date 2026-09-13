@@ -8,6 +8,7 @@ import type {
   ApprovalBulkDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AuditEntry,
   BadgeCounts,
   Budget,
   ChannelConsent,
@@ -16,9 +17,13 @@ import type {
   Contact,
   Enquiry,
   EnquiryDetail,
+  EnquiryExtractionPatch,
+  FollowUp,
   HrdcDeadline,
   KnowledgeSource,
   ListResponse,
+  MessageChannel,
+  MessageDraft,
   Me,
   MeProfile,
   ModelTier,
@@ -34,8 +39,11 @@ import type {
   ProgrammeDelivery,
   Proposal,
   ProposalCreateRequest,
+  ProposalSectionRegenerateResponse,
+  ProposalSectionWrite,
   Quotation,
   QuotationWrite,
+  RateCard,
   RuleChangeSet,
   SavedView,
   Template,
@@ -101,6 +109,21 @@ export type ProposalInput = Idempotent<ProposalCreateRequest>;
 export type QuotationInput = Idempotent<QuotationWrite>;
 
 /**
+ * `POST /v1/proposals/{id}/sections` — a section a person typed.
+ *
+ * The body is written out rather than imported because the contract has no
+ * shape for it: §13 publishes `PUT /sections/{n}` and
+ * `POST /sections/{n}/regenerate`, both of which need the section to exist
+ * already, so "Add section" on M07-S02 has no published endpoint. The fixture
+ * client implements it and reports the gap; this mirrors its body exactly.
+ * E3 reads RETURN types, and this one returns the contract's `Proposal`.
+ */
+export type SectionInput = Idempotent<{ title: string; body?: string }>;
+
+/** `PUT /v1/proposals/{id}/sections/{n}`. */
+export type SectionWriteInput = Idempotent<ProposalSectionWrite>;
+
+/**
  * The methods, grouped by golden-path order then by the §8 view reads.
  *
  * A method here may name an RPC that does not exist in the database yet. That
@@ -116,19 +139,29 @@ export interface TrainOsClient {
   badges(): Promise<Result<BadgeCounts>>;
   listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>>;
   getEnquiry(id: string): Promise<Result<EnquiryDetail>>;
+  patchExtraction(id: string, patch: EnquiryExtractionPatch): Promise<Result<EnquiryDetail>>;
+  listFollowUps(query: PageRequest): Promise<Result<ListResponse<FollowUp>>>;
+  getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>>;
   getOrganisation(id: string): Promise<Result<Organisation>>;
   getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>>;
   getOpportunity(id: string): Promise<Result<Opportunity>>;
   getTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
   createProposal(input: ProposalInput): Promise<Result<Proposal>>;
+  listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>>;
   getProposal(id: string): Promise<Result<Proposal>>;
+  addSection(id: string, input: SectionInput): Promise<Result<Proposal>>;
+  putSection(id: string, n: number, input: SectionWriteInput): Promise<Result<Proposal>>;
+  regenerateSection(id: string, n: number): Promise<Result<ProposalSectionRegenerateResponse>>;
+  listQuotations(query: PageRequest): Promise<Result<ListResponse<Quotation>>>;
   getQuotation(id: string): Promise<Result<Quotation>>;
+  rateCard(): Promise<Result<RateCard>>;
   putQuotation(id: string, input: QuotationInput): Promise<Result<Quotation>>;
   listApprovals(query: PageRequest): Promise<Result<ApprovalListResponse>>;
   getApproval(id: string): Promise<Result<ApprovalDetail>>;
   decideApproval(id: string, input: DecideInput): Promise<Result<ApprovalDecideResponse>>;
   bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>>;
+  audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>>;
   performAction(input: ActionInput): Promise<Result<ActionResponse>>;
   listTemplates(type?: TemplateType): Promise<Result<ListResponse<Template>>>;
   listPolicies(): Promise<Result<ListResponse<Policy>>>;

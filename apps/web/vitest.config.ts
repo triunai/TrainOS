@@ -21,6 +21,14 @@ export default defineConfig({
     // exists. Pin it so a transitive import cannot reach a real origin.
     env: {
       VITE_API_BASE_URL: "http://localhost:54321/v1",
+      // Anything that renders an instant as a wall-clock date or time reads
+      // the process timezone. Unpinned, an assertion written on a Malaysian
+      // laptop passes there and fails on a UTC runner, which is what CI was
+      // reporting. Pin the zone to the tenant default the schema ships
+      // (`tenant.timezone DEFAULT 'Asia/Kuala_Lumpur'`), which is also the
+      // offset every fixture timestamp carries, so a local run and CI agree
+      // and both agree with the audience the screens render for.
+      TZ: "Asia/Kuala_Lumpur",
     },
     coverage: {
       provider: "v8",

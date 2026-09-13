@@ -12,6 +12,7 @@ import {
   FilterSelect,
   ListToolbar,
   LoadingState,
+  MESSAGE_CATEGORY_TONE,
   MoneyText,
   PillTabGroup,
   RecordHeader,
@@ -175,7 +176,7 @@ export function TemplatesScreen() {
       accessor: (template) =>
         template.category ? (
           <div className="flex flex-col items-start gap-1">
-            <StatusChip tone={template.category === "MARKETING" ? "warning" : "neutral"}>
+            <StatusChip tone={MESSAGE_CATEGORY_TONE[template.category]}>
               {humanise(template.category)}
             </StatusChip>
             {template.ratePerMessage ? (

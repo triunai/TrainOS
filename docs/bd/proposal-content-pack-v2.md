@@ -1,6 +1,8 @@
 # TrainOS — AI-Enabled Operating System for [CLIENT]
-## Proposal content pack v2 (market · approach · technical · commercial · objections)
+## Proposal content pack v3 (market · approach · technical · commercial · objections)
 
+> **Changelog — v3, 13 Sep 2026.** Rewritten against the six `docs/research/2026-09-13-*.md` research docs, `docs/architecture/07` and `08`, `packages/agent-runtime/src/routing/config.ts` (post-routing-alignment), `apps/worker/README.md`, and the Opus pass over the eight AI-exploration docs (`docs/bd/ai-explorations/2026-09-13-opus-pass.md`). Ten changes that matter most: (1) The stack is Supabase + SQL RPCs + one Node worker on Railway — no Edge Functions, no .NET, no Microsoft Agent Framework — and n8n is now optional, pending [CLIENT]. (2) §4.1's model tiers now match the shipped routing config: a three-vendor STRONG jury (Anthropic, Google, OpenAI), a compliance-driven host allow-list keeping DeepSeek/Qwen off China-hosted infrastructure, and all 24 governed action types routed, not 9. (3) §4.2's AI cost baseline is now shown as two figures, not one confident number — a top-down placeholder and a far lower bottom-up sum from the exploration docs' own token math — because neither alone is precise enough to quote on its own. (4) WhatsApp's 1 Oct 2026 change raises cost, not lowers it: utility-in-window and service messages become billable again. (5) HRD-TDF trainer accreditation is Circular 6/2024 (1 Jan 2025), not Circular 2/2026 — separated out, with its 3-year renewal cycle added. (6) The single-query-round rule now states its 5-calendar-day response deadline, missing which silently expires the whole application. (7) PDPA obligations (DPO, breach notification, cross-border self-assessment) are stated as already in force since 2025, not upcoming. (8) MyInvois Phase 4 (up to RM 5m turnover) is already in force from 1 Jan 2026, and a new SST policy table at §3.2 states that TrainOS's own training/coaching services are themselves SST-taxable at 8% — absent from v2 entirely. (9) Malaysia hosting is stated plainly as self-hosting the open-source stack on AWS `ap-southeast-5` — Supabase has no managed region there. (10) The priority ranking in §2.4/§2.5 changed: the claim-integrity guard now ships first (zero-token, fully seedable), and the levy radar's headline 15% rule is gated on claim-history coverage and does not ship until "utilisation" — a term HRD Corp never formally defines — is confirmed with [CLIENT]. Prices in §7 are carried over unchanged from v2; see the note at §7.3.
+>
 > Saved 13 Sep 2026 from the user's drafting session. Placeholders: [CLIENT] = Alex's company · [VENDOR] = your company · [DATE] · [ALEX]. Prices in RM unless stated. FX assumption RM 4.5/USD — adjust before sending. Facts marked † are sourced in Appendix H; figures marked ‡ are arithmetic on published data and are labelled as such wherever they appear. Re-verify † items on the day. Companion: `2026-09-13-value-chain-and-numbers.md`. Iterate here; do not fork copies.
 
 ---
@@ -68,11 +70,14 @@ The 2024 Auditor-General and PAC reports criticised HRD Corp's use of levy funds
 
 ### 1.5 The Malaysian operating constraints TrainOS is designed around
 - **Levy economics:** 1% of monthly wages for employers with 10+ Malaysian employees; under SBL-Khas the employer pays nothing upfront — fees are debited from the levy.† Claim reliability is cash flow.
-- **Circular 2/2026:** 14-day rule (in-house), 3-day for public until 31 Dec 2026 then 14 days from 1 Jan 2027, 90-day commencement, 6-month claim window, no amendments, single query round, HRD-TDF accreditation mandatory, 2026 ACM ceilings.†
+- **Circular 2/2026:** 14-day rule (in-house), 3-day for public until 31 Dec 2026 then 14 days from 1 Jan 2027, 90-day commencement, 6-month claim window, no amendments, single query round with a **5-calendar-day deadline to respond or the application expires**.† (An undocumented postponement path is reportedly negotiable directly with HRD Corp; not built as a system behaviour without confirmation.)
+- **HRD-TDF trainer accreditation is mandatory under a separate, earlier circular — 6/2024, effective 1 Jan 2025** — not part of 2/2026; it carries a **3-year validity with a 360-active-training-hour renewal** (or an assessment route), applied for at least 3 months before expiry.†
+- **ACM course-fee ceilings** (up to RM 1,500/hour, capped RM 10,500/day in-house per group; RM 1,750/pax/day public) were **set 1 Nov 2024 and restated in the Jan 2026 guidebook** — a standing rate, not a new 2026 tightening.† The meal-allowance ceiling (RM 15–25/pax) has one conflicting secondary source (RM 100/pax/day) unresolved pending a primary-PDF read.
 - **eTRIS has no API**; attendance cannot be modified once approved.†
-- **e-Invoicing** mandatory above RM 1m turnover via MyInvois; the major Malaysian accounting packages submit natively.†
-- **PDPA (amended):** mandatory DPO, breach notification, new cross-border regime, fines up to RM 1m.†
-- **WhatsApp** billed per message in MYR (Marketing ≈ RM 0.35, Utility ≈ RM 0.056, service replies free within 24h; utility inside the window charged from 1 Oct 2026).†
+- **e-Invoicing (MyInvois)** is mandatory for turnover up to RM 5m as of **1 Jan 2026 (Phase 4, already in force)**, not merely "above RM 1m" — issuers under RM 1m turnover remain exempt entirely; a penalty-free relaxation on consolidated e-invoices runs to 31 Dec 2027 with full enforcement from 1 Jan 2028 (re-verify these two dates directly before quoting).†
+- **Training and coaching services are themselves SST-taxable** — Group G (Professionals), standard-rated at **8%** since 1 Mar 2024, registration threshold RM 500,000 turnover; the "education services" SST exemption applies only to institutions registered under the Education Act 1996, which a corporate training provider is not.† See the SST policy table at §3.2.
+- **PDPA (amended) — already in force, not pending:** DPO appointment and breach notification (72-hour Commissioner notice, 7-day data-subject notice) since **1 Jun 2025**; the cross-border transfer regime (self-assessed adequacy, no more Minister-approved whitelist) since **1 Apr 2025**; fines up to **RM 1,000,000 and/or 3 years** (up from RM 300,000/2 years), with data processors — including [VENDOR] — now directly liable on the Security Principle.†
+- **WhatsApp** billed per message in MYR (Marketing ≈ RM 0.35–0.42, Utility ≈ RM 0.05–0.07, service replies free within 24h) — **the 1 Oct 2026 change raises cost, not lowers it**: utility-template messages sent inside the 24-hour service window (free since 1 Jul 2025) become billable again, and service messages become billable beyond a new 1,000-free-per-number-per-month allowance. Re-verify against Meta's own rate card before the pack goes out.†
 
 ---
 
@@ -110,11 +115,15 @@ A policy engine evaluates every action (type, value, first-time flags, confidenc
 | Knowledge, documents | Ingest, cite, answer | Curate |
 | Marketing, admin | Templates, broadcasts with cost preview, consent | Approve broadcast |
 
-### 2.4 The levy radar (the feature that sells)
-Employer balances are not public, but for each client [CLIENT] serves, the contribution rate, claim history and balance are known. TrainOS tracks utilisation per client, projects year-end position, and flags: "likely < 50% utilisation and > RM 50,000 balance by December → 15% deduction risk → pitch now." That is a cross-sell engine no directory or broker can replicate, and it is [CLIENT]'s data.
+### 2.4 The levy radar — real, but gated on one thing to confirm
+Employer balances are not public, but for each client [CLIENT] serves, the contribution rate, claim history and balance may be known — with a caveat that changes what ships first. **HRD Corp publishes no formula for "utilisation"**; every source states only the trigger condition ("less than 50% of the employer's contribution between 1 Jan and 31 Dec"), never a named calculation. TrainOS's working definition — **utilisation = claims approved in the calendar year ÷ that year's levy contribution, not the accumulated balance** — is an inferred assumption, not a published fact, and is **flagged to confirm with [CLIENT], ideally against a real eTRIS utilisation display, before it appears in front of a client.**
+
+The bigger constraint: [CLIENT] typically sees only its own share of an employer's claim history, and brokers routinely place an employer with three to five providers at once — so TrainOS-only claim history reads systematically *low*, which would invert the pitch into a false "you're at risk" call. **The 15% deduction flag ships only where claim-history coverage is confirmed complete (a client statement or a declared figure) — never on TrainOS-only data alone.** Two rules need no such coverage and ship regardless: the 24-month forfeiture clock above RM 10,000 (Circular 7/2019) and the raw balance-above-RM-50,000 flag — both zero-inference and defensible from day one. That is still a cross-sell engine no directory or broker can replicate on the data it has access to, and it is [CLIENT]'s own data driving it.
 
 ### 2.5 The golden path we will demonstrate
 Enquiry email → classified (Leadership 94%) and matched to an organisation with prior engagements, unused levy and an overdue invoice → convert → TNA gaps with sources → programme recommended with fit score, trainer matched by accreditation and availability → proposal drafted, costed (margin vs floor), earliest claimable date computed → policy routes to Sales Manager (> RM 15,000 and first proposal) → approval screen shows evidence, what differs from normal, risk, and the exact diff → approved, sent, tracked → follow-up scheduled → client accepts on a portal page → engagement created with grant window and claim deadline already on it.
+
+**Two corrections behind that narrative.** First, the earliest-claimable-date step returns a **clean-path date and a contingency date**, never a bare one — the single query round's 5-calendar-day response window (§1.5) means a date quoted without the contingency is wrong by weeks the moment a query lands. Second, the demo's narrative order (money in, found, controlled, kept) is unchanged, but **the build order is not**: the claim-integrity guard (§2.3, HRD Corp / compliance row) now ships before the levy radar, because the claimable-date read depends on the compliance rules registry being seeded first — and seeding that registry is a zero-token, already-scoped piece of work, while the radar's headline number still needs the coverage question at §2.4 answered. One demo change follows directly: minutes 1:30–3:00 lead with the levy **balance and forfeiture countdown**, not the 15% deduction flag, until claim-history coverage clears the TrainOS-only caveat.
 
 ---
 
@@ -126,54 +135,75 @@ Employees (approve / review)             Clients · Participants · Trainers (po
         │                                               │
         ▼                                               ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ TrainOS API (.NET modular monolith)                             │
-│  Modules: CRM · TNA · Catalogue · Training Ops · Trainers ·      │
-│           Compliance · Finance · Reporting                      │
-│  Core: Policy engine · Approvals · Audit · Outbox · Tenancy     │
-│  Agent tools exposed via MCP                                     │
+│ Supabase Postgres — PostgREST + SQL RPCs                        │
+│  Schemas: crm · training · compliance · finance · automation ·  │
+│           core (tenant resolver, permission lookup, action gate)│
+│  Policy engine, approvals, audit, outbox and tenancy (RLS) are  │
+│  all SQL — no separate application server                       │
+│  + pgvector + rules graph + pg_cron + Vault                      │
 └───────────────┬─────────────────────────┬───────────────────────┘
                 │                         │
         ┌───────▼────────┐       ┌────────▼──────────┐
-        │ PostgreSQL     │       │ Agent runtime       │
-        │ (Supabase)     │       │ Orchestrator +      │
-        │ + pgvector     │       │ scoped sub-agents,  │
-        │ + rules graph  │       │ evals, budgets      │
-        └────────────────┘       │ (Microsoft Agent    │
-                                 │  Framework)         │
+        │ Web app         │       │ One Node worker      │
+        │ (React/Next.js),│       │ on Railway            │
+        │ calls RPCs      │       │ claims `app.outbox`   │
+        │ directly via    │       │ jobs (FOR UPDATE SKIP │
+        │ PostgREST       │       │ LOCKED), runs the     │
+        └────────────────┘       │ agent runtime, sends  │
+                                 │ email/WhatsApp,        │
+                                 │ publishes events.      │
+                                 │ No Edge Functions —    │
+                                 │ the 2s CPU-time budget │
+                                 │ and EarlyDrop worker   │
+                                 │ retirement rule them   │
+                                 │ out for this workload  │
                                  └────────┬────────────┘
                                           │
                     ┌─────────────────────▼──────────────────────┐
-                    │ Integrations (n8n at the edges + adapters)  │
+                    │ Integrations (adapters; n8n optional,       │
+                    │ pending [CLIENT] — see below)                │
                     │ Email · Calendar · WhatsApp Cloud API ·     │
                     │ Accounting (MyInvois-capable) · Storage ·   │
                     │ eTRIS packet generation (no API)            │
                     └─────────────────────────────────────────────┘
 ```
 
+No .NET, no separate application server, and no Microsoft Agent Framework: the write spine (`app.perform_action`, `app.decide_approval`, `app.bulk_decide`) is SQL, `SECURITY DEFINER` with `SET search_path = ''`, called by the browser directly through a thin `authenticated`-granted wrapper — one fewer hop and one fewer place to duplicate the policy logic. **n8n is optional** — kept for ingestion/glue only if [CLIENT] still wants it after Phase 0; it is not committed in this pack.
+
 ### 3.2 Key design decisions
-- **Modular monolith** (API + worker, one codebase, schemas per module: `crm.*`, `training.*`, `compliance.*`, `finance.*`, `automation.*`, `core.*`). Split only when a contract demands isolation.
-- **Action envelope → policy → outcome.** Every human or agent action is `{type, target, payload, requester, confidence, reasoning, evidence}`; the policy engine returns EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED.
+- **Postgres-native, not a modular monolith with a separate API tier.** Schemas per module (`crm.*`, `training.*`, `compliance.*`, `finance.*`, `automation.*`, `core.*`) exist today as the schema layout. The browser calls SQL functions directly through PostgREST — `core.perform_action` (a thin, `authenticated`-granted wrapper over the `service_role`-only gate functions) plus one function per read PostgREST cannot express as a plain table or view. No second application layer re-implements the same rules in a second language.
+- **Action envelope → policy → outcome.** Every human or agent action is `{type, target, payload, requester, confidence, reasoning, evidence}`; the policy engine — SQL functions, not application code — returns EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED, evaluated once and logged once per action.
 - **Provenance, approvals, audit are first-class.** Every AI element carries origin, confidence, model/provider, sources, approver and time. Audit is append-only at the database.
-- **Rules registry ("cheap graph").** Circulars, scheme guides and the ACM are distilled into effective-dated rules with source spans. Date and cost checks are deterministic (zero tokens). New circulars trigger model-proposed rule diffs that a human approves.
-- **Orchestrator with scoped sub-agents.** Small cached orchestrator context plus a database-backed state card; sub-agents (reader, matcher, drafter, verifier) receive only what they need and return findings. Checkpointed, resumable runs; structured handoff at 60% context.
-- **Deterministic first.** Costing, commissions, date windows, ACM ceilings are code. Models never compute money.
-- **Tenancy from day one.** `tenant_id` + row-level security on every table.
+- **Rules registry ("cheap graph").** Circulars, scheme guides and the ACM are distilled into effective-dated rules with source spans and a `check_key`. Date, cost and tax checks are deterministic (zero tokens). New circulars trigger model-proposed rule diffs that a human approves; nothing is inserted active from a research pass alone.
+- **Orchestrator with scoped sub-agents.** Small cached orchestrator context plus a database-backed state card; sub-agents (reader, matcher, drafter, verifier) receive only what they need and return findings. Checkpointed, resumable runs, driven from the worker below rather than an Edge Function's wall clock.
+- **Deterministic first.** Costing, commissions, date windows, ACM ceilings and SST are code and configuration, not model output. Models never compute money or tax.
+- **Tenancy from day one.** `tenant_id` + row-level security (forced) on every table.
+
+**SST policy table** (training/coaching is Group G taxable — §1.5):
+
+| Document | Default SST posture | Rate | Basis |
+|---|---|---|---|
+| Quotation | Standard-rated | 8% | Group G (Professionals), standard-rated since 1 Mar 2024 — a sent quotation should show the client's true payable |
+| Invoice (to [CLIENT]'s own clients) | Standard-rated by default; exemption allowed only with an explicit, recorded justification | 8% / 0% | Exemption applies only to Education-Act-1996-registered institutions — not a corporate training provider |
+| [VENDOR]'s own fees to [CLIENT] | Per [VENDOR]'s own SST registration status | — | Outside TrainOS's schema; a commercial matter, noted at §7.8 |
+
+Every SST posture change away from standard-rated is logged with who asserted it and on what basis — an auditable decision, not a silent schema default.
 
 ### 3.3 Platform stack
 | Layer | Choice | Notes |
 |---|---|---|
-| DB / auth / storage / realtime | Supabase Pro (Singapore) | Postgres, RLS, pgvector, pg_cron, Vault |
-| API + worker | ASP.NET (.NET 9) + Dapper | Two processes, one codebase |
-| Agent runtime | Microsoft Agent Framework 1.0 (GA April 2026)† | .NET-native, MCP tool discovery |
-| Automation edges | n8n self-hosted on [CLIENT]'s account | Ingestion/glue only; permitted for client internal use† |
-| Compute | Railway (Singapore) | API, worker, n8n, portals on one bill |
-| Internal UI / portals | React / Next.js | Dense ops UI; client, participant, trainer portals; public forms |
-| LLM access | OpenRouter + direct BYOK | Model switching without re-integration |
-| Observability | OpenTelemetry + Langfuse | LLM traces, cost per run, evals; self-hostable |
+| DB / auth / storage / realtime / API | Supabase Pro (Singapore) | Postgres, RLS, pgvector (HNSW, `hnsw.iterative_scan = relaxed_order` set on every tenant-filtered retrieval RPC), pg_cron, Vault; PostgREST serves reads and RPC-backed writes directly — no separate API server |
+| Write spine | SQL RPCs in `core`/`app` schemas | `app.perform_action`, `app.decide_approval`, `app.bulk_decide`, called through a thin `core.perform_action` wrapper granted to `authenticated`; **no Edge Functions** — the platform's 2-second CPU-time budget and `EarlyDrop` worker retirement rule them out for redaction, hashing and longer-running work — and **no .NET, no Agent Framework** |
+| Background worker | One Node worker on Railway | Claims `app.outbox` jobs (`FOR UPDATE SKIP LOCKED`), runs the agent runtime, sends email/WhatsApp, publishes events; connects to Postgres directly as `service_role` — the anon key is never used; `/healthz` reports unhealthy after consecutive claim failures |
+| Automation edges | n8n — **optional, pending [CLIENT]**; not committed in this pack | Ingestion/glue only if retained; permitted for client-internal use† |
+| Compute | Railway (Singapore), one worker process; Supabase hosts the rest | One bill for the worker and any retained n8n instance |
+| Internal UI / portals | React / Next.js | Dense ops UI; client, participant, trainer portals; public forms; calls Supabase directly through PostgREST |
+| LLM access | OpenRouter + direct BYOK; three-vendor STRONG jury (Anthropic, Google, OpenAI) with a host allow-list keeping DeepSeek/Qwen off China-hosted infrastructure | See §4.1 |
+| Observability | OpenTelemetry + Langfuse | LLM traces, cost per run, evals; self-hostable; 90-day auto-purge on raw prompt/response traces (PDPA storage limitation) |
 | Messaging | Meta WhatsApp Cloud API (direct); client mailbox via API; Resend transactional | |
 
 ### 3.4 Data residency, PDPA and model-provider data handling
-Default hosting Singapore with a cross-border transfer clause in the DPA; unchanged deployment on self-hosted Supabase in AWS Malaysia if the DPO requires residency. [VENDOR] as processor; both parties appoint a DPO. **PII never goes to DeepSeek's own API** (China-hosted); DeepSeek models are consumed through US/SG hosts via OpenRouter, PII is redacted before any model call, and sensitive drafting runs on providers with signed data-processing terms.
+Default hosting Singapore (Supabase's nearest managed region — there is no managed Supabase region in Malaysia). **Malaysia hosting means self-hosting the open-source Supabase stack on AWS `ap-southeast-5` directly**, which shifts patching, backup and HA onto [VENDOR]; priced as a distinct option if [CLIENT] requires residency. [VENDOR] as processor; both parties appoint a DPO — under the amended PDPA, [VENDOR] as processor now carries direct statutory liability on the Security Principle regardless of [CLIENT]'s own DPO threshold. Cross-border transfers rely on a self-assessment that the receiving jurisdiction's protection is substantially similar or adequate (amended s.129, in force 1 Apr 2025) — there is no more Minister-approved whitelist to point to. **PII never goes to DeepSeek's own API** (China-hosted) **under any configuration**; DeepSeek and Qwen models are consumed through OpenRouter pinned to named non-China hosts (Baseten, Fireworks, Azure), PII is pseudonymized — a reversible, tenant-scoped token map, not one-way redaction, so extraction agents can still reason over named individuals — before any model call, and sensitive drafting runs on providers with signed data-processing terms.
 
 ### 3.5 Security controls
 Least-privilege tool scopes per agent; inbound email/WhatsApp treated as untrusted (prompt-injection isolation); per-action kill switches; idempotency keys on every send/create; dead-letter queue with operator retry; secrets in vault; PII masking in traces; backup/restore drills; breach procedure aligned to the PDPA guideline.
@@ -183,30 +213,37 @@ Least-privilege tool scopes per agent; inbound email/WhatsApp treated as untrust
 ## 4. AI model strategy and token economics
 
 ### 4.1 Tiers
+Bound to `packages/agent-runtime/src/routing/config.ts` (the shipped code); this table follows the code, not the reverse — see the v3 changelog.
+
 | Tier | Model (launch) | USD per 1M tokens (in / out)† | Used for |
 |---|---|---|---|
-| FAST | DeepSeek V4 Flash via high-throughput host | 0.22 / 0.66 off-peak · 0.44 / 1.32 peak · cache hit 0.007 | Assistant chat, classification, drafts, summaries |
-| FAST-UI | gpt-oss-120B on Cerebras/Groq | ≈ 0.04 / 0.19 | Sub-second UI responses |
-| MID | DeepSeek V4 Pro | 0.66 / 1.98 off-peak | TNA extraction, matching, packet checks, eval grading |
-| CHEAP | Qwen3.7 Flash or equivalent passing evals | 0.03 / 0.13 | Dedupe, routing, language detection |
-| STRONG ×3 | Claude Sonnet 5 · Gemini 3.1 Pro · GPT-5.6 Terra | 2 / 10 · 2 / 12 · 2.50 in | Proposal drafting; long-document verification; third vote |
-| DEEP THINK | DeepSeek V4 Pro (thinking) → Sonnet 5 extended thinking | as above | Rule conflicts, ambiguous cases |
-| SPECIAL | Claude Opus 5 | 5 / 25 | Capped: rule-change interpretation, top-threshold approvals |
+| CHEAP | Qwen3.7 Flash via OpenRouter, pinned to a non-China host | 0.03 / 0.13 | Dedupe, routing, language detection, opportunity conversion, enquiry archive |
+| FAST | DeepSeek V4.1-Flash via OpenRouter, pinned to a non-China host | 0.15 off-peak / 0.30 peak · 0.60 off-peak / 1.20 peak out | Assistant chat, classification, drafts, summaries |
+| FAST-UI | gpt-oss-120B via Groq (zero data retention) | 0.15 / 0.60 | Sub-second UI responses |
+| MID | DeepSeek V4 Pro, direct API | 0.66 off-peak / 1.32 peak · 1.98 off-peak / 3.96 peak out | TNA extraction, matching, packet checks, eval grading. **Flagged, not fixed**: this tier reads the same class of PII-bearing inbound content as CHEAP/FAST but remains on DeepSeek's direct API rather than a pinned non-China OpenRouter host — a known compliance gap scheduled as a follow-up, not shipped silently |
+| STRONG ×3 (jury, three vendors) | Claude Sonnet 5 (Anthropic) · Gemini 3.1 Pro via OpenRouter (Google) · GPT-5.2 via OpenRouter (OpenAI) | 2.00 / 10.00 · 2.00 / 12.00 · 1.75 / 14.00 | Proposal drafting; long-document verification; third vote. Rebalanced from the prior binding, which put two of three jurors (Sonnet 5, Opus 5) on Anthropic — a 2-of-3 quorum that could not catch an Anthropic-specific failure mode |
+| DEEP THINK | Claude Opus 5 | 5.00 / 25.00 | Rule conflicts, ambiguous cases — unchanged; no exploration doc sized this tier's volume |
+| SPECIAL | Claude Opus 5 | 5.00 / 25.00 | Capped: rule-change interpretation, top-threshold approvals |
 
-Routing: DeepSeek's peak hours (01–04 and 06–10 UTC weekdays) are Malaysian working hours, so interactive traffic uses third-party hosts without peak pricing and batch runs off-peak at night. Prompts are cache-first. OpenRouter passes through provider rates with a 5.5% fee on credit purchases; BYOK usage is free up to USD 25,000/month.† DeepSeek announced a cheaper V4.1 Flash in September 2026;† tiers are re-baselined at discovery and quarterly.
+Gemini 3.1 Pro's quoted rate reflects a post-preview GA price roughly double the preview rate — **confirm GA status directly against ai.google.dev before quoting.**† All 24 governed action types now carry an explicit tier and jury policy (was 9 of 24; the other 15 fell silently to a MID default with no jury — closed in this pass). DeepSeek/Qwen calls carry a code-enforced host allow-list (Baseten, Fireworks, Azure), because OpenRouter's default routing does not guarantee a non-China host.
+
+Routing: DeepSeek's peak hours (01–04 and 06–10 UTC weekdays) are Malaysian working hours, so interactive traffic uses third-party hosts without peak pricing and batch runs off-peak at night. Prompts are cache-first. OpenRouter passes through provider rates with a 5.5% fee on Stripe top-ups; BYOK usage is fee-free up to USD 25,000/month list-price inference cost.† DeepSeek's cheaper V4.1-Flash refresh has already shipped — not a pending announcement, so the earlier "announced September 2026" hedge is dropped.
 
 ### 4.2 Monthly AI cost at three volumes
 Baseline = 80 enquiries, 40 proposals, 25 engagements, 300 follow-ups, 600 participant messages, 120 collection touches, 40 HRDC packets, 1,000 assistant turns/month.
 
-| Volume | AI (USD) | AI (RM) | Equivalent |
+Two estimates, shown together rather than collapsed into one: a **top-down placeholder** (carried since v2) and a **bottom-up sum**‡ of the eight AI-exploration docs' own per-action token estimates, priced at the tiers actually bound in `routing/config.ts` (§4.1). The bottom-up sum comes in well below the placeholder at every volume — every exploration doc independently flagged its own estimate as a rounding error against the placeholder, and summing them confirms it. The likeliest explanation is unsized DEEP-THINK, jury and assistant-turn volume plus a deliberate safety margin in the placeholder, not an error in either figure — both are shown so nothing here reads more precise than the underlying evidence supports.
+
+| Volume | Top-down placeholder (USD / RM) | Bottom-up from exploration-doc token math‡ (USD / RM) | Equivalent |
 |---|---|---|---|
-| Baseline | 25–40 | ~110–180 | — |
-| 3× | 75–120 | ~340–540 | ≈ 0.15 FTE |
-| 10× | 250–400 | ~1,100–1,800 | ≈ 0.35 FTE at RM 3.5–5k/month |
-Budget caps per agent and per action type are enforced in code.
+| Baseline | 25–40 / ~110–180 | roughly 2–3 / under RM 15, before cache discounts | — |
+| 3× | 75–120 / ~340–540 | roughly 6–8 / a few tens of RM | ≈ 0.15 FTE (top-down) |
+| 10× | 250–400 / ~1,100–1,800 | roughly 20–25 / under RM 100 | ≈ 0.35 FTE at RM 3.5–5k/month (top-down) |
+
+Treat the top-down row as the conservative planning number until 1,000 assistant turns/month and jury/DEEP-THINK volume are actually sized against [CLIENT]'s real usage; treat the bottom-up row as the floor. Budget caps per agent and per action type are enforced in code regardless of which estimate proves closer.
 
 ### 4.3 Recurring platform costs (pass-through, monthly)
-Supabase Pro USD 25 · Railway Pro + usage USD 45–60 · transactional email USD 20 · observability/errors USD 0–30 · WhatsApp RM 50 at baseline (broadcasts extra at ≈ RM 0.35/msg) · accounting connector RM 0–300. **Total at baseline ≈ RM 1,000–1,300**, billed to [CLIENT]'s own accounts (recommended) or passed through with a 15% handling fee; live usage visible in-app.
+Supabase Pro USD 25 (includes PostgREST, RLS, pgvector Micro compute, pg_cron, Vault; add USD 15/month once the knowledge base reaches roughly 10 tenants' worth of vectors — §5) · Railway, one Node worker only (no separate API/portal process) USD 15–25 · transactional email USD 20 · observability/errors USD 0–30 · WhatsApp — **the 1 Oct 2026 change raises this line, not lowers it**: utility-template messages sent inside the 24-hour service window, and service messages beyond a new 1,000-free-per-number-per-month allowance, both become billable again, on top of the existing ≈ RM 50/month broadcast baseline (at ≈ RM 0.35–0.42/marketing message, ≈ RM 0.05–0.07/utility message) — re-verify against Meta's own rate card once [CLIENT]'s real in-window volumes are known, before this line is finalised · accounting connector RM 0–300. **Total at baseline still planned at ≈ RM 1,000–1,300**, pending that WhatsApp re-verification and the smaller Railway footprint from dropping the separate API tier — a number to firm up in Phase 0, not to under-quote now — billed to [CLIENT]'s own accounts (recommended) or passed through with a 15% handling fee; live usage visible in-app.
 
 ### 4.4 BYOK
 [CLIENT] owns its provider keys (OpenRouter, Anthropic, DeepSeek-via-host, Google, OpenAI, Cerebras/Groq). Keys are scoped to tiers, capped monthly, rotatable, and billed to [CLIENT] directly.
@@ -261,6 +298,8 @@ RM 5,000/month from Phase 1 go-live: business-hours monitoring and incident resp
 
 ### 7.3 Recurring third-party costs
 Pass-through at cost (≈ RM 1,000–1,300/month at baseline; §4.2–4.3).
+
+> **Note on §7 prices (v3).** The architecture and cost changes in §3–§4 — dropping the separate .NET API tier, the routing-config and AI-cost re-baseline, and the WhatsApp fee change — are **not** reflected in the RM figures in §7.1/§7.2/§7.6 below. Those build and managed-service prices carry over unchanged from v2 pending a Phase 0 re-quote against the actual, simpler implementation effort. Do not read the lower recurring pass-through estimate at §4.3 as already priced into the figures below.
 
 ### 7.4 Founding-client terms (optional)
 10% off implementation in exchange for reference and case study rights; [VENDOR] retains the reusable core (policy engine, approvals, agent harness, rules registry) and may reuse it; [CLIENT] receives founding-customer pricing on any productised version; [CLIENT] owns all data, configuration, templates and customisations. Exclusivity is available as a priced option (named competitors, 12 months).
@@ -323,12 +362,17 @@ Organisation → Contact → Enquiry → Lead/Opportunity → TNA → Programme 
 | Grant approval lead time | Public | training_start ≥ grant_approval + 3 days | 15 Jun 2026 → 31 Dec 2026 | Circular 2/2026 |
 | Grant approval lead time | Public | training_start ≥ grant_approval + 14 days | 1 Jan 2027 → | Circular 2/2026 |
 | Commencement window | All | training_start ≤ grant_approval + 90 days | 15 Jun 2026 → | Circular 2/2026 |
-| Claim window | All | claim_submitted ≤ completion + 6 months | current | HRD Corp |
-| Trainer accreditation | All | trainer.hrd_tdf_accredited = true | current | HRD Corp |
-| Meal allowance ceiling | All | meal_cost_per_pax within RM 15–25 | Jan 2026 ACM | ACM 2026 |
+| Claim window | All | claim_submitted ≤ completion + 6 months | current, unconfirmed against primary circular text | HRD Corp |
+| Trainer accreditation | All | trainer.hrd_tdf_accredited = true | **1 Jan 2025, Circular 6/2024** (3-yr validity, 360h active-training renewal) | HRD Corp |
+| Query response deadline | All | query_response ≤ query_raised + 5 calendar days, else application expires | 15 Jun 2026 → | Circular 2/2026 |
+| Fee ceiling (in-house) | In-house | course_fee ≤ RM 1,500/hour, ≤ RM 10,500/day per group | set 1 Nov 2024, restated Jan 2026 guidebook | ACM |
+| Fee ceiling (public) | Public | course_fee ≤ RM 1,750/pax/day | set 1 Nov 2024, restated Jan 2026 guidebook | ACM |
+| Meal allowance ceiling | All | meal_cost_per_pax within RM 15–25 (one conflicting source cites RM 100/pax/day, unresolved) | set 1 Nov 2024, restated Jan 2026 guidebook | ACM — pending primary-PDF confirmation |
 | Attendance immutability | All | locked after approval | current | eTRIS |
 | Unused-levy forfeiture | Employer | balance above RM 10,000 forfeited after 24 months without claim | 1 Jan 2020 → | Circular 7/2019 |
 | 15% deduction | Employer | balance > RM 50,000 and utilisation < 50% → 15% of excess | Mar 2025 → | HRD Corp |
+
+**"Utilisation" is not formally defined by HRD Corp.** Every source states only the trigger condition, never a formula. TrainOS's working definition — claims approved in the calendar year ÷ that year's levy contribution, not the accumulated balance — is an inferred assumption, flagged to confirm with [CLIENT] and, where possible, HRD Corp during discovery (§2.4).
 
 ## Appendix C — API conventions (summary)
 REST/JSON under `/v1`; tenant implicit from auth; money as integer minor units MYR; ISO-8601 +08:00; filters, saved views, cursor paging; provenance envelope on AI-touched records; idempotency keys; `/v1/actions` through the policy engine → EXECUTED / QUEUED_FOR_APPROVAL / SUGGESTED; outbox domain events; realtime channels; inbound webhooks (email, WhatsApp, proposal acceptance, accounting callbacks).
@@ -378,3 +422,12 @@ ACM — Allowable Cost Matrix · eTRIS — HRD Corp grant/claim portal · HCC �
 - n8n licence: docs.n8n.io/sustainable-use-license
 - Grants: gritc.com.my; aitraining2u.com; gotchaa-lab.com (MDAG-AI); marketinglancers.com.my
 - Malaysian market pricing: techies.app; gotchaa-lab.com; thecrunch.io; bixtech.co; zenweb.my
+- Circular 6/2024 (HRD-TDF mandatory, eff. 1 Jan 2025) and validity/renewal: hrdcorp.gov.my/wp-content/uploads/2025/01/HRD-TDF-FAQ-022024-1.pdf; hrdcorp.gov.my/hrd-tdf
+- Circular 1/2026 (education-sector levy exemption): hrdcorp.gov.my/circulars; businesstoday.com.my (14 Jan 2026)
+- Circular 2/2026 query-deadline and ACM vintage (PDF URLs 404'd on direct fetch this pass — open in a browser before citing): hrdcorp.gov.my/wp-content/uploads/2026/05/Employer-Circular-22026.pdf; nexustac.com
+- SST on training/coaching (Group G, 8% since 1 Mar 2024): mysst.customs.gov.my — Guide on Consultancy, Training or Coaching Services; bdo.my SST rate/scope update
+- MyInvois Phase 4 and relaxation dates (re-verify v4.7 dates directly): hasil.gov.my e-Invoice Guideline v4.6; vatupdate.com summary of v4.7
+- PDPA amendment dates and penalties: pdp.gov.my; privacymatters.dlapiper.com; mayerbrown.com; lexology.com; sidley.com
+- Model pricing, 2026-09-13 re-baseline: claude.com/pricing; api-docs.deepseek.com/quick_start/pricing; openrouter.ai/pricing; ai.google.dev/gemini-api/docs/pricing; developers.openai.com/api/docs/pricing
+- WhatsApp 1 Oct 2026 change (primary CSV not directly confirmed; converging secondary sources): developers.facebook.com/documentation/business-messaging/whatsapp/pricing; wati.io; sendpulse.com; respond.io; pickyassist.com; qiscus.com; raiontech.com
+- pgvector/Supabase current behaviour: supabase.com/docs (pgvector, RLS, Edge Functions, pg_cron, pg_net, Vault, Realtime, pricing)

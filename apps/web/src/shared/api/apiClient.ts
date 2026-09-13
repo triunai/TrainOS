@@ -2,8 +2,11 @@ import type {
   ActionRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  EnquiryExtractionPatch,
+  MessageChannel,
   PageRequest,
   ProposalCreateRequest,
+  ProposalSectionWrite,
   QuotationWrite,
   SavedView,
   TemplateType,
@@ -11,8 +14,12 @@ import type {
 import { ContractError, EventBus, paginate, type FixtureClient } from "@trainos/fixtures";
 
 import type { TrainOsClient } from "./client";
-import { ApiErrorException, type Result } from "./errors";
-import { derivedIdempotencyKey, stableIdempotencyKey } from "./idempotency";
+import { ApiErrorException, transportError, type Result } from "./errors";
+import {
+  bulkDecideIdempotencyKey,
+  derivedIdempotencyKey,
+  stableIdempotencyKey,
+} from "./idempotency";
 import { createRpcClient } from "./rpcClient";
 
 /**
@@ -82,6 +89,12 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     listEnquiries: async (page?: PageRequest) => must(await rpc.listEnquiries(page ?? {})),
     getEnquiry: async (id: string) => must(await rpc.getEnquiry(id)),
+    patchEnquiryExtraction: async (id: string, patch: EnquiryExtractionPatch) =>
+      must(await rpc.patchExtraction(id, patch)),
+
+    listFollowUps: async (page?: PageRequest) => must(await rpc.listFollowUps(page ?? {})),
+    getFollowUpDraft: async (id: string, channel: MessageChannel) =>
+      must(await rpc.getFollowUpDraft(id, channel)),
 
     getOrganisation: async (id: string) => must(await rpc.getOrganisation(id)),
     getOrganisationRelations: async (id: string) => must(await rpc.getOrganisationRelations(id)),
@@ -101,9 +114,35 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
           ),
         }),
       ),
+    listProposals: async (page?: PageRequest) => must(await rpc.listProposals(page ?? {})),
     getProposal: async (id: string) => must(await rpc.getProposal(id)),
-
+    /* No options bag on the fixture signature for the two section writes, so
+       the key is derived here — the same derivation the hooks use, not a
+       second one. `n` rides in the subject because section 2 of a proposal is
+       a different intent from section 3 of the same one. */
+    addProposalSection: async (
+      id: string,
+      body: { title: string; body?: string },
+      options?: RequestOptions,
+    ) =>
+      must(
+        await rpc.addSection(id, {
+          ...body,
+          idempotencyKey: key(options, derivedIdempotencyKey("proposal-section-add", id, body)),
+        }),
+      ),
+    putProposalSection: async (id: string, n: number, body: ProposalSectionWrite) =>
+      must(
+        await rpc.putSection(id, n, {
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("proposal-section-put", `${id}#${n}`, body),
+        }),
+      ),
+    regenerateProposalSection: async (id: string, n: number) =>
+      must(await rpc.regenerateSection(id, n)),
+    listQuotations: async (page?: PageRequest) => must(await rpc.listQuotations(page ?? {})),
     getQuotation: async (id: string) => must(await rpc.getQuotation(id)),
+    getRateCard: async () => must(await rpc.rateCard()),
     /* No options bag on the fixture signature, so the key is derived here — the
        same derivation the hooks use, not a second one. */
     putQuotation: async (id: string, body: QuotationWrite) =>
@@ -116,6 +155,7 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     listApprovals: async (page?: PageRequest) => must(await rpc.listApprovals(page ?? {})),
     getApproval: async (id: string) => must(await rpc.getApproval(id)),
+    getAudit: async (resourceType: string, id: string) => must(await rpc.audit(resourceType, id)),
     decideApproval: async (id: string, body: ApprovalDecideRequest, options?: RequestOptions) =>
       must(
         await rpc.decideApproval(id, {
@@ -127,10 +167,23 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       must(
         await rpc.bulkDecide({
           ...body,
-          idempotencyKey: key(
-            options,
-            derivedIdempotencyKey("approval-bulk-decide", body.ids.join(","), body),
-          ),
+          /* ⚠ THE KEY IS DERIVED FROM THE SELECTION AS A SET, NOT IN CLICK ORDER.
+             `app.bulk_decide` takes its idempotency request hash over the ids
+             `array_agg(x ORDER BY x)` — SORTED (011:3447) — precisely because
+             "the client hashes its selection in click order, so the same two
+             approvals picked in the other order produced a different key and a
+             spurious refusal on the retry". Sorting server-side fixes the hash
+             COMPARISON but not the KEY: `stableStringify` sorts object keys and
+             leaves array order alone, so {A,B} and {B,A} still derived two
+             different keys, landed two idempotency rows, and the retry ran the
+             batch a SECOND time instead of replaying it — the inverse of what
+             the key is for, and a double decide on the one write a person makes
+             with money behind it.
+
+             Only the DERIVATION is sorted. The wire array keeps click order,
+             because 011:3506 iterates `p_items` in the order given to build
+             `results`, and the inbox reads that order back. */
+          idempotencyKey: key(options, bulkDecideIdempotencyKey(body)),
         }),
       ),
 
@@ -238,6 +291,12 @@ function controls() {
  * returning an empty list — a silent empty list looks like "no records" and
  * ships as a bug, while "not implemented by the Supabase client" is something
  * a reader can act on.
+ *
+ * The trap fails as `NOT_DEPLOYED`, the code a missing PostgREST function gets.
+ * It is the same fact one step earlier — this environment does not serve the
+ * endpoint — and as a bare `Error` it became a transport `UNKNOWN`, which every
+ * screen drew as "Something went wrong. Try again." over a feature that has not
+ * shipped. The method name stays in the message for whoever reads the cause.
  */
 export function createRpcApiClient(rpc: TrainOsClient = createRpcClient()): ApiClient {
   const methods = adapters(rpc);
@@ -250,9 +309,13 @@ export function createRpcApiClient(rpc: TrainOsClient = createRpcClient()): ApiC
       if (property in methods) return methods[property];
       return () =>
         Promise.reject(
-          new Error(
-            `${property}() is not implemented by the Supabase client yet. ` +
-              "Its RPC is specified in docs/architecture/09-golden-path-rpc-specs.md.",
+          new ApiErrorException(
+            transportError(
+              "NOT_DEPLOYED",
+              `${property}() is not implemented by the Supabase client yet. ` +
+                "Its RPC is specified in docs/architecture/09-golden-path-rpc-specs.md.",
+              { status: 404 },
+            ),
           ),
         );
     },

@@ -162,7 +162,7 @@ export function RunEventRow({ event, className }: RunEventRowProps) {
         <DateText
           value={event.at}
           withTime
-          className="shrink-0 font-mono text-[11px] text-ink-muted"
+          className="shrink-0 tabular-nums text-[11px] text-ink-muted"
         />
       ) : null}
     </li>

@@ -111,7 +111,7 @@ export function TraceTreeNode({
         ) : null}
       </span>
 
-      <span className="shrink-0 whitespace-nowrap text-right font-mono text-[11px] text-ink-muted">
+      <span className="shrink-0 whitespace-nowrap text-right tabular-nums text-[11px] text-ink-muted">
         {typeof node.durationMs === "number" ? formatDuration(node.durationMs) : "—"}
         {node.cost ? (
           <>

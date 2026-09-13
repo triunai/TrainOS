@@ -15,11 +15,20 @@ describe("Money", () => {
     expect(formatMoney(AMOUNT, true)).toBe("RM 18,500");
   });
 
-  it("renders the formatted value with right-aligned mono classes", () => {
+  it("aligns with tabular figures in the UI font, not with a monospace face", () => {
+    /* Tightening brief §1: a number is not a machine value. Money was
+       `font-mono` so a column of amounts would line up, and `tabular-nums` on
+       the UI font lines it up the same way without spending the app's second
+       typeface on every price on every screen. `MoneyText` is read by the
+       table, the metric strip, the run rows and the budget bars, so this one
+       class was most of the mono on a list screen.
+
+       Asserted both ways: the alignment must still be there, and the mono must
+       not come back with it. */
     render(<MoneyText value={AMOUNT} />);
     const el = screen.getByText("RM 18,500.00");
-    expect(el.className).toContain("font-mono");
     expect(el.className).toContain("tabular-nums");
+    expect(el.className).not.toContain("font-mono");
   });
 
   it("renders a dash instead of RM 0.00 when dashWhenZero is set on a zero amount", () => {

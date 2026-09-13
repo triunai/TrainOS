@@ -92,6 +92,16 @@ export interface ModelAgreement {
 export interface ApprovalDecideRequest {
   decision: ApprovalDecision;
   note: string | null;
+  /**
+   * The `diffHash` off the `ApprovalRequest`/`ApprovalDetail` the screen is
+   * currently rendering, echoed back as `p_expected_diff_hash` so
+   * `core.decide_approval`'s optimistic-concurrency check
+   * (`011:2781-2787`) can refuse a decision made against a stale diff.
+   *
+   * Required, not optional: the only caller (M02-S02) always has one, having
+   * just read it off the same approval it is now deciding.
+   */
+  diffHash: string;
 }
 
 /**
@@ -115,15 +125,26 @@ export interface ApprovalDecideResponse {
 export interface ApprovalDiffChangedDetails {
   diffChanged: true;
   diff: DiffLine[];
+  /** The fresh diff's hash — what a retried decide should echo back. */
+  diffHash: string;
 }
 
 /**
  * §7 `POST /v1/approvals/bulk-decide` — `409` if any id has
  * `bulkApprovable: false`. `bulkApprovable` is server-decided: false for any
  * action carrying a monetary value.
+ *
+ * `items`, not `ids`: a hash per approval cannot travel in an array of ids, and
+ * a bulk APPROVE needs one, for the same optimistic-concurrency reason
+ * `ApprovalDecideRequest.diffHash` is required on the single path
+ * (`011:2781-2787`, `core.bulk_decide_approvals`). Each `diffHash` is the one
+ * already on the row the screen selected — nothing new to compute. An APPROVE
+ * item with a missing or blank hash is refused before any item in the batch is
+ * applied, and a repriced approval refuses `DIFF_CHANGED` the same way the
+ * single path does.
  */
 export interface ApprovalBulkDecideRequest {
-  ids: string[];
+  items: { approvalId: string; diffHash: string }[];
   decision: ApprovalDecision;
   note?: string | null;
 }
