@@ -222,10 +222,85 @@ export function initials(name: string): string {
     .join("");
 }
 
-/** `UPPER_SNAKE` → `Sentence case`. The contract speaks in enums; users do not. */
+/**
+ * Words that are acronyms rather than words, and must not be title-cased.
+ *
+ * Lower-casing the whole enum and re-capitalising the first character is what
+ * put "Md", "Hrdc packet mark submitted", "Tna questionnaire" and "Whatsapp" on
+ * screen. §13 names amateur tells as the thing the primary persona reads first,
+ * and "Md" sitting next to "Sales manager" in the same column is one.
+ *
+ * This set is derived from the enum values the contract and fixtures actually
+ * ship, not from guesswork — every member below appears as a whole word in a
+ * real value. Membership is deliberately conservative, because over-preserving
+ * is its own defect: `MY`, `US`, `WA`, `SG`, `MS`, `AM`, `PM`, `ON`, `NO`, `OK`
+ * and `AS` all occur as enum words too, and preserving `MY` would render
+ * `MY_TASKS` as "MY tasks". A token earns a place here only if it has no
+ * reading as an ordinary lower-case word.
+ */
+const PRESERVED_TOKENS = new Set([
+  "AI",
+  "DOCX",
+  "HRD",
+  "HRDC",
+  "HTML",
+  "MD",
+  "MYR",
+  "PDF",
+  "PPTX",
+  "QR",
+  "SBL",
+  "SLA",
+  "TNA",
+  "TTT",
+  "UI",
+]);
+
+/**
+ * Tokens whose correct spelling is neither lower nor upper case. A brand name
+ * is wrong in both directions: "whatsapp" and "WHATSAPP" are as wrong as
+ * "Whatsapp", so preserving the input case is not enough and the spelling has
+ * to be written down.
+ */
+const CASED_TOKENS: Record<string, string> = {
+  WHATSAPP: "WhatsApp",
+};
+
+/**
+ * `UPPER_SNAKE` → `Sentence case`. The contract speaks in enums; users do not.
+ *
+ *   AWAITING_MD                → "Awaiting MD"
+ *   HRDC_PACKET_MARK_SUBMITTED → "HRDC packet mark submitted"
+ *   WHATSAPP                   → "WhatsApp"
+ *   PROPOSAL_SENT              → "Proposal sent"
+ *
+ * Sentence case, not title case: only the first word is capitalised, because
+ * every other label in the product is sentence case and a title-cased enum
+ * would be the one place that is not.
+ *
+ * The acronym handling lives here rather than at the call sites on purpose.
+ * `channelLabel` below is the older, narrower version of this fix — a map for
+ * one union — and it only ever corrected the screens that remembered to call
+ * it, which is why "Whatsapp" was still rendering from the template-kind
+ * column. Twenty-odd screens call `humanise`; one of them getting an acronym
+ * right is not a property worth having.
+ */
 export function humanise(value: string): string {
-  const spaced = value.replace(/_/g, " ").toLowerCase();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  const words = value.split("_").filter((word) => word !== "");
+  if (words.length === 0) return "";
+
+  return words
+    .map((word, index) => {
+      const upper = word.toUpperCase();
+      const cased = CASED_TOKENS[upper];
+      if (cased) return cased;
+      if (PRESERVED_TOKENS.has(upper)) return upper;
+
+      const lower = word.toLowerCase();
+      /* Sentence case: the first word carries the capital, the rest do not. */
+      return index === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    })
+    .join(" ");
 }
 
 /**
