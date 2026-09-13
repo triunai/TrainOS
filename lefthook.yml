@@ -22,7 +22,7 @@ pre-commit:
   commands:
     lint-staged:
       tags: baseline
-      run: npx lint-staged
+      run: npx lint-staged --no-stash
 
 commit-msg:
   commands:
