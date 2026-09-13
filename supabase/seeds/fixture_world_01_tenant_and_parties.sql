@@ -9,9 +9,11 @@
 --     -f supabase/seeds/fixture_world_03_delivery_compliance_finance.sql \
 --     -f supabase/seeds/fixture_world_04_ai_ops_and_agents.sql
 --
--- Targets migrations 001-017 (and 018 when it merges): the tenant is
--- provisioned by app.provision_tenant() from 016, so this does NOT run
--- against a database at 013 or earlier.
+-- Targets migrations 001-017: the tenant is provisioned by
+-- app.provision_tenant() from 016, so this does NOT run against a database at
+-- 013 or earlier. 018 adds RPCs, not configuration this seed writes — the
+-- pipeline rows below are the seed's own, and no provisioning pack writes
+-- stages yet.
 --
 -- Idempotent: every statement is an upsert guarded by an IS DISTINCT FROM
 -- comparison, so a second run of an unchanged seed performs zero updates and
@@ -250,9 +252,10 @@ WHERE target.tenant_id IS DISTINCT FROM EXCLUDED.tenant_id;
 -- Pipeline configuration ──────────────────────────────────────────────────
 
 -- Stage names and order are configuration, never hardcoded: this is the row the
--- UI renders from. Ids are md5(tenant_id::text || 'pipeline:' || object)::uuid,
--- the derivation the 018 lane's stage seed computes in SQL, so either pack may
--- write these rows and both produce the same id. See lib/ids.ts.
+-- UI renders from. This seed owns these rows: no provisioning pack writes
+-- them yet. The id is md5(tenant_id::text || 'pipeline:' || object)::uuid all
+-- the same, so a provisioning seed computing the same expression later lands
+-- on these rows instead of a second set. See lib/ids.ts.
 INSERT INTO core.pipelines AS target
   (id, tenant_id, ref, object, name, is_default, version, status, created_at, created_by_kind, created_by_id, created_by_name)
 VALUES
@@ -271,8 +274,10 @@ ON CONFLICT (id) DO UPDATE SET
 WHERE (target.tenant_id, target.object, target.name, target.is_default, target.version, target.status, target.created_by_kind, target.created_by_id, target.created_by_name)
    IS DISTINCT FROM (EXCLUDED.tenant_id, EXCLUDED.object, EXCLUDED.name, EXCLUDED.is_default, EXCLUDED.version, EXCLUDED.status, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
 
--- Ids are md5(tenant_id::text || 'pipeline:' || object || ':' || step_key)::uuid.
--- The object is in the name because WON is a stage of BOTH pipelines, and
+-- Ids are md5(tenant_id::text || 'pipeline:' || object || ':' || step_key)::uuid,
+-- so a later provisioning seed converges on these rows by arithmetic rather
+-- than by migration. The object is in the name because WON is a stage of BOTH
+-- pipelines, and
 -- core.pipeline_steps is unique on (tenant_id, pipeline_id, step_key) rather
 -- than on step_key alone, so the two rows are legitimate and a shared id would
 -- be a primary key violation. See lib/ids.ts.

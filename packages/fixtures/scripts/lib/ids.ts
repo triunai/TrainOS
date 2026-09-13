@@ -106,9 +106,18 @@ export const uuidFor = (key: string): string => {
 /**
  * The agreed cross-lane derivation for pipeline configuration ids.
  *
- * `md5(tenant_id::text || name)::uuid`, which is what the 018 lane's stage seed
- * computes in SQL, so both packs produce the same id for the same row and either
- * may write it. Ruled by the lead 2026-09-13.
+ * `md5(tenant_id::text || name)::uuid`. The seed owns the fixture tenant's
+ * pipeline rows outright — 018 ships no per-tenant stage seed, because the shape
+ * of the configuration is still open (doc 01 §9 Q10: DEAL_CHAIN as its own
+ * object, as PACKET, or as two rows on one object) and `core.pipeline_steps`
+ * has no `outcome` column to carry WON and LOST on the terminal opportunity
+ * stages.
+ *
+ * The ids are derived anyway, and that is the point: when a provisioning seed
+ * does arrive, it computes the same expression in SQL and lands on these exact
+ * rows. Convergence by arithmetic rather than by migration, and nobody has to
+ * transcribe eighteen uuids from one pack to another. Ruled by the lead
+ * 2026-09-13.
  *
  * The ruling as first written was `uuid_generate_v5(tenant_id, 'pipeline:' ||
  * stage_key)` with md5 as a fallback where `uuid-ossp` is absent. Two things

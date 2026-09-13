@@ -9,9 +9,11 @@
 --     -f supabase/seeds/fixture_world_03_delivery_compliance_finance.sql \
 --     -f supabase/seeds/fixture_world_04_ai_ops_and_agents.sql
 --
--- Targets migrations 001-017 (and 018 when it merges): the tenant is
--- provisioned by app.provision_tenant() from 016, so this does NOT run
--- against a database at 013 or earlier.
+-- Targets migrations 001-017: the tenant is provisioned by
+-- app.provision_tenant() from 016, so this does NOT run against a database at
+-- 013 or earlier. 018 adds RPCs, not configuration this seed writes — the
+-- pipeline rows below are the seed's own, and no provisioning pack writes
+-- stages yet.
 --
 -- Idempotent: every statement is an upsert guarded by an IS DISTINCT FROM
 -- comparison, so a second run of an unchanged seed performs zero updates and

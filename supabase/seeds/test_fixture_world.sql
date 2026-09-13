@@ -2,7 +2,7 @@
 -- PIN · fixture_world
 -- ============================================================================
 --
--- Targets migrations 001-017 (and 018 when it merges). T10 needs 014's policies
+-- Targets migrations 001-017. T10 needs 014's policies
 -- and the seed provisions through 016's seeders, so neither runs at 013.
 --
 -- Run only AFTER the four fixture_world parts have been applied AND COMMITTED,
@@ -175,13 +175,14 @@ BEGIN
     RAISE EXCEPTION 'T2e FAIL: the ENGAGEMENT pipeline has % steps, expected 9 (WON..PAID)', v_count;
   END IF;
 
-  -- Pipeline configuration ids are a CONTRACT WITH ANOTHER PACK, not an internal
-  -- detail. 018's stage seed computes the same md5 expression in SQL so that
-  -- either pack may write these rows; if the two derivations ever diverge, the
-  -- ENGAGEMENT steps get two sets of ids and this seed's 90
-  -- core.engagement_step_states rows fail their composite foreign key. Asserted
-  -- against the SQL form rather than against literals, because a literal would
-  -- agree with itself while disagreeing with 018.
+  -- Pipeline configuration ids are DERIVED, and asserted against the derivation
+  -- rather than against literals. The seed owns these rows today -- no
+  -- provisioning pack writes pipeline stages yet -- but the arithmetic is what
+  -- lets one converge on them later without a migration and without transcribing
+  -- eighteen uuids. A literal here would agree with itself while disagreeing with
+  -- whatever computes the expression in SQL, which is the one failure this cannot
+  -- afford: 90 core.engagement_step_states rows hang off these ids by composite
+  -- foreign key.
   SELECT count(*) INTO v_count
     FROM core.pipelines
    WHERE tenant_id = v_tenant
@@ -200,9 +201,9 @@ BEGIN
          md5(step.tenant_id::text || 'pipeline:' || pipeline.object || ':' || step.step_key)::uuid;
   IF v_count <> 0 THEN
     RAISE EXCEPTION
-      'T2l FAIL: % pipeline step(s) do not carry the agreed derived id. 018 computes '
-      'md5(tenant_id::text || ''pipeline:'' || object || '':'' || step_key)::uuid for '
-      'the same rows, and engagement_step_states points at whichever set exists.', v_count;
+      'T2l FAIL: % pipeline step(s) do not carry the derived id '
+      'md5(tenant_id::text || ''pipeline:'' || object || '':'' || step_key)::uuid. '
+      'engagement_step_states points at whichever set exists.', v_count;
   END IF;
 
   -- Every prefix core.assign_ref can be handed. A missing one raises

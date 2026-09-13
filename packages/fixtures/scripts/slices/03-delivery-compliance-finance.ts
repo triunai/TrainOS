@@ -74,10 +74,11 @@ const engagementUuid = (ref: string): string => refUuid(ref);
 /**
  * The ENGAGEMENT pipeline and its steps.
  *
- * Derived, not remembered: `pipelineUuid` is the cross-lane expression the 018
- * stage seed computes in SQL, so this slice's 90 `core.engagement_step_states`
- * rows resolve to the same steps whichever pack wrote them. Hardcoding the
- * literals here is how the two lanes drift apart on a rename.
+ * Derived, not remembered. `pipelineUuid` is the same expression slice 1 writes
+ * the steps with, so this slice's 90 `core.engagement_step_states` rows resolve
+ * to them without either file carrying a literal. Hardcoding one here is how two
+ * files drift apart on a rename, and the failure would be a composite foreign
+ * key violation 1,700 lines from the cause.
  */
 const engagementPipelineUuid = (): string => pipelineUuid(pipelineName("ENGAGEMENT"));
 const stepUuid = (stageKey: string): string =>
