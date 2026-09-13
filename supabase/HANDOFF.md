@@ -44,3 +44,15 @@ amendment pass plus the column change in the pack named on the row.
 | `core.collection_next_action_status` | `DRAFT_READY · AWAITING_MD · HUMAN_REQUIRED · BLOCKED_ON_SYNC` | 003 (type) + 010 finance/collections — the ladder's next-rung status, all four values observed |
 | `core.plan_step_status` | `PENDING · RUNNING · DONE · SKIPPED · HALTED · FAILED` | 003 (type) + 013 ai-ops (not started) — the run state card's plan lines. Distinct from `run_step_status` (`OK · RETRIED · FAILED · HALTED`), which is a tool call's outcome and has no member for work not yet begun |
 | `core.rate_source` | `LIVE · CACHED · UNAVAILABLE` | 003 (type) + wherever a WhatsApp message draft is stored. §16 Q4: a failed BSP rate lookup becomes a value rather than a zero, and the two money columns on a draft must be NULLABLE for that to mean anything |
+
+Two shape changes from the same pass that add no enum but do need schema, both
+for 013 ai-ops (not started):
+
+- Ruling R12 · `RoutingEntry.staged?: { tier, reason }`. The routing table needs
+  a nullable staged-tier column and a staged-reason column, and
+  `unsavedChanges` is then a count over them rather than its own stored number.
+- Ruling R13 · `GET /v1/ai/usage/daily?period=` returning `UsageDay[]` of
+  `{ date, peak, offPeak, runs? }`. A daily rollup table, or a view over the
+  run ledger. The invariant to enforce or test: summed over a period,
+  `offPeak / (peak + offPeak)` equals the `offPeakShare` the monthly rollup
+  publishes.

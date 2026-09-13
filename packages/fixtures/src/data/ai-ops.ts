@@ -9,7 +9,14 @@
  * and never blocks, ESCALATE blocks only when a trigger fires.
  */
 
-import type { Budget, ModelTier, ProviderKey, RoutingEntry, UsageResponse } from "@trainos/contract";
+import type {
+  Budget,
+  ModelTier,
+  ProviderKey,
+  RoutingEntry,
+  UsageDailySeries,
+  UsageResponse,
+} from "@trainos/contract";
 import { PROVIDER_ANTHROPIC, USER_KHAIRUL } from "@trainos/contract";
 import { myr } from "./_helpers";
 
@@ -243,6 +250,13 @@ export const routingEntries: RoutingEntry[] = [
     escalationLadder: ["STRONG_2", "SPECIAL"],
     jury: { mode: "GATE", quorum: 2, of: 3, tiers: ["STRONG_1", "STRONG_2", "STRONG_3"] },
     requiredForAutonomous: true,
+    /* Ruling R12: the server names its own staged edits. STRONG-2 is DEGRADED
+       and its live fallback is DEEP_THINK, so this row is proposed to move
+       there. Nothing is applied until the admin presses the primary. */
+    staged: {
+      tier: "DEEP_THINK",
+      reason: "STRONG-2 is returning 5xx; its live fallback is Deep Think.",
+    },
   },
   {
     actionType: "RULE_CHANGE_APPROVE",
@@ -256,6 +270,12 @@ export const routingEntries: RoutingEntry[] = [
       triggers: { minConfidence: 0.8, maxValue: myr(0), firstOfKind: true },
     },
     requiredForAutonomous: true,
+    /* SPECIAL is PAUSED_BY_CAP, so the head of its fallback chain is the
+       proposal. The budget lane and the routing lane meet on this row. */
+    staged: {
+      tier: "STRONG_1",
+      reason: "Special is at its RM 200.00 cap; the chain heads to Strong-1.",
+    },
   },
   {
     actionType: "ATTENDANCE_APPROVE",
@@ -266,8 +286,14 @@ export const routingEntries: RoutingEntry[] = [
   },
 ];
 
-/** §17 how many matrix edits are staged in the UI but not yet applied. */
-export const routingUnsavedChanges = 2;
+/**
+ * §17 how many matrix edits are staged but not yet applied.
+ *
+ * Ruling R12 made `staged` a field on the row, so this is derived rather than
+ * written. A count and a list that are typed separately drift; a count that is
+ * the list's length cannot.
+ */
+export const routingUnsavedChanges = routingEntries.filter((entry) => entry.staged).length;
 
 /**
  * §17 `GET /v1/ai/providers` — six cards, four of the states M20-S21 renders.
@@ -526,3 +552,19 @@ export const usageByGrouping: Record<string, UsageResponse> = {
 
 /** §17 `GET /v1/ai/usage/forecast?period=` — linear on the trailing seven days. */
 export const usageForecast = { period: "2026-11", forecast: myr(81200), cap: myr(94000) };
+
+/**
+ * §17 ruled R13 · `GET /v1/ai/usage/daily?period=` — the peak / off-peak series.
+ *
+ * SEEDING IS OWED. The type, the endpoint row and the client method are the
+ * contract lane's; the days themselves are narrative data and belong to the
+ * persona lane, which owns what the demo month looks like. Two constraints
+ * bind whoever fills it: `data` must cover 2026-11, and summed across the
+ * period `offPeak / (peak + offPeak)` must equal the `offPeakShare` of 0.44
+ * that `usageByGrouping` already publishes — otherwise the chart and the tile
+ * above it disagree about the same month.
+ *
+ * Empty until then, which the screen renders as an empty state rather than as
+ * a flat chart claiming zero spend.
+ */
+export const usageDaily: UsageDailySeries = { period: "2026-11", data: [] };

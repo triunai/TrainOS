@@ -124,6 +124,7 @@ import type {
   Tna,
   TrainerAvailability,
   TnaRecommendationsResponse,
+  UsageDailySeries,
   UsageForecast,
   UsageResponse,
   WebhookDuplicateResponse,
@@ -1850,6 +1851,19 @@ export class FixtureClient {
     const usage = this.#store.usageByGrouping[`${period}::${groupBy}`];
     if (!usage) throw notFound("Usage for", `${period} grouped by ${groupBy}`);
     return this.#read(usage);
+  }
+
+  /**
+   * §17 ruled R13 · the peak / off-peak series behind the M20-S16 chart.
+   *
+   * `UsageTotals.offPeakShare` is one number for the month, and the screen
+   * explains it as a routing outcome rather than a coincidence. A scalar
+   * cannot show that — a share that fell because one week routed badly reads
+   * exactly like one that fell because volume moved.
+   */
+  async getUsageDaily(period = "2026-11"): Promise<UsageDailySeries> {
+    if (this.#store.usageDaily.period !== period) throw notFound("Daily usage for period", period);
+    return this.#read(this.#store.usageDaily);
   }
 
   async getUsageForecast(period = "2026-11"): Promise<UsageForecast> {

@@ -12,14 +12,16 @@ import type {
   AgentEval,
   AgentRegistrySummary,
   AttendanceSheet,
+  AuditEntry,
   AutomationRun,
+  BadgeCounts,
   Budget,
+  ChannelConsent,
   ClaimPacket,
   CollectionRule,
   ComplianceChecksResponse,
   ComplianceRule,
   Contact,
-  Quotation,
   Engagement,
   EnquiryDetail,
   ExecutiveDashboard,
@@ -44,6 +46,7 @@ import type {
   Proposal,
   ProposalsVsWonReport,
   ProviderKey,
+  Quotation,
   RateCard,
   Receivable,
   ReceivablesAging,
@@ -54,10 +57,8 @@ import type {
   Template,
   Tna,
   TnaRecommendationsResponse,
+  UsageDailySeries,
   UsageResponse,
-  AuditEntry,
-  BadgeCounts,
-  ChannelConsent,
 } from "@trainos/contract";
 import type { FixtureCommission } from "../data/commissions";
 import type { FixtureLibraryAsset } from "../data/library";
@@ -137,6 +138,8 @@ export interface FixtureStore {
   budgets: Budget[];
   usageByGrouping: Record<string, UsageResponse>;
   usageForecast: { period: string; forecast: { amount: number; currency: "MYR" }; cap: { amount: number; currency: "MYR" } };
+  /** Ruled R13 — the peak / off-peak series behind the M20-S16 chart. */
+  usageDaily: UsageDailySeries;
 
   knowledgeSources: KnowledgeSource[];
   libraryAssets: FixtureLibraryAsset[];
@@ -220,6 +223,7 @@ export const createStore = (): FixtureStore => ({
   budgets: clone(data.budgets),
   usageByGrouping: clone(data.usageByGrouping),
   usageForecast: clone(data.usageForecast),
+  usageDaily: clone(data.usageDaily),
 
   knowledgeSources: clone(data.knowledgeSources),
   libraryAssets: clone(data.libraryAssets),

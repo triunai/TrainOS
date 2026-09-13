@@ -174,6 +174,10 @@ export const ENDPOINTS = [
 
   /* §17 · Usage and budgets — M20-S16 */
   { method: 'GET', path: '/v1/ai/usage', screenIds: ['M20-S16', 'M20-S20'], roles: ['ADMIN', 'FINANCE', 'MD'], gated: false, idempotent: true },
+  /* Ruled R13. Not a §13 or §17 row: the matrix gives `/v1/ai/usage` and its
+     forecast, both period rollups, and M20-S16 draws a peak / off-peak chart
+     that neither can feed. Same roles as the rollup it decomposes. */
+  { method: 'GET', path: '/v1/ai/usage/daily', screenIds: ['M20-S16'], roles: ['ADMIN', 'FINANCE', 'MD'], gated: false, idempotent: true },
   { method: 'GET', path: '/v1/ai/usage/forecast', screenIds: ['M20-S16'], roles: ['ADMIN', 'FINANCE', 'MD'], gated: false, idempotent: true },
   { method: 'GET', path: '/v1/ai/budgets', screenIds: ['M20-S16'], roles: ['ADMIN', 'FINANCE', 'MD'], gated: false, idempotent: true },
   { method: 'PUT', path: '/v1/ai/budgets/{scope}/{key}', screenIds: ['M20-S16'], roles: ['ADMIN'], gated: true, idempotent: true },

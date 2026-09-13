@@ -69,34 +69,25 @@ const PEAK_WINDOWS: [number, number][] = [
 ];
 
 /**
- * The tier a routing entry should move to, if the one it names cannot serve it.
+ * The edits the SERVER has staged, read off the rows rather than re-derived.
  *
- * This is the screen's only opinion, and it is derived rather than invented: an
- * action type routed to a DEGRADED tier should follow that tier's live
- * fallback, and one routed to a tier PAUSED_BY_CAP should follow the head of
- * its fallback chain. Against the current data that produces exactly the two
- * staged edits §4 asks the screen to render — rule extraction is on SPECIAL,
- * which is at its cap, and the HRDC packet submission is on STRONG-2, which is
- * returning 5xx.
+ * This used to be the screen's one opinion: an action type on a DEGRADED tier
+ * should follow that tier's live fallback, one on a tier PAUSED_BY_CAP should
+ * follow the head of its fallback chain. The inference was sound and it
+ * matched `unsavedChanges` exactly — which is the problem, because it matched
+ * by construction. A staged edit that did not come from tier health would have
+ * been invisible while the count still said two, and the screen would have
+ * been confidently wrong about a change an admin was about to apply.
  *
- * Nothing is applied. A staged edit is a proposal the admin can accept, change
- * or clear, and it reaches a run only through the primary button.
+ * Ruling R12 put `staged` on `RoutingEntry`, so the proposal and the reason
+ * for it are both the server's. Nothing is applied: a staged edit reaches a run
+ * only through the primary button.
  */
-function proposeEdits(entries: RoutingEntry[], tiers: ModelTier[]): Map<string, TierKey> {
-  const byKey = new Map(tiers.map((tier) => [tier.key, tier]));
+function stagedEdits(entries: RoutingEntry[]): Map<string, TierKey> {
   const staged = new Map<string, TierKey>();
-
   for (const entry of entries) {
-    const tier = byKey.get(entry.tier);
-    if (!tier) continue;
-    if (tier.status === "DEGRADED" && tier.degradation) {
-      staged.set(entry.actionType, tier.degradation.activeFallback);
-    } else if (tier.status === "PAUSED_BY_CAP") {
-      const fallback = tier.fallbackChain?.[0];
-      if (fallback) staged.set(entry.actionType, fallback);
-    }
+    if (entry.staged) staged.set(entry.actionType, entry.staged.tier);
   }
-
   return staged;
 }
 
@@ -116,10 +107,10 @@ export function AiModelsScreen() {
   const routingRows = useMemo(() => routing.data?.data ?? [], [routing.data]);
 
   useEffect(() => {
-    if (seeded || tierRows.length === 0 || routingRows.length === 0) return;
-    setStaged(proposeEdits(routingRows, tierRows));
+    if (seeded || routingRows.length === 0) return;
+    setStaged(stagedEdits(routingRows));
     setSeeded(true);
-  }, [routingRows, seeded, tierRows]);
+  }, [routingRows, seeded]);
 
   const degraded = tierRows.find((tier) => tier.status === "DEGRADED");
   const capped = tierRows.find((tier) => tier.status === "PAUSED_BY_CAP");

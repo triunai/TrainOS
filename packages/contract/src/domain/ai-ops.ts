@@ -5,7 +5,7 @@
  * Screens M20-S20 (models), M20-S21 (providers), M20-S16 (usage).
  */
 
-import type { EditedBy, Money, Rate, Timestamp } from '../envelope';
+import type { DateOnly, EditedBy, Money, Rate, Timestamp } from '../envelope';
 import type {
   AiProvider,
   BillingOwner,
@@ -112,6 +112,25 @@ export interface JuryPolicy {
  * §17 · Routing — M20-S20
  * ------------------------------------------------------------------ */
 
+/**
+ * §17 a change the server has staged against one routing row.
+ *
+ * Ruling R12. `RoutingResponse.unsavedChanges` counted something the response
+ * never named, so `AiModelsScreen` re-derived WHICH rows those were: an action
+ * type on a DEGRADED tier follows that tier's live fallback, one on a tier
+ * `PAUSED_BY_CAP` follows the head of its fallback chain. The inference was
+ * sound and it matched the count, which is the problem — it matched by
+ * construction, and the first staged edit that did not come from tier health
+ * would have been invisible while the count still said two.
+ *
+ * `reason` is the server's sentence, not a code, because the admin is being
+ * asked to accept a proposal and needs to know what proposed it.
+ */
+export interface StagedRoutingChange {
+  tier: TierKey;
+  reason: string;
+}
+
 /** §17 one row of the action→tier assignment matrix. */
 export interface RoutingEntry {
   actionType: GovernedActionType;
@@ -120,6 +139,12 @@ export interface RoutingEntry {
   jury: JuryPolicy;
   /** Whether a jury result is required before this type may run AUTONOMOUS. */
   requiredForAutonomous: boolean;
+  /**
+   * Ruling R12: present when this row has an edit staged but not applied.
+   * `tier` above is still what runs today — `PUT /v1/ai/routing` applies to
+   * future runs only and is never retroactive.
+   */
+  staged?: StagedRoutingChange;
 }
 
 /**
@@ -128,7 +153,10 @@ export interface RoutingEntry {
  */
 export interface RoutingResponse {
   data: RoutingEntry[];
-  /** Count of edits staged in the UI but not yet applied. */
+  /**
+   * Count of edits staged but not yet applied. Ruling R12 makes this the count
+   * of `data[].staged`, so the number and the rows cannot disagree.
+   */
   unsavedChanges: number;
 }
 
@@ -243,6 +271,41 @@ export interface UsageResponse {
   cap: Money;
   breakdown: UsageBreakdownRow[];
   budgets: Budget[];
+}
+
+/**
+ * §17 one day of a period's spend, split by when the work ran.
+ *
+ * Ruling R13. `UsageTotals.offPeakShare` is a single number for the month, and
+ * M20-S16 explains it as "a routing outcome rather than a coincidence" —
+ * batch-eligible tiers are restricted to off-peak hours and queue rather than
+ * escalate. A monthly scalar cannot show that: a share that fell because one
+ * week routed badly reads exactly like one that fell because volume moved.
+ * The chart needs the days.
+ *
+ * The invariant: summed across the period, `offPeak / (peak + offPeak)` equals
+ * `UsageTotals.offPeakShare`. Both are server-computed from the same ledger,
+ * so a client never has to reconcile them and must never recompute one from
+ * the other.
+ */
+export interface UsageDay {
+  date: DateOnly;
+  /** Spend on work that ran in peak hours. */
+  peak: Money;
+  /** Spend on work that ran off-peak, including everything the batch window took. */
+  offPeak: Money;
+  /**
+   * Runs started that day. Optional, and the reason the chart is readable: a
+   * spike in spend with flat runs is a pricing or tier change, and a spike in
+   * both is simply a busy day. Without it every spike looks the same.
+   */
+  runs?: number;
+}
+
+/** §17 ruled R13 · `GET /v1/ai/usage/daily?period=` — the peak / off-peak series. */
+export interface UsageDailySeries {
+  period: string;
+  data: UsageDay[];
 }
 
 /** §17 `GET /v1/ai/usage/forecast?period=`. */
