@@ -34,6 +34,12 @@ export const queryKeys = {
   proposals: list(["proposals"] as const),
   quotations: list(["quotations"] as const),
   approvals: list(["approvals"] as const),
+  /**
+   * `GET /v1/policies`. Read by three screens — my tasks names the deciding
+   * role from it, and both policy screens are built on it — so it gets a root
+   * here rather than a hand-written key array in each feature.
+   */
+  policies: list(["policies"] as const),
   engagements: list(["engagements"] as const),
   complianceRules: list(["compliance-rules"] as const),
   ruleChanges: list(["rule-changes"] as const),
