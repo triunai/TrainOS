@@ -2009,5 +2009,131 @@ BEGIN
 END
 $t30$;
 
+DO $banner$ BEGIN RAISE NOTICE '════════ T31 · ONE KEYSET ENGINE — total is stable, next stops at the end ════════'; END $banner$;
+DO $t31$
+DECLARE
+  v        jsonb;
+  v_tenant uuid := '11111111-1111-4111-8111-111111111111';
+  v_cursor text;
+  v_total1 integer;
+  v_total2 integer;
+BEGIN
+  -- ── H2 · `page.total` IS THE FILTERED COUNT, ON EVERY PAGE ───────────────
+  -- Before the keyset engine was extracted, `core.list_enquiries` appended the
+  -- cursor predicate to `v_where` and THEN counted, so `total` was the rows
+  -- REMAINING after the cursor. A reader paging 120 matches at size 50 saw the
+  -- list header read 120, then 70, then 20. The other four list RPCs counted
+  -- first, which is what made this invisible: the divergence lived 250 lines
+  -- from its twin. This assertion fails on the pre-fix migration with
+  -- "T31b: page.total shrank across pages: 4 then 2".
+  INSERT INTO core.enquiries
+    (id, tenant_id, channel, status, received_at, from_name, from_email, subject,
+     preview, body, needs_human_review, currency, created_by_kind, created_by_id)
+  VALUES ('ddddddd1-0000-4000-8000-00000000000a', v_tenant, 'EMAIL', 'OPEN',
+          '2026-09-09T09:00:00+08', 'Pager', 'pager@chrome.test', 'Paging fixture',
+          'four makes an exact multiple', 'body', false, 'MYR',
+          'HUMAN', '22222222-2222-4222-8222-222222222222');
+
+  v := core.list_enquiries('[]'::jsonb, '-receivedAt', '{"size":2}'::jsonb, NULL);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T31a: %', v; END IF;
+  v_total1 := (v #>> '{data,page,total}')::integer;
+  IF v_total1 <> 4 THEN
+    RAISE EXCEPTION 'T31a2: expected 4 enquiries in the tenant, got %', v_total1;
+  END IF;
+  v_cursor := v #>> '{data,page,next}';
+  IF v_cursor IS NULL THEN
+    RAISE EXCEPTION 'T31a3: page one of four at size two handed back no cursor';
+  END IF;
+
+  v := core.list_enquiries('[]'::jsonb, '-receivedAt',
+         pg_catalog.jsonb_build_object('size', 2, 'cursor', v_cursor), NULL);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T31b0: %', v; END IF;
+  v_total2 := (v #>> '{data,page,total}')::integer;
+  IF v_total2 <> v_total1 THEN
+    RAISE EXCEPTION 'T31b: page.total shrank across pages: % then %', v_total1, v_total2;
+  END IF;
+
+  -- ── H3 · `next` IS NULL ON AN EXACT-MULTIPLE LAST PAGE ───────────────────
+  -- The other four decided `next` from `v_count = v_size AND v_count < v_total`.
+  -- With four rows at size two, page two returns two rows and 2 < 4 holds, so
+  -- they handed back a cursor pointing PAST the last row: the client fetched a
+  -- third page, got `data: []`, and rendered an empty list. `list_enquiries`
+  -- did NOT have this bug — its `v_total` was the post-cursor remainder, so the
+  -- same wrong arithmetic happened to cancel. Two copies of one engine, two
+  -- opposite defects, one of them masking the other.
+  IF (v #> '{data,page,next}') <> 'null'::jsonb THEN
+    RAISE EXCEPTION 'T31c: list_enquiries page two of four at size two handed back '
+                    'a cursor past the last row: %', v #> '{data,page,next}';
+  END IF;
+
+  -- The same question asked of one of the four. T25 seeded two follow-ups;
+  -- two more make an exact multiple of the page size.
+  INSERT INTO core.follow_ups
+    (id, tenant_id, organisation_id, contact_id, reason, due_date, status, autonomy,
+     owner_id, created_by_kind, created_by_id)
+  VALUES ('c0000001-0000-4000-8000-000000000003', v_tenant,
+          'bbbbbbb1-0000-4000-8000-000000000001','ccccccc1-0000-4000-8000-000000000001',
+          'Third', CURRENT_DATE + 3, 'DUE','SUGGEST',
+          '22222222-2222-4222-8222-222222222222','HUMAN','22222222-2222-4222-8222-222222222222'),
+         ('c0000001-0000-4000-8000-000000000004', v_tenant,
+          'bbbbbbb1-0000-4000-8000-000000000001','ccccccc1-0000-4000-8000-000000000001',
+          'Fourth', CURRENT_DATE + 4, 'DUE','SUGGEST',
+          '22222222-2222-4222-8222-222222222222','HUMAN','22222222-2222-4222-8222-222222222222');
+
+  v := core.list_follow_ups('[]'::jsonb, 'dueDate', '{"size":2}'::jsonb, NULL);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T31d: %', v; END IF;
+  v_total1 := (v #>> '{data,page,total}')::integer;
+  IF v_total1 <> 4 THEN
+    RAISE EXCEPTION 'T31d2: expected 4 follow-ups, got %', v_total1;
+  END IF;
+  v_cursor := v #>> '{data,page,next}';
+  IF v_cursor IS NULL THEN
+    RAISE EXCEPTION 'T31d3: page one of four at size two handed back no cursor';
+  END IF;
+
+  v := core.list_follow_ups('[]'::jsonb, 'dueDate',
+         pg_catalog.jsonb_build_object('size', 2, 'cursor', v_cursor), NULL);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T31e0: %', v; END IF;
+  IF pg_catalog.jsonb_array_length(v #> '{data,data}') <> 2 THEN
+    RAISE EXCEPTION 'T31e1: page two returned % rows, expected 2',
+      pg_catalog.jsonb_array_length(v #> '{data,data}');
+  END IF;
+  IF (v #>> '{data,page,total}')::integer <> v_total1 THEN
+    RAISE EXCEPTION 'T31e2: follow-up page.total moved: % then %',
+      v_total1, v #>> '{data,page,total}';
+  END IF;
+  -- THIS IS THE ASSERTION THAT FAILS ON THE PRE-FIX MIGRATION.
+  IF (v #> '{data,page,next}') <> 'null'::jsonb THEN
+    RAISE EXCEPTION 'T31f: list_follow_ups handed back a cursor past the end of an '
+                    'exact-multiple last page: %', v #> '{data,page,next}';
+  END IF;
+
+  -- And the page that cursor pointed at is empty, which is the round trip the
+  -- client was making. Asserted so the failure above reads as a real cost.
+  v := core.list_follow_ups('[]'::jsonb, 'dueDate',
+         pg_catalog.jsonb_build_object('size', 2, 'cursor',
+           app._cursor_encode((SELECT (due_date::timestamptz) FROM core.follow_ups
+                                WHERE id = 'c0000001-0000-4000-8000-000000000004'),
+                              'c0000001-0000-4000-8000-000000000004'::uuid)), NULL);
+  IF pg_catalog.jsonb_array_length(v #> '{data,data}') <> 0 THEN
+    RAISE EXCEPTION 'T31g: a cursor at the last row should yield an empty page';
+  END IF;
+
+  -- ── The engine is shared, not merely corrected in five places ────────────
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p
+                   JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+                  WHERE n.nspname = 'app' AND p.proname = '_keyset_scope')
+     OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p
+                      JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+                     WHERE n.nspname = 'app' AND p.proname = '_next_cursor') THEN
+    RAISE EXCEPTION 'T31h: the keyset helpers are absent; the five list RPCs are '
+                    'each owning their own copy of the ordering again';
+  END IF;
+
+  RAISE NOTICE 'T31 PASS: page.total is the filtered count on every page, next is null '
+               'on an exact-multiple last page, and all five list RPCs share one engine.';
+END
+$t31$;
+
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
