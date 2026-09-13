@@ -57,3 +57,18 @@ Reference screenshot: "Send proposal · Aurora Manufacturing Sdn Bhd" header on 
 - **That gradient card is itself a dropdown**: its header row shows the metrics (Value · Agent · Confidence · Margin · Risk); expanding it reveals the record's detail sections beneath ("Why this needs you", recommendation, evidence, deviations, risk, diff) inside the same card, so the metrics act as the summary row of the detail. Chevron on the right; eased.
 - **Spread the metrics out:** equal-width grid across the full band (`grid-template-columns: repeat(n, 1fr)`), dividers between cells, not clustered left.
 - Kit owns it: extend `RecordHeader` (collapsible, `metricsCard` slot) and `MetricStrip` (`variant="accentCard"`, `expandable` with children). Screens pass the sections as children; no per-screen composition.
+
+## 16. Enquiry inbox rows and detail (M03-S01/S02) — "exception gets the component, normal data becomes typography"
+Row = exactly three layers:
+```
+Lim Wei Sheng · Kenanga Retail Group                         09:12
+✉ Email · 13 Nov
+Sales excellence programme for 48 store managers in Q1 2027…
+Sales excellence                                        RM 67,200
+```
+- Sender · company is the strongest line (15/550); channel is muted text with a tiny glyph (✉ ◉ ☎ ◌), **no capsule**; date/time right-aligned muted; money is a fixed right column in tabular numerals, **not a badge**.
+- AI classification shows plain text when confidence ≥ business threshold ("Sales excellence"); the ✦/confidence treatment appears **only** below threshold ("Needs review · 61%") or on unmatched/spam ("⚠ Needs classification", "Not an enquiry"). Confidence is an exception metric, not primary UI.
+- Three distinct states: hover → subtle surface; selected → surface + left indicator (keep); attention → status indicator. Never the same treatment for all three.
+- Detail pane: keep the sequence (Enquiry → Original message → Extracted → Suggested action → Decision) but remove agent theatre: "EXTRACTED ✦ Lead Agent · 92%" → heading "Enquiry details" with a tiny "AI extracted" tag; "SUGGESTED ACTION ✦ Lead Agent · 88% · Act with approval" → "Recommended next step" + "Requires approval" subline, then the sentence. Provenance stays available in the AIChip popover, not repeated inline.
+- **Header rows align:** the list pane's filter/summary row ("Channel: WhatsApp · 3 of 3 shown") and the detail pane's header block ("Quotation request" + refs + actions) must be the same height and share the same baseline hairline, so the split reads as one composition.
+- Same principles apply to every list/master-detail screen (collections, invoices, engagements): money and dates as data columns, provenance/confidence only on exceptions.
