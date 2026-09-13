@@ -58,6 +58,24 @@ const CHANNEL_LABEL: Record<EnquiryChannel, string> = {
 /** The "all open" pill the saved views do not carry: no filter, everything. */
 const ALL_TAB = "view_all";
 
+/**
+ * The height BOTH panes' header blocks are pinned to, so the split reads as one
+ * composition rather than two stacked screens (tightening brief §16, "header
+ * rows align ... the same height and share the same baseline hairline").
+ *
+ * 72px, from the M03-S01 artboard (Kit.dc.html `proof-m03s01`): its detail
+ * header is `padding:16px 20px` around a 16px title, a 4px gap and a 12px mono
+ * meta line — a 70px block plus its 1px hairline — rounded up to the pack's 8px
+ * grid. The list pane's filter row is the shorter of the two in the artboard
+ * (44px), so matching on the list pane's height instead would mean squeezing
+ * the detail title and its refs line, which is the content that actually needs
+ * the room. The taller block sets the height; the shorter one centres inside it.
+ *
+ * `border-box` is the app-wide default, so the hairline is INSIDE these 72px
+ * and both panes' bottom edges land on the same pixel.
+ */
+const SPLIT_HEADER_HEIGHT = "h-[72px]";
+
 function pageFor(views: SavedView[], activeId: string): PageRequest | undefined {
   if (activeId === ALL_TAB) return undefined;
   const view = views.find((candidate) => candidate.id === activeId);
@@ -192,7 +210,13 @@ export function EnquiryInboxPage() {
             filters={filters}
             shown={rows.length}
             total={enquiries.data?.page.total}
-            className="border-b border-border"
+            /* `flex-nowrap` and `py-0` are what let the fixed height hold: the
+               bar's own wrap-and-pad would grow past 72px the moment a third
+               filter chip arrives, and the split would come apart again. */
+            className={cn(
+              SPLIT_HEADER_HEIGHT,
+              "shrink-0 flex-nowrap overflow-hidden border-b border-border py-0",
+            )}
           />
 
           <div className="min-h-0 flex-1 overflow-auto">
@@ -227,10 +251,10 @@ export function EnquiryInboxPage() {
           </div>
         </section>
 
-        <section
-          aria-label="Enquiry preview"
-          className="flex min-w-0 flex-1 flex-col overflow-auto"
-        >
+        {/* The pane itself does not scroll; its BODY does, below the header. A
+            pane that scrolls as a whole takes its header block with it, and the
+            hairline the two panes share would slide out of the list pane's. */}
+        <section aria-label="Enquiry preview" className="flex min-h-0 min-w-0 flex-1 flex-col">
           {detail.isPending && current ? (
             <LoadingState rows={5} label="Loading the enquiry" />
           ) : detail.isError ? (
@@ -246,10 +270,25 @@ export function EnquiryInboxPage() {
             />
           ) : (
             <>
-              <div className="flex items-start gap-3 border-b border-border px-5 py-4">
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <h2 className="text-[16px] font-semibold">{detail.data.subject}</h2>
-                  <p className="font-mono text-[12px] text-ink-muted">
+              <div
+                className={cn(
+                  SPLIT_HEADER_HEIGHT,
+                  "flex shrink-0 items-center gap-3 overflow-hidden border-b border-border px-5",
+                )}
+              >
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  {/* Both lines truncate rather than wrap. A subject long enough
+                      to run to two lines used to push this block to 97px and
+                      break the shared hairline; the full subject is one row
+                      down in the record, and the title attribute keeps it
+                      reachable here. */}
+                  <h2
+                    className="truncate text-[16px] font-semibold leading-6"
+                    title={detail.data.subject}
+                  >
+                    {detail.data.subject}
+                  </h2>
+                  <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
                     {detail.data.ref} · received{" "}
                     <DateText value={detail.data.receivedAt} withTime /> ·{" "}
                     {detail.data.assignedTo ? detail.data.assignedTo.name : "unassigned"}
@@ -261,7 +300,7 @@ export function EnquiryInboxPage() {
                 </SecondaryButton>
               </div>
 
-              <div className="flex flex-col gap-6 px-5 pb-6 pt-5">
+              <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto px-5 pb-6 pt-5">
                 <section className="flex flex-col gap-2">
                   <div className="flex items-baseline gap-2.5">
                     <h3 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">

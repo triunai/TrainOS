@@ -89,6 +89,28 @@ describe("M03-S01 · enquiry inbox", () => {
     });
     expect(screen.getByText("Needs human classification")).toBeInTheDocument();
   });
+
+  /* Tightening brief §16: the two panes' header blocks are one composition, so
+     they are pinned to one height and their hairlines meet. jsdom does not lay
+     out, so the contract is checked where it is expressed — the shared height
+     class on both blocks, and neither block free to grow. */
+  it("pins both panes' header blocks to the same height so the hairlines meet", async () => {
+    renderScreen(<EnquiryInboxPage />, { path: "/sales/enquiries", route: "/sales/enquiries" });
+
+    await screen.findByRole("heading", { name: "Enquiry inbox" });
+
+    const listHeader = await screen.findByRole("group", { name: "Filters" });
+    const preview = screen.getByRole("region", { name: "Enquiry preview" });
+    const detailTitle = await within(preview).findByRole("heading", { level: 2 });
+    const detailHeader = detailTitle.closest("div")?.parentElement;
+
+    expect(listHeader.className).toContain("h-[72px]");
+    expect(detailHeader?.className).toContain("h-[72px]");
+
+    /* Both would grow past 72px on a long subject or a third filter chip. */
+    expect(listHeader.className).toContain("flex-nowrap");
+    expect(detailTitle.className).toContain("truncate");
+  });
 });
 
 describe("M03-S02 · enquiry detail", () => {
