@@ -133,6 +133,28 @@ export const QUOTATION_STATUSES = [
 ] as const;
 export type QuotationStatus = (typeof QUOTATION_STATUSES)[number];
 
+/**
+ * §6 `Programme.status`.
+ *
+ * Ruling R9: typed `string` until now, which is why `PROGRAMME_TONE` could not
+ * join the other tone maps in the kit — a map over `string` cannot be total,
+ * and one that claims to be is a lie about its own exhaustiveness. The screen
+ * carried a `status === "ACTIVE" ? … : …` ternary instead (W-11 remainder).
+ *
+ * §12 has no entry. `ACTIVE` is the only value the contract shows (§6
+ * `GET /v1/programmes/{id}`) and the only one the artboard draws. `DRAFT` and
+ * `RETIRED` follow the shape `AGENT_STATUSES` already uses for a record that
+ * is versioned and withdrawable: §6 makes `PUT /v1/programmes/{id}` ADMIN and
+ * L&D only and the record carries a `version`, so a catalogue entry exists
+ * before it is sellable and stays readable after it stops being sold —
+ * deleting it would orphan every engagement priced against it.
+ *
+ * TODO(contract §16): catalogue the programme status vocabulary. Two of these
+ * three are derived.
+ */
+export const PROGRAMME_STATUSES = ['DRAFT', 'ACTIVE', 'RETIRED'] as const;
+export type ProgrammeStatus = (typeof PROGRAMME_STATUSES)[number];
+
 /** §12 `ApprovalDecision`. `note` required for the latter two (§7). */
 export const APPROVAL_DECISIONS = ['APPROVE', 'REQUEST_CHANGES', 'REJECT'] as const;
 export type ApprovalDecision = (typeof APPROVAL_DECISIONS)[number];

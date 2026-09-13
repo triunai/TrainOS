@@ -12,6 +12,7 @@ import {
   LoadingState,
   MoneyText,
   PrimaryButton,
+  PROGRAMME_TONE,
   RecordHeader,
   SecondaryButton,
   StatusChip,
@@ -133,7 +134,7 @@ export function ProgrammeDetailPage() {
           ]}
           chips={
             <>
-              <StatusChip tone={programme.status === "ACTIVE" ? "success" : "neutral"}>
+              <StatusChip tone={PROGRAMME_TONE[programme.status]}>
                 {humanise(programme.status)}
               </StatusChip>
               {programme.hrdcClaimable ? <StatusChip tone="info">HRDC claimable</StatusChip> : null}

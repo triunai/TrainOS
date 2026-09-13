@@ -21,6 +21,7 @@ import type {
   EvidenceType,
   GapPriority,
   HRDCScheme,
+  ProgrammeStatus,
   ProposalStatus,
   QuotationStatus,
   Role,
@@ -210,7 +211,8 @@ export interface Programme extends EntityEnvelope {
   category: string;
   days: number;
   version: number;
-  status: string;
+  /** Ruling R9: an enum, so a tone map over it can be total. */
+  status: ProgrammeStatus;
   hrdcScheme: HRDCScheme;
   hrdcClaimable: boolean;
   listPrice: Money;

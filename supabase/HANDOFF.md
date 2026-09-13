@@ -36,3 +36,4 @@ amendment pass plus the column change in the pack named on the row.
 | Enum | Values | Carried by |
 |---|---|---|
 | `core.quotation_status` | `DRAFT · PENDING_DISCOUNT_APPROVAL · APPLIED · SUPERSEDED` | 003 (type) + 007 money/proposals/quotations — new `status` column on the quotation table, `Quotation.status` is required in the contract |
+| `core.programme_status` | `DRAFT · ACTIVE · RETIRED` | 003 (type) + 006 catalogue/programmes — `core.programmes.status` is already `text NOT NULL DEFAULT 'DRAFT'` with a CHECK over exactly these three values (006:78). The contract now agrees with it; the only change is text + CHECK becoming the enum type |

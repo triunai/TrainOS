@@ -13,6 +13,7 @@ import type {
   OpportunityStage,
   OrganisationStatus,
   PacketStatus,
+  ProgrammeStatus,
   ProposalStatus,
   ProviderKeyStatus,
   QuotationStatus,
@@ -42,6 +43,20 @@ import type { StatusTone } from "./StatusChip";
  * Each map is total over its enum, so adding an enum value to the contract
  * breaks the build here rather than rendering an uncoloured surprise.
  */
+
+/**
+ * §6 a catalogue programme's state (ruling R9).
+ *
+ * `ACTIVE` is the one that earns a colour, and it earns it here where nine
+ * other maps would have stayed neutral: the catalogue is the thing a
+ * consultant prices from, and a programme that is a draft or has been retired
+ * is one they must not quote. The colour marks the row that is safe to use.
+ */
+export const PROGRAMME_TONE: Record<ProgrammeStatus, StatusTone> = {
+  DRAFT: "neutral",
+  ACTIVE: "success",
+  RETIRED: "neutral",
+};
 
 export const PROPOSAL_TONE: Record<ProposalStatus, StatusTone> = {
   DRAFT: "neutral",
