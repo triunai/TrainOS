@@ -30,6 +30,15 @@ Read this first in the new session, then `supabase/HANDOFF.md`, then `docs/revie
 - `lefthook.yml` runs `lint-staged --no-stash` (a stash restore lost work once).
 - **Prefer worktrees next blast** for lanes with disjoint folders and no kit additions; the shared index is the one thing they fix.
 
+## Cloud lanes in flight at 15:08 (13 Sep), each on its own branch with a PR to main; check GitHub PRs first next session
+
+- `cloud/opus-pass` LANDED (4fb1ba3): `docs/bd/ai-explorations/2026-09-13-opus-pass.md`. Levy radar drops to rank 5 (no utilisation definition; TrainOS-only claim history under-reads); claim-integrity guard is rank 1; `PROPOSAL_DRAFT` was never a gap, the gap is 9 routing entries for 24 governed types; CHEAP tier sends raw PII to DeepSeek direct (PDPA defect). Merge it.
+- `cloud/migrations` running: 013–017 on a self-built PostgreSQL 17 shim; PR "feat(supabase): migrations 013–017". 018 not started (gated).
+- `cloud/worker` running: `apps/worker/` Node job worker over the 012 claim RPCs; PR.
+- `cloud/routing` running: three-vendor jury, host allow-list, all 24 governed types routed, CHEAP off DeepSeek direct; PR.
+- Local `migrations` lane was asked to commit and stop at 15:05; its last HANDOFF entry is the cloud lane's resume point.
+- Merge order: routing → worker → migrations (rebase on main if the local lane landed 013 first; keep the higher-assertion version).
+
 ## API phase: the executable plan is `ai/briefs/2026-09-13-api-phase-plan.md` (rulings R-A..R-G, eight lanes with prompts, what runs local vs cloud, what needs the user). The section below is the earlier sketch it supersedes.
 
 ## Next session: API phase (user's stated goal: get the API contracts up; a few core flows runnable first)
