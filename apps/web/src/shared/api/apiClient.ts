@@ -15,7 +15,11 @@ import { ContractError, EventBus, paginate, type FixtureClient } from "@trainos/
 
 import type { TrainOsClient } from "./client";
 import { ApiErrorException, type Result } from "./errors";
-import { derivedIdempotencyKey, stableIdempotencyKey } from "./idempotency";
+import {
+  bulkDecideIdempotencyKey,
+  derivedIdempotencyKey,
+  stableIdempotencyKey,
+} from "./idempotency";
 import { createRpcClient } from "./rpcClient";
 
 /**
@@ -163,14 +167,23 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       must(
         await rpc.bulkDecide({
           ...body,
-          idempotencyKey: key(
-            options,
-            derivedIdempotencyKey(
-              "approval-bulk-decide",
-              body.items.map((item) => item.approvalId).join(","),
-              body,
-            ),
-          ),
+          /* ⚠ THE KEY IS DERIVED FROM THE SELECTION AS A SET, NOT IN CLICK ORDER.
+             `app.bulk_decide` takes its idempotency request hash over the ids
+             `array_agg(x ORDER BY x)` — SORTED (011:3447) — precisely because
+             "the client hashes its selection in click order, so the same two
+             approvals picked in the other order produced a different key and a
+             spurious refusal on the retry". Sorting server-side fixes the hash
+             COMPARISON but not the KEY: `stableStringify` sorts object keys and
+             leaves array order alone, so {A,B} and {B,A} still derived two
+             different keys, landed two idempotency rows, and the retry ran the
+             batch a SECOND time instead of replaying it — the inverse of what
+             the key is for, and a double decide on the one write a person makes
+             with money behind it.
+
+             Only the DERIVATION is sorted. The wire array keeps click order,
+             because 011:3506 iterates `p_items` in the order given to build
+             `results`, and the inbox reads that order back. */
+          idempotencyKey: key(options, bulkDecideIdempotencyKey(body)),
         }),
       ),
 
