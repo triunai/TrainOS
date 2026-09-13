@@ -121,7 +121,15 @@ INSERT INTO public.tenants (id, slug, name) VALUES
 -- activation and that runs long before T7's fixture block. In the product these
 -- rows come from 016's tenant provisioning; no migration seeds them.
 INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
-  ('00000009-1111-1111-1111-111111111111','ACT','action_requests',false,4);
+  ('00000009-1111-1111-1111-111111111111','ACT','action_requests',false,4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 
 INSERT INTO core.rule_set_versions (id, tenant_id, version_key, registry_asof) VALUES
   ('00000009-0aaa-0aaa-0aaa-0aaaaaaaaaa1', NULL,'rs_2026_06_15','2026-06-15T00:00:00+08:00'),
@@ -362,9 +370,18 @@ BEGIN
   INSERT INTO core.programmes (tenant_id, name, category, days, list_price_sen,
                                list_price_pax, floor_price_sen, floor_margin_rate)
   VALUES ('00000009-1111-1111-1111-111111111111','P','C',1,100000,10,90000,0.35);
+  -- `is_default` is false because **019** seeds every tenant a DEFAULT
+  -- ENGAGEMENT pipeline, and `pipelines_one_default_uq` is a partial unique
+  -- index on `(tenant_id, object) WHERE is_default`. Changed by 019, the pack that made a default engagement pipeline a repo-wide fact; nothing about this migration changed.
   INSERT INTO core.pipelines (tenant_id, object, name, is_default)
-  VALUES ('00000009-1111-1111-1111-111111111111','ENGAGEMENT','std', true);
+  VALUES ('00000009-1111-1111-1111-111111111111','ENGAGEMENT','std', false);
 
+  -- `AND pl.name = 'std'` for the same reason, and it is the load-bearing half.
+  -- This is an UNCONSTRAINED CROSS JOIN over `core.pipelines`: with **019**'s seed
+  -- the tenant now owns three pipelines rather than one, so without the
+  -- predicate this INSERT writes three engagements and `RETURNING … INTO
+  -- v_eng` keeps whichever one happened to come last. Every assertion below
+  -- would then be measuring an arbitrary row. Changed by 019, the pack that made a default engagement pipeline a repo-wide fact; nothing about this migration changed.
   INSERT INTO core.engagements (tenant_id, organisation_id, programme_id, owner_id,
                                 pipeline_id, title)
   SELECT '00000009-1111-1111-1111-111111111111', v_org, p.id,
@@ -372,6 +389,7 @@ BEGIN
   FROM core.programmes p, core.pipelines pl
   WHERE p.tenant_id = '00000009-1111-1111-1111-111111111111'
     AND pl.tenant_id = '00000009-1111-1111-1111-111111111111'
+    AND pl.name = 'std'
   RETURNING id INTO v_eng;
 
   INSERT INTO core.hrdc_packets (tenant_id, engagement_id, organisation_id, scheme,

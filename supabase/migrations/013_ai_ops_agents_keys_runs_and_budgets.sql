@@ -1439,8 +1439,85 @@ COMMENT ON TABLE core.ai_provider_keys IS
   'column list is exactly the set whose name matches key/secret/token, so a '
   'fourth one cannot appear without failing the migration.';
 
+-- ⚠ `key_fingerprint` IS NOT IN THE IMMUTABLE SET, AND IT USED TO BE.
+--
+-- A rotation issues NEW key material, so its fingerprint differs by definition —
+-- that is what a fingerprint is for. Freezing the column therefore made
+-- `ai_provider_key_rotate` impossible: its own UPDATE writes
+-- `key_fingerprint = p_fingerprint` and was refused with IMMUTABLE_COLUMN,
+-- permanently, for every key. Reproduced live on a clean 001-017 database; no pin
+-- caught it because `test_013` T11c only exercises the `authenticated`-role
+-- refusal and never a successful rotate. Rotation has never worked.
+--
+-- The column is not simply unfrozen. The protection it was reaching for is real —
+-- nobody should be able to point a key row at different material without going
+-- through the rotate path — and it is re-expressed below as the thing that is
+-- actually true of a rotation: the fingerprint may change ONLY when `key_ref`,
+-- the vault locator, changes in the same statement. `key_ref` was never in the
+-- frozen list (rotate writes it too), which is what made the list inconsistent
+-- with itself and hid the defect: one half of "the material changed" was frozen
+-- and the other was not.
 SELECT app.finalise_table('core','ai_provider_keys',false,NULL,
-  ARRAY['provider_ref','provider','key_fingerprint','added_by','added_at']);
+  ARRAY['provider_ref','provider','added_by','added_at']);
+
+CREATE OR REPLACE FUNCTION app.enforce_key_material_pairing()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  -- ⚠ SYMMETRIC. The first version fired only when the FINGERPRINT changed, so
+  -- `UPDATE core.ai_provider_keys SET key_ref = 'vault:elsewhere'` passed
+  -- untouched — and the reveal-audit trigger beside it only fires on
+  -- `last_revealed_at`, so that write left NO audit row at all. Repointing a key
+  -- row at a different vault entry while keeping the old fingerprint is the same
+  -- substitution as the one this trigger was written to stop, approached from the
+  -- other side: afterwards the row's fingerprint describes material the key_ref no
+  -- longer names, and the next reveal hands out whatever is at the new locator.
+  IF NEW.key_fingerprint IS NOT DISTINCT FROM OLD.key_fingerprint
+     AND NEW.key_ref IS NOT DISTINCT FROM OLD.key_ref THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.key_fingerprint IS NOT DISTINCT FROM OLD.key_fingerprint THEN
+    RAISE EXCEPTION
+      'IMMUTABLE_COLUMN: core.ai_provider_keys.key_ref changed while '
+      'key_fingerprint did not. The locator and the material identify the same '
+      'secret; moving one without the other points this row at a different vault '
+      'entry while still claiming the old fingerprint, and leaves no audit row '
+      'because the reveal trigger only watches last_revealed_at.'
+      USING ERRCODE = 'integrity_constraint_violation',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','IMMUTABLE_COLUMN','column','key_ref')::text;
+  END IF;
+
+  IF NEW.key_ref IS NOT DISTINCT FROM OLD.key_ref THEN
+    RAISE EXCEPTION
+      'IMMUTABLE_COLUMN: core.ai_provider_keys.key_fingerprint changed while '
+      'key_ref did not. A fingerprint identifies the key material; changing it '
+      'alone points this row at a different secret while still naming the old '
+      'vault locator, which is either a rotation that forgot half of itself or '
+      'somebody swapping material without going through ai_provider_key_rotate.'
+      USING ERRCODE = 'integrity_constraint_violation',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','IMMUTABLE_COLUMN','column','key_fingerprint')::text;
+  END IF;
+
+  RETURN NEW;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.enforce_key_material_pairing() FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION app.enforce_key_material_pairing() IS
+  'core.ai_provider_keys: key_fingerprint may change only when key_ref changes in '
+  'the same statement, which is what a rotation is. Replaces freezing the column '
+  'outright, which made rotation impossible for every key. 013.';
+
+DROP TRIGGER IF EXISTS ai_provider_keys_material_pairing ON core.ai_provider_keys;
+CREATE TRIGGER ai_provider_keys_material_pairing
+  BEFORE UPDATE ON core.ai_provider_keys
+  FOR EACH ROW EXECUTE FUNCTION app.enforce_key_material_pairing();
 
 CREATE INDEX ai_provider_keys_status_idx
   ON core.ai_provider_keys (tenant_id, status, provider);
@@ -2125,6 +2202,33 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- ⚠ A ROTATION IS NOT A REVEAL, AND THIS TRIGGER USED TO DISAGREE.
+  --
+  -- `ai_provider_key_rotate` issues new key material and CLEARS `last_revealed_at`,
+  -- because the 24-hour reveal ceiling is per key material and the previous
+  -- reveal no longer constrains the new one. That clear is a write to this column,
+  -- so the check below demanded an `app.key_reveal_audit` GUC that `rotate` has no
+  -- reason to set — and raised REVEAL_AUDIT_REQUIRED. Permanently, for any key
+  -- that had ever been revealed, which is exactly the key a security team needs to
+  -- rotate. Reproduced live: set -> reveal -> rotate on one provider_ref gives
+  --   42501  core.ai_provider_keys.last_revealed_at may only be written by the
+  --          audited reveal path (M-10) ... {"code":"REVEAL_AUDIT_REQUIRED"}
+  -- and `test_013` never caught it because T11c only exercises the `authenticated`
+  -- role refusal, never a successful rotate.
+  --
+  -- The exemption is narrow on purpose. It is not "any NULL write": it is a write
+  -- that CLEARS the stamp AND changes the key material in the same statement.
+  -- Nothing about that shape can leak a secret — the column is being emptied, not
+  -- filled, and the row is getting a new `key_ref` — whereas the attack this
+  -- trigger exists to stop is a caller BUMPING the stamp to move the ceiling
+  -- without leaving an audit row. Clearing the stamp without changing the material
+  -- is still refused, because that is the shape of somebody resetting the ceiling.
+  IF NEW.last_revealed_at IS NULL
+     AND NEW.key_ref IS DISTINCT FROM OLD.key_ref
+     AND NEW.key_fingerprint IS DISTINCT FROM OLD.key_fingerprint THEN
+    RETURN NEW;
+  END IF;
+
   BEGIN
     v_audit_id := NULLIF(
       pg_catalog.current_setting('app.key_reveal_audit', true), '')::uuid;
@@ -2132,12 +2236,27 @@ BEGIN
     v_audit_id := NULL;
   END;
 
+  -- ⚠ 'TRNOS' HERE TOO, AND MY EARLIER REASONING FOR KEEPING 42501 WAS WRONG.
+  --
+  -- I argued these two were trigger integrity guards "that no RPC path can
+  -- reach", so the client's code mapping could not misrender them. The re-review
+  -- showed the path: under the carried FORCE-RLS-with-no-policy residue an
+  -- authenticated caller can reach REVEAL_AUDIT_MISMATCH through
+  -- ai_provider_key_reveal itself. 42501 is in the web client's
+  -- UNAUTHENTICATED_CODES set, so it would have rendered "Your session has
+  -- expired. Sign in again." to somebody whose session is fine and whose key
+  -- audit just failed — sending them to re-login instead of to an incident.
+  --
+  -- "No RPC path reaches it" is a claim about every current and future caller of
+  -- a shared trigger, which is not a claim worth defending for the sake of a
+  -- SQLSTATE. Both raise 'TRNOS' now; the DETAIL bags already carried the real
+  -- codes, so nothing else changes.
   IF v_audit_id IS NULL THEN
     RAISE EXCEPTION
       'core.ai_provider_keys.last_revealed_at may only be written by the '
       'audited reveal path (M-10): no app.key_reveal_audit row is named for '
       'this transaction'
-      USING ERRCODE = 'insufficient_privilege',
+      USING ERRCODE = 'TRNOS',
             DETAIL  = pg_catalog.jsonb_build_object(
                         'code', 'REVEAL_AUDIT_REQUIRED')::text;
   END IF;
@@ -2153,7 +2272,7 @@ BEGIN
       'core.ai_provider_keys.last_revealed_at was bumped but audit row % is not '
       'a REVEAL of this key in this transaction. A reveal that succeeds while '
       'its audit row fails is the one case that must not be possible.', v_audit_id
-      USING ERRCODE = 'insufficient_privilege',
+      USING ERRCODE = 'TRNOS',
             DETAIL  = pg_catalog.jsonb_build_object(
                         'code', 'REVEAL_AUDIT_MISMATCH')::text;
   END IF;
@@ -2276,15 +2395,15 @@ DECLARE
   v_row    core.ai_provider_keys;
 BEGIN
   IF app.is_agent() THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','reason','AGENT')::text;
   END IF;
   IF NOT app.has_permission('ai:provider:write') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   IF app.aal() <> 'aal2' THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
 
@@ -2330,7 +2449,7 @@ DECLARE
   v_row    core.ai_provider_keys;
 BEGIN
   IF app.is_agent() OR NOT app.has_permission('ai:provider:test') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
 
@@ -2385,11 +2504,11 @@ DECLARE
   v_row     core.ai_provider_keys;
 BEGIN
   IF app.is_agent() OR NOT app.has_permission('ai:provider:rotate') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   IF app.aal() <> 'aal2' THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
 
@@ -2450,11 +2569,11 @@ DECLARE
   v_orphan  text;
 BEGIN
   IF app.is_agent() OR NOT app.has_permission('ai:provider:delete') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   IF app.aal() <> 'aal2' THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
 
@@ -2530,17 +2649,17 @@ DECLARE
   v_bumped   uuid;
 BEGIN
   IF app.is_agent() THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','reason','AGENT')::text;
   END IF;
   IF NOT app.has_permission('ai:provider:reveal') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   -- M-10(2). app.aal2_verified(), not app.aal(): a forged token can claim any
   -- session_id it likes but cannot conjure a matching auth.sessions row at aal2.
   IF NOT app.aal2_verified() THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
   IF COALESCE(pg_catalog.length(pg_catalog.btrim(COALESCE(p_reason, ''))), 0) < 10 THEN
@@ -2972,8 +3091,27 @@ BEGIN
              'ai_provider_key_set','ai_provider_key_test','ai_provider_key_rotate',
              'ai_provider_key_delete','ai_provider_key_reveal']))
   LOOP
+    -- ⚠ `service_role` IS IN THIS LIST, AND IT WAS NOT.
+    --
+    -- The comment beside this block says the intent is that NOBODY holds EXECUTE
+    -- on the five `public.ai_provider_key_*` definers — they are reached through
+    -- the Edge Function's own credential, not through PostgREST. The revoke named
+    -- PUBLIC, anon and authenticated and stopped, which is the whole set on a
+    -- vanilla Postgres and NOT the whole set on Supabase: the platform bootstrap
+    -- grants `service_role` EXECUTE on functions in `public` by default unless
+    -- something explicitly takes it away. So on hosted — and only on hosted — the
+    -- five key RPCs were callable by the one role every server-side integration
+    -- already holds.
+    --
+    -- ⚠ THIS CANNOT BE PROVED ON THIS HARNESS, and saying so is the point. The
+    -- shim is vanilla Postgres with no Supabase ALTER DEFAULT PRIVILEGES
+    -- bootstrap, so `service_role` has no EXECUTE here either way and the pin
+    -- below passes identically before and after this line. The revoke is correct
+    -- regardless — revoking a privilege nobody holds costs nothing — but the
+    -- CONFIRMATION is owed against a real project. Recorded in the catalog as
+    -- such rather than reported as verified.
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated', v_function);
+      'REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role', v_function);
   END LOOP;
 END;
 $revoke$;

@@ -104,7 +104,15 @@ FROM (VALUES ('ORG','organisations',false),('CON','contacts',false),
              -- from 016's tenant provisioning; no migration seeds them.
              ('ACT','action_requests',false)) AS p(prefix,entity,dated)
 CROSS JOIN public.tenants t
-WHERE t.slug IN ('t005-alpha','t005-beta');
+WHERE t.slug IN ('t005-alpha','t005-beta')
+-- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger on
+-- public.tenants, so this fixture collides with the real thing. The pin's own
+-- shape wins: it is a fixture inside a transaction that rolls back, and the
+-- assertions below were written against these exact values.
+ON CONFLICT (tenant_id, prefix)
+  DO UPDATE SET entity = EXCLUDED.entity,
+                dated  = EXCLUDED.dated,
+                width  = EXCLUDED.width;
 
 INSERT INTO core.organisations (id, tenant_id, name, owner_id, hrdc_registered, hrdc_employer_code)
 VALUES ('00000005-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000005-1111-1111-1111-111111111111',
