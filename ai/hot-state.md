@@ -9,6 +9,8 @@
 
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 
+> **WRAP 13 Sep 19:05 +08** — outage recovered; routing and worker PRs merged; migrations 014–017, web-swap and pack-v3 relaunched in the cloud on `cloud/*` branches. Start from `ai/resume-brief.md` 19:05 entry; check GitHub PRs first.
+>
 > **WRAP 13 Sep 13:55 +08** — UI paused by user decision; all 45 nav leaves built; API phase next. Start from `ai/resume-brief.md` (research blast E, migrations A, API-layer decision C). Previous wrap note kept below for history.
 >
 > **WRAP 13 Sep 11:52 +08** — session cleared for context. Start the next session from `ai/resume-brief.md` (agents to relaunch, blast A–E, eyeball list). In-flight at wrap: shell-fix, applier-2, proto-header — check `git log` for their last commits before relaunching.

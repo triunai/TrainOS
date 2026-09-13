@@ -30,7 +30,9 @@ Read this first in the new session, then `supabase/HANDOFF.md`, then `docs/revie
 - `lefthook.yml` runs `lint-staged --no-stash` (a stash restore lost work once).
 - **Prefer worktrees next blast** for lanes with disjoint folders and no kit additions; the shared index is the one thing they fix.
 
-## Cloud lanes in flight at 15:08 (13 Sep), each on its own branch with a PR to main; check GitHub PRs first next session
+## WRAP 13 Sep 19:05 (+08) — START HERE. A network outage at ~16:00 killed the local migrations lane mid-014 and the first cloud migrations lane; nothing of 014–017 landed and no dirty SQL was left. Since then: PR #1 routing MERGED, PR #2 worker MERGED (main c3d12b8, typecheck clean in a clean worktree). Relaunched at 19:03 in the cloud, each with a PR to main: `cloud/migrations` (014–017 from a fresh shim, PR "feat(supabase): migrations 014–017"), `cloud/web-swap` (enquiries → proposals → approvals through the TrainOsClient seam), `cloud/pack-v3` (proposal pack rewrite). `cloud/opus-pass` (4fb1ba3) is NOT merged yet: merge it. Merge order when they land: opus-pass → pack-v3 → web-swap → migrations. Still gated on the user: 018 RPC pack (L2), first hosted apply (L3; needs `core` exposed in the dashboard and a DB secret in env), region confirmation, n8n in the proposal.
+
+## Cloud lanes in flight at 15:08 (13 Sep), each on its own branch with a PR to main (superseded by the 19:05 entry above)
 
 - `cloud/opus-pass` LANDED (4fb1ba3): `docs/bd/ai-explorations/2026-09-13-opus-pass.md`. Levy radar drops to rank 5 (no utilisation definition; TrainOS-only claim history under-reads); claim-integrity guard is rank 1; `PROPOSAL_DRAFT` was never a gap, the gap is 9 routing entries for 24 governed types; CHEAP tier sends raw PII to DeepSeek direct (PDPA defect). Merge it.
 - `cloud/migrations` running: 013–017 on a self-built PostgreSQL 17 shim; PR "feat(supabase): migrations 013–017". 018 not started (gated).
