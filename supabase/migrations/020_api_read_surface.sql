@@ -42,7 +42,7 @@
 --
 -- ── DEFECT 3 · THREE 018 VIEWS RAISE 42501 FOR EVERY CLIENT ────────────────
 --
--- See §4. A view's function calls are checked against the INVOKER, and 018's
+-- See §3. A view's function calls are checked against the INVOKER, and 018's
 -- views call `app._money`, `app._budget_rows` and `app._model_tier_rows`, all
 -- REVOKEd from `authenticated`. test_018 only checked `has_table_privilege`.
 -- Measured on the hosted-like shim: `SELECT count(*) FROM core.v_budgets` as
@@ -50,8 +50,8 @@
 --
 -- ── DEFECT 4 · FOURTEEN VIEW_READS NAME VIEWS THAT DO NOT EXIST ────────────
 --
--- See §5. `rpcClient.ts` `VIEW_READS` names eighteen `core.v_*` reads, and 018
--- built three. Every other one answered PGRST205. §5 builds the fourteen the
+-- See §4. `rpcClient.ts` `VIEW_READS` names eighteen `core.v_*` reads, and 018
+-- built three. Every other one answered PGRST205. §4 builds the fourteen the
 -- web calls. `v_pipeline_configs` has no caller and is not built. The web's
 -- consent read moves to `v_contact_channel_consents`, because 005's view is
 -- snake_case and is not renamed under its other readers.
@@ -565,7 +565,7 @@ BEGIN
 END;
 $fn$;
 
--- ═══ 4 · The three 018 views a client could not read ═══════════════════════
+-- ═══ 3 · The three 018 views a client could not read ═══════════════════════
 --
 -- THE MECHANISM. Under `security_invoker = true` every function a view calls is
 -- checked against the QUERYING role. 018's three views call `app._money`
@@ -599,7 +599,7 @@ $fn$;
 --     (CREATE OR REPLACE VIEW may only append), so the client can match on the
 --     ref its route carries. It also gains the `organisation:read` predicate.
 --
--- ═══ 5 · The VIEW_READS the client names and 001–019 never built ═══════════
+-- ═══ 4 · The VIEW_READS the client names and 001–019 never built ═══════════
 --
 -- `apps/web/src/shared/api/rpcClient.ts` `VIEW_READS` reads each of these as
 -- `.from(name).select("*")`, so a column name IS the contract key: camelCase,
@@ -725,7 +725,7 @@ FROM core.organisations AS org
 -- 020 · the 002 read permission; empty for a caller without it.
 WHERE (SELECT app.has_permission('organisation:read'));
 
--- ── 4b · The AI budget and tier row sources, in core ──────────────────────
+-- ── 3b · The AI budget and tier row sources, in core ──────────────────────
 --
 -- Same body as 018's `app._budget_rows` / `app._model_tier_rows`, plus the
 -- permission predicate. SECURITY DEFINER only to cross into `app.usage_rollup`
@@ -839,7 +839,7 @@ COMMENT ON VIEW core.v_model_tiers IS
   'core.ai_model_tier_rows(), a definer that derives the tenant and requires '
   'ai:tier:read. allowedHours is [start,end) windows derived from the bit(24). 020.';
 
--- ── 5a · Templates, policies, saved views ──────────────────────────────────
+-- ── 4a · Templates, policies, saved views ──────────────────────────────────
 
 CREATE VIEW core.v_templates
 WITH (security_invoker = true) AS
@@ -908,7 +908,7 @@ SELECT saved.id::text                        AS id,
    AND (SELECT app.has_permission('view:read'))
  ORDER BY saved.object, saved.is_default DESC, saved.label;
 
--- ── 5b · People: trainers, contacts, consent ───────────────────────────────
+-- ── 4b · People: trainers, contacts, consent ───────────────────────────────
 
 CREATE VIEW core.v_trainers
 WITH (security_invoker = true) AS
@@ -998,7 +998,7 @@ SELECT consent.channel::text                 AS channel,
    AND (SELECT app.has_permission('contact:consent:read'))
  ORDER BY consent.contact_id, consent.channel;
 
--- ── 5c · Catalogue: programmes and their deliveries ────────────────────────
+-- ── 4c · Catalogue: programmes and their deliveries ────────────────────────
 
 CREATE VIEW core.v_programmes
 WITH (security_invoker = true) AS
@@ -1066,7 +1066,7 @@ SELECT engagement.programme_id,
    AND (SELECT app.has_permission('programme:read'))
  ORDER BY engagement.starts_on DESC NULLS LAST;
 
--- ── 5d · HRD Corp, collections, compliance ─────────────────────────────────
+-- ── 4d · HRD Corp, collections, compliance ─────────────────────────────────
 
 -- One row per live packet with a deadline. `status` is the packet's panel
 -- state in the contract's spelling (`DEADLINE_AT_RISK` → `AT_RISK`).
@@ -1167,7 +1167,7 @@ SELECT change_set.document_id                AS "documentId",
  WHERE (SELECT app.has_permission('compliance:rule:read'))
  ORDER BY change_set.ingested_at DESC;
 
--- ── 5e · Agents and knowledge ──────────────────────────────────────────────
+-- ── 4e · Agents and knowledge ──────────────────────────────────────────────
 
 -- `AgentEval` is a dashboard ROW per agent, not an evaluation record: the mean
 -- score and sample size over the trailing 30 days, labelled `30d` as the
@@ -1229,7 +1229,7 @@ BEGIN
 END
 $view_grants$;
 
--- ═══ 9 · Grants ════════════════════════════════════════════════════════════
+-- ═══ 5 · Grants ════════════════════════════════════════════════════════════
 --
 -- CREATE OR REPLACE keeps an existing function's ACL, so these statements
 -- change nothing on a database where 018 granted them. They are restated so
@@ -1242,7 +1242,7 @@ GRANT EXECUTE ON FUNCTION core.list_approvals(jsonb, text, jsonb, text) TO authe
 GRANT EXECUTE ON FUNCTION core.get_approval(text)                      TO authenticated;
 GRANT EXECUTE ON FUNCTION core.get_audit(text, text)                   TO authenticated;
 
--- ═══ 10 · $verify$ — structural, off the catalogue ═════════════════════════
+-- ═══ 6 · $verify$ — structural, off the catalogue ══════════════════════════
 
 DO $verify$
 DECLARE
@@ -1321,7 +1321,7 @@ BEGIN
 END
 $verify$;
 
--- ═══ 11 · $verify$ — the views a browser reads ═════════════════════════════
+-- ═══ 7 · $verify$ — the views a browser reads ══════════════════════════════
 
 DO $verify_views$
 DECLARE
@@ -1347,7 +1347,7 @@ BEGIN
   END IF;
 
   -- V6 · NO client view depends on a function `authenticated` cannot execute.
-  -- This is the exact defect §4 repairs, asserted off pg_depend rather than
+  -- This is the exact defect §3 repairs, asserted off pg_depend rather than
   -- off the DDL text, so it covers every view in `core`, not only 020's.
   SELECT pg_catalog.array_agg(DISTINCT c.relname || ' -> ' || p.oid::regprocedure::text) INTO v_bad
     FROM pg_catalog.pg_class AS c
