@@ -92,10 +92,21 @@ describe("the document register's model", () => {
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
   });
 
-  it("falls back to the HRD Corp type rather than prettifying a name the circular does not use", () => {
+  it("prefers the packet's own label and falls back to HRD Corp's written name", () => {
     const rows = documentRows([packet()]);
-    expect(rows[1]?.label).toBe("TRAINING_SCHEDULE");
+    /* The server sent a label for the first and none for the second. The
+       fallback is a table of proper nouns, not `humanise`: "Trainer ttt cert"
+       is not how HRD Corp writes it, and the raw enum in a name column reads
+       as machine output leaking into the UI. */
     expect(rows[0]?.label).toBe("Attendance sheet");
+    expect(rows[1]?.label).toBe("Training schedule");
+    expect(
+      documentRows([
+        packet({
+          requiredDocuments: [{ type: "TRAINER_TTT_CERT", status: "MISSING" }],
+        } as Partial<ClaimPacket>),
+      ])[0]?.label,
+    ).toBe("Trainer TTT certificate");
   });
 
   it("puts what is missing first", () => {
@@ -166,10 +177,10 @@ describe("M12 · the documents register", () => {
   it("gathers every packet's required documents into one list", async () => {
     documentsScreen();
 
-    /* The four packets' missing documents, gathered across engagements. The
-       label falls back to the HRD Corp type where the packet sends none. */
-    expect(await screen.findByText("EVALUATION_SUMMARY")).toBeInTheDocument();
-    expect(screen.getAllByText("TRAINING_SCHEDULE").length).toBeGreaterThan(1);
+    /* The four packets' missing documents, gathered across engagements, each
+       under HRD Corp's own name for it. */
+    expect((await screen.findAllByText("Evaluation summary")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Training schedule").length).toBeGreaterThan(1);
     expect(screen.getAllByText("Missing").length).toBeGreaterThan(0);
   });
 
@@ -177,7 +188,7 @@ describe("M12 · the documents register", () => {
     const user = userEvent.setup();
     documentsScreen();
 
-    await screen.findByText("EVALUATION_SUMMARY");
+    await screen.findAllByText("Evaluation summary");
     const table = screen.getByRole("table", { name: "Claim documents" });
     const [firstRow] = within(table).getAllByRole("row").slice(1);
     await user.click(firstRow as HTMLElement);
@@ -185,16 +196,14 @@ describe("M12 · the documents register", () => {
     const drawer = await screen.findByRole("dialog");
     expect(within(drawer).getByText("Open the claim packet")).toBeInTheDocument();
     /* Every one of the five required documents, present ones included. */
-    expect(within(drawer).getAllByText(/Attendance sheet|ATTENDANCE_SHEET/).length).toBeGreaterThan(
-      0,
-    );
+    expect(within(drawer).getAllByText(/Attendance sheet/).length).toBeGreaterThan(0);
   });
 
   it("narrows by document type and says so when nothing matches", async () => {
     const user = userEvent.setup();
     documentsScreen();
 
-    await screen.findByText("EVALUATION_SUMMARY");
+    await screen.findAllByText("Evaluation summary");
     await user.type(screen.getByLabelText("Search documents"), "no such document");
 
     expect(await screen.findByText("No document matches these filters")).toBeInTheDocument();
@@ -202,7 +211,7 @@ describe("M12 · the documents register", () => {
 
   it("claims no solid primary", async () => {
     documentsScreen();
-    await screen.findByText("EVALUATION_SUMMARY");
+    await screen.findAllByText("Evaluation summary");
 
     await waitFor(() => {
       expect(currentPrimaries()).toHaveLength(0);

@@ -21,3 +21,12 @@ export {
   useProgrammes,
 } from "./api";
 export { dayRange, nearestWindow, poolRows, type PoolRow, type PoolStatus } from "./availability";
+/**
+ * HRD Corp scheme copy. Exported 13 Sep so the compliance registers write
+ * "SBL-Khas" the way HRD Corp does rather than `humanise`'s "Sbl khas".
+ *
+ * Its real home is the hrdc feature, not this one — it landed here because
+ * M06-S02 needed it first. Moving it is a consolidation for whoever owns both
+ * folders in one pass; re-deriving it in a third place is not.
+ */
+export { HRDC_SCHEME_LABEL, hrdcSchemeLabel } from "./labels";

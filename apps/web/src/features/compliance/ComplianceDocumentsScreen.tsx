@@ -27,7 +27,9 @@ import {
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
 import { HRDC_PACKET_PATH } from "@/features/hrdc";
+import { hrdcSchemeLabel } from "@/features/programmes";
 import { useClaimPackets, useHrdcDeadlines, useOrganisations } from "./api";
+import { hrdcDocumentLabel } from "./labels";
 import { byUrgency, documentRows, type DocumentRow } from "./registers";
 
 /**
@@ -132,7 +134,7 @@ export function ComplianceDocumentsScreen() {
   }, [inTab, type, query]);
 
   const chips: FilterChipModel[] = [];
-  if (type !== ANY) chips.push({ id: "type", label: "Document", value: humanise(type) });
+  if (type !== ANY) chips.push({ id: "type", label: "Document", value: hrdcDocumentLabel(type) });
   if (query.trim()) chips.push({ id: "query", label: "Search", value: query.trim() });
 
   const openPacket = loaded.find((packet) => packet.engagementRef === openRef) ?? null;
@@ -144,9 +146,10 @@ export function ComplianceDocumentsScreen() {
       accessor: (row) => (
         <div className="min-w-0">
           <div className="truncate text-[15px] font-medium text-ink">{row.label}</div>
-          <div className="truncate text-[12px] text-ink-muted">
-            {row.meta ?? humanise(row.type)}
-          </div>
+          {/* The server's own context line where it sends one. No second
+              line where it does not — repeating the name in another register
+              is the "said twice" tell §9 names. */}
+          {row.meta ? <div className="truncate text-[12px] text-ink-muted">{row.meta}</div> : null}
         </div>
       ),
     },
@@ -161,7 +164,7 @@ export function ComplianceDocumentsScreen() {
           </div>
           <div className="truncate text-[12px] text-ink-muted">
             <span className="font-mono">{row.engagementRef}</span>
-            {` · ${humanise(row.scheme)}`}
+            {` · ${hrdcSchemeLabel(row.scheme as never)}`}
           </div>
         </div>
       ),
@@ -239,7 +242,7 @@ export function ComplianceDocumentsScreen() {
                 onChange={setType}
                 options={[
                   { value: ANY, label: "Any document" },
-                  ...types.map((value) => ({ value, label: humanise(value) })),
+                  ...types.map((value) => ({ value, label: hrdcDocumentLabel(value) })),
                 ]}
               />
             </FilterBar>
@@ -317,7 +320,7 @@ export function ComplianceDocumentsScreen() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <StatusChip tone="neutral">{humanise(openPacket.status)}</StatusChip>
-              <StatusChip tone="neutral">{humanise(openPacket.scheme)}</StatusChip>
+              <StatusChip tone="neutral">{hrdcSchemeLabel(openPacket.scheme)}</StatusChip>
             </div>
 
             <CompletenessBar value={openPacket.completeness} />

@@ -93,7 +93,7 @@ export function TrainingCalendarScreen() {
   const inPeriod = daysWithin(filtered, periodFrom, periodTo);
 
   const shown = view === "list" ? filtered : inPeriod;
-  const entries = useMemo(() => shown.map(toEntry), [shown]);
+  const entries = useMemo(() => shown.map((day) => toEntry(day, view)), [shown, view]);
 
   const selected = useMemo(
     () => filtered.find((row) => row.id === selectedId) ?? null,
@@ -183,7 +183,7 @@ export function TrainingCalendarScreen() {
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-5 px-5 pb-5 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <div className="grid grid-cols-1 gap-5 px-5 pb-5 xl:grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)]">
             <div>
               {view === "list" ? (
                 <CalendarList
@@ -248,13 +248,25 @@ export function TrainingCalendarScreen() {
   );
 }
 
-/** One delivery day, in the kit's entry shape. */
-function toEntry(day: ScheduleDay): CalendarEntry {
+/**
+ * One delivery day, in the kit's entry shape.
+ *
+ * The sub-line is shorter in the month grid. A month cell is a seventh of the
+ * master column, and "Day 1 of 2 · Akademi Perdana, Petaling Jaya" truncates to
+ * "Day 1 of 2 · …" there — a venue that is always elided is worse than no
+ * venue, because it costs the same line and answers nothing. The week and list
+ * views have the width, so they carry it.
+ */
+function toEntry(day: ScheduleDay, view: ViewId): CalendarEntry {
+  const position = day.dayCount > 1 ? `Day ${day.dayNumber} of ${day.dayCount}` : null;
+  const meta =
+    view === "month" ? (position ?? day.venue) : [position, day.venue].filter(Boolean).join(" · ");
+
   return {
     id: day.id,
     day: day.day,
     title: day.title,
-    meta: day.dayCount > 1 ? `Day ${day.dayNumber} of ${day.dayCount} · ${day.venue}` : day.venue,
+    meta,
     badge: <StatusChip tone={toneOf(day.status)}>{humanise(day.status)}</StatusChip>,
   };
 }

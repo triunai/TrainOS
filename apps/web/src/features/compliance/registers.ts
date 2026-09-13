@@ -1,5 +1,6 @@
 import type { ClaimPacket, HrdcDeadline, RequiredDocument } from "@trainos/contract";
 import type { StatusTone } from "@/shared/components/kit";
+import { hrdcDocumentLabel } from "./labels";
 
 /**
  * The two compliance registers' models. Pure, no React.
@@ -84,11 +85,13 @@ export interface DocumentRow {
 /**
  * Every required document of every packet, as one register.
  *
- * `label` falls back to the type rather than to a humanised guess: the type IS
- * the HRD Corp document name, and a screen that prettified `TRAINER_TTT_CERT`
- * into something friendlier would be inventing a name the circular does not
- * use. `meta` is the server's sentence and is never assembled here — what
- * counts as complete is not a frontend concern.
+ * The packet's own `label` wins; where the server sends none, `labels.ts`
+ * supplies HRD Corp's written name for the type. A raw `TRAINER_TTT_CERT` in
+ * the name column reads as machine output leaking into the UI — see the note
+ * in `labels.ts`, which is a correction to this file's first version.
+ *
+ * `meta` is the server's own sentence and is never assembled here. What counts
+ * as complete is not a frontend concern.
  */
 export function documentRows(packets: readonly ClaimPacket[]): DocumentRow[] {
   return packets.flatMap((packet) =>
@@ -101,7 +104,7 @@ export function documentRows(packets: readonly ClaimPacket[]): DocumentRow[] {
       scheme: packet.scheme,
       completeness: packet.completeness,
       type: document.type,
-      label: document.label ?? document.type,
+      label: document.label ?? hrdcDocumentLabel(document.type),
       status: document.status,
       reference: document.ref ?? null,
       meta: document.meta ?? null,

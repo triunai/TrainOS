@@ -8,6 +8,7 @@
 export { ComplianceDocumentsScreen } from "./ComplianceDocumentsScreen";
 export { ComplianceDeadlinesScreen } from "./ComplianceDeadlinesScreen";
 export { COMPLIANCE_DOCUMENTS_PATH, COMPLIANCE_DEADLINES_PATH } from "./paths";
+export { HRDC_DOCUMENT_LABEL, hrdcDocumentLabel } from "./labels";
 export {
   SEVERITY_TONE,
   byUrgency,
