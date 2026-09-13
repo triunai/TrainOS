@@ -2,16 +2,16 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Programme } from "@trainos/contract";
 import {
-  ContentCard,
   DataTable,
   DensityToggle,
   EmptyState,
   ErrorState,
   FilterBar,
+  humanise,
   LoadingState,
   MoneyText,
+  RecordHeader,
   StatusChip,
-  humanise,
   type Column,
   type Density,
   type FilterChipModel,
@@ -183,85 +183,90 @@ export function ProgrammesListPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <ContentCard
+    <div className="flex flex-col">
+      {/* A list screen's header is a RecordHeader with no `recordRef` — Kit's
+          ruling, and there is no PageHeader component to reach for. It brings
+          the pack's 20px offset with it (`px-5 pt-5`), which the bare
+          `flex flex-col gap-4` root had no gutter for. The ContentCard that
+          used to wrap all of this is gone: its border landed 1px inside the
+          shell card's, which reads as a rendering artefact rather than a
+          boundary. */}
+      <RecordHeader
         title="Programmes"
-        eyebrow="Catalogue"
+        withoutCondensed
         actions={<DensityToggle value={density} onChange={setDensity} />}
-        flush
-      >
-        <div className="border-b border-border px-4 py-3">
-          <FilterBar
-            filters={chips}
-            shown={rows.length}
-            total={programmes.length}
-            onRemove={(id) => setFacets((current) => ({ ...current, [id]: "ALL" }))}
-            onClearAll={() => setFacets(EMPTY_FACETS)}
-          >
-            <FacetSelect
-              label="Category"
-              value={facets.category}
-              onChange={(value) => setFacets((current) => ({ ...current, category: value }))}
-              options={[
-                { value: "ALL", label: "All categories" },
-                ...categories.map((category) => ({ value: category, label: humanise(category) })),
-              ]}
-            />
-            <FacetSelect
-              label="HRDC"
-              value={facets.claimable}
-              onChange={(value) =>
-                setFacets((current) => ({ ...current, claimable: value as ClaimableFilter }))
-              }
-              options={[
-                { value: "ALL", label: "Any" },
-                { value: "CLAIMABLE", label: "Claimable" },
-                { value: "NOT_CLAIMABLE", label: "Not claimable" },
-              ]}
-            />
-            <FacetSelect
-              label="Duration"
-              value={facets.duration}
-              onChange={(value) =>
-                setFacets((current) => ({ ...current, duration: value as DurationFilter }))
-              }
-              options={[
-                { value: "ALL", label: "Any length" },
-                { value: "1", label: "1 day" },
-                { value: "2", label: "2 days" },
-                { value: "3+", label: "3 days or more" },
-              ]}
-            />
-          </FilterBar>
-        </div>
-
-        {isPending ? <LoadingState label="Loading programmes" /> : null}
-
-        {isError ? (
-          <ErrorState
-            title="Could not load the catalogue"
-            error={toApiError(error)}
-            onRetry={() => void refetch()}
+      />
+      <div className="border-b border-border px-5 py-3">
+        <FilterBar
+          filters={chips}
+          shown={rows.length}
+          total={programmes.length}
+          onRemove={(id) => setFacets((current) => ({ ...current, [id]: "ALL" }))}
+          onClearAll={() => setFacets(EMPTY_FACETS)}
+        >
+          <FacetSelect
+            label="Category"
+            value={facets.category}
+            onChange={(value) => setFacets((current) => ({ ...current, category: value }))}
+            options={[
+              { value: "ALL", label: "All categories" },
+              ...categories.map((category) => ({ value: category, label: humanise(category) })),
+            ]}
           />
-        ) : null}
-
-        {!isPending && !isError ? (
-          <DataTable
-            label="Programmes"
-            columns={columns}
-            rows={rows}
-            rowKey={(programme) => programme.id}
-            density={density}
-            onRowClick={(programme) => navigate(PROGRAMME_DETAIL_PATH(programme.ref))}
-            empty={
-              <EmptyState
-                title="No programme matches these filters"
-                description="Clear a filter to widen the catalogue."
-              />
+          <FacetSelect
+            label="HRDC"
+            value={facets.claimable}
+            onChange={(value) =>
+              setFacets((current) => ({ ...current, claimable: value as ClaimableFilter }))
             }
+            options={[
+              { value: "ALL", label: "Any" },
+              { value: "CLAIMABLE", label: "Claimable" },
+              { value: "NOT_CLAIMABLE", label: "Not claimable" },
+            ]}
           />
-        ) : null}
-      </ContentCard>
+          <FacetSelect
+            label="Duration"
+            value={facets.duration}
+            onChange={(value) =>
+              setFacets((current) => ({ ...current, duration: value as DurationFilter }))
+            }
+            options={[
+              { value: "ALL", label: "Any length" },
+              { value: "1", label: "1 day" },
+              { value: "2", label: "2 days" },
+              { value: "3+", label: "3 days or more" },
+            ]}
+          />
+        </FilterBar>
+      </div>
+
+      {isPending ? <LoadingState label="Loading programmes" /> : null}
+
+      {isError ? (
+        <ErrorState
+          title="Could not load the catalogue"
+          error={toApiError(error)}
+          onRetry={() => void refetch()}
+        />
+      ) : null}
+
+      {!isPending && !isError ? (
+        <DataTable
+          label="Programmes"
+          columns={columns}
+          rows={rows}
+          rowKey={(programme) => programme.id}
+          density={density}
+          onRowClick={(programme) => navigate(PROGRAMME_DETAIL_PATH(programme.ref))}
+          empty={
+            <EmptyState
+              title="No programme matches these filters"
+              description="Clear a filter to widen the catalogue."
+            />
+          }
+        />
+      ) : null}
     </div>
   );
 }

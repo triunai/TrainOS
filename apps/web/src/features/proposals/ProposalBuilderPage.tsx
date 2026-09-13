@@ -11,9 +11,7 @@ import { TEMPLATE_PROPOSAL } from "@trainos/contract";
 import {
   AIChip,
   ApprovalBanner,
-  Breadcrumb,
   CitationChip,
-  ContentCard,
   ErrorState,
   ExceptionBanner,
   formatDate,
@@ -29,6 +27,7 @@ import {
   StatusChip,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { readableMessage, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
@@ -58,6 +57,9 @@ import { EDITED_LABEL, isEdited, needsReview, originLabel, REVIEW_THRESHOLD } fr
  */
 
 export function ProposalBuilderPage() {
+  /* Declared, not drawn. Ends at the list — RecordHeader owns the identity. */
+  useBreadcrumb([{ label: "Sales" }, { label: "Proposals", href: PROPOSALS_LIST_PATH }]);
+
   const { proposalRef } = useParams<{ proposalRef: string }>();
   const { me } = useMe();
 
@@ -134,103 +136,103 @@ export function ProposalBuilderPage() {
   );
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Ends at the list. RecordHeader below renders the ref; the trail owns
-          the path and never the identity. */}
-      <Breadcrumb items={[{ label: "Sales" }, { label: "Proposals", href: PROPOSALS_LIST_PATH }]} />
+    <div className="flex flex-col">
+      {/* No wrapping ContentCard and no inline <Breadcrumb>. The card's border
+          landed 1px inside the shell card's, and the trail belongs to the top
+          bar — BreadcrumbProvider exists so a screen declares the path rather
+          than drawing it. RecordHeader brings the pack's 20px gutter with it,
+          which the bare `flex flex-col gap-4` root did not have. Same shape as
+          the engagement and invoice detail screens. */}
+      <RecordHeader
+        title={clientQuery.data ? `${proposal.ref} · ${clientQuery.data.name}` : proposal.ref}
+        meta={[
+          proposal.opportunityRef,
+          proposal.templateId,
+          `created ${formatDate(proposal.createdAt)}`,
+          `owner ${proposal.createdBy.name ?? proposal.createdBy.id}`,
+        ]}
+        chips={
+          <>
+            <StatusChip tone={PROPOSAL_TONE[proposal.status]}>
+              {humanise(proposal.status)}
+            </StatusChip>
+            {proposal.runId ? (
+              <AIChip
+                variant="executed"
+                label={`Drafted by ${proposal.createdBy.name ?? "the proposal agent"}`}
+              />
+            ) : null}
+          </>
+        }
+        actions={
+          <>
+            <GhostButton type="button">Preview</GhostButton>
+            <SecondaryButton type="button">Save draft</SecondaryButton>
+          </>
+        }
+        primaryAction={sendButton}
+        metrics={metricsFor(proposal, flagged.length)}
+      />
 
-      <ContentCard flush>
-        <RecordHeader
-          title={clientQuery.data ? `${proposal.ref} · ${clientQuery.data.name}` : proposal.ref}
-          meta={[
-            proposal.opportunityRef,
-            proposal.templateId,
-            `created ${formatDate(proposal.createdAt)}`,
-            `owner ${proposal.createdBy.name ?? proposal.createdBy.id}`,
-          ]}
-          chips={
-            <>
-              <StatusChip tone={PROPOSAL_TONE[proposal.status]}>
-                {humanise(proposal.status)}
-              </StatusChip>
-              {proposal.runId ? (
-                <AIChip
-                  variant="executed"
-                  label={`Drafted by ${proposal.createdBy.name ?? "the proposal agent"}`}
-                />
-              ) : null}
-            </>
-          }
-          actions={
-            <>
-              <GhostButton type="button">Preview</GhostButton>
-              <SecondaryButton type="button">Save draft</SecondaryButton>
-            </>
-          }
-          primaryAction={sendButton}
-          metrics={metricsFor(proposal, flagged.length)}
-        />
+      <SendOutcome
+        response={queued}
+        approval={approvalQuery.data}
+        flaggedSections={flagged.map((section) => section.n)}
+      />
 
-        <SendOutcome
-          response={queued}
-          approval={approvalQuery.data}
-          flaggedSections={flagged.map((section) => section.n)}
-        />
-
-        {send.isError ? (
-          <div className="px-5 pb-4">
-            <RefusalBanner title="The send was refused" error={toApiError(send.error)} />
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-1 gap-0 border-t border-divider lg:grid-cols-[220px_minmax(0,1fr)_300px]">
-          <SectionRail
-            sections={sections}
-            activeN={active?.n ?? null}
-            onSelect={(n) => {
-              setActiveN(n);
-              setDraftBody(null);
-            }}
-            templateId={proposal.templateId}
-            onAdd={(title) =>
-              addSection.mutate(
-                { title },
-                { onSuccess: (updated) => setActiveN(updated.sections.at(-1)?.n ?? null) },
-              )
-            }
-            isAdding={addSection.isPending}
-            addError={addSection.error}
-          />
-
-          <SectionEditor
-            key={active?.n}
-            section={active}
-            draftBody={draftBody}
-            onDraftChange={setDraftBody}
-            onRegenerate={() => active && regenerate.mutate(active.n)}
-            onSave={() =>
-              active &&
-              draftBody !== null &&
-              edit.mutate(
-                { n: active.n, body: { body: draftBody } },
-                { onSuccess: () => setDraftBody(null) },
-              )
-            }
-            isRegenerating={regenerate.isPending}
-            isSaving={edit.isPending}
-            error={regenerate.error ?? edit.error}
-            flagged={flagged}
-            onOpenFlagged={(n) => {
-              setActiveN(n);
-              setDraftBody(null);
-            }}
-            policyNote={policyNote(proposal)}
-            sendAction={sendFromEditor}
-          />
-
-          <LivePreview proposal={proposal} />
+      {send.isError ? (
+        <div className="px-5 pb-4">
+          <RefusalBanner title="The send was refused" error={toApiError(send.error)} />
         </div>
-      </ContentCard>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-0 border-t border-divider lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+        <SectionRail
+          sections={sections}
+          activeN={active?.n ?? null}
+          onSelect={(n) => {
+            setActiveN(n);
+            setDraftBody(null);
+          }}
+          templateId={proposal.templateId}
+          onAdd={(title) =>
+            addSection.mutate(
+              { title },
+              { onSuccess: (updated) => setActiveN(updated.sections.at(-1)?.n ?? null) },
+            )
+          }
+          isAdding={addSection.isPending}
+          addError={addSection.error}
+        />
+
+        <SectionEditor
+          key={active?.n}
+          section={active}
+          draftBody={draftBody}
+          onDraftChange={setDraftBody}
+          onRegenerate={() => active && regenerate.mutate(active.n)}
+          onSave={() =>
+            active &&
+            draftBody !== null &&
+            edit.mutate(
+              { n: active.n, body: { body: draftBody } },
+              { onSuccess: () => setDraftBody(null) },
+            )
+          }
+          isRegenerating={regenerate.isPending}
+          isSaving={edit.isPending}
+          error={regenerate.error ?? edit.error}
+          flagged={flagged}
+          onOpenFlagged={(n) => {
+            setActiveN(n);
+            setDraftBody(null);
+          }}
+          policyNote={policyNote(proposal)}
+          sendAction={sendFromEditor}
+        />
+
+        <LivePreview proposal={proposal} />
+      </div>
     </div>
   );
 }

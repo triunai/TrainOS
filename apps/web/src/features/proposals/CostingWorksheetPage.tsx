@@ -11,8 +11,6 @@ import { RATE_CARD_PLACEHOLDER_VERSION } from "@trainos/contract";
 import type { QuotationWithFloors } from "@trainos/fixtures";
 import {
   BINDING_FLOOR_TONE,
-  Breadcrumb,
-  ContentCard,
   DataTable,
   ErrorState,
   ExceptionBanner,
@@ -31,6 +29,7 @@ import {
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { isDomainError, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
@@ -63,6 +62,9 @@ const marginOf = (sellPrice: Money, directCost: Money): number =>
   sellPrice.amount === 0 ? 0 : (sellPrice.amount - directCost.amount) / sellPrice.amount;
 
 export function CostingWorksheetPage() {
+  /* Declared, not drawn. Ends at the list — RecordHeader owns the identity. */
+  useBreadcrumb([{ label: "Finance" }, { label: "Quotations", href: QUOTATIONS_LIST_PATH }]);
+
   const { quotationRef } = useParams<{ quotationRef: string }>();
   const { me } = useMe();
 
@@ -119,197 +121,188 @@ export function CostingWorksheetPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Ends at the list — the header's title already says which quotation. */}
-      <Breadcrumb
-        items={[{ label: "Finance" }, { label: "Quotations", href: QUOTATIONS_LIST_PATH }]}
+    <div className="flex flex-col">
+      {/* No wrapping ContentCard and no inline <Breadcrumb>. The card's border
+          landed 1px inside the shell card's, and the trail belongs to the top
+          bar — BreadcrumbProvider exists so a screen declares the path rather
+          than drawing it. RecordHeader brings the pack's 20px gutter with it,
+          which the bare `flex flex-col gap-4` root did not have. Same shape as
+          the engagement and invoice detail screens. */}
+      <RecordHeader
+        title={`${quotation.ref} · costing`}
+        meta={[
+          quotation.proposalRef,
+          `${quotation.lines.length} cost lines`,
+          /* DECISIONS §5: until Finance supplies numbers the card is a
+               placeholder, and every screen priced against it must say so. */
+          rateCardQuery.data?.version === RATE_CARD_PLACEHOLDER_VERSION
+            ? "rate card v0 · placeholder"
+            : rateCardQuery.data
+              ? `rate card ${rateCardQuery.data.version}`
+              : null,
+        ]}
+        chips={
+          <>
+            <StatusChip tone="neutral">Draft</StatusChip>
+            <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
+              {quotation.bindingFloorBasis === "MARGIN" ? "Margin floor binds" : "Tier floor binds"}
+            </StatusChip>
+          </>
+        }
+        actions={
+          <>
+            <GhostButton type="button">Rate card</GhostButton>
+            <SecondaryButton
+              type="button"
+              disabled={save.isPending || proposed === null}
+              onClick={() => proposed && save.mutate({ sellPrice: proposed })}
+            >
+              {save.isPending ? "Saving…" : "Save"}
+            </SecondaryButton>
+          </>
+        }
+        primaryAction={
+          <PrimaryButton type="button" disabled={apply.isPending} onClick={onApply}>
+            {apply.isPending ? "Applying…" : "Apply to proposal"}
+          </PrimaryButton>
+        }
+        metrics={metricsFor(quotation, candidate, candidateMargin)}
       />
 
-      <ContentCard flush>
-        <RecordHeader
-          title={`${quotation.ref} · costing`}
-          meta={[
-            quotation.proposalRef,
-            `${quotation.lines.length} cost lines`,
-            /* DECISIONS §5: until Finance supplies numbers the card is a
-               placeholder, and every screen priced against it must say so. */
-            rateCardQuery.data?.version === RATE_CARD_PLACEHOLDER_VERSION
-              ? "rate card v0 · placeholder"
-              : rateCardQuery.data
-                ? `rate card ${rateCardQuery.data.version}`
-                : null,
-          ]}
-          chips={
-            <>
-              <StatusChip tone="neutral">Draft</StatusChip>
-              <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
-                {quotation.bindingFloorBasis === "MARGIN"
-                  ? "Margin floor binds"
-                  : "Tier floor binds"}
-              </StatusChip>
-            </>
-          }
-          actions={
-            <>
-              <GhostButton type="button">Rate card</GhostButton>
-              <SecondaryButton
-                type="button"
-                disabled={save.isPending || proposed === null}
-                onClick={() => proposed && save.mutate({ sellPrice: proposed })}
-              >
-                {save.isPending ? "Saving…" : "Save"}
-              </SecondaryButton>
-            </>
-          }
-          primaryAction={
-            <PrimaryButton type="button" disabled={apply.isPending} onClick={onApply}>
-              {apply.isPending ? "Applying…" : "Apply to proposal"}
-            </PrimaryButton>
-          }
-          metrics={metricsFor(quotation, candidate, candidateMargin)}
-        />
+      <ApplyOutcome response={applied} proposalRef={quotation.proposalRef} />
 
-        <ApplyOutcome response={applied} proposalRef={quotation.proposalRef} />
+      {breach ? <FloorBreachBanner breach={breach} quotation={quotation} /> : null}
 
-        {breach ? <FloorBreachBanner breach={breach} quotation={quotation} /> : null}
+      {apply.isError && !breach ? (
+        <div className="px-5 pb-4">
+          <RefusalBanner title="The price was not applied" error={toApiError(apply.error)} />
+        </div>
+      ) : null}
 
-        {apply.isError && !breach ? (
-          <div className="px-5 pb-4">
-            <RefusalBanner title="The price was not applied" error={toApiError(apply.error)} />
-          </div>
-        ) : null}
+      <div className="grid grid-cols-1 gap-6 border-t border-divider px-5 py-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="flex flex-col gap-6">
+          <section className="flex flex-col gap-2">
+            <h2 className="text-[13px] font-semibold text-ink">Cost lines</h2>
+            <CostLinesTable quotation={quotation} />
+          </section>
 
-        <div className="grid grid-cols-1 gap-6 border-t border-divider px-5 py-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="flex flex-col gap-6">
-            <section className="flex flex-col gap-2">
-              <h2 className="text-[13px] font-semibold text-ink">Cost lines</h2>
-              <CostLinesTable quotation={quotation} />
-            </section>
-
-            <section className="flex flex-col gap-2">
-              <h2 className="text-[13px] font-semibold text-ink">Discount</h2>
-              {/* Both prices side by side on purpose: the error state is only
+          <section className="flex flex-col gap-2">
+            <h2 className="text-[13px] font-semibold text-ink">Discount</h2>
+            {/* Both prices side by side on purpose: the error state is only
                   readable next to the price that does not have it. */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <MoneyInput
-                  label="Proposed price"
-                  value={candidate}
-                  onChange={setProposed}
-                  {...(belowFloor
-                    ? {
-                        errorText: `Below the ${formatMoney(quotation.floorPrice)} ${
-                          quotation.bindingFloorBasis === "MARGIN" ? "margin" : "tier"
-                        } floor — margin would fall to ${Math.round(candidateMargin * 100)}%. Applying it needs a discount approval under APV-02.`,
-                      }
-                    : { hint: `Margin ${Math.round(candidateMargin * 100)}% · above the floor` })}
-                />
-                <MoneyInput
-                  label="List price"
-                  value={quotation.sellPrice}
-                  onChange={() => undefined}
-                  disabled
-                  hint={`Applied to ${quotation.proposalRef}`}
-                />
-              </div>
-            </section>
-          </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <MoneyInput
+                label="Proposed price"
+                value={candidate}
+                onChange={setProposed}
+                {...(belowFloor
+                  ? {
+                      errorText: `Below the ${formatMoney(quotation.floorPrice)} ${
+                        quotation.bindingFloorBasis === "MARGIN" ? "margin" : "tier"
+                      } floor — margin would fall to ${Math.round(candidateMargin * 100)}%. Applying it needs a discount approval under APV-02.`,
+                    }
+                  : { hint: `Margin ${Math.round(candidateMargin * 100)}% · above the floor` })}
+              />
+              <MoneyInput
+                label="List price"
+                value={quotation.sellPrice}
+                onChange={() => undefined}
+                disabled
+                hint={`Applied to ${quotation.proposalRef}`}
+              />
+            </div>
+          </section>
+        </div>
 
-          <div className="flex flex-col gap-6">
-            <section className="flex flex-col gap-2">
-              <h2 className="text-[13px] font-semibold text-ink">Margin</h2>
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-[18px] font-semibold text-ink">
-                    {Math.round(candidateMargin * 100)}%
-                  </span>
-                  <span className="text-[11px] text-ink-muted">
-                    <MoneyText
-                      value={{
-                        amount: candidate.amount - quotation.directCost.amount,
-                        currency: candidate.currency,
-                      }}
-                    />{" "}
-                    gross
-                  </span>
-                </div>
-                {/* The floor is a point on the track, not a caption floating in
+        <div className="flex flex-col gap-6">
+          <section className="flex flex-col gap-2">
+            <h2 className="text-[13px] font-semibold text-ink">Margin</h2>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[18px] font-semibold text-ink">
+                  {Math.round(candidateMargin * 100)}%
+                </span>
+                <span className="text-[11px] text-ink-muted">
+                  <MoneyText
+                    value={{
+                      amount: candidate.amount - quotation.directCost.amount,
+                      currency: candidate.currency,
+                    }}
+                  />{" "}
+                  gross
+                </span>
+              </div>
+              {/* The floor is a point on the track, not a caption floating in
                     the middle of it. A label at 50% while the floor is at 35%
                     is the kind of small lie a margin gauge cannot afford. */}
-                <div className="relative">
-                  <MiniBar
-                    label="Margin against the floor"
-                    value={candidateMargin}
-                    state={belowFloor ? "over" : "within"}
-                    size="md"
-                    valueText={`${Math.round(candidateMargin * 100)} percent, floor ${Math.round(quotation.floorMarginRate * 100)} percent`}
-                  />
-                  <span
-                    aria-hidden="true"
-                    style={{ left: `${quotation.floorMarginRate * 100}%` }}
-                    className="absolute top-0 h-1.5 w-px -translate-x-1/2 bg-ink"
-                  />
-                </div>
-                <div className="relative h-4 text-[11px] text-ink-muted">
-                  <span className="absolute left-0">0%</span>
-                  <span
-                    style={{ left: `${quotation.floorMarginRate * 100}%` }}
-                    className="absolute -translate-x-1/2 whitespace-nowrap"
-                  >
-                    floor {Math.round(quotation.floorMarginRate * 100)}%
+              <div className="relative">
+                <MiniBar
+                  label="Margin against the floor"
+                  value={candidateMargin}
+                  state={belowFloor ? "over" : "within"}
+                  size="md"
+                  valueText={`${Math.round(candidateMargin * 100)} percent, floor ${Math.round(quotation.floorMarginRate * 100)} percent`}
+                />
+                <span
+                  aria-hidden="true"
+                  style={{ left: `${quotation.floorMarginRate * 100}%` }}
+                  className="absolute top-0 h-1.5 w-px -translate-x-1/2 bg-ink"
+                />
+              </div>
+              <div className="relative h-4 text-[11px] text-ink-muted">
+                <span className="absolute left-0">0%</span>
+                <span
+                  style={{ left: `${quotation.floorMarginRate * 100}%` }}
+                  className="absolute -translate-x-1/2 whitespace-nowrap"
+                >
+                  floor {Math.round(quotation.floorMarginRate * 100)}%
+                </span>
+                <span className="absolute right-0">100%</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <h2 className="text-[13px] font-semibold text-ink">Floors</h2>
+            <div>
+              <Row
+                label="Absolute floor · programme tier"
+                value={<MoneyText value={quotation.absoluteFloorPrice} />}
+              />
+              <Row
+                label={`Margin floor · cost ÷ (1 − ${quotation.floorMarginRate})`}
+                value={<MoneyText value={quotation.marginFloorPrice} />}
+              />
+              <Row
+                label={<span className="font-medium text-ink">Binding floor</span>}
+                value={
+                  <span className="flex items-center gap-2">
+                    <MoneyText value={quotation.floorPrice} />
+                    <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
+                      {humanise(quotation.bindingFloorBasis)}
+                    </StatusChip>
                   </span>
-                  <span className="absolute right-0">100%</span>
-                </div>
-              </div>
-            </section>
+                }
+              />
+            </div>
+          </section>
 
-            <section className="flex flex-col gap-2">
-              <h2 className="text-[13px] font-semibold text-ink">Floors</h2>
-              <div>
+          <section className="flex flex-col gap-2">
+            <h2 className="text-[13px] font-semibold text-ink">Commission</h2>
+            <div>
+              <Row label="Rate" value={`${Math.round(quotation.commissionRate * 100)}% of sell`} />
+              <Row label="Amount" value={<MoneyText value={quotation.commission} />} />
+              <Row label="Payable" value={humanise(quotation.commissionPayableOn).toLowerCase()} />
+              {quotation.display?.perPax ? (
                 <Row
-                  label="Absolute floor · programme tier"
-                  value={<MoneyText value={quotation.absoluteFloorPrice} />}
+                  label="Per participant"
+                  value={<MoneyText value={quotation.display.perPax} />}
                 />
-                <Row
-                  label={`Margin floor · cost ÷ (1 − ${quotation.floorMarginRate})`}
-                  value={<MoneyText value={quotation.marginFloorPrice} />}
-                />
-                <Row
-                  label={<span className="font-medium text-ink">Binding floor</span>}
-                  value={
-                    <span className="flex items-center gap-2">
-                      <MoneyText value={quotation.floorPrice} />
-                      <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
-                        {humanise(quotation.bindingFloorBasis)}
-                      </StatusChip>
-                    </span>
-                  }
-                />
-              </div>
-            </section>
-
-            <section className="flex flex-col gap-2">
-              <h2 className="text-[13px] font-semibold text-ink">Commission</h2>
-              <div>
-                <Row
-                  label="Rate"
-                  value={`${Math.round(quotation.commissionRate * 100)}% of sell`}
-                />
-                <Row label="Amount" value={<MoneyText value={quotation.commission} />} />
-                <Row
-                  label="Payable"
-                  value={humanise(quotation.commissionPayableOn).toLowerCase()}
-                />
-                {quotation.display?.perPax ? (
-                  <Row
-                    label="Per participant"
-                    value={<MoneyText value={quotation.display.perPax} />}
-                  />
-                ) : null}
-              </div>
-            </section>
-          </div>
+              ) : null}
+            </div>
+          </section>
         </div>
-      </ContentCard>
+      </div>
     </div>
   );
 }
