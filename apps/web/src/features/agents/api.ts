@@ -1,6 +1,6 @@
 /**
- * Data access for the agents feature — M18-S01 (registry) and M18-S04 (run
- * trace viewer).
+ * Data access for the agents feature — M18-S01 (registry), M18-S04 (run trace
+ * viewer), M18-S07 (failures) and the policy gates.
  *
  * Every read is a TanStack Query hook over a `FixtureClient` method, and every
  * write is a mutation that invalidates the query root it touched. No component
@@ -20,8 +20,12 @@ import type {
   AgentEval,
   AgentPauseRequest,
   AgentRegistryResponse,
+  ApprovalListResponse,
   AutomationRun,
   ListResponse,
+  PipelineConfig,
+  PipelineObject,
+  Policy,
 } from "@trainos/contract";
 import { queryKeys, toApiError, useApi, type ApiError } from "@/shared/api";
 
@@ -120,5 +124,51 @@ export function useDeadLetterRun() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.runs.all });
     },
+  });
+}
+
+/** §2 `GET /v1/policies` — read-only for the demo, and read-only here. */
+export function usePolicies(): UseQueryResult<ListResponse<Policy>, ApiError> {
+  const api = useApi();
+  return useQuery<ListResponse<Policy>, ApiError>({
+    queryKey: queryKeys.policies.lists(),
+    queryFn: () => api.listPolicies().catch((thrown) => Promise.reject(toApiError(thrown))),
+  });
+}
+
+/**
+ * §7 `GET /v1/approvals`, read here only to COUNT what each gate is holding.
+ *
+ * The approvals feature owns the inbox and the decision; this reads the same
+ * list to answer a different question — which policies are firing — and links
+ * to that inbox rather than offering a decision of its own. A failure is
+ * rendered, not defaulted to zero: "nothing queued" and "we could not ask" look
+ * identical in a count column and only one of them is safe to act on.
+ */
+export function useApprovalQueue(): UseQueryResult<ApprovalListResponse, ApiError> {
+  const api = useApi();
+  const page = { page: { size: 100 } } as const;
+  return useQuery<ApprovalListResponse, ApiError>({
+    queryKey: queryKeys.approvals.list(page),
+    queryFn: () => api.listApprovals(page).catch((thrown) => Promise.reject(toApiError(thrown))),
+  });
+}
+
+/**
+ * §5 `GET /v1/config/pipelines?object=` — the stage definitions.
+ *
+ * CLAUDE.md: stage names and order render from pipeline configuration, never
+ * hardcoded. The policies screen draws the engagement pipeline as a reference
+ * strip, so it reads the configuration rather than typing nine stage labels
+ * that would silently stop matching the server.
+ */
+export function usePipelineConfig(
+  object: PipelineObject,
+): UseQueryResult<PipelineConfig, ApiError> {
+  const api = useApi();
+  return useQuery<PipelineConfig, ApiError>({
+    queryKey: [...queryKeys.pipelineConfig, object] as const,
+    queryFn: () =>
+      api.getPipelineConfig(object).catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }

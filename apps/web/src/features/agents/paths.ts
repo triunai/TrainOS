@@ -22,3 +22,9 @@ export const RUN_TRACE_PATH = `${RUNS_PATH}/:runRef`;
 export function runTracePath(runRef: string): string {
   return `${RUNS_PATH}/${encodeURIComponent(runRef)}`;
 }
+
+/** `/automation/failures` — M18-S07, the dead-letter list. */
+export const AUTOMATION_FAILURES_PATH = navPath("Automation", "Failures");
+
+/** `/automation/policies` — the gates, and what is queued against them. */
+export const AUTOMATION_POLICIES_PATH = navPath("Automation", "Policies");

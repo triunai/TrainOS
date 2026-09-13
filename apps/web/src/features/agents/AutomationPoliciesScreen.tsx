@@ -22,7 +22,7 @@ import {
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { APPROVALS_PATH } from "@/features/approvals";
-import { useApprovalQueue, usePipelineConfig, usePolicies } from "./automationApi";
+import { useApprovalQueue, usePipelineConfig, usePolicies } from "./api";
 
 /**
  * `/automation/policies` — the gates, and what is queued against each one.
