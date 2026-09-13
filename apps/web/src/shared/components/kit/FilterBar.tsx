@@ -57,10 +57,7 @@ export function FilterBar({
           <span className="text-ink-muted">{filter.label}:</span>
           <span className="font-medium text-ink">{filter.value}</span>
           {filter.locked || !onRemove ? (
-            <span
-              className="pr-1.5 font-mono text-[10px] text-ink-muted"
-              title="From the saved view"
-            >
+            <span className="pr-1.5 text-[10px] text-ink-muted" title="From the saved view">
               view
             </span>
           ) : (
@@ -107,7 +104,7 @@ export function FilterBar({
         {counting ? (
           <span
             aria-live="polite"
-            className="whitespace-nowrap font-mono text-[11px] text-ink-muted"
+            className="whitespace-nowrap text-[11px] tabular-nums text-ink-muted"
           >
             {shown} of {total} shown
           </span>

@@ -66,7 +66,7 @@ export function RuleCheckRow({ check, onOpenRule, citation, className }: RuleChe
 
       <div className="min-w-0 flex-1">
         <p className="text-[13px] text-ink">{check.label}</p>
-        {working ? <p className="pt-0.5 font-mono text-[12px] text-ink-muted">{working}</p> : null}
+        {working ? <p className="pt-0.5 text-[12px] text-ink-muted">{working}</p> : null}
         {basis ? <p className="pt-0.5 text-[11px] text-ink-muted">{basis}</p> : null}
       </div>
 

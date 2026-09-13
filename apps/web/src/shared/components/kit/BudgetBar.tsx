@@ -37,7 +37,7 @@ export function BudgetBar({ budget, label, className }: BudgetBarProps) {
     <div className={cn("flex min-w-[150px] flex-col gap-1.5", className)}>
       <div className="flex items-baseline justify-between gap-2 text-[12px]">
         <span className="truncate text-ink-secondary">{label}</span>
-        <span className="whitespace-nowrap font-mono text-ink-muted">{valueText}</span>
+        <span className="whitespace-nowrap tabular-nums text-ink-muted">{valueText}</span>
       </div>
       <MiniBar value={ratio} state={STATE[budget.state]} label={label} valueText={valueText} />
       {budget.state === "PAUSED" ? (
@@ -68,7 +68,7 @@ export function TokenBudgetBar({ used, limit, label = "Tokens", className }: Tok
         <span className="text-ink-secondary">
           {label} {format(used)}
         </span>
-        <span className="whitespace-nowrap font-mono text-ink-muted">of {format(limit)}</span>
+        <span className="whitespace-nowrap tabular-nums text-ink-muted">of {format(limit)}</span>
       </div>
       <MiniBar value={ratio} label={label} valueText={valueText} />
     </div>
@@ -128,7 +128,7 @@ export function BudgetHeadline({
   return (
     <div className={cn("flex min-w-0 flex-col gap-2", className)}>
       <p className="flex flex-wrap items-baseline gap-2">
-        <span className="font-mono text-[22px] font-semibold tracking-[-0.01em] text-ink">
+        <span className="text-[22px] font-semibold tabular-nums tracking-[-0.01em] text-ink">
           {formatMoney(used)}
         </span>
         <span className="text-[12px] text-ink-muted">of {formatMoney(limit)} budget</span>

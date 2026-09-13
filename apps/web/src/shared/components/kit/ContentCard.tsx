@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
-import { FOCUS_RING } from "./tokens";
+import { FOCUS_RING, SECTION_LABEL } from "./tokens";
 
 /**
  * The single white content card every internal screen sits in, and its page
@@ -42,11 +42,7 @@ export function ContentCard({
       {title || eyebrow || actions ? (
         <div className="flex flex-wrap items-center gap-3 border-b border-divider px-4 py-3">
           <div className="flex min-w-0 flex-col gap-0.5">
-            {eyebrow ? (
-              <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                {eyebrow}
-              </span>
-            ) : null}
+            {eyebrow ? <span className={SECTION_LABEL}>{eyebrow}</span> : null}
             {title ? (
               <h2 className="truncate text-[15px] font-semibold text-ink">{title}</h2>
             ) : null}

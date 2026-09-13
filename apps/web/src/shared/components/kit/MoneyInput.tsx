@@ -68,7 +68,7 @@ export function MoneyInput({
       >
         <span
           aria-hidden="true"
-          className="border-r border-border bg-surface px-2.5 py-2 font-mono text-[12px] text-ink-muted"
+          className="border-r border-border bg-surface px-2.5 py-2 text-[12px] text-ink-muted"
         >
           RM
         </span>
@@ -82,7 +82,7 @@ export function MoneyInput({
           aria-invalid={errorText ? true : undefined}
           aria-describedby={describedBy}
           className={cn(
-            "w-full bg-transparent px-2.5 py-2 text-right font-mono text-[13px] tabular-nums text-ink outline-none placeholder:text-ink-disabled disabled:cursor-not-allowed disabled:text-ink-disabled",
+            "w-full bg-transparent px-2.5 py-2 text-right text-[13px] tabular-nums text-ink outline-none placeholder:text-ink-disabled disabled:cursor-not-allowed disabled:text-ink-disabled",
             FOCUS_RING,
           )}
         />

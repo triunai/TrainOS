@@ -15,7 +15,7 @@ export {
   AI_GLYPH,
   AI_POPOVER_BG,
   FOCUS_RING,
-  MONO_LABEL,
+  SECTION_LABEL,
   PEAK_BG,
   WARNING_ACCENT_BG,
 } from "./tokens";

@@ -2,7 +2,7 @@ import type { AlternativeCategoryRate, MessageCategory, Money } from "@trainos/c
 import { cn } from "@/shared/lib/utils";
 import { formatMoney } from "./format";
 import { MoneyText } from "./Money";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The WhatsApp cost strip. Kit.dc.html §03, used on M03-S06 and M13-S05.
@@ -163,7 +163,7 @@ export function WhatsAppCostStrip({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <span className="flex flex-col gap-1">
-      <span className={MONO_LABEL}>{label}</span>
+      <span className={SECTION_LABEL}>{label}</span>
       <span className="text-[13px] text-ink">{children}</span>
     </span>
   );

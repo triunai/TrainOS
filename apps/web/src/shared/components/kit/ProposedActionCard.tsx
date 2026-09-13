@@ -4,7 +4,7 @@ import { cn } from "@/shared/lib/utils";
 import { AIChip } from "./AIChip";
 import { AutonomyChip } from "./AutonomyChip";
 import { DiffBlock } from "./DiffBlock";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The proposed-action card. Kit.dc.html §02.
@@ -69,7 +69,7 @@ export function ProposedActionCard({
           <div className="grid grid-cols-3 gap-3">
             {metrics.map((metric) => (
               <div key={metric.label} className="flex flex-col gap-1">
-                <span className={MONO_LABEL}>{metric.label}</span>
+                <span className={SECTION_LABEL}>{metric.label}</span>
                 <span className="text-[14px] font-medium text-ink">{metric.value}</span>
               </div>
             ))}
