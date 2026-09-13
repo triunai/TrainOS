@@ -39,11 +39,32 @@
 --   result from the first. The grants are restored with a NOTICE saying exactly
 --   what has just been re-opened.
 --
--- ⚠ AND ONE PLACE WHERE DATA IS DELETED: the two national tax policies, the three
--- HRD Corp rules and the three check keys 017 seeded. All six are reference rows
--- 017 introduced; none is customer data; all are seeded `PROPOSED` and therefore
--- not yet relied on. Deleted by `policy_code` / `rule_code` / `check_key`, never
--- by a range, so a row somebody added beside them survives.
+-- ⚠ AND THE PLACES WHERE DATA IS DELETED. An earlier version of this header said
+-- "none is customer data". That was false, and it was false about the rows that
+-- matter most, so it is corrected here in full rather than softened.
+--
+--   TRUE, and unchanged: the two national tax policies, the three HRD Corp rules
+--   and the three check keys 017 seeded are reference rows 017 introduced, all
+--   seeded `PROPOSED`, deleted by `policy_code` / `rule_code` / `check_key` and
+--   never by a range, so a row somebody added beside them survives.
+--
+--   FALSE, and now guarded: this rollback also drops `core.data_breach_register`
+--   — a statutory PDPA s.12B register — and `core.data_retention_policies`; drops
+--   `purpose` and `notice_version` from `core.contact_consents`, which is the
+--   evidence that a consent was informed; and drops the four SST columns from
+--   `core.quotations`, which are the tax position on documents a customer may
+--   already have accepted. Every one of those is customer data or the statutory
+--   record of it, and `DROP TABLE`/`DROP COLUMN` is not recoverable from inside
+--   this transaction.
+--
+-- So the rule the numeric-precision guard already followed is applied to all of
+-- them: COUNT FIRST, AND REFUSE IF NON-EMPTY. A rollback that destroys a breach
+-- register is not a rollback, it is an incident — and on an empty database, which
+-- is where a rollback is actually exercised, the guard costs nothing.
+--
+-- There is no override flag. If you genuinely intend to lose these rows, export
+-- them and empty the tables deliberately first; that is one command and it leaves
+-- a trace, which is the difference between a decision and an accident.
 --
 -- Re-runnable throughout.
 -- ============================================================================
@@ -93,6 +114,10 @@ DELETE FROM core.compliance_rules
 -- the trigger goes before the rows, or a tenant inserted between the two would be
 -- re-seeded with keys this rollback has just deleted.
 DROP TRIGGER IF EXISTS trg_tenants_seed_check_keys ON public.tenants;
+
+-- The registry row 017 wrote. Deleted by its own key, never by a range: 016 and
+-- 011 own the other rows and provision_tenant still has to check them.
+DELETE FROM app.tenant_seed_checks WHERE schema_name = 'core' AND table_name = 'check_keys';
 DROP FUNCTION IF EXISTS app.seed_check_keys_on_tenant();
 DROP FUNCTION IF EXISTS app.seed_compliance_check_keys(uuid);
 DELETE FROM core.check_keys
@@ -104,6 +129,69 @@ ALTER TABLE core.trainers DROP COLUMN IF EXISTS hrd_tdf_valid_to;
 ALTER TABLE core.trainers DROP COLUMN IF EXISTS hrd_tdf_ref;
 
 -- ── 4 · PDPA tables ─────────────────────────────────────────────────────────
+-- ── THE PDPA / CUSTOMER-DATA GUARD ─────────────────────────────────────────
+-- Counted before anything is dropped, and reported all at once: a rollback that
+-- refuses on the first table leaves whoever is running it to discover the next
+-- one on the next attempt.
+DO $pdpa$
+DECLARE
+  r       pg_catalog.record;
+  v_n     bigint;
+  v_stop  text[] := ARRAY[]::text[];
+BEGIN
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('core','data_breach_register', NULL::text,
+       'the statutory PDPA s.12B breach register'),
+      ('core','data_retention_policies', NULL,
+       'the approved retention windows four reapers are gated on'),
+      ('core','contact_consents', 'purpose',
+       'the evidence that a data subject''s consent was informed'),
+      ('core','quotations', 'sst_reason',
+       'the tax position on quotations a customer may already have accepted')
+    ) AS t(sch, tbl, col, what)
+  LOOP
+    IF pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.sch, r.tbl)) IS NULL THEN
+      CONTINUE;
+    END IF;
+
+    IF r.col IS NULL THEN
+      EXECUTE pg_catalog.format('SELECT pg_catalog.count(*) FROM %I.%I', r.sch, r.tbl)
+        INTO v_n;
+    ELSE
+      -- A column drop only loses data where the column is populated.
+      IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                      WHERE a.attrelid = pg_catalog.format('%I.%I', r.sch, r.tbl)::regclass
+                        AND a.attname = r.col AND a.attnum > 0 AND NOT a.attisdropped) THEN
+        CONTINUE;
+      END IF;
+      EXECUTE pg_catalog.format(
+        'SELECT pg_catalog.count(*) FROM %I.%I WHERE %I IS NOT NULL', r.sch, r.tbl, r.col)
+        INTO v_n;
+    END IF;
+
+    IF v_n > 0 THEN
+      v_stop := v_stop || pg_catalog.format('%s.%s%s: %s row(s) — %s',
+        r.sch, r.tbl, COALESCE('.' || r.col, ''), v_n, r.what);
+    END IF;
+  END LOOP;
+
+  IF pg_catalog.cardinality(v_stop) > 0 THEN
+    RAISE EXCEPTION
+      'ROLLBACK 017 refused: it would destroy customer data. %  '
+      'This rollback drops those tables and columns outright and cannot put them '
+      'back. An earlier version of this file claimed "none is customer data", '
+      'which was wrong about the breach register in particular. Export what you '
+      'need and empty them deliberately, then re-run.',
+      pg_catalog.array_to_string(v_stop, ' | ');
+  END IF;
+
+  RAISE NOTICE
+    'ROLLBACK 017: PDPA guard OK — breach register, retention policies, consent '
+    'purpose and quotation SST all empty, so dropping them loses nothing.';
+END;
+$pdpa$;
+
 DROP TABLE IF EXISTS core.data_breach_register;
 DROP TABLE IF EXISTS core.data_retention_policies;
 
@@ -169,7 +257,7 @@ $regrant$;
 
 -- ── POST-CONDITIONS ─────────────────────────────────────────────────────────
 DO $verify$
-DECLARE v_n integer;
+DECLARE v_n integer; v_expected integer;
 BEGIN
   IF pg_catalog.to_regclass('core.tax_policies') IS NOT NULL
      OR pg_catalog.to_regclass('core.data_retention_policies') IS NOT NULL
@@ -211,10 +299,40 @@ BEGIN
     JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
    WHERE n.nspname='core';
-  IF v_n < 220 THEN
+  -- ⚠ EXACT, NOT `< 220`. The earlier spelling tolerated the loss of one or two
+  -- of 014's policies while claiming to check for exactly this. 014 leaves 228 on
+  -- `core`; 017 adds three tenant-scoped tables, so six; rolling 017 back must
+  -- leave 222 and any other number is a defect in one direction or the other.
+  -- ⚠ EXACT AND DERIVED, NOT `< 220`, AND NOT 222 EITHER.
+  --
+  -- The earlier spelling tolerated the silent loss of one or two of 014's
+  -- policies while claiming to check for exactly this, and its commentary said
+  -- "228 minus six should leave 222". A review repeated that arithmetic and
+  -- recommended `<> 222`. Both are wrong, and running the rollback is what showed
+  -- it: 014 leaves 228 policies on `core`; 017 ADDS three tenant-scoped tables,
+  -- taking it to 234; rolling 017 back drops those three tables and their six
+  -- policies go with them, returning to 228. The subtraction was applied to the
+  -- wrong end.
+  --
+  -- So it is derived rather than written down: two policies per tenant-scoped
+  -- `core` table that still exists, plus 014's provenance_subjects_read, plus
+  -- 011's H-02 kill switch. That moves correctly when a later pack adds a tenant
+  -- table; a literal would not.
+  SELECT pg_catalog.count(*) * 2 + 2 INTO v_expected
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
+   WHERE ns.nspname = 'core' AND c.relkind = 'r'
+     AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute AS a
+                  WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                    AND a.attnum > 0 AND NOT a.attisdropped);
+
+  IF v_n <> v_expected THEN
     RAISE EXCEPTION
-      'ROLLBACK 017: core carries only % policies; 014''s 228 minus 017''s six '
-      'should leave 222. Something took more than 017 created.', v_n;
+      'ROLLBACK 017: core carries % policies and the catalogue says it should '
+      'carry % (two per surviving tenant-scoped core table, plus 014''s '
+      'provenance_subjects_read and 011''s H-02). Fewer means something took more '
+      'than 017 created; more means 017''s own policies survived its rollback.',
+      v_n, v_expected;
   END IF;
 
   RAISE NOTICE 'ROLLBACK 017: OK - baseline restored, 010 and 014 intact';

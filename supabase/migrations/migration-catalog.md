@@ -786,6 +786,17 @@ to have rewritten (the rollback's post-condition and the rollback pin's R3a) —
 `has_table_privilege`; five line citations were off by one to two lines; two references pointed
 at a `§7` that does not exist. All corrected.
 
+**THE HARNESS, AND A COLLISION WORTH NOT REPEATING.** Every result in this section was produced on
+a PostgreSQL 17.11 shim on port 5436 with its own data directory under
+`~/Repos/personal-work/trainos-wt/.shim-fix014` (real pgvector, stub `pg_cron`/`pg_net`). ⚠ A
+FOREIGN POSTMASTER HELD PORT 5436 at the start of that lane: `pg_ctl start` failed to bind while
+`psql` still connected, so one throwaway pass of "apply 001-017 and run the pins" went into another
+cluster entirely and was neither noticed nor attributable until afterwards. Every run since asserts
+`current_setting('data_directory')` matches the shim before it does anything, and that assertion is
+the reason the numbers here can be trusted. **Lanes should pin their port in `postgresql.conf`
+rather than on the command line**, and any harness script should check the data directory, not the
+port: a port is a promise about who answers, not about which database.
+
 **⚠ THE SECOND REVIEWER SLOT IS OWED, NOT FILLED.** The gate's D-012 rule is that BOTH reviewers
 land. Only one did against the fixes. Codex `gpt-5.6-sol` was dispatched at the same time as the
 thermonuclear pass and came back hard quota-blocked: *"usage limit … try again at Sep 14th, 2026

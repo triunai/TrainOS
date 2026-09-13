@@ -268,4 +268,81 @@ BEGIN
 END;
 $t5$;
 
+
+-- ─── T6 · the overload guard on app.reap_jobs_all_tenants ──────────────────
+-- The G3 trap, pinned rather than trusted. `CREATE OR REPLACE FUNCTION` matches
+-- on the argument list, so adding a second parameter — even a defaulted one,
+-- which is how it always happens — creates a SECOND overload instead of
+-- replacing the function. Two overloads differing only by a defaulted trailing
+-- argument make every short call ambiguous, and the short call here is the cron
+-- command string `SELECT app.reap_jobs_all_tenants(200)`. Nothing type-checks a
+-- cron command: pg_cron would write `function ... is not unique` into
+-- job_run_details every thirty seconds while `cron.job` still showed an active,
+-- healthy job, and expired job leases would stop being recovered in silence.
+--
+-- 016 hit this exact trap on `app.provision_tenant`. This pin is the reason 015
+-- will not.
+--
+-- ⚠ ONE CORRECTION TO THE FINDING THAT PROMPTED THIS, measured rather than
+-- assumed: 015's existing "does the command resolve" check ALREADY aborts on a
+-- second overload, because `to_regproc` returns NULL for an ambiguous bare name.
+-- Verified by creating the overload on a live database and re-running the
+-- pre-fix verify block, which failed — with "does not resolve to a function",
+-- which points at the wrong cause. The exposure that is real is the one nothing
+-- re-runs: a LATER migration adding the overload, long after 015's verify block
+-- last ran.
+DO $t6$
+DECLARE
+  v_n      integer;
+  v_broke  boolean := false;
+BEGIN
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname = 'reap_jobs_all_tenants';
+  ASSERT v_n = 1,
+    pg_catalog.format('T6a FAIL: app.reap_jobs_all_tenants has %s overloads, not '
+      '1. The cron command calls it with one argument and would become ambiguous.',
+      v_n);
+
+  ASSERT pg_catalog.to_regprocedure('app.reap_jobs_all_tenants(integer)') IS NOT NULL,
+    'T6b FAIL: the exact signature the cron command calls does not exist.';
+
+  -- And the failure mode itself, staged. A second overload is created inside this
+  -- transaction and the one-argument call is shown to become ambiguous — so the
+  -- assertion above is pinning a real hazard rather than a tidy invariant.
+  CREATE FUNCTION app.reap_jobs_all_tenants(p_limit_per_tenant integer, p_unused text DEFAULT NULL)
+  RETURNS integer LANGUAGE sql AS $probe$ SELECT 0 $probe$;
+
+  BEGIN
+    PERFORM app.reap_jobs_all_tenants(200);
+  EXCEPTION WHEN OTHERS THEN
+    v_broke := true;
+    ASSERT SQLSTATE = '42725',
+      pg_catalog.format('T6c1 FAIL: the two-overload call failed with %s, expected '
+        '42725 ambiguous_function.', SQLSTATE);
+  END;
+
+  DROP FUNCTION app.reap_jobs_all_tenants(integer, text);
+
+  ASSERT v_broke,
+    'T6c FAIL: with a second, defaulted-trailing-argument overload in place, '
+    '`SELECT app.reap_jobs_all_tenants(200)` still resolved. If Postgres has '
+    'stopped treating that as ambiguous, the DROP FUNCTION guard in 015 and the '
+    'overload assertions above are no longer load-bearing and should be cut '
+    'rather than left as folklore.';
+
+  ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS p
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+           WHERE n.nspname='app' AND p.proname='reap_jobs_all_tenants') = 1,
+    'T6d FAIL: the probe overload survived the probe.';
+
+  RAISE NOTICE
+    'T6 PASS - exactly one app.reap_jobs_all_tenants, the cron command''s exact '
+    'signature resolves, and a staged second overload really does make that call '
+    'ambiguous at 42725.';
+END;
+$t6$;
+
+
 ROLLBACK;

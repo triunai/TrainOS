@@ -54,11 +54,95 @@ INSERT INTO public.memberships (tenant_id,user_id,role,actor_kind,status,is_defa
 VALUES ('00000017-1111-1111-1111-111111111111',
         '00000017-0000-0000-0000-0000000000a1','SALES','HUMAN','ACTIVE',true);
 
+-- ─── Fixtures for T3b, T5b and T11 ─────────────────────────────────────────
+-- T3b stores 0.867 into evaluation_responses.overall_score and T5b reads the
+-- generated SST columns back off a quotation. Both were written as
+-- `... FROM core.engagements LIMIT 1` / `SELECT id INTO v_qid FROM
+-- core.quotations LIMIT 1` against tables with no rows, so the INSERT wrote
+-- nothing, `IF FOUND` was false, and NEITHER ASSERTION EVER EXECUTED — while the
+-- catalog claimed T3 "proves the conversion by storing 0.867 and reading it
+-- back". Same false-catalog-claim mechanism that hid 014's defect.
+--
+-- Nine rows, each one a foreign key the two targets actually require:
+-- engagements needs organisation + programme + owner + pipeline; quotations
+-- needs a proposal (opportunity + organisation + template) and a rate card.
+-- Shapes follow test_007's quotation chain and test_008's engagement chain.
+-- Every ref prefix these tables need is already provisioned by 016's trigger on
+-- the tenant INSERT above, so this block adds no core.ref_formats row.
+--
+-- ⚠ sst_rate / sst_reason are DELIBERATELY NOT SET. They no longer carry
+-- defaults, and 017's BEFORE trigger resolves them from policy; setting them here
+-- would pre-empt the path T11 exists to test.
+INSERT INTO core.organisations (id, tenant_id, name, owner_id)
+VALUES ('00000017-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000017-1111-1111-1111-111111111111',
+        'Aurora Manufacturing Sdn Bhd','00000017-0000-0000-0000-0000000000a1');
+
+INSERT INTO core.programmes (id, tenant_id, name, category, days, list_price_sen,
+                             list_price_pax, floor_price_sen, floor_margin_rate, status)
+VALUES ('00000017-0ddd-0ddd-0ddd-0ddddddddde1','00000017-1111-1111-1111-111111111111',
+        'Leading Through Change','LEADERSHIP',2,1850000,30,1390000,0.3500,'ACTIVE');
+
+INSERT INTO core.pipelines (id, tenant_id, object, name, is_default, status)
+VALUES ('00000017-0eee-0eee-0eee-0eeeeeeeeee1','00000017-1111-1111-1111-111111111111',
+        'ENGAGEMENT','Standard delivery', true,'ACTIVE');
+
+INSERT INTO core.opportunities (id, tenant_id, organisation_id, owner_id, value_sen)
+VALUES ('00000017-0bbb-0bbb-0bbb-0bbbbbbbbbb1','00000017-1111-1111-1111-111111111111',
+        '00000017-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000017-0000-0000-0000-0000000000a1',1850000);
+
+INSERT INTO core.templates (id, tenant_id, template_type, label, status)
+VALUES ('00000017-0ccc-0ccc-0ccc-0ccccccccce1','00000017-1111-1111-1111-111111111111',
+        'PROPOSAL','Standard proposal','ACTIVE');
+
+INSERT INTO core.rate_cards (id, tenant_id, version, status, effective_from)
+VALUES ('00000017-0fff-0fff-0fff-0fffffffffe1','00000017-1111-1111-1111-111111111111',
+        'v1-2026','DRAFT','2026-01-01');
+
+INSERT INTO core.proposals (id, tenant_id, opportunity_id, organisation_id, template_id,
+                            programme_id, value_sen, margin_rate)
+VALUES ('00000017-0acc-0acc-0acc-0accccccccc1','00000017-1111-1111-1111-111111111111',
+        '00000017-0bbb-0bbb-0bbb-0bbbbbbbbbb1','00000017-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
+        '00000017-0ccc-0ccc-0ccc-0ccccccccce1','00000017-0ddd-0ddd-0ddd-0ddddddddde1',
+        1850000, 0.4100);
+
+INSERT INTO core.engagements (id, tenant_id, organisation_id, programme_id, owner_id,
+                             pipeline_id, proposal_id, title, starts_on, ends_on, value_sen)
+VALUES ('00000017-0ee8-0ee8-0ee8-0ee888888881','00000017-1111-1111-1111-111111111111',
+        '00000017-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000017-0ddd-0ddd-0ddd-0ddddddddde1',
+        '00000017-0000-0000-0000-0000000000a1','00000017-0eee-0eee-0eee-0eeeeeeeeee1',
+        '00000017-0acc-0acc-0acc-0accccccccc1',
+        'Leading Through Change','2026-11-12','2026-11-13',1850000);
+
+-- No quotation_lines: core.quotation_assert_reconciled and
+-- core.quotation_assert_floor both return early when a quotation has no lines
+-- ("a draft being started, not a breach"), so the header carries its own totals
+-- and T5b still gets a non-zero net to compute SST on.
+INSERT INTO core.quotations (id, tenant_id, proposal_id, rate_card_id, pax,
+                             sell_price_sen, direct_cost_sen,
+                             programme_floor_price_sen, floor_margin_rate)
+VALUES ('00000017-0977-0977-0977-097777777771','00000017-1111-1111-1111-111111111111',
+        '00000017-0acc-0acc-0acc-0accccccccc1','00000017-0fff-0fff-0fff-0fffffffffe1',
+        30, 1850000, 1091500, 1390000, 0.3500);
+
 CREATE FUNCTION pg_temp.t017_try(p_sql text) RETURNS jsonb
 LANGUAGE plpgsql AS $fn$
 BEGIN
   EXECUTE p_sql;
   RETURN jsonb_build_object('ok',true);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('ok',false,'sqlstate',SQLSTATE,'message',SQLERRM);
+END;
+$fn$;
+
+-- The same probe, but returning WHAT was read rather than only whether it raised.
+-- "Did not error" and "read zero rows" are different facts and a cross-tenant
+-- assertion needs the second one.
+CREATE FUNCTION pg_temp.t017_try_value(p_sql text) RETURNS jsonb
+LANGUAGE plpgsql AS $fn$
+DECLARE v jsonb;
+BEGIN
+  EXECUTE p_sql INTO v;
+  RETURN jsonb_build_object('ok',true,'value',v);
 EXCEPTION WHEN OTHERS THEN
   RETURN jsonb_build_object('ok',false,'sqlstate',SQLSTATE,'message',SQLERRM);
 END;
@@ -173,18 +257,40 @@ BEGIN
   -- Proved by STORING a third decimal, which numeric(3,2) could not hold. A
   -- catalogue check alone would pass against a column that was never really
   -- converted.
+  -- ⚠ NO `IF FOUND` AROUND THIS ANY MORE. It used to select its engagement with
+  -- `FROM core.engagements LIMIT 1` against a table this pin never populated, so
+  -- the INSERT affected zero rows, `IF FOUND` was false, and the assertion never
+  -- ran — while the catalog claimed T3 "proves the conversion by storing 0.867
+  -- and reading it back". The engagement is now a real fixture, named, and the
+  -- assertions are unconditional: a missing fixture has to fail here, not pass
+  -- quietly.
   INSERT INTO core.evaluation_responses
     (tenant_id, engagement_id, submitted_at, overall_score, answers)
-  SELECT '00000017-1111-1111-1111-111111111111', e.id, pg_catalog.now(), 0.867, '{}'::jsonb
-    FROM core.engagements AS e LIMIT 1;
+  VALUES ('00000017-1111-1111-1111-111111111111',
+          '00000017-0ee8-0ee8-0ee8-0ee888888881', pg_catalog.now(), 0.867, '{}'::jsonb);
 
-  IF FOUND THEN
-    SELECT overall_score INTO v_score FROM core.evaluation_responses
-     WHERE tenant_id='00000017-1111-1111-1111-111111111111' LIMIT 1;
-    ASSERT v_score = 0.867,
-      pg_catalog.format('T3b FAIL: stored 0.867 and read back %s. numeric(3,2) '
-        'would have rounded it to 0.87.', v_score);
-  END IF;
+  SELECT overall_score INTO v_score FROM core.evaluation_responses
+   WHERE tenant_id='00000017-1111-1111-1111-111111111111'
+     AND engagement_id='00000017-0ee8-0ee8-0ee8-0ee888888881';
+  ASSERT v_score = 0.867,
+    pg_catalog.format('T3b FAIL: stored 0.867 and read back %s. numeric(3,2) '
+      'would have rounded it to 0.87.', v_score);
+
+  -- T3d · and the 0..1 bound is enforced, not merely present. 008 defined this
+  -- column on a five-point scale, so a stored 4.5 is the concrete thing the
+  -- constraint exists to refuse and 017 now refuses to VALIDATE past.
+  BEGIN
+    INSERT INTO core.evaluation_responses
+      (tenant_id, engagement_id, submitted_at, overall_score, answers)
+    VALUES ('00000017-1111-1111-1111-111111111111',
+            '00000017-0ee8-0ee8-0ee8-0ee888888881', pg_catalog.now(), 4.5, '{}'::jsonb);
+    ASSERT false,
+      'T3d FAIL: a five-point Likert score of 4.5 was accepted into a column 017 '
+      'bounds to 0..1. Every average built on this column would be wrong by a '
+      'factor nobody notices.';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
 
   ASSERT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
                   WHERE conrelid='core.evaluation_responses'::regclass
@@ -309,15 +415,23 @@ BEGIN
 
   -- SST on the summed net. 010's pin proves this is not pedantry: three lines at
   -- RM 333.33 at 8% give 8,001 sen per line and 8,000 sen on the summed net.
-  SELECT id INTO v_qid FROM core.quotations LIMIT 1;
-  IF v_qid IS NOT NULL THEN
-    UPDATE core.quotations SET sst_rate = 0.08000, sst_reason='STANDARD_RATED'
-     WHERE id = v_qid;
-    SELECT sst_sen, gross_price_sen INTO v_sst, v_gross
-      FROM core.quotations WHERE id = v_qid;
-    ASSERT v_sst IS NOT NULL AND v_gross IS NOT NULL,
-      'T5b FAIL: the generated SST columns produced NULL';
-  END IF;
+  -- ⚠ UNCONDITIONAL, AND ON A NAMED FIXTURE. This used to be
+  -- `SELECT id INTO v_qid FROM core.quotations LIMIT 1` against a table with no
+  -- rows, so the whole block was skipped and T5b asserted nothing.
+  v_qid := '00000017-0977-0977-0977-097777777771';
+  UPDATE core.quotations SET sst_rate = 0.08000, sst_reason='STANDARD_RATED'
+   WHERE id = v_qid;
+  SELECT sst_sen, gross_price_sen INTO v_sst, v_gross
+    FROM core.quotations WHERE id = v_qid;
+
+  -- The arithmetic, not just non-nullity. 1,850,000 sen at 8% is 148,000 sen of
+  -- SST and a gross of 1,998,000. A NULL check would pass against a column that
+  -- generated zero.
+  ASSERT v_sst = 148000,
+    pg_catalog.format('T5b FAIL: sst_sen is %s, expected 148000 — 8%% of the '
+      '1,850,000 sen net.', v_sst);
+  ASSERT v_gross = 1998000,
+    pg_catalog.format('T5b2 FAIL: gross_price_sen is %s, expected 1998000.', v_gross);
 
   -- The exemption costs something: claiming it without a reason is refused.
   --
@@ -620,5 +734,243 @@ BEGIN
     'relaxed_order exists for.';
 END;
 $t10$;
+
+
+-- ─── T11 · CRIT · SST is resolved from policy, never stamped by a default ───
+-- The finding: `sst_rate` and `sst_reason` were added `NOT NULL DEFAULT 0` and
+-- `NOT NULL DEFAULT 'STANDARD_RATED'`, and nothing in 001-017 called
+-- `app.resolve_tax_policy()` on a write. Ruling R-C says SST is resolved from
+-- policy and "never a column default", and those two defaults were exactly that
+-- — worse than a missing value, because the pair is internally consistent and
+-- wrong: STANDARD_RATED at a rate of zero reads as a deliberate taxable, zero-tax
+-- position. `sst_sen` and `gross_price_sen` are GENERATED from `sst_rate`, so the
+-- gross equals the net, the invoice built field-for-field carries it forward, and
+-- a taxable service is silently billed with no service tax.
+DO $t11$
+DECLARE
+  v_rate   numeric;
+  v_reason text;
+  v_pol    uuid;
+  v_sst    bigint;
+  v_refused jsonb;
+BEGIN
+  -- T11a · the defaults are GONE. This is the half a behavioural test cannot
+  -- reach: a default only shows itself when a column is omitted, and the trigger
+  -- now fills that case, so the two would be indistinguishable from the outside
+  -- until the day somebody drops the trigger.
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema='core' AND table_name='quotations'
+       AND column_name IN ('sst_rate','sst_reason')
+       AND column_default IS NOT NULL),
+    'T11a FAIL: sst_rate or sst_reason still carries a column default. Ruling R-C '
+    'says SST is resolved by app.resolve_tax_policy() and never defaulted, and a '
+    'default of 0 / STANDARD_RATED is a taxable position billed at zero tax.';
+
+  ASSERT (SELECT pg_catalog.count(*) FROM information_schema.columns
+           WHERE table_schema='core' AND table_name='quotations'
+             AND column_name IN ('sst_rate','sst_reason')
+             AND is_nullable='NO') = 2,
+    'T11a2 FAIL: sst_rate and sst_reason are not both NOT NULL. Without the '
+    'default they must be NOT NULL, or an omitted column becomes a NULL rate and '
+    'the generated sst_sen becomes NULL rather than wrong — quieter, still wrong.';
+
+  -- T11b · the trigger exists, is BEFORE, and covers UPDATE as well as INSERT.
+  ASSERT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger AS t
+     WHERE t.tgrelid = 'core.quotations'::regclass
+       AND t.tgname  = 'trg_quotations_resolve_sst'
+       AND NOT t.tgisinternal
+       AND (t.tgtype & 2) <> 0        -- BEFORE
+       AND (t.tgtype & 4) <> 0        -- INSERT
+       AND (t.tgtype & 16) <> 0),     -- UPDATE
+    'T11b FAIL: no BEFORE INSERT OR UPDATE trigger resolving SST on '
+    'core.quotations. Without it the columns are NOT NULL with no default and '
+    'every insert that omits them fails, which is a different outage.';
+
+  -- T11c · THE BEHAVIOUR. The fixture quotation was inserted without touching a
+  -- single SST column, and must have come out carrying the policy's position.
+  SELECT sst_rate, sst_reason, sst_policy_id, sst_sen
+    INTO v_rate, v_reason, v_pol, v_sst
+    FROM core.quotations WHERE id = '00000017-0977-0977-0977-097777777771';
+
+  ASSERT v_reason = 'STANDARD_RATED',
+    pg_catalog.format('T11c FAIL: sst_reason resolved to %s, expected '
+      'STANDARD_RATED — corporate training is taxable under Group G.', v_reason);
+  ASSERT v_rate = 0.08000,
+    pg_catalog.format('T11c2 FAIL: sst_rate resolved to %s, expected 0.08000 from '
+      'the seeded SST-G-TRAINING-8 policy. A rate of 0 beside STANDARD_RATED is '
+      'the defect: it reads as a deliberate zero-tax position on a taxable '
+      'service.', v_rate);
+  ASSERT v_pol IS NOT NULL,
+    'T11c3 FAIL: sst_policy_id is NULL, so the rate above is not traceable to the '
+    'policy row it came from and nobody can answer "why this rate" in two years.';
+  ASSERT v_pol = (SELECT id FROM core.tax_policies WHERE policy_code='SST-G-TRAINING-8'),
+    'T11c4 FAIL: sst_policy_id does not point at the resolved policy.';
+
+  -- T11d · an explicit resolution is left alone. 018's put_quotation resolves for
+  -- itself; the trigger must not re-resolve over it on every later UPDATE.
+  UPDATE core.quotations
+     SET sst_rate = 0.06000, sst_reason = 'STANDARD_RATED'
+   WHERE id = '00000017-0977-0977-0977-097777777771';
+  SELECT sst_rate INTO v_rate FROM core.quotations
+   WHERE id = '00000017-0977-0977-0977-097777777771';
+  ASSERT v_rate = 0.06000,
+    pg_catalog.format('T11d FAIL: an explicitly supplied rate of 0.06 was '
+      'overwritten with %s. 018''s put_quotation resolves explicitly and the '
+      'trigger must fill only what the caller left NULL.', v_rate);
+
+  -- T11e · half a position is refused. A rate without its reason is a rate that
+  -- does not match the reason beside it.
+  v_refused := pg_temp.t017_try($$
+    UPDATE core.quotations SET sst_rate = NULL
+     WHERE id = '00000017-0977-0977-0977-097777777771'$$);
+  ASSERT NOT (v_refused->>'ok')::boolean,
+    pg_catalog.format('T11e FAIL: a quotation was allowed to carry a reason with '
+      'no rate: %s', v_refused::text);
+
+  -- T11f · and asking for a re-resolution works: both NULL means resolve.
+  UPDATE core.quotations
+     SET sst_rate = NULL, sst_reason = NULL
+   WHERE id = '00000017-0977-0977-0977-097777777771';
+  SELECT sst_rate, sst_reason INTO v_rate, v_reason FROM core.quotations
+   WHERE id = '00000017-0977-0977-0977-097777777771';
+  ASSERT v_rate = 0.08000 AND v_reason = 'STANDARD_RATED',
+    pg_catalog.format('T11f FAIL: clearing both columns did not re-resolve from '
+      'policy; got %s / %s.', v_rate, v_reason);
+
+  RAISE NOTICE
+    'T11 PASS - no column default on sst_rate/sst_reason, a BEFORE INSERT OR '
+    'UPDATE trigger resolves them from app.resolve_tax_policy (8%% Group G, '
+    'traceable to its policy row), an explicit resolution passes through '
+    'untouched, half a position is refused, and clearing both re-resolves.';
+END;
+$t11$;
+
+-- ─── T12 · the tenant-seed registry, and the guard it drives ────────────────
+-- The finding: 017 added a THIRD tenant-provisioning trigger by copying 016's
+-- pattern, and `app.provision_tenant`'s completeness guard — which exists
+-- precisely to refuse a tenant that looks provisioned and is missing something a
+-- later table needs — checked two relations by name and knew nothing about it.
+-- 018 adds a fourth. The guard is now driven by `app.tenant_seed_checks`, so a
+-- pack registers its seed beside its own trigger instead of remembering to widen
+-- a guard in another file.
+DO $t12$
+DECLARE
+  v_tenant  uuid;
+  v_refused jsonb;
+BEGIN
+  ASSERT EXISTS (
+    SELECT 1 FROM app.tenant_seed_checks
+     WHERE schema_name='core' AND table_name='check_keys' AND pack='017'),
+    'T12a FAIL: 017 does not register its compliance-check-key seed, so '
+    'provision_tenant would hand back a tenant with no check keys and report it '
+    'fully provisioned.';
+
+  ASSERT (SELECT pg_catalog.count(*) FROM app.tenant_seed_checks) >= 3,
+    'T12b FAIL: fewer than three registered seed checks. 011, 016 and 017 each '
+    'seed a tenant and each must be registered.';
+
+  -- THE BEHAVIOUR, staged: disable 017's trigger and confirm provision_tenant
+  -- REFUSES rather than returning a half-provisioned tenant. Inside this
+  -- transaction, so the trigger is back at ROLLBACK.
+  ALTER TABLE public.tenants DISABLE TRIGGER trg_tenants_seed_check_keys;
+  v_refused := pg_temp.t017_try(
+    $$SELECT app.provision_tenant('t017-halfseed','T017 Half Seeded','Asia/Kuala_Lumpur')$$);
+  ALTER TABLE public.tenants ENABLE TRIGGER trg_tenants_seed_check_keys;
+
+  ASSERT NOT (v_refused->>'ok')::boolean,
+    pg_catalog.format('T12c FAIL: provision_tenant returned a tenant whose '
+      'check-key seed did not run. Every HRD Corp compliance rule for that tenant '
+      'resolves to no check key, the compliance engine evaluates nothing, and a '
+      'claim deadline passes with the packet looking healthy. Result: %s',
+      v_refused::text);
+  ASSERT v_refused->>'message' LIKE '%check_keys%',
+    pg_catalog.format('T12c2 FAIL: provisioning was refused, but not by the '
+      'check-keys registry entry: %s', v_refused->>'message');
+
+  -- And it still works with the trigger enabled, or the guard is just an outage.
+  v_tenant := app.provision_tenant('t017-fullseed','T017 Fully Seeded','Asia/Kuala_Lumpur');
+  ASSERT v_tenant IS NOT NULL, 'T12d FAIL: provisioning failed with every trigger enabled.';
+  ASSERT (SELECT pg_catalog.count(*) FROM core.check_keys WHERE tenant_id = v_tenant) > 0,
+    'T12d2 FAIL: a fully provisioned tenant has no check keys.';
+
+  RAISE NOTICE
+    'T12 PASS - 017 registers its seed in app.tenant_seed_checks, provision_tenant '
+    'refuses a tenant whose check-key trigger did not fire, and a fully seeded '
+    'tenant still provisions.';
+END;
+$t12$;
+
+-- ─── T13 · the three new tables are tenant-isolated, probed as a caller ─────
+-- The finding: 017's three new tenant-scoped tables got ZERO RLS or grant
+-- assertions in this pin. The only cross-tenant probe went through a
+-- SECURITY DEFINER function as owner, which proves that function's own filter and
+-- nothing about the policy underneath it. Probed here directly, as
+-- `authenticated`, with the WRONG tenant's claims — one statement each, because a
+-- batched probe matrix lets the planner fold repeated STABLE calls whose
+-- role-swap side effects it cannot see, and returns a silently-wrong all-denied.
+
+INSERT INTO core.data_breach_register (tenant_id, detected_at, nature, affected_count)
+VALUES ('00000017-1111-1111-1111-111111111111', pg_catalog.now(),
+        'Probe incident for the cross-tenant read test', 1);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000017-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000017-2222-2222-2222-222222222222","app_role":"ADMIN","actor_kind":"HUMAN","aal":"aal2"}',
+  true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t017.xt_breach',
+  pg_temp.t017_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.data_breach_register
+                      WHERE tenant_id = '00000017-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+DO $t13$
+DECLARE v_xt jsonb := pg_catalog.current_setting('t017.xt_breach')::jsonb;
+BEGIN
+  -- `>= 1`, not `= 1`: T7 seeds its own breach rows for this tenant earlier in
+  -- the file. The number does not matter; that the owner sees SOMETHING does,
+  -- because otherwise the cross-tenant zero below would be a zero for the wrong
+  -- reason — which is the exact defect this pin was added to close elsewhere.
+  ASSERT (SELECT pg_catalog.count(*) FROM core.data_breach_register
+           WHERE tenant_id='00000017-1111-1111-1111-111111111111') >= 1,
+    'T13 SETUP FAIL: the owner cannot see any breach row for the alpha tenant, so '
+    'the cross-tenant probe below would read zero for the wrong reason.';
+
+  ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+           WHERE n.nspname='core'
+             AND c.relname IN ('tax_policies','data_retention_policies','data_breach_register')
+             AND c.relrowsecurity AND c.relforcerowsecurity) = 3,
+    'T13a FAIL: one of 017''s three new tables is not RLS enabled AND FORCED. '
+    '004''s finalise_table sets both and 014''s policy layer assumes both.';
+
+  ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy AS p
+            JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+           WHERE n.nspname='core'
+             AND c.relname IN ('tax_policies','data_retention_policies','data_breach_register')
+             AND p.polname IN (c.relname||'_tenant_select', c.relname||'_tenant_isolation')) = 6,
+    'T13b FAIL: the three new tables do not all carry 014''s policy pair.';
+
+  ASSERT (v_xt->>'ok')::boolean,
+    pg_catalog.format('T13c FAIL: an authenticated caller got an ERROR rather '
+      'than zero rows reading another tenant''s breach register. A RESTRICTIVE '
+      'policy should return empty; an error means the grant is missing and the '
+      'posture is different from the one being claimed. %s', v_xt::text);
+
+  ASSERT (v_xt->'value')::text = '0',
+    pg_catalog.format('T13d FAIL: an ADMIN of tenant Beta read %s of tenant '
+      'Alpha''s breach-register rows. This is a statutory PDPA register and the '
+      'only thing between it and the other tenant is 014''s policy pair, probed '
+      'here directly rather than through a definer function that would have '
+      'proved its own filter instead.', (v_xt->'value')::text);
+
+  RAISE NOTICE
+    'T13 PASS - 017''s three tables are RLS forced with 014''s policy pair, and an '
+    'ADMIN of another tenant reading the breach register directly, as '
+    'authenticated, sees nothing.';
+END;
+$t13$;
+
 
 ROLLBACK;

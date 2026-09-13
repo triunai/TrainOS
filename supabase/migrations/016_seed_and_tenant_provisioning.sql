@@ -242,6 +242,48 @@ COMMENT ON TRIGGER trg_tenants_seed_ref_formats ON public.tenants IS
 -- AFTER INSERT triggers do the work, so there is exactly one implementation of
 -- "what a new tenant gets" and no second copy to drift from the first.
 
+-- ── THE SEED REGISTRY · what a provisioned tenant must have ────────────────
+-- One row per thing an AFTER INSERT trigger on `public.tenants` is expected to
+-- produce. `provision_tenant` refuses to hand back a tenant that is missing any
+-- of them, and it reads this table rather than carrying a list, so a pack that
+-- adds a seed registers it beside its own trigger instead of remembering to widen
+-- a guard in this file. 017 adds a third seed and 018 a fourth; neither needs to
+-- touch `provision_tenant`.
+--
+-- Deliberately a plain table and not a function-per-check: the check is always
+-- "does this tenant have at least one row here", the interesting part is WHICH
+-- relations, and a table makes that list readable in one query by anybody
+-- debugging a half-provisioned tenant.
+CREATE TABLE IF NOT EXISTS app.tenant_seed_checks (
+  pack        text NOT NULL CHECK (pack ~ '^[0-9]{3}$'),
+  label       text NOT NULL CHECK (NULLIF(pg_catalog.btrim(label), '') IS NOT NULL),
+  schema_name text NOT NULL CHECK (schema_name IN ('core','app','public')),
+  table_name  text NOT NULL CHECK (NULLIF(pg_catalog.btrim(table_name), '') IS NOT NULL),
+  note        text NOT NULL CHECK (NULLIF(pg_catalog.btrim(note), '') IS NOT NULL),
+  PRIMARY KEY (schema_name, table_name)
+);
+
+COMMENT ON TABLE app.tenant_seed_checks IS
+  'What app.provision_tenant verifies before returning a tenant id: one row per '
+  'relation an AFTER INSERT trigger on public.tenants is expected to seed. A pack '
+  'that adds a tenant seed INSERTs here beside its own trigger; provision_tenant '
+  'needs no edit. `note` is shown in the refusal, so write what breaks without it. '
+  'Not granted to any client role. 016.';
+
+COMMENT ON COLUMN app.tenant_seed_checks.note IS
+  'Shown verbatim in provision_tenant''s exception. State the consequence, not the '
+  'mechanism: the person reading it is mid-incident.';
+
+REVOKE ALL ON app.tenant_seed_checks FROM PUBLIC, anon, authenticated;
+
+INSERT INTO app.tenant_seed_checks (pack, label, schema_name, table_name, note) VALUES
+  ('016','ref formats','core','ref_formats',
+   'Every ref''d table is unwritable for this tenant: core.next_ref raises without a format row, so the first enquiry, organisation or proposal fails to save.'),
+  ('011','action policies','core','action_policies',
+   'Every action falls through the policy gate with nothing to evaluate, so the envelope cannot decide whether anything needs approval.')
+ON CONFLICT (schema_name, table_name) DO UPDATE
+  SET pack = EXCLUDED.pack, label = EXCLUDED.label, note = EXCLUDED.note;
+
 -- ⚠ THE DROP IS MANDATORY AND IS NOT TIDINESS. `p_id` was added after the seeds
 -- lane found it needed one (see below), and a bare CREATE OR REPLACE does NOT
 -- replace a function when the parameter LIST changes — it creates an OVERLOAD
@@ -278,9 +320,9 @@ SECURITY DEFINER
 SET search_path = ''
 AS $fn$
 DECLARE
-  v_id uuid;
-  v_formats  integer;
-  v_policies integer;
+  v_id     uuid;
+  v_seeded integer;
+  v_check  pg_catalog.record;
 BEGIN
   IF p_slug IS NULL OR pg_catalog.btrim(p_slug) = '' THEN
     RAISE EXCEPTION 'provision_tenant: p_slug is required'
@@ -295,27 +337,53 @@ BEGIN
   VALUES (COALESCE(p_id, gen_random_uuid()), p_slug, p_name, p_timezone)
   RETURNING id INTO v_id;
 
-  -- Both seeds are triggers, so by here they have run. Verifying that they DID is
-  -- the point: a disabled trigger, or a trigger dropped by a later migration that
-  -- did not know it mattered, would otherwise produce a tenant that looks
+  -- Every seed is a trigger, so by here they have all run. Verifying that they DID
+  -- is the point: a disabled trigger, or a trigger dropped by a later migration
+  -- that did not know it mattered, would otherwise produce a tenant that looks
   -- provisioned and cannot write a single ref'd row. Failing here costs one
   -- transaction; failing later costs a customer's first enquiry.
-  SELECT pg_catalog.count(*) INTO v_formats
-    FROM core.ref_formats WHERE tenant_id = v_id;
-  IF v_formats = 0 THEN
-    RAISE EXCEPTION
-      'provision_tenant: tenant % was created with no ref_formats. The AFTER '
-      'INSERT trigger on public.tenants did not run, so every ref''d table is '
-      'unwritable for this tenant.', v_id;
-  END IF;
+  --
+  -- ⚠ DRIVEN BY app.tenant_seed_checks, NOT BY A LIST IN THIS FUNCTION, and the
+  -- reason is a defect that had already happened by the time this was written.
+  -- An earlier version checked exactly two things by name, ref_formats and
+  -- action_policies. 017 then added a THIRD provisioning trigger
+  -- (app.seed_check_keys_on_tenant) by copying 016's pattern almost line for line
+  -- — and did not, could not reasonably be expected to, remember to come back and
+  -- widen a guard in a different file. So the exact failure mode this guard exists
+  -- to catch, a tenant that looks provisioned and is missing something a later
+  -- table needs, was unguarded for the newest seed. 018 adds a fourth.
+  --
+  -- A pack that adds a tenant seed now REGISTERS it — one INSERT next to its own
+  -- trigger, in its own file, where the person writing the trigger is looking —
+  -- and this loop picks it up with no edit here. That is the difference between a
+  -- convention three packs have to remember and a mechanism they cannot miss.
+  FOR v_check IN
+    SELECT c.pack, c.label, c.schema_name, c.table_name, c.note
+      FROM app.tenant_seed_checks AS c
+     ORDER BY c.pack, c.label
+  LOOP
+    EXECUTE pg_catalog.format(
+      'SELECT pg_catalog.count(*) FROM %I.%I WHERE tenant_id = $1',
+      v_check.schema_name, v_check.table_name)
+      INTO v_seeded USING v_id;
 
-  SELECT pg_catalog.count(*) INTO v_policies
-    FROM core.action_policies WHERE tenant_id = v_id;
-  IF v_policies = 0 THEN
+    IF v_seeded = 0 THEN
+      RAISE EXCEPTION
+        'provision_tenant: tenant % was created with no rows in %.% (%, seeded by '
+        '%). %',
+        v_id, v_check.schema_name, v_check.table_name, v_check.label,
+        v_check.pack, v_check.note;
+    END IF;
+  END LOOP;
+
+  -- The registry must not be empty. An empty registry would make the loop above a
+  -- no-op and this whole guard decorative, which is a worse state than the two
+  -- hardcoded checks it replaced.
+  IF NOT EXISTS (SELECT 1 FROM app.tenant_seed_checks) THEN
     RAISE EXCEPTION
-      'provision_tenant: tenant % was created with no action_policies (011). '
-      'Every action would fall through the policy gate with nothing to evaluate.',
-      v_id;
+      'provision_tenant: app.tenant_seed_checks is empty, so nothing about this '
+      'tenant was verified. A guard that checks nothing is worse than no guard: it '
+      'reads as a check in every review of every future pack.';
   END IF;
 
   RETURN v_id;

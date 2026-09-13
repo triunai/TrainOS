@@ -47,6 +47,29 @@ BEGIN
       'ROLLBACK 016 refused: core.ref_formats is absent, so 004 is already gone '
       'and there is nothing beneath this migration to roll back to.';
   END IF;
+
+  -- ⚠ REFUSE WHILE 017 IS STILL APPLIED.
+  --
+  -- 017 adds a THIRD tenant-provisioning trigger on public.tenants
+  -- (app.seed_compliance_check_keys), beside 016's ref-format seed and 011's
+  -- action-policy seed. Dropping 016's trigger underneath it leaves a database
+  -- where a new tenant is given check keys and action policies but NO REF
+  -- FORMATS — and nothing raises, because each trigger only knows about itself.
+  -- The first symptom is a customer's first enquiry failing on core.next_ref,
+  -- long after whoever ran this rollback has stopped watching.
+  --
+  -- Same shape as 014's rollback refusing while 017 is applied, and for the same
+  -- reason: reverse order is the only order that leaves the provisioning set
+  -- coherent at every step.
+  IF pg_catalog.to_regproc('app.seed_compliance_check_keys') IS NOT NULL THEN
+    RAISE EXCEPTION
+      'ROLLBACK 016 refused: migration 017 is still applied '
+      '(app.seed_compliance_check_keys exists). 017 adds a third '
+      'tenant-provisioning trigger beside 016''s; dropping 016''s first would '
+      'leave new tenants with check keys and action policies but no ref formats, '
+      'and nothing would raise until a customer''s first enquiry. Roll back in '
+      'reverse order: 017, then 016.';
+  END IF;
 END;
 $preflight$;
 
@@ -62,20 +85,74 @@ DROP FUNCTION IF EXISTS app.provision_tenant(text,text,text);
 DROP FUNCTION IF EXISTS app.seed_ref_formats_on_tenant();
 DROP FUNCTION IF EXISTS app.seed_ref_formats(uuid);
 
+-- The seed registry. Dropped last of 016's objects because provision_tenant reads
+-- it and is dropped above; dropping it first would leave a moment in which the
+-- function exists and its guard cannot run. 017 registers a row in it and 017's
+-- own rollback deletes that row, so by here the table holds only 016's and 011's.
+DROP TABLE IF EXISTS app.tenant_seed_checks;
+
 -- ── 3 · The seeded rows, except any prefix already allocated against ────────
+-- ⚠ SCOPED TO ROWS 016 CAN PROVE IT WROTE. An earlier version ran
+-- `DELETE FROM core.ref_formats WHERE NOT EXISTS (allocated)` with no further
+-- qualification, which is every unallocated ref_format IN THE DATABASE — including
+-- any an operator configured by hand before 016 existed, and any a future pack
+-- adds. The header claimed only "the seeded rows"; the post-condition below then
+-- required zero unallocated rows to survive, so the over-deletion was enforced as
+-- correct and could not fail. Same class of defect as 014's rollback taking 002's
+-- grants, one table over.
+--
+-- 016 has no ownership column to check, so ownership is proven to the precision
+-- actually available: a row is 016's only if ALL of
+--   * it is unallocated (no core.ref_sequences row), AND
+--   * its prefix is one the forward migration would derive — an `assign_ref`
+--     trigger in `core` carries it as TG_ARGV[0], the same query §2 uses, not a
+--     list, AND
+--   * its `entity`, `dated` and `width` are EXACTLY what that derivation produces.
+--
+-- A hand-made row differs in at least one of those in practice: a different
+-- width, a different dated flag, an entity name that is not the triggered table.
+-- One that matches the derivation in every column is genuinely indistinguishable
+-- from a seeded row, and is deleted. That residue is stated rather than papered
+-- over, and it is bounded: such a row is byte-identical to what re-applying 016
+-- would recreate.
 DO $rows$
-DECLARE v_deleted integer; v_kept integer;
+DECLARE v_deleted integer; v_kept integer; v_foreign integer;
 BEGIN
+  WITH derived AS (
+    SELECT pg_catalog.split_part(
+             pg_catalog.encode(trg.tgargs,'escape'), '\000', 1) AS prefix,
+           cls.relname AS entity
+      FROM pg_catalog.pg_trigger AS trg
+      JOIN pg_catalog.pg_class     AS cls ON cls.oid = trg.tgrelid
+      JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+      JOIN pg_catalog.pg_proc      AS prc ON prc.oid = trg.tgfoid
+     WHERE nsp.nspname = 'core'
+       AND prc.proname = 'assign_ref'
+       AND NOT trg.tgisinternal
+  )
   DELETE FROM core.ref_formats AS f
-   WHERE NOT EXISTS (
-     SELECT 1 FROM core.ref_sequences AS s
-      WHERE s.tenant_id = f.tenant_id AND s.prefix = f.prefix);
+   USING derived AS d
+   WHERE f.prefix = d.prefix
+     AND f.entity = d.entity
+     AND f.width  = 4
+     AND NOT EXISTS (
+       SELECT 1 FROM core.ref_sequences AS s
+        WHERE s.tenant_id = f.tenant_id AND s.prefix = f.prefix);
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
   SELECT pg_catalog.count(*) INTO v_kept FROM core.ref_formats;
+
+  SELECT pg_catalog.count(*) INTO v_foreign
+    FROM core.ref_formats AS f
+   WHERE NOT EXISTS (
+     SELECT 1 FROM core.ref_sequences AS s
+      WHERE s.tenant_id = f.tenant_id AND s.prefix = f.prefix);
+
   RAISE NOTICE
-    'ROLLBACK 016: deleted % unused ref_format row(s); kept % that a tenant has '
-    'already allocated against', v_deleted, v_kept;
+    'ROLLBACK 016: deleted % ref_format row(s) matching 016''s own derivation and '
+    'unallocated; kept % row(s) in total, of which % are unallocated rows 016 '
+    'cannot prove it wrote and therefore leaves alone',
+    v_deleted, v_kept, v_foreign;
 END;
 $rows$;
 
@@ -107,13 +184,36 @@ BEGIN
 
   -- Any format left standing must have a live counter behind it, or the
   -- exception above has been applied backwards and a working tenant is broken.
+  -- ⚠ NOT "no unallocated row survives". That was the absolutist post-condition
+  -- that made the over-deletion above unfailable: it demanded the very state the
+  -- unqualified DELETE produced, so a rollback that destroyed an operator's
+  -- hand-configured formats reported success. What 016 actually owes is narrower
+  -- and checkable: nothing matching 016's OWN derivation, unallocated, survives.
+  -- A row that does not match it is not 016's to have deleted and its survival is
+  -- the correct outcome, not an incomplete rollback.
+  WITH derived AS (
+    SELECT pg_catalog.split_part(
+             pg_catalog.encode(trg.tgargs,'escape'), '\000', 1) AS prefix,
+           cls.relname AS entity
+      FROM pg_catalog.pg_trigger AS trg
+      JOIN pg_catalog.pg_class     AS cls ON cls.oid = trg.tgrelid
+      JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+      JOIN pg_catalog.pg_proc      AS prc ON prc.oid = trg.tgfoid
+     WHERE nsp.nspname = 'core'
+       AND prc.proname = 'assign_ref'
+       AND NOT trg.tgisinternal
+  )
   SELECT pg_catalog.string_agg(pg_catalog.format('%s/%s', f.tenant_id, f.prefix), ', ')
     INTO v_bad
     FROM core.ref_formats AS f
-   WHERE NOT EXISTS (SELECT 1 FROM core.ref_sequences AS s
+    JOIN derived AS d ON d.prefix = f.prefix AND d.entity = f.entity
+   WHERE f.width = 4
+     AND NOT EXISTS (SELECT 1 FROM core.ref_sequences AS s
                       WHERE s.tenant_id=f.tenant_id AND s.prefix=f.prefix);
   IF v_bad IS NOT NULL THEN
-    RAISE EXCEPTION 'ROLLBACK 016 incomplete: unused ref_format row(s) survive: %', v_bad;
+    RAISE EXCEPTION
+      'ROLLBACK 016 incomplete: unallocated ref_format row(s) matching 016''s own '
+      'derivation survive: %', v_bad;
   END IF;
 
   RAISE NOTICE 'ROLLBACK 016: OK - provisioning removed, allocated formats preserved';

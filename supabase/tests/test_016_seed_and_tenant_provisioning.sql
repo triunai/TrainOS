@@ -362,4 +362,115 @@ BEGIN
 END;
 $t6$;
 
+
+-- ─── T7 · the rollback deletes only rows 016 can prove it wrote ────────────
+-- The finding: `rollbacks/016` ran `DELETE FROM core.ref_formats WHERE NOT
+-- EXISTS (allocated)` with no further qualification — every unallocated
+-- ref_format IN THE DATABASE, including one an operator configured by hand
+-- before 016 existed. Its post-condition then demanded that zero unallocated
+-- rows survive, so the over-deletion was enforced as correct and the rollback
+-- could not fail. Same class as 014's rollback taking 002's grants.
+--
+-- ⚠ THIS PIN RESTATES THE ROLLBACK'S PREDICATE RATHER THAN CALLING IT, and that
+-- is a real weakness worth naming instead of hiding. The rollback is a file with
+-- its own BEGIN/COMMIT; running it from inside this transaction would commit
+-- this transaction, and a pin that can leave fixtures behind is not a pin. So
+-- the predicate is duplicated here, and T7d guards the duplication: it asserts
+-- the two are still the same shape by requiring that the set this pin computes
+-- over a freshly provisioned tenant is EXACTLY the set the forward seeder wrote
+-- for it. If the rollback's predicate is narrowed or widened without this one
+-- moving, the fresh-tenant set stops matching and this fails.
+DO $t7$
+DECLARE
+  v_tenant   uuid;
+  v_seeded   integer;
+  v_matched  integer;
+  v_hand     integer;
+BEGIN
+  v_tenant := app.provision_tenant('t016-rbk','T016 Rollback Probe','Asia/Kuala_Lumpur');
+
+  SELECT pg_catalog.count(*) INTO v_seeded
+    FROM core.ref_formats WHERE tenant_id = v_tenant;
+  ASSERT v_seeded > 0, 'T7 SETUP FAIL: the probe tenant was seeded no ref_formats.';
+
+  -- A row no trigger could have produced: a prefix that is not any assign_ref
+  -- argument, an entity that is not a table, a width that is not the derived 4.
+  INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width)
+  VALUES (v_tenant, 'ZZQ', 'configured_by_an_operator', false, 6);
+
+  -- The rollback's predicate, restated. See the note above.
+  WITH derived AS (
+    SELECT pg_catalog.split_part(
+             pg_catalog.encode(trg.tgargs,'escape'), '\000', 1) AS prefix,
+           cls.relname AS entity
+      FROM pg_catalog.pg_trigger AS trg
+      JOIN pg_catalog.pg_class     AS cls ON cls.oid = trg.tgrelid
+      JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+      JOIN pg_catalog.pg_proc      AS prc ON prc.oid = trg.tgfoid
+     WHERE nsp.nspname = 'core'
+       AND prc.proname = 'assign_ref'
+       AND NOT trg.tgisinternal
+  )
+  SELECT pg_catalog.count(*) INTO v_matched
+    FROM core.ref_formats AS f
+    JOIN derived AS d ON d.prefix = f.prefix AND d.entity = f.entity
+   WHERE f.tenant_id = v_tenant
+     AND f.width = 4
+     AND NOT EXISTS (SELECT 1 FROM core.ref_sequences AS s
+                      WHERE s.tenant_id = f.tenant_id AND s.prefix = f.prefix);
+
+  -- T7a · the hand-made row is NOT in the delete set.
+  SELECT pg_catalog.count(*) INTO v_hand
+    FROM core.ref_formats AS f
+   WHERE f.tenant_id = v_tenant AND f.prefix = 'ZZQ';
+  ASSERT v_hand = 1, 'T7a FAIL: the hand-made probe row was not created.';
+
+  ASSERT v_matched = v_seeded,
+    pg_catalog.format('T7b FAIL: the rollback''s delete set covers %s of this '
+      'tenant''s %s rows. It must cover exactly the seeded ones: fewer means the '
+      'rollback leaves 016''s own rows behind, more means it is reaching past '
+      'them — and the row it would reach first is the operator''s ZZQ row, which '
+      'is unallocated and which the unqualified predicate deleted.',
+      v_matched, v_seeded);
+
+  -- T7c · stated the other way round, so the number above cannot be right by
+  -- coincidence: the hand-made row must be excluded by the predicate itself.
+  ASSERT NOT EXISTS (
+    WITH derived AS (
+      SELECT pg_catalog.split_part(
+               pg_catalog.encode(trg.tgargs,'escape'), '\000', 1) AS prefix,
+             cls.relname AS entity
+        FROM pg_catalog.pg_trigger AS trg
+        JOIN pg_catalog.pg_class     AS cls ON cls.oid = trg.tgrelid
+        JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = cls.relnamespace
+        JOIN pg_catalog.pg_proc      AS prc ON prc.oid = trg.tgfoid
+       WHERE nsp.nspname = 'core'
+         AND prc.proname = 'assign_ref'
+         AND NOT trg.tgisinternal
+    )
+    SELECT 1 FROM core.ref_formats AS f
+      JOIN derived AS d ON d.prefix = f.prefix AND d.entity = f.entity
+     WHERE f.tenant_id = v_tenant AND f.prefix = 'ZZQ' AND f.width = 4),
+    'T7c FAIL: a hand-configured ref_format matched 016''s derivation, so the '
+    'rollback would delete a row 016 never wrote. This is the finding.';
+
+  -- T7d · and the OLD, unqualified predicate would have taken it. Written out so
+  -- the pin fails if somebody "simplifies" the rollback back to it.
+  ASSERT EXISTS (
+    SELECT 1 FROM core.ref_formats AS f
+     WHERE f.tenant_id = v_tenant AND f.prefix = 'ZZQ'
+       AND NOT EXISTS (SELECT 1 FROM core.ref_sequences AS s
+                        WHERE s.tenant_id=f.tenant_id AND s.prefix=f.prefix)),
+    'T7d FAIL: the probe row is allocated against, so it would have survived the '
+    'unqualified predicate too and this pin proves nothing. Pick a prefix with no '
+    'ref_sequences row.';
+
+  RAISE NOTICE
+    'T7 PASS - the rollback''s delete set is exactly the % rows 016 seeded for a '
+    'fresh tenant and excludes an operator-configured row that the old '
+    'unqualified predicate would have taken.', v_seeded;
+END;
+$t7$;
+
+
 ROLLBACK;

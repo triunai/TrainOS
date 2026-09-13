@@ -130,13 +130,31 @@ REVOKE ALL ON FUNCTION core.sync_rule_scheme_key()             FROM PUBLIC, anon
 -- the file rather than by remembering. A migration that cannot be re-run is a
 -- migration that cannot be recovered halfway through.
 --
--- NOT VALID then VALIDATE, rather than a plain ADD, and the reason is operational:
--- a plain ADD CONSTRAINT takes an ACCESS EXCLUSIVE lock AND scans the whole table
--- under it. NOT VALID takes the lock only long enough to record the constraint —
--- every subsequent write is checked immediately — and VALIDATE then scans under a
--- SHARE UPDATE EXCLUSIVE lock that blocks neither reads nor writes. On an empty
--- database the difference is nothing; on a customer's `knowledge_chunks` it is
--- the difference between a lock held for a moment and one held for a table scan.
+-- NOT VALID then VALIDATE, rather than a plain ADD.
+--
+-- ⚠ AND THE LOCK ARGUMENT AN EARLIER VERSION OF THIS COMMENT MADE IS FALSE AS
+-- THIS FILE IS WRITTEN, so it is corrected here rather than repeated. The claim
+-- was: NOT VALID takes ACCESS EXCLUSIVE only long enough to record the
+-- constraint, and VALIDATE then scans under SHARE UPDATE EXCLUSIVE, blocking
+-- neither reads nor writes. That is true of two SEPARATE TRANSACTIONS. This file
+-- is ONE transaction, `BEGIN` on line 1 to `COMMIT` on the last — so the ACCESS
+-- EXCLUSIVE taken by NOT VALID is held until COMMIT, VALIDATE runs inside that
+-- same lock, and the concurrency property being claimed does not exist. Splitting
+-- it is a real change to the pack's shape (two migrations, two apply windows,
+-- a window in which the constraint exists unvalidated) and is NOT done here.
+--
+-- What the pattern still buys inside one transaction, and why it is kept:
+--   * The constraint is recorded before the scan, so if VALIDATE aborts the
+--     failure names the constraint rather than an anonymous ALTER.
+--   * `NOT VALID` left permanently — which two constraints in this file do, on
+--     purpose — genuinely avoids the scan, because there is no VALIDATE.
+--   * It is the shape a later split into two migrations needs, and re-writing it
+--     as a plain ADD would have to be undone to get there.
+--
+-- The honest operational statement for this file is therefore: every ALTER here
+-- holds ACCESS EXCLUSIVE on its table until COMMIT. On an empty database that is
+-- nothing. On a customer's `knowledge_chunks` it is a table scan's worth of
+-- downtime, and the apply window has to be chosen accordingly.
 DO $jsonb$
 DECLARE
   r        pg_catalog.record;
@@ -235,11 +253,48 @@ ALTER TABLE core.evaluation_responses
 -- normalised 0..1 figure; without the CHECK a five-point Likert answer written
 -- straight into the column as `4.5` is accepted and every average built on it is
 -- wrong by a factor nobody notices.
+--
+-- ⚠ GUARDED BEFORE IT IS VALIDATED, and the sibling change three lines above is
+-- why this one has to be. `008:491` defines `overall_score` on a FIVE-POINT
+-- scale, and this file's own prose concedes that a Likert `4.5` "is accepted"
+-- today. On any database holding one such row, `VALIDATE CONSTRAINT` aborts —
+-- and it aborts naming the constraint, not the row, so whoever is running the
+-- apply at that moment learns that something is out of range and nothing about
+-- what or how much. The numeric-precision change beside it counts first and
+-- refuses with the rows named; this one did not, which is the asymmetry.
+--
+-- 017 does not normalise the offending rows. Dividing a 5-point score by 5 is a
+-- data decision about what a customer's evaluation MEANT, not a migration's to
+-- take silently, and a mixed table where some rows were normalised and some were
+-- always fractions is worse than a stopped migration. So: count, name, refuse.
 DO $score$
+DECLARE
+  v_out_of_range integer;
+  v_max          numeric;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
                   WHERE conrelid='core.evaluation_responses'::regclass
                     AND conname='evaluation_responses_overall_score_range') THEN
+
+    SELECT pg_catalog.count(*), pg_catalog.max(overall_score)
+      INTO v_out_of_range, v_max
+      FROM core.evaluation_responses
+     WHERE overall_score IS NOT NULL
+       AND (overall_score < 0 OR overall_score > 1);
+
+    IF v_out_of_range > 0 THEN
+      RAISE EXCEPTION
+        '017: % evaluation_responses row(s) hold an overall_score outside 0..1 '
+        '(highest: %). 008 defined this column on a five-point scale and 017 '
+        'narrows it to the normalised 0..1 figure the rule names, so VALIDATE '
+        'would abort here without telling you which rows. It is not this '
+        'migration''s call whether a stored 4.5 means 0.9 or a data-entry error: '
+        'normalise or correct them deliberately, then re-run. Until then every '
+        'average built on this column is wrong by a factor nobody notices, which '
+        'is the defect the constraint exists to stop.',
+        v_out_of_range, v_max;
+    END IF;
+
     ALTER TABLE core.evaluation_responses
       ADD CONSTRAINT evaluation_responses_overall_score_range
       CHECK (overall_score IS NULL OR (overall_score >= 0 AND overall_score <= 1)) NOT VALID;
@@ -594,11 +649,202 @@ COMMENT ON VIEW core.v_tax_policy_unverified IS
 -- not pedantry: three lines at RM 333.33 at 8% give 8,001 sen per line and 8,000
 -- sen on the summed net.
 
+-- ⚠ NO DEFAULTS ON `sst_rate` AND `sst_reason`, AND THAT IS THE WHOLE POINT.
+--
+-- An earlier version of this file added them as `NOT NULL DEFAULT 0` and
+-- `NOT NULL DEFAULT 'STANDARD_RATED'`. Ruling R-C says SST is "resolved by
+-- `app.resolve_tax_policy()`; **never a column default**", and those two defaults
+-- were exactly the thing it forbids — worse than a missing value, because the
+-- pair they produce is internally consistent and wrong: a quotation stamped
+-- STANDARD_RATED at a rate of zero reads as a deliberate, taxable, zero-tax
+-- position. `sst_sen` and `gross_price_sen` are GENERATED from `sst_rate`, so the
+-- customer is quoted a gross equal to the net, the invoice built from the
+-- quotation field-for-field carries it forward, and nothing in the database
+-- disagrees. A taxable service silently billed with no service tax is an RMCD
+-- problem with no error message attached to it.
+--
+-- The columns are therefore added NULLABLE, filled — for existing rows by the
+-- backfill below, for every future row by the BEFORE trigger below that — and
+-- only then made NOT NULL. That ordering is the standard retrofit shape for a
+-- NOT NULL column on a table that may already hold rows, and 017's header says
+-- these tables may.
 ALTER TABLE core.quotations
   ADD COLUMN IF NOT EXISTS sst_policy_id uuid REFERENCES core.tax_policies(id),
-  ADD COLUMN IF NOT EXISTS sst_rate      numeric(6,5) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS sst_reason    text NOT NULL DEFAULT 'STANDARD_RATED',
+  ADD COLUMN IF NOT EXISTS sst_rate      numeric(6,5),
+  ADD COLUMN IF NOT EXISTS sst_reason    text,
   ADD COLUMN IF NOT EXISTS sst_exempt_reason text;
+
+-- If this file is re-run against a database that got the old defaulted columns,
+-- strip the defaults rather than leaving them to re-appear on the next INSERT
+-- that omits the column. Re-runnability is a stated property of this pack.
+ALTER TABLE core.quotations ALTER COLUMN sst_rate   DROP DEFAULT;
+ALTER TABLE core.quotations ALTER COLUMN sst_reason DROP DEFAULT;
+
+-- ── THE RESOLVER TRIGGER · what makes "never a column default" true ─────────
+-- Ruling R-C names `app.resolve_tax_policy()` as the only source of an SST
+-- position. Naming it is not enough: 017 also has to make it IMPOSSIBLE to store
+-- a quotation without going through it, because the write paths are not all
+-- written yet. 018's `put_quotation` resolves explicitly and is welcome to — this
+-- trigger fills only what the caller left NULL, so an explicit resolution passes
+-- through untouched and is not re-resolved on every later UPDATE.
+--
+-- WHY BEFORE AND NOT A CHECK CONSTRAINT. A CHECK can refuse a bad row; it cannot
+-- produce the right one, and a refusal here would mean every writer in the
+-- product has to learn the tax model before it can save a draft. The trigger
+-- makes the correct value the path of least resistance and leaves the refusal for
+-- the case where the correct value genuinely cannot be derived.
+--
+-- WHY `CORPORATE_TRAINING` IS HARDCODED AS THE CATEGORY, stated rather than
+-- buried: a quotation carries no service-category column, and the product sells
+-- one category. When a second one exists it becomes a column on the quotation and
+-- this line reads it instead. Hardcoding the LOOKUP KEY is not the thing R-C
+-- forbids; hardcoding the RATE is, and the rate still comes from the table.
+--
+-- WHY `created_at::date` IS THE EFFECTIVE DATE. `core.tax_policies` is
+-- effective-dated and bitemporal, so "which rate" is a question about a moment.
+-- The moment that matters commercially is when the quotation was written, not
+-- when a trigger happened to run — a quotation drafted before a rate change and
+-- updated after it must not silently re-rate.
+CREATE OR REPLACE FUNCTION core.resolve_quotation_sst()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_policy record;
+  v_on     date;
+BEGIN
+  -- Nothing to do when the caller resolved it themselves. Checked on BOTH
+  -- columns: a caller who set one and not the other has a half-formed position,
+  -- and filling the other from policy would produce a rate that does not match
+  -- the reason beside it.
+  IF NEW.sst_reason IS NOT NULL AND NEW.sst_rate IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.sst_reason IS NOT NULL OR NEW.sst_rate IS NOT NULL THEN
+    RAISE EXCEPTION
+      'resolve_quotation_sst: quotation % supplies only one of sst_reason/sst_rate '
+      '(reason=%, rate=%). Supply both, from one resolve_tax_policy() call, or '
+      'neither and let this trigger resolve them together. Half a tax position is '
+      'a rate that does not match its own reason.',
+      COALESCE(NEW.ref, NEW.id::text), NEW.sst_reason, NEW.sst_rate
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  v_on := (COALESCE(NEW.created_at, pg_catalog.now()))::date;
+
+  SELECT * INTO v_policy
+    FROM app.resolve_tax_policy(NEW.tenant_id, 'CORPORATE_TRAINING', v_on, pg_catalog.now());
+
+  NEW.sst_policy_id := v_policy.policy_id;
+  NEW.sst_rate      := v_policy.rate;
+  NEW.sst_reason    := CASE WHEN v_policy.exempt THEN 'TRAINING_EXEMPT'
+                            ELSE 'STANDARD_RATED' END;
+
+  -- The exemption costs a reason, and the trigger will not invent one. An exempt
+  -- policy that requires a written reason and a caller who supplied none is a
+  -- refusal, not a default: `quotations_exempt_needs_reason` would catch it a
+  -- moment later anyway, and this message says what to do about it.
+  IF v_policy.exempt AND v_policy.exempt_reason_required
+     AND (NEW.sst_exempt_reason IS NULL OR pg_catalog.btrim(NEW.sst_exempt_reason) = '') THEN
+    RAISE EXCEPTION
+      'resolve_quotation_sst: tax policy % is exempt and requires a written '
+      'reason, and quotation % supplies none. Set sst_exempt_reason. Corporate '
+      'training is TAXABLE under Group G; the exemption is for Education Act '
+      'institutions, and an unexplained one is an under-billed customer and an '
+      'RMCD question nobody can answer two years later.',
+      v_policy.policy_code, COALESCE(NEW.ref, NEW.id::text)
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  RETURN NEW;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION core.resolve_quotation_sst() FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION core.resolve_quotation_sst() IS
+  'BEFORE INSERT OR UPDATE on core.quotations. Fills sst_policy_id, sst_rate and '
+  'sst_reason from app.resolve_tax_policy() when the caller supplied neither rate '
+  'nor reason, so ruling R-C''s "never a column default" is enforced by mechanism '
+  'rather than by convention. An explicit resolution (018''s put_quotation) passes '
+  'through untouched; half a position is refused; an exempt policy that requires a '
+  'written reason and has none is refused. 017.';
+
+DROP TRIGGER IF EXISTS trg_quotations_resolve_sst ON core.quotations;
+CREATE TRIGGER trg_quotations_resolve_sst
+  BEFORE INSERT OR UPDATE ON core.quotations
+  FOR EACH ROW EXECUTE FUNCTION core.resolve_quotation_sst();
+
+-- ── THE BACKFILL, and the guard that stops it guessing ─────────────────────
+-- Existing quotations have NULL in both columns now. They are filled from the
+-- SAME resolver, at each row's own creation date, so a historical quotation gets
+-- the rate that applied when it was written rather than today's.
+--
+-- A quotation older than the earliest policy cannot be resolved, and
+-- `resolve_tax_policy` RAISES rather than returning zero — correctly. Counting
+-- them FIRST turns that into one legible refusal naming the rows, instead of an
+-- abort on whichever row the UPDATE happened to reach first. Same shape as the
+-- numeric-precision guard earlier in this file.
+DO $sst_backfill$
+DECLARE
+  v_unresolvable integer;
+  v_earliest     date;
+  v_filled       integer;
+BEGIN
+  SELECT pg_catalog.min(tp.effective_from) INTO v_earliest
+    FROM core.tax_policies AS tp
+   WHERE tp.service_category = 'CORPORATE_TRAINING';
+
+  IF v_earliest IS NULL THEN
+    RAISE EXCEPTION
+      '017: no CORPORATE_TRAINING tax policy exists, so no quotation can be '
+      'resolved. §4 seeds one; this block runs after it and something has removed it.';
+  END IF;
+
+  SELECT pg_catalog.count(*) INTO v_unresolvable
+    FROM core.quotations AS q
+   WHERE q.sst_reason IS NULL
+     AND q.created_at::date < v_earliest;
+
+  IF v_unresolvable > 0 THEN
+    RAISE EXCEPTION
+      '017: % quotation(s) were created before % , the earliest CORPORATE_TRAINING '
+      'tax policy, so their SST position cannot be resolved from policy. 017 will '
+      'not guess one: a stamped zero is exactly the defect this section removes. '
+      'Seed a policy whose effective_from covers them, or correct their '
+      'created_at, then re-run.',
+      v_unresolvable, v_earliest;
+  END IF;
+
+  -- The lateral is joined to a second reference to the table rather than to the
+  -- UPDATE target: an UPDATE's target is not in scope for its own FROM clause, so
+  -- `FROM LATERAL (... q.tenant_id ...)` does not compile.
+  UPDATE core.quotations AS q
+     SET sst_policy_id = p.policy_id,
+         sst_rate      = p.rate,
+         sst_reason    = CASE WHEN p.exempt THEN 'TRAINING_EXEMPT' ELSE 'STANDARD_RATED' END
+    FROM core.quotations AS src
+    CROSS JOIN LATERAL app.resolve_tax_policy(
+      src.tenant_id, 'CORPORATE_TRAINING', src.created_at::date, pg_catalog.now()) AS p
+   WHERE src.id = q.id
+     AND (q.sst_reason IS NULL OR q.sst_rate IS NULL);
+  GET DIAGNOSTICS v_filled = ROW_COUNT;
+
+  IF v_filled > 0 THEN
+    RAISE NOTICE
+      '017: resolved SST from policy for % pre-existing quotation(s), each at its '
+      'own created_at date', v_filled;
+  END IF;
+END;
+$sst_backfill$;
+
+-- Now, and only now, the columns can carry the constraint the model needs. A
+-- NULL here after this line means a write path found a way past the trigger.
+ALTER TABLE core.quotations ALTER COLUMN sst_rate   SET NOT NULL;
+ALTER TABLE core.quotations ALTER COLUMN sst_reason SET NOT NULL;
 
 ALTER TABLE core.quotations
   ADD COLUMN IF NOT EXISTS sst_sen bigint
@@ -932,6 +1178,17 @@ DROP TRIGGER IF EXISTS trg_tenants_seed_check_keys ON public.tenants;
 CREATE TRIGGER trg_tenants_seed_check_keys
   AFTER INSERT ON public.tenants
   FOR EACH ROW EXECUTE FUNCTION app.seed_check_keys_on_tenant();
+
+-- ⚠ REGISTER THE SEED, so app.provision_tenant refuses a tenant that is missing
+-- it. 016's guard used to name two relations in its own body; a third trigger
+-- added here by copying 016's pattern would have been unguarded, and was, until
+-- 016 grew the registry this INSERT writes to. The whole cost of not forgetting
+-- is these five lines, next to the trigger they describe.
+INSERT INTO app.tenant_seed_checks (pack, label, schema_name, table_name, note) VALUES
+  ('017','compliance check keys','core','check_keys',
+   'Every HRD Corp compliance rule for this tenant resolves to no check key, so the compliance engine evaluates nothing and a claim deadline passes with the packet looking healthy.')
+ON CONFLICT (schema_name, table_name) DO UPDATE
+  SET pack = EXCLUDED.pack, label = EXCLUDED.label, note = EXCLUDED.note;
 
 DO $ck_backfill$
 DECLARE r pg_catalog.record; v_total integer := 0;
