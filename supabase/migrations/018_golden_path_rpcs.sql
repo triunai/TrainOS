@@ -980,8 +980,13 @@ BEGIN
     )
     SELECT COALESCE(pg_catalog.jsonb_agg(row.item ORDER BY row.ord), '[]'::jsonb),
            pg_catalog.count(*)::integer,
-           pg_catalog.max(row.sort_at),
-           (pg_catalog.array_agg(row.id ORDER BY row.ord DESC))[1]
+           -- THE CURSOR IS THE LAST ROW IN DISPLAY ORDER, not the maximum sort
+           -- key. Under a DESCENDING sort those are opposite ends of the page,
+           -- and taking the max hands back a cursor pointing at the row the
+           -- reader has already seen — page two then repeats page one's tail.
+           -- Caught by T4e, which counted the rows on page two.
+           (pg_catalog.array_agg(row.sort_at ORDER BY row.ord DESC))[1],
+           (pg_catalog.array_agg(row.id      ORDER BY row.ord DESC))[1]
       FROM (
         SELECT pg_catalog.row_number() OVER (ORDER BY e.%I %s, e.id %s) AS ord,
                e.id, e.%I AS sort_at,
@@ -1924,7 +1929,7 @@ BEGIN
      -- `core.put_quotation`'s and the §18 money rule lives in 007.
      COALESCE(v_opportunity.value_sen, v_programme.list_price_sen),
      'MYR',
-     COALESCE(v_actor.actor_kind, 'HUMAN'), v_actor.actor_id, NULL)
+     COALESCE(v_actor.actor_kind, 'HUMAN')::app.actor_kind, v_actor.actor_id, NULL)
   RETURNING * INTO v_proposal;
 
   -- Sections come from the template, in the template's own order. A proposal
@@ -1934,7 +1939,7 @@ BEGIN
     (tenant_id, proposal_id, n, title, body, needs_review,
      created_by_kind, created_by_id, created_by_name)
   SELECT v_tenant, v_proposal.id, section.n, section.title, section.default_body, false,
-         COALESCE(v_actor.actor_kind, 'HUMAN'), v_actor.actor_id, NULL
+         COALESCE(v_actor.actor_kind, 'HUMAN')::app.actor_kind, v_actor.actor_id, NULL
     FROM core.template_sections AS section
    WHERE section.tenant_id = v_tenant AND section.template_id = v_template.id
    ORDER BY section.n;
@@ -2086,8 +2091,11 @@ DECLARE
   v_computed bigint;
   v_hash     text;
   v_key      app.idempotency_keys%ROWTYPE;
-  v_after    core.quotations%ROWTYPE;
-  v_sell     bigint;
+  v_after      core.quotations%ROWTYPE;
+  v_sell       bigint;
+  v_sum_sell   bigint;
+  v_sum_cost   bigint;
+  v_line_count integer;
 BEGIN
   SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
   IF v_actor.role IS NULL THEN
@@ -2213,39 +2221,74 @@ BEGIN
     END IF;
   END IF;
 
-  -- 007's two assertions are DEFERRABLE INITIALLY DEFERRED, so without this
-  -- they fire at COMMIT — outside this function, where the error can no longer
-  -- be translated into a contract error code and reaches the client as a raw
-  -- integrity violation. Forcing them IMMEDIATE is what makes
-  -- FLOOR_PRICE_BREACH and TOTAL_NOT_RECONCILED catchable here.
-  BEGIN
-    SET CONSTRAINTS core.trg_quotation_reconciled, core.trg_quotation_floor IMMEDIATE;
-  EXCEPTION WHEN integrity_constraint_violation THEN
-    SELECT quotation.* INTO v_after FROM core.quotations AS quotation
-     WHERE quotation.tenant_id = v_tenant AND quotation.id = v_row.id;
+  -- ── TRANSLATING 007'S TWO ASSERTIONS INTO CONTRACT ERROR CODES ──────────
+  --
+  -- 007 enforces the money rule with two DEFERRABLE INITIALLY DEFERRED
+  -- constraint triggers, which fire at COMMIT — outside this function, where
+  -- the error can no longer be turned into a contract error code and reaches
+  -- the client as a raw integrity violation with 007's own message.
+  --
+  -- `SET CONSTRAINTS ... IMMEDIATE` DOES NOT SOLVE THIS, and that was measured
+  -- rather than assumed: inside a PL/pgSQL block with an exception handler the
+  -- statement succeeds and fires nothing, because the handler opens a
+  -- subtransaction and the deferred-event queue is not processed there. The
+  -- first version of this function used it and T14 caught 007's raw message
+  -- coming through untranslated.
+  --
+  -- So the check is made HERE, by READING BACK the columns 007 GENERATED.
+  -- This computes no money of its own — `sell_price_sen` and
+  -- `direct_cost_sen` were written by `core.quotation_recalc()`, and
+  -- `below_floor`, `floor_price_sen`, `margin_floor_price_sen`,
+  -- `binding_floor_basis` and `margin_rate` are generated columns. 007 remains
+  -- the enforcement; its deferred triggers still fire at COMMIT as the
+  -- backstop. This is the translation layer, and it refuses FIRST so the
+  -- client gets FLOOR_PRICE_BREACH and TOTAL_NOT_RECONCILED rather than 23000.
+  SELECT quotation.* INTO v_after FROM core.quotations AS quotation
+   WHERE quotation.tenant_id = v_tenant AND quotation.id = v_row.id;
 
-    IF v_after.below_floor AND v_after.discount_approval_id IS NULL THEN
-      -- The full RULING R6 bag. `POLICY_APPROVAL_REQUIRED` is NOT raised here:
-      -- a discount that needs approval goes through `DISCOUNT_APPROVE` on
-      -- `core.perform_action`, which is the one endpoint that gates approvals.
-      RAISE EXCEPTION 'quotation is priced below its binding floor'
-        USING ERRCODE = 'TRNOS',
-              DETAIL = pg_catalog.jsonb_build_object(
-                'code','FLOOR_PRICE_BREACH',
-                'floorPrice',          app._money(v_after.floor_price_sen, v_after.currency::text),
-                'resultingMarginRate', COALESCE(v_after.margin_rate, 0),
-                'requiresPolicy',      'APV-02',
-                'absoluteFloorPrice',  app._money(v_after.programme_floor_price_sen, v_after.currency::text),
-                'marginFloorPrice',    app._money(v_after.margin_floor_price_sen, v_after.currency::text),
-                'bindingFloorBasis',   CASE WHEN v_after.binding_floor_basis = 'PROGRAMME'
-                                            THEN 'ABSOLUTE' ELSE v_after.binding_floor_basis END)::text;
-    END IF;
+  SELECT COALESCE(pg_catalog.sum(line.total_sen) FILTER (WHERE NOT line.is_cost), 0),
+         COALESCE(pg_catalog.sum(line.total_sen) FILTER (WHERE     line.is_cost), 0),
+         pg_catalog.count(*)::integer
+    INTO v_sum_sell, v_sum_cost, v_line_count
+    FROM core.quotation_lines AS line
+   WHERE line.tenant_id = v_tenant AND line.quotation_id = v_row.id;
 
+  -- A quotation with NO lines is a draft being started, not a disagreement —
+  -- 007 makes the same exemption, and the two must agree or a legal draft is
+  -- refused by one and accepted by the other.
+  IF v_line_count > 0
+     AND (v_after.sell_price_sen <> v_sum_sell OR v_after.direct_cost_sen <> v_sum_cost) THEN
     RAISE EXCEPTION 'quotation header does not equal the sum of its rounded lines'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object(
-              'code','VALIDATION_FAILED','reason','TOTAL_NOT_RECONCILED')::text;
-  END;
+              'code','VALIDATION_FAILED',
+              'reason','TOTAL_NOT_RECONCILED',
+              'claimedSell', v_after.sell_price_sen, 'lineSell', v_sum_sell,
+              'claimedCost', v_after.direct_cost_sen, 'lineCost', v_sum_cost)::text;
+  END IF;
+
+  IF v_line_count > 0 AND v_after.below_floor AND v_after.discount_approval_id IS NULL THEN
+    -- The full RULING R6 bag. `floorPrice` alone says a price is too low; it
+    -- does not say WHICH constraint made it too low, and the two are acted on
+    -- differently — an absolute breach is a conversation about the tier, a
+    -- margin breach is a conversation about cost.
+    --
+    -- `POLICY_APPROVAL_REQUIRED` IS NOT RAISED HERE: a discount that needs
+    -- approval goes through `DISCOUNT_APPROVE` on `core.perform_action`, which
+    -- is the one endpoint that gates approvals. Raising it here would put a
+    -- second approval path beside the spine.
+    RAISE EXCEPTION 'quotation is priced below its binding floor'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','FLOOR_PRICE_BREACH',
+              'floorPrice',          app._money(v_after.floor_price_sen, v_after.currency::text),
+              'resultingMarginRate', COALESCE(v_after.margin_rate, 0),
+              'requiresPolicy',      'APV-02',
+              'absoluteFloorPrice',  app._money(v_after.programme_floor_price_sen, v_after.currency::text),
+              'marginFloorPrice',    app._money(v_after.margin_floor_price_sen, v_after.currency::text),
+              'bindingFloorBasis',   CASE WHEN v_after.binding_floor_basis = 'PROGRAMME'
+                                          THEN 'ABSOLUTE' ELSE v_after.binding_floor_basis END)::text;
+  END IF;
 
   IF v_key.id IS NOT NULL THEN
     UPDATE app.idempotency_keys
@@ -2436,8 +2479,13 @@ BEGIN
   EXECUTE pg_catalog.format($q$
     SELECT COALESCE(pg_catalog.jsonb_agg(row.item ORDER BY row.ord), '[]'::jsonb),
            pg_catalog.count(*)::integer,
-           pg_catalog.max(row.sort_at),
-           (pg_catalog.array_agg(row.id ORDER BY row.ord DESC))[1]
+           -- THE CURSOR IS THE LAST ROW IN DISPLAY ORDER, not the maximum sort
+           -- key. Under a DESCENDING sort those are opposite ends of the page,
+           -- and taking the max hands back a cursor pointing at the row the
+           -- reader has already seen — page two then repeats page one's tail.
+           -- Caught by T4e, which counted the rows on page two.
+           (pg_catalog.array_agg(row.sort_at ORDER BY row.ord DESC))[1],
+           (pg_catalog.array_agg(row.id      ORDER BY row.ord DESC))[1]
       FROM (
         SELECT pg_catalog.row_number() OVER (ORDER BY a.%I %s, a.id %s) AS ord,
                a.id, a.%I AS sort_at,
