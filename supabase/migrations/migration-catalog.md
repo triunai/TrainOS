@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 9 · **Applied:** 0 · **Authored, not applied:** 9
+**Migrations:** 10 · **Applied:** 0 · **Authored, not applied:** 10
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 1 (2026-09-13, rulings R-EXT / search_path / FORCE RLS — see the entry below)
 
@@ -57,6 +57,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 010 | `010_finance_invoices_payments_collections.sql` | **Invoices, payments, credit notes, the e-invoice mirror, receivables aging and the collections ladder (2026-09-13).** Ten tables. Total-from-lines reuses 007's pattern rather than inventing a second one — the line amount is GENERATED, an AFTER trigger recomputes the header, a DEFERRABLE constraint trigger asserts at COMMIT — and extends it: `sst_sen` and `total_sen` are GENERATED too, so a wrong total is unrepresentable rather than merely rejected. **SST is computed on the summed net**, and the pin proves that is not pedantry: three lines at RM 333.33 at 8% give 8,001 sen per-line and 8,000 sen on the summed net. **Payments are append-only**, enforced by a trigger that refuses UPDATE and DELETE; a correction is a reversal row with a reason, because a signed amount column would let a correction be entered as an ordinary payment and vanish into the total. **Critic C-11 is answered**: the e-invoice mirror separates the document UUID from the submission UID, carries the QR long id, a status vocabulary that can express SUBMITTED_PENDING_VALIDATION and CANCELLED, structured per-field validation errors with a key-presence CHECK, per-line classification and UoM codes, self-billed and consolidated flags, a supplier tax profile and buyer identifiers — and enforces the **statutory 72-hour cancellation window**, proved at 71 and 73 hours. Credit notes are the legal exit from a mistake on a filed invoice and cannot exceed it. Aging buckets and the 7/30/45/60/75 ladder are DATA with a GiST exclusion and two CHECK constraints that make "reminder 3 is always human" and "a trading hold needs MD" unrepresentable. Spine untouched. |
 | 009 | `009_compliance_rules_checks_hrdc.sql` | **The bitemporal HRD Corp rule registry, rule-change review, checks with version drift, claim packets, knowledge corpus (2026-09-12).** Twelve tables. Rules carry two time ranges — in force, and known — so re-running a check on an old engagement resolves what the registry said THEN rather than silently re-deciding it against today. A GiST exclusion constraint over both axes makes "which rule applied on this date as known on that date" have exactly one answer. Rules are national by default (`tenant_id NULL`) with optional tenant overrides that win locally and nowhere else; there is deliberately no platform-admin role, so writing a national rule is a provisioning act. A rule cannot go ACTIVE without a named verifier, per DECISIONS §3. A packet cannot be marked SUBMITTED while incomplete — contract §9's 422 expressed where an application cannot route around it — and a required document marked PRESENT must have something behind it. A changed knowledge source is quarantined by constraint. Spine untouched. |
 | 008 | `008_delivery_engagements_sessions_attendance.sql` | **Delivery, and the one-way attendance lock (2026-09-12).** Engagements with a configuration-driven lifecycle, sessions, participants, attendance, certificates, evaluations, message rates and outbound messages. The attendance lock is enforced on the day AND its entries, because the rule is about the day and the writes happen to the entries. Locking forces all three capture modes false so the response cannot contradict the rule. Unlocking requires a reason, clears the approval, reopens capture and increments a counter the caller cannot set. `engagement_step_states` stores no step key and no position — both come from `pipeline_steps`. Participants' identity numbers are stored as a hash plus last four, never the number. A sent message cites the consent row it relied on by foreign key. Closes the two FKs 006 and 007 left open. Spine untouched: `ATTENDANCE_APPROVE` and `ATTENDANCE_UNLOCK` are action types 011 will dispatch; this is what makes the lock real when it does. |
 | 007 | `007_money_proposals_quotations_portal.sql` | **Money: rate cards, provenance, proposals, quotations and the client portal (2026-09-12).** Eighteen tables. Total-from-lines is enforced, not trusted: `quotation_lines.total_sen` is a GENERATED column so a caller cannot supply a total that disagrees with its own unit price and quantity, a trigger recomputes the header from the lines, and a DEFERRABLE constraint trigger refuses to commit a header that disagrees. Deferred because a multi-line edit legitimately passes through states where they do not match. **Two floors, both generated**: an absolute programme floor stamped at pricing time and a margin floor derived with `ceil` (never `round`), with the binding one and `below_floor` derived from the row so the costing screen and the approval screen cannot compute them differently. `floor_margin_rate` and `commission_rate` are STAMPED onto the quotation, so a rate-card edit cannot silently reprice a proposal already sent, and the floor stays reproducible after the card is retired. Portal tokens store only a SHA-256 hash, and `UNIQUE (tenant_id, proposal_id)` on acceptances makes a double-clicked Accept unable to create a second binding acceptance whatever the handler does. Spine untouched. |
@@ -243,6 +244,109 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 010 (`010_finance_invoices_payments_collections.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.** Sources:
+`docs/architecture/01` §3.4 (invoices, lines, payments, collections),
+`docs/architecture/04` §1.3 and §1.6 (lines, totals, reconciliation, SST on the summed net) and
+§7 (aging buckets, the collections ladder), `DECISIONS.md` §1 (autonomy ceilings) and §7
+(rounding), and `docs/architecture/06` `C-11` (the e-invoice gap).
+
+### What it does
+
+- **Ten tables**: `tenant_tax_profiles`, `invoices`, `invoice_lines`, `invoice_sync_entries`,
+  `payments`, `credit_notes`, `credit_note_lines`, `aging_buckets`, `collection_rules`,
+  `collections_cases`. All through `app.finalise_table`, all RLS enabled AND FORCED with zero
+  policies — deny-all until 014.
+- **Ten functions**, every one at `search_path = ''` and REVOKEd from every client role.
+- **One ALTER**, on `core.organisations`, adding the buyer's tax identifiers and a structured
+  address. The rollback reproduces that table's prior shape in full.
+
+### The decisions worth defending
+
+- **`sst_sen` and `total_sen` are GENERATED, where doc 01 has CHECK constraints.** A CHECK
+  rejects a wrong total; a generated column makes one unrepresentable, which is the argument doc
+  04 §1.3 makes for the line amount and which applies identically here. PostgreSQL forbids one
+  generated column referencing another, so the SST term is recomputed inside `total_sen` rather
+  than referenced — the duplication is the language's, not a second definition of the rule.
+- **`outstanding_sen` is NOT generated, and cannot be.** A generation expression may not read
+  another table. It is trigger-maintained from `core.payments` and then asserted at COMMIT by the
+  same deferred trigger that guards the header totals, so a direct UPDATE on the header — which
+  bypasses the maintaining trigger entirely — still cannot leave it wrong.
+- **`einvoice_cancel_deadline_at` is derived by trigger, and that is a downgrade forced by
+  PostgreSQL rather than a choice.** It was written `GENERATED ALWAYS AS (einvoice_validated_at +
+  interval '72 hours') STORED` and refused: *generation expression is not immutable*.
+  `timestamptz + interval` is STABLE, not IMMUTABLE, because interval arithmetic depends on the
+  session TimeZone. Found by running it. The guarantee is bought back by a BEFORE trigger that
+  overwrites the column unconditionally, and `test_010` T8 earns it by writing a deliberately
+  extended deadline and checking the row afterwards.
+- **Payments are append-only and the trigger is named `trg_a_payments_immutable`.** Triggers fire
+  in NAME order and `app.set_updated_at` is also a BEFORE UPDATE trigger; the `a_` prefix is what
+  makes the refusal win regardless of what a later migration attaches.
+- **`core.payment_apply()` locks the invoice and re-reads the payment sum INSIDE the lock.** A
+  read before the lock is the stale read the lock exists to prevent. Parent-before-child is also
+  007's portal-acceptance lock order, so the two cannot deadlock against each other under load.
+- **`collections_cases` is UNIQUE per OPEN case, not per invoice.** An invoice that was chased,
+  settled, and went overdue again is a second case; collapsing them would lose the first chase.
+
+### Defects found by running it
+
+1. **The self-referential foreign key could not be declared inline.**
+   `payments_reverses_fk (tenant_id, reverses_payment_id) → core.payments (tenant_id, id)` needs
+   `UNIQUE (tenant_id, id)` on the table being created, and that unique constraint is one of the
+   things `app.finalise_table` adds afterwards. Inline it fails with *there is no unique
+   constraint matching given keys for referenced table*, which is accurate and reads like a
+   missing parent table. Added after `finalise_table` with the reason in the file.
+2. **`invoices_void_needs_reason` was wrong, and `test_010` T7a caught it.** It read
+   `(voided_at IS NULL) = (void_reason IS NULL)`, conflating two different events that both need a
+   reason: TrainOS voiding its own invoice, and the DOCUMENT being cancelled downstream inside the
+   72-hour window. The second sets `void_reason` without `voided_at`, so the CHECK refused it —
+   making the statutory cancellation path this migration exists to support unwalkable. Worth
+   recording rather than quietly fixing: the wrong version was the more restrictive of the two and
+   looked more careful, which is how a wrong constraint survives review.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — no client-callable RPC added. `core.receivables_aging` returns a SETOF and
+   `core.collection_stage_for` a scalar; both are internal. When 014 exposes a finance RPC it
+   returns through `app.ok`/`app.err` like every other.
+2. **Unwrap** — not applicable; nothing here returns the envelope, and no top-level sibling key is
+   introduced anywhere, so the 037 mechanism cannot fire.
+3. **RpcMap** — no entries. No client-callable surface is added.
+4. **Call sites** — `grep -rn "receivables_aging\|collection_stage_for"` over `apps/` and
+   `packages/` returns ZERO today. Stated rather than left to look like a dead-RPC finding: they
+   exist for 013's agent tooling and the collections queue, both later. **If they still have zero
+   call sites after 016, that IS a finding.**
+5. **Casts** — none. No `as unknown as` near this surface.
+6. **Reload/restore** — no client-visible behaviour yet.
+7. **Public routes** — none. The portal's public surface is 007's share tokens, untouched;
+   nothing here is reachable by `anon`, and `test_010` T15 asserts it per object.
+
+### Authorization
+
+No grants to any client role, on any table or either function. `core.receivables_aging` takes the
+tenant as an ARGUMENT, so granting EXECUTE before 014 gives the tables policies would publish a
+cross-tenant reader; 014 grants it and the body re-checks the caller's tenant.
+
+### Spine
+
+**Spine untouched.** `app.perform_action` does not exist yet. Every action type these tables are
+the target of — `INVOICE_CREATE`, `INVOICE_PUSH`, `PAYMENT_RECORD`, `CREDIT_NOTE_ISSUE`,
+`ACCOUNT_TRADING_HOLD` — is registered as DATA in 011's `app.action_types` seed, never as a branch
+here. `collections_cases.trading_hold_action_id` is deliberately left without a foreign key: 011
+adds it rather than 010 guessing the shape of a table that does not exist.
+
+### Carried forward
+
+- **C-11 is NOT fully closed by this migration and does not claim to be.** Its first sentence asks
+  for written confirmation that the accounting package is the submitter of record and round-trips
+  these fields. That is a client answer, not a schema change. Registered as **D-45**.
+- **The C-04 sequencing residue** is flagged in 010's header for 011 as the critic asked, not
+  re-derived: doc 03's `grant select … to authenticated` must not land before the gate tables have
+  policies.
 
 ---
 

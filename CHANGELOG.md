@@ -12,6 +12,44 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-13 — billing, and the tax document that finally has somewhere to put its own identity
+
+Authored and executed against a scratch database. Applied nowhere. Engineering detail is in
+`supabase/migrations/migration-catalog.md`.
+
+### Added
+
+- **Invoicing end to end**: invoices and their lines, payments, credit notes, receivables aging
+  and the collections ladder. An invoice total is now derived from its lines rather than supplied
+  alongside them, so a header that disagrees with what it is made of cannot be saved at all.
+- **Service tax is calculated once on the whole invoice, not line by line.** On a three-line
+  invoice at 8% the two methods differ by one sen, and the one-sen version is the one that ends up
+  in a dispute.
+- **A payment can never be edited or deleted.** A correction is a reversal entry that names what
+  it reverses and why, so the original and the correction are both visible. The alternative quietly
+  rewrites history and leaves the bank reconciliation unexplainable.
+- **Credit notes.** Until now a validated invoice was frozen with no way out of a mistake except
+  editing a filed tax document. A credit note is the legal exit, and it cannot be written for more
+  than the invoice it credits.
+- **Everything a Malaysian e-invoice needs to be mirrored back.** The document reference and the
+  batch reference are now separate fields rather than one, the QR token has somewhere to live, the
+  status can express "submitted, awaiting validation" instead of guessing, and a rejection arrives
+  as a list of fields rather than a sentence. The company's own tax registration details and the
+  customer's now exist as data; previously there was nowhere to put either.
+- **The 72-hour cancellation window is enforced by the database.** Inside it, a cancellation with
+  a stated reason is accepted. Outside it, the cancellation is refused and the route is a credit
+  note. The deadline cannot be pushed back by writing a later date into it.
+- **Receivables buckets and the reminder ladder are settings, not code.** A finance lead moves the
+  second reminder from 30 days to 21 without a release. Two things stay fixed because the business
+  decided they are fixed: the third reminder is always sent by a person, and a trading hold always
+  needs the managing director.
+
+### Fixed
+
+- **Overlapping receivables buckets are now impossible.** Two buckets covering the same range
+  would count the same invoice twice, and the resulting total is wrong in the direction nobody
+  questions.
+
 ## 2026-09-13 — the database can now schedule, send and remember, and one rule that would have locked everybody out
 
 Nothing in this release is applied to any hosted database. These are amendments to migrations

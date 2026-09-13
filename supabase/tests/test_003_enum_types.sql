@@ -165,7 +165,9 @@ BEGIN
       'rate_card_status',
       -- owned by 009_compliance_rules_checks_hrdc
       'rule_side', 'rule_kind', 'rule_op', 'rule_reference_kind',
-      'rule_offset_unit', 'delivery_mode'
+      'rule_offset_unit', 'delivery_mode',
+      -- owned by 010_finance_invoices_payments_collections
+      'tax_identifier_kind', 'einvoice_status'
     );
   ASSERT v_extra IS NULL, format('T2 FAIL: unexpected enum type(s) in core: %s', v_extra);
   RAISE NOTICE 'T2 PASS - no unexpected enum types in core (7 later-migration enums allowed by name).';
