@@ -195,14 +195,16 @@ wiring the second one. Refs: `CLAUDE.md` gotchas, `fa88a24`.
 same branch at once, so rewriting the tip rewrites whatever a sibling lane
 committed into it in the meantime. Pathspec-only commits (R9) prevent taking
 someone else's staged work; this prevents destroying work already committed.
-Refs: `CLAUDE.md` R9, `AGENTS.md`, `5609dbe`, `ai/findings-log.md` B-007.
+Refs: `CLAUDE.md` **R12** and R9, `AGENTS.md`, `5609dbe`,
+`ai/findings-log.md` B-007.
 
 **D-121 · Check the file, not the message · ACTIVE (2026-09-12).** A commit
 message is a claim about a file, and this session produced at least one commit
 whose message described an edit the file did not receive. Every cross-lane
 premise was verified by reading the artefact — `git show`, the catalog, the
 `proconfig` value, the emitted chunk — before it was relied on. Refs:
-`ai/findings-log.md`, `docs/reviews/2026-09-12-ui-blast-lane-review.md`.
+`CLAUDE.md` **R13**, `AGENTS.md`, `ai/findings-log.md`,
+`docs/reviews/2026-09-12-ui-blast-lane-review.md`.
 
 **D-122 · No silent `else` over a value another lane owns · ACTIVE
 (2026-09-12).** A two-branch `CASE` over a foreign vocabulary fails silently
@@ -210,13 +212,15 @@ toward whichever branch is the `else`, so one wrong constant recorded every
 delivered email as dead-lettered and surfaced as `PARTIALLY_FAILED` on actions
 that fully succeeded. The durable fix is to raise on an unrecognised value, not
 to get the constant right; the same reasoning makes `app.job_type_for` a raising
-lookup table rather than a `CASE` returning null. Refs:
-`docs/architecture/05` §2.7, `85cb624`, `cc3a330`, `1caca0b`.
+lookup table rather than a `CASE` returning null. Refs: `CLAUDE.md` **R14**,
+`AGENTS.md`, `docs/architecture/05` §2.7, `85cb624`, `cc3a330`, `1caca0b`.
 
 **Rules table.** This file has none; the numbered rules live in `CLAUDE.md`
 Part 3. Pathspec-only commits are R9 and the CI-assertion-for-every-control rule
-is R11, both already written there. `D-120`, `D-121` and `D-122` are added to
-`CLAUDE.md` and `AGENTS.md` in the same pass as this entry.
+is R11, both already written there. `D-120`, `D-121` and `D-122` were added to
+`CLAUDE.md` Part 3 and `AGENTS.md` in the same pass as this entry, as **R12**
+(never rewrite a commit in a shared worktree), **R13** (check the file, not the
+message) and **R14** (the receiving side rejects an unknown value).
 
 ## D-101 · The dev server owns port 5180, not the house default 8080 · ACTIVE
 
