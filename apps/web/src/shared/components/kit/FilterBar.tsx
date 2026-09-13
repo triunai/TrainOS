@@ -233,10 +233,26 @@ export interface FilterSelectProps {
  */
 export function FilterSelect({ label, value, options, onChange, className }: FilterSelectProps) {
   return (
-    <label className={cn("flex items-center gap-2 text-[12px] text-ink-secondary", className)}>
-      <span>{label}</span>
+    <label
+      className={cn("flex min-w-0 items-center gap-2 text-[12px] text-ink-secondary", className)}
+    >
+      <span className="shrink-0">{label}</span>
       <select
-        className={cn(FILTER_CONTROL, FOCUS_RING)}
+        /* A native select is as wide as its WIDEST OPTION, and a facet whose
+           options are records rather than words — the participants list filters
+           by engagement, so every option is a cohort title — sizes itself to
+           the longest title in the fixture. Unbounded, that select was ~500px
+           inside a group with 311px to spend, and because the group is
+           `justify-end` the surplus hung off its LEFT edge and painted across
+           the segmented tabs. Same failure as the search box in aea54c4, from
+           a control that cannot shrink for a different reason.
+
+           240px is the cap: wide enough for a recognisable title, narrow
+           enough that three facets and a counter still fit a row. `truncate`
+           is what makes the cap legible rather than clipped, and `min-w-0`
+           is what lets the cap actually bind — a flex item's automatic
+           minimum is its content, which is the whole problem here. */
+        className={cn(FILTER_CONTROL, "min-w-0 max-w-[240px] truncate", FOCUS_RING)}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >

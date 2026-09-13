@@ -117,6 +117,32 @@ describe("ListToolbar", () => {
     expect(search.className).toContain("max-w-full");
   });
 
+  /* THE OVERLAP BUG, from the user's participants screenshot (74.png): the
+     search box and both selects painted straight across the segmented tabs.
+
+     jsdom cannot lay this out, so the assertion is on the property that makes
+     the overlap unrepresentable rather than on pixels. `min-w-0` lets a flex
+     item be laid out NARROWER THAN ITS CONTENTS; the item still counts as
+     fitting, so the line never breaks, and `justify-end` then hangs the surplus
+     off the group's LEFT edge, over the tabs. `min-w-min` floors the group at
+     its own min-content instead, so a group that cannot fit beside the track
+     has no way to pretend it fits and wraps to its own row.
+
+     Measured at 1440 and 1280, both themes, after this change: no control on
+     any of the three screens starts before the track ends, and nothing spills
+     past the toolbar's right edge either. */
+  it("floors the filter group at its content, so a row that cannot fit wraps instead of overlapping", () => {
+    const { container } = renderToolbar();
+    const right = container.querySelector("[data-list-toolbar] > div:nth-of-type(2)");
+
+    expect(right?.className).toContain("min-w-min");
+    expect(right?.className).not.toContain("min-w-0");
+    /* The wrap needs somewhere to go: both the row and the group must stay
+       wrappable, or the floor turns an overlap into a horizontal overflow. */
+    expect(container.querySelector("[data-list-toolbar]")).toHaveClass("flex-wrap");
+    expect(right?.className).toContain("flex-wrap");
+  });
+
   it("strips the FilterBar's own row padding, which this row already owns", () => {
     const { container } = renderToolbar();
     const right = container.querySelector("[data-list-toolbar] > div:nth-of-type(2)");

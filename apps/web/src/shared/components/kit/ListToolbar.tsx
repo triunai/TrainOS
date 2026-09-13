@@ -90,7 +90,24 @@ export function ListToolbar({ tabs, filters, actions, className }: ListToolbarPr
                not lower this further without lowering that first — a basis
                below the group's real minimum stops being a wrap rule and goes
                back to squeezing, which is the 155px bug §10b was written for. */
-            "flex min-w-0 grow basis-[300px] flex-wrap items-center justify-end gap-x-3 gap-y-2",
+            /* `min-w-min`, NOT `min-w-0`. This is what makes the row wrap
+               instead of overlap, and the basis alone never did it.
+
+               `min-w-0` lets a flex item be laid out narrower than its own
+               contents. The item then still counts as FITTING, so the line
+               never breaks, and because this group is `justify-end` the
+               contents it cannot hold hang off its LEFT edge — straight over
+               the tabs. That is the participants screenshot: the row had 311px
+               for a group that needed more, and nothing in the layout objected.
+
+               `min-w-min` floors the group at its own min-content, so when the
+               track leaves less than that, flex has no way to fit it and wraps
+               it to its own row. Overlap stops being representable rather than
+               being tuned away. The group is itself `flex-wrap`, so its
+               min-content is its WIDEST CHILD, not the sum of them — which is
+               why capping the select at 240px is what keeps this floor low
+               enough to sit beside a track at all. */
+            "flex min-w-min grow basis-[300px] flex-wrap items-center justify-end gap-x-3 gap-y-2",
             /* The FilterBar's row padding, removed for the one case where it is
                not a row. Scoped to the element it belongs to rather than to
                every child, so an action button keeps its own geometry. */

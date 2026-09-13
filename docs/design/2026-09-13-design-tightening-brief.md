@@ -74,7 +74,7 @@ Sales excellence                                        RM 67,200
 - Same principles apply to every list/master-detail screen (collections, invoices, engagements): money and dates as data columns, provenance/confidence only on exceptions.
 
 ### 10a. Tab group — revised reference (11:45)
-Use the kit's own saved-view switcher form (Kit.dc.html "My open leads 48 · Unassigned 12 · Overdue follow-up 7 · +": a contained track with the selected segment as a filled surface inside it) but with the rounding pulled back hard: track radius ≈ `--radius-panel` (10px), selected segment ≈ `--radius-control` (6–8px) — **not** fully round. Keep counts inline, "+" to add a view, corporate sentence case. (User said "20–40px of rounding" — interpret as a fraction of the current full-round, i.e. modest radius; confirm on the first render.) **Amended 13 Sep:** the 120px segment minimum is withdrawn — segments size to their content (label plus count) with 12px horizontal padding over a 64px floor, because at 120px an eight-segment status track measured 973px and left the §10b filter group 155px at 1440, which overlapped it; at content width the same track measures 776px, which recovers the overlap and puts five of the eight ListToolbar screens on one row. Measured at 1440: proposals (7 segments, 617px) now holds one row; engagements (8, 776px) misses by 8px and participants (8, 806px) by 49px (three-digit counts widen the track, and its scroller takes a 13px gutter), and both stack cleanly with the filters right-aligned rather than being forced.
+Use the kit's own saved-view switcher form (Kit.dc.html "My open leads 48 · Unassigned 12 · Overdue follow-up 7 · +": a contained track with the selected segment as a filled surface inside it) but with the rounding pulled back hard: track radius ≈ `--radius-panel` (10px), selected segment ≈ `--radius-control` (6–8px) — **not** fully round. Keep counts inline, "+" to add a view, corporate sentence case. (User said "20–40px of rounding" — interpret as a fraction of the current full-round, i.e. modest radius; confirm on the first render.) **Amended 13 Sep:** the 120px segment minimum is withdrawn — segments size to their content (label plus count) with 12px horizontal padding over a 64px floor, because at 120px an eight-segment status track measured 973px and left the §10b filter group 155px at 1440, which overlapped it; at content width the same track measures 776px, which recovers the overlap and puts five of the eight ListToolbar screens on one row. Measured at 1440: proposals (7 segments, 617px) now holds one row; engagements (8, 776px) missed by 8px and participants (8, 806px) by 49px (three-digit counts widen the track, and its scroller takes a 13px gutter). **Closed 13 Sep by the toolbar, not the segments:** `ListToolbar`'s filter basis drops 360 → 300 (320 still missed participants by 9px), `FilterSearch` gains a 160px floor, and `FilterSelect` is capped at 240px with truncation — a facet whose options are records, like the participants engagement filter, otherwise sizes itself to the longest record and, right-aligned, paints across the tabs. The group is floored at `min-w-min` rather than `min-w-0`, so a filter set too wide for the space left beside the track WRAPS to its own row instead of overlapping it; overlap is no longer representable. Measured at 1440 and 1280 in both themes: proposals holds one row at both, engagements holds one row at 1440 and stacks at 1280, and participants stacks at both — three facets and an 806px track genuinely do not fit beside each other, and stacking is the right answer rather than a failure to force.
 
 ### 10b. Tab row and filter row are ONE row (12:05, user ruling from screenshots)
 On every list screen the filter row — search, selects and the "N of M shown" counter — must NOT sit on its own row beneath the segmented tab group. It sits on the SAME row, right-aligned, with the table directly beneath; reference composition `features/finance/CollectionsQueueScreen.tsx`. Stacked, the two bands put two horizontal rules between the heading and the first row of data while each band leaves half its width empty — the tabs say which subset and the filters say which slice of it, so they are one control surface. The kit component is `ListToolbar` (tabs left, filters and count right, actions after the filters, stacking to two rows only when the two halves do not both fit — decided by content, not by a breakpoint, since a pinned row cannot wrap and instead squeezes the filters until they overlap the tabs); it strips `FilterBar`'s own row padding, so a screen passes `FilterBar` unmodified and puts the page gutter on the toolbar. An action that opens a record rather than narrowing the list belongs in the page header, not in this row.
@@ -177,3 +177,71 @@ Page answers one question: are my sources healthy, and does anything need me? Th
 - **The outer page container is one surface.** Title and tabs sit above the split workspace; do not box the workspace inside a second rounded card.
 
 **Built:** `SplitWorkspace` + `/dev/kit` entry (43ccc9c); M03-S01 enquiry inbox and M03-S06 follow-up queue migrated (6063b33). A follow-up queue whose `DataTable` had 352px of fixed columns in a 40% pane became rows for the same reason — a four-column table is not a list row. `SPLIT_HEADER_HEIGHT` stays exported only until features/leads and features/contacts are off it (scr-B).
+
+## 19. Sales › Pipeline board (13 Sep, user ruling on the first build)
+
+The board was drawn to fit rather than to be read: seven stages squeezed into
+1440px at 240px a column, wrapped in one giant card, with every company name
+truncated and the `OPP-` ref promoted to the second line of each card. The
+company name is the first thing a sales manager reads and the ref is the last,
+so the ruling inverts the card and lets the board scroll. A board that scrolls is
+a board you can read; a board that fits is a board of abbreviations. Column
+headers and lane sums are computed per lane from the same rows the cards render,
+so they cannot disagree; terminal stages sit last and may collapse to a narrow
+rail. Everything else on the screen follows §1 and §16 — typography carries the
+hierarchy, pills are for status only, and a border survives only where removing
+it would make a relationship ambiguous.
+
+1. **Stop fitting all seven stages into the viewport.** Each lane is a fixed
+   300px (min 280, max 320); the board scrolls horizontally; cards never truncate
+   the company name.
+2. **Remove the giant enclosing board card.** The board IS the workspace:
+   breadcrumb, then RecordHeader (title "Pipeline", one secondary "List view", NO
+   solid primary since there is no write), a compact summary line in UI type
+   "5 deals · RM 164,800 pipeline · RM 107,725 weighted · 3 active · 1 won"
+   computed from data, then the lanes directly on the page surface.
+3. **Cards are sales cards, not records:** line 1 company name (full, wraps to two
+   lines), line 2 programme or enquiry topic, then the money large in tabular
+   numerals, then owner, then expected close and probability on one row. The OPP
+   ref is demoted to a small muted mono line at the bottom, or into the
+   hover/detail.
+4. **Each column is a real lane:** stage name in UI type medium weight (not mono
+   uppercase), "1 deal · RM 67,200" beneath in muted UI type, a hairline, a lane
+   surface (surface-L1 tint, no aggressive border) that extends to the bottom of
+   the viewport as a drop target. Empty lane: "No deals" plus "Drop a deal here"
+   centred in a quiet dashed drop zone. Drag and drop between lanes via the
+   existing useAction for stage change (Act-with-approval if the policy says so;
+   render the refusal), keyboard-accessible alternative (a stage select in the
+   card menu).
+5. **Reduce engineering metadata:** no "7 configured stages" in the summary; dates
+   and percentages in UI font with tabular numerals; mono only for the demoted
+   ref.
+6. Then typography, pills, borders per §1 and §16.
+
+### 19a. What the build found (13 Sep, reported not hidden)
+
+- **§3 had no action for the drag.** `ACTION_TYPES` carried `OPPORTUNITY_CONVERT`
+  — an enquiry BECOMING an opportunity — and nothing that moved one that already
+  existed, so R1's "every write goes through `POST /v1/actions`" had no type to
+  go through. Raised with the contract lane rather than worked around; ruling R18
+  added `OPPORTUNITY_STAGE_CHANGE` as a RULED type, and the board sends
+  `fromStage` so a move computed from a stale read is refused rather than applied
+  over somebody else's.
+- **The weighted figure is RM 84,335, not the ruling's illustrative RM 107,725.**
+  It is the probability-weighted fold over the same five deals the other figures
+  fold, so the two cannot disagree. A deal carrying no probability counts at full
+  value rather than at zero: `probability` is optional in §5 and reading "absent"
+  as "0%" would shrink the forecast by however many deals nobody had scored.
+- **There is no programme or topic on an `Opportunity`.** §5 gives it a client, a
+  stage, a value, an owner and a date. Line 2 is therefore the TNA's
+  highest-priority gap, or failing that the audience the TNA describes — the
+  client's own words for why they are buying. Two of the five seeded deals have
+  no TNA and render with no second line, which is the honest outcome; inventing
+  "Training programme" for them would make the card look complete while saying
+  nothing. A real topic field is a contract gap, not a screen gap.
+- **The fixture client serves the store's live objects**, so a read cached by
+  React Query is the same object `performAction` then mutates — and a refetch
+  compared against an already-mutated cache reports no change, leaving the deal
+  moved in the data and stationary on the screen. The feature copies rows at the
+  data boundary, which is what an HTTP client parsing a fresh body would have
+  done. Any screen that re-reads after a write has the same exposure.
