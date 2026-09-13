@@ -17,7 +17,6 @@ export {
   FOCUS_RING,
   MONO_LABEL,
   PEAK_BG,
-  SPLIT_HEADER_HEIGHT,
   WARNING_ACCENT_BG,
 } from "./tokens";
 export {
@@ -315,3 +314,12 @@ export type {
   LoadingStateProps,
   ErrorStateProps,
 } from "@/shared/components/states";
+
+/* ---- Board (added 13 Sep 2026, brief §19; no artboard draws one) ----- */
+export {
+  KanbanBoard,
+  lanesFrom,
+  KANBAN_DRAG_TYPE,
+  type KanbanBoardProps,
+  type KanbanLane,
+} from "./KanbanBoard";

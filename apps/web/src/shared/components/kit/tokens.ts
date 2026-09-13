@@ -54,26 +54,3 @@ export const MONO_LABEL = "font-mono text-[11px] uppercase tracking-[0.08em] tex
 
 /** The ✦ glyph. AI is marked by this plus a text label, never by fill alone. */
 export const AI_GLYPH = "✦";
-
-/**
- * The height BOTH panes' header blocks take on a master/detail screen, so the
- * split reads as one composition rather than two stacked screens: the list
- * pane's summary row and the detail pane's identity block share a single
- * continuous hairline (tightening brief §16, "the same height and share the
- * same baseline hairline").
- *
- * 72px, from the M03-S01 artboard (Kit.dc.html `proof-m03s01`), whose detail
- * header is `padding:16px 20px` around a 16px title, a 4px gap and a 12px mono
- * meta line — a 70px block plus its 1px hairline, rounded to the pack's 8px
- * grid. The TALLER block sets the height because it is the one carrying content
- * that needs the room; the shorter one centres inside it.
- *
- * Two rules travel with it, and a pane that skips them comes apart again: the
- * block must not wrap (`flex-nowrap`, and `truncate` on any title or meta line)
- * and the pane's scroll belongs to its BODY, not to the pane, or the header
- * slides out of alignment on the first scroll.
- *
- * `border-box` is the app-wide default, so the hairline is INSIDE these 72px
- * and both panes' bottom edges land on the same pixel.
- */
-export const SPLIT_HEADER_HEIGHT = "h-[72px]";
