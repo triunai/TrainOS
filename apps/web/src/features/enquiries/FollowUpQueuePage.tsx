@@ -22,16 +22,11 @@ import {
   describeActionError,
   FOLLOW_UP_TONE,
   type ActionError,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { cn } from "@/shared/lib/utils";
-import {
-  isNotDeployed,
-  notDeployedState,
-  readableMessage,
-  toApiError,
-  useActor,
-} from "@/shared/api";
+import { isNotDeployed, readableMessage, toApiError, useActor } from "@/shared/api";
 import { useEnquiryAction, useFollowUpDraft, useFollowUps } from "./api";
 
 /**
@@ -174,7 +169,7 @@ export function FollowUpQueuePage() {
           queue.isPending ? (
             <LoadingState rows={6} label="Loading the follow-up queue" />
           ) : isNotDeployed(queue.error) ? (
-            <EmptyState {...notDeployedState("The follow-up queue")} />
+            <NotDeployedState subject="The follow-up queue" error={toApiError(queue.error)} />
           ) : queue.isError ? (
             <ErrorState
               title="The queue did not load"
@@ -243,7 +238,7 @@ export function FollowUpQueuePage() {
                 {draft.isPending ? (
                   <LoadingState rows={4} label="Loading the draft" />
                 ) : isNotDeployed(draft.error) ? (
-                  <EmptyState {...notDeployedState("The prepared draft")} />
+                  <NotDeployedState subject="The prepared draft" error={toApiError(draft.error)} />
                 ) : draft.isError ? (
                   <ErrorState
                     title="The draft did not load"

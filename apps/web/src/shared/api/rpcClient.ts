@@ -61,7 +61,15 @@ import type {
   SectionWriteInput,
   TrainOsClient,
 } from "./client";
-import { fail, ok, transportError, type ApiError, type DomainError, type Result } from "./errors";
+import {
+  fail,
+  ok,
+  transportError,
+  withDiagnostics,
+  type ApiError,
+  type DomainError,
+  type Result,
+} from "./errors";
 import { getTransport } from "./supabase";
 import type { TransportFailure, TransportResponse } from "./transport";
 
@@ -257,9 +265,12 @@ export function aggregateTypeOf(resourceType: string): string {
  */
 export function classifyViewFailure(failure: TransportFailure): ApiError {
   if (failure.code === "42501") {
-    return transportError("NOT_DEPLOYED", `${failure.message} — view grant not deployed`, {
-      status: 404,
-    });
+    return withDiagnostics(
+      transportError("NOT_DEPLOYED", `${failure.message} — view grant not deployed`, {
+        status: 404,
+      }),
+      { sourceCode: failure.code },
+    );
   }
   return classifyTransportFailure(failure);
 }
@@ -267,7 +278,12 @@ export function classifyViewFailure(failure: TransportFailure): ApiError {
 /** A supabase-js failure, split into the domain and transport branches. */
 export function classifyTransportFailure(failure: TransportFailure): ApiError {
   const code = failure.code ?? "";
+  return code === ""
+    ? classify(failure, code)
+    : withDiagnostics(classify(failure, code), { sourceCode: code });
+}
 
+function classify(failure: TransportFailure, code: string): ApiError {
   if (code === DOMAIN_SQLSTATE) {
     let parsed: unknown = null;
     if (typeof failure.details === "string") {
@@ -465,12 +481,18 @@ export class SupabaseRpcClient implements TrainOsClient {
       response = await getTransport().rpc(name, args);
     } catch (thrown) {
       const message = thrown instanceof Error ? thrown.message : "Request failed";
-      return fail(transportError("NETWORK", message, { cause: thrown }));
+      return fail(
+        withDiagnostics(transportError("NETWORK", message, { cause: thrown }), { operation: name }),
+      );
     }
-    if (response.error !== null) return fail(classifyTransportFailure(response.error));
+    if (response.error !== null) {
+      return fail(withDiagnostics(classifyTransportFailure(response.error), { operation: name }));
+    }
 
     const unwrapped = unwrapEnvelope(response.data);
-    if (unwrapped.error !== null) return fail(unwrapped.error);
+    if (unwrapped.error !== null) {
+      return fail(withDiagnostics(unwrapped.error, { operation: name }));
+    }
     return ok(unwrapped.data as T);
   }
 
@@ -492,9 +514,13 @@ export class SupabaseRpcClient implements TrainOsClient {
       response = await (match === undefined ? query : query.match(match));
     } catch (thrown) {
       const message = thrown instanceof Error ? thrown.message : "Request failed";
-      return fail(transportError("NETWORK", message, { cause: thrown }));
+      return fail(
+        withDiagnostics(transportError("NETWORK", message, { cause: thrown }), { operation: name }),
+      );
     }
-    if (response.error !== null) return fail(classifyViewFailure(response.error));
+    if (response.error !== null) {
+      return fail(withDiagnostics(classifyViewFailure(response.error), { operation: name }));
+    }
     return ok(asList((response.data ?? []) as T[]));
   }
 

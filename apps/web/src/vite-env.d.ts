@@ -17,6 +17,12 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   /** Supabase publishable (anon) key. Required only in `supabase` mode. */
   readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string;
+  /**
+   * `true` draws the Details disclosure (code, operation, status, SQLSTATE,
+   * message, time) under every error state in this build. Always on in
+   * development; off by default in production.
+   */
+  readonly VITE_SHOW_ERROR_DETAILS?: "true" | "false";
 }
 
 interface ImportMeta {

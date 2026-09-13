@@ -1,4 +1,6 @@
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { CrashState, ErrorBoundary } from "@/shared/components/states";
+import { DEFAULT_ROUTE_PATH } from "@/shared/config/nav";
 import { useMe } from "@/shared/hooks/useMe";
 import { BreadcrumbProvider } from "./BreadcrumbProvider";
 import { Sidebar } from "./Sidebar";
@@ -35,9 +37,15 @@ import { Topbar } from "./Topbar";
  * `BreadcrumbProvider` wraps BOTH the top bar and the outlet, and it has to:
  * the screen inside the outlet declares the trail and the top bar above it
  * renders it, so the state they share must sit above them both.
+ *
+ * The outlet sits in its OWN error boundary, keyed on the path: a screen that
+ * throws while rendering is replaced by a crash state inside the card, and the
+ * sidebar and top bar stay usable — navigating anywhere else clears it.
  */
 export function AppShell() {
   const { me } = useMe();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
 
   return (
     <BreadcrumbProvider>
@@ -46,7 +54,19 @@ export function AppShell() {
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />
           <main className="mb-inset mr-inset flex min-h-0 flex-1 flex-col overflow-y-auto rounded-card-lg border border-border bg-card shadow-card">
-            <Outlet />
+            <ErrorBoundary
+              resetKey={pathname}
+              fallback={(error, reset) => (
+                <CrashState
+                  scope="screen"
+                  error={error}
+                  onRetry={reset}
+                  onGoHome={() => navigate(DEFAULT_ROUTE_PATH)}
+                />
+              )}
+            >
+              <Outlet />
+            </ErrorBoundary>
           </main>
         </div>
       </div>

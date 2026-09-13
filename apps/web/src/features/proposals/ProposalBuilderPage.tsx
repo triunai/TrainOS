@@ -28,9 +28,10 @@ import {
   StatusChip,
   type MetricCellProps,
   PartialDataBanner,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isNotDeployed, notDeployedState, readableMessage, toApiError } from "@/shared/api";
+import { isNotDeployed, readableMessage, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
@@ -97,7 +98,7 @@ export function ProposalBuilderPage() {
   /* Ahead of the error branch: a missing RPC is a fact about the environment,
      and "Try again" over one is a button that can never work. */
   if (isNotDeployed(proposalQuery.error)) {
-    return <EmptyState {...notDeployedState("This proposal")} />;
+    return <NotDeployedState subject="This proposal" error={toApiError(proposalQuery.error)} />;
   }
 
   if (proposalQuery.isError || !proposal) {

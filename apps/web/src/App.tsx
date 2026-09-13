@@ -5,6 +5,8 @@ import { AuthProvider } from "@/shared/auth";
 import { ThemeProvider } from "@/shared/theme";
 import { AppRoutes } from "@/routes/routes";
 import { useScrollbarReveal } from "@/shared/components/layout";
+import { CrashState, ErrorBoundary } from "@/shared/components/states";
+import { DEFAULT_ROUTE_PATH } from "@/shared/config/nav";
 
 /**
  * The provider stack, in the order the dependencies actually run:
@@ -25,6 +27,12 @@ import { useScrollbarReveal } from "@/shared/components/layout";
  * toast library is debt, not a pattern — the centralised MutationCache in
  * `shared/api/queryClient.ts` is the only thing that should be calling it for a
  * failed write.
+ *
+ * The outermost error boundary is inside the theme (so the crash page is
+ * painted) and outside everything else, because a crash in the session or the
+ * router has to be caught too. Its way home is the window, not the router —
+ * the router may be what broke. Each routed screen has its own boundary in
+ * `AppShell`, so this one only sees what the shell could not contain.
  */
 export default function App() {
   /* Above the router on purpose: the rule is site-wide, and the external
@@ -34,13 +42,23 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <AuthProvider>
-            <AppRoutes />
-          </AuthProvider>
-        </BrowserRouter>
-      </QueryClientProvider>
+      <ErrorBoundary
+        fallback={(error) => (
+          <CrashState
+            scope="app"
+            error={error}
+            onGoHome={() => window.location.assign(DEFAULT_ROUTE_PATH)}
+          />
+        )}
+      >
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <AuthProvider>
+              <AppRoutes />
+            </AuthProvider>
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ErrorBoundary>
     </ThemeProvider>
   );
 }
