@@ -34,3 +34,65 @@
     @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-canvas;
   }
 }
+
+@layer components {
+  /* The sidebar's expand/collapse region.
+   *
+   * `grid-template-rows: 0fr -> 1fr` animates to the content's OWN height
+   * without anyone measuring it, so there is no JS animation, no ResizeObserver
+   * and no hardcoded max-height that clips a group when a badge wraps.
+   *
+   * `visibility` is transitioned at 0s with a 200ms DELAY on close and no delay
+   * on open. That is what takes the closed region out of the tab order and the
+   * accessibility tree the instant the animation finishes, with no
+   * `transitionend` listener and no timer to leak — the browser does the
+   * sequencing. `inert` is set alongside it from React for browsers that honour
+   * it, so a closed group is unreachable by either route.
+   *
+   * All spacing lives on the list INSIDE the clipped row. Padding or a margin
+   * on the wrapper would survive the collapse as a residual band. */
+  .nav-collapse {
+    display: grid;
+    grid-template-rows: 0fr;
+    visibility: hidden;
+    transition:
+      grid-template-rows 200ms ease,
+      visibility 0s linear 200ms;
+  }
+
+  .nav-collapse[data-open="true"] {
+    grid-template-rows: 1fr;
+    visibility: visible;
+    transition:
+      grid-template-rows 200ms ease,
+      visibility 0s;
+  }
+
+  .nav-collapse > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nav-collapse,
+    .nav-collapse[data-open="true"] {
+      transition: none;
+    }
+  }
+}
+
+@layer utilities {
+  /* A scroll container with no native scrollbar. The sidebar scrolls but must
+     not draw a track down its right edge: the rail's edge is where the content
+     card begins, and a scrollbar there reads as a border between two surfaces
+     that the pack draws as one. Scrolling, wheel, keyboard and overscroll all
+     behave normally — only the painted bar is gone. */
+  .scrollbar-none {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* old Edge */
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

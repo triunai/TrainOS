@@ -41,7 +41,7 @@ export function AppShell() {
 
   return (
     <BreadcrumbProvider>
-      <div className="flex h-dvh w-full overflow-hidden bg-canvas">
+      <div className="flex h-dvh w-full overflow-hidden bg-sidebar">
         <Sidebar role={me.role} />
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />

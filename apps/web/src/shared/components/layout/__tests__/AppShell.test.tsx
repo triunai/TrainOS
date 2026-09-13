@@ -85,6 +85,16 @@ describe("AppShell", () => {
     expect(card.className).not.toMatch(/\bmt-inset\b/);
   });
 
+  it("paints one ground behind the rail, the bar and the card's gutters", () => {
+    const { container } = renderShell();
+    const root = container.firstElementChild as HTMLElement;
+
+    /* The pack draws its whole frame on a single colour with the card as the
+       only other plane. A second surface token here is what put a visible
+       cutoff at the rail-to-bar junction. */
+    expect(root).toHaveClass("bg-sidebar");
+  });
+
   it("fills the viewport height and clips at it", () => {
     const { container } = renderShell();
     const root = container.firstElementChild as HTMLElement;

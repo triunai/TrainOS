@@ -32,8 +32,16 @@
 :root,
 [data-theme="light"] {
   /* ---- Surfaces ------------------------------------------------------- */
-  --canvas: 247 248 250; /* #F7F8FA  app background behind the card */
-  --sidebar: 243 245 247; /* #F3F5F7  sidebar surface, one step off canvas */
+  /* The shell ground: the sidebar, the top bar and the canvas band around the
+     content card are ONE surface. Every artboard in the pack draws its
+     1440x900 frame on this single colour — 25 of 25 light frames at #F3F5F7,
+     including the external proposal screen — and nothing sits on a second
+     ground behind the card. `--sidebar` is kept as a name for the same value
+     so `bg-sidebar` still reads as intent at a call site; it must never hold a
+     different colour, or the junction between the rail and the top bar comes
+     back as a visible cutoff. */
+  --canvas: 243 245 247; /* #F3F5F7  the shell ground, behind and around the card */
+  --sidebar: var(--canvas); /* the rail is the same ground, by the pack */
   --card: 255 255 255; /* #FFFFFF  every content card and popover */
   --surface: 250 251 252; /* #FAFBFC  table headers, recessed rails, zebra rows */
   --surface-hover: 241 244 248; /* #F1F4F8  row and nav hover */
@@ -59,6 +67,22 @@
   /* ---- AI surfaces (6% tint + the glyph + a label; never a solid fill) - */
   --ai-tint: 244 247 255; /* #F4F7FF  AI surfaces */
   --ai-tint-2: 235 241 255; /* #EBF1FF  selected row, active nav, active pill */
+
+  /* The accent BAND — the one gradient in the system, for the metric card that
+     spans a RecordHeader (tightening brief §15). Stored as an image rather than
+     a colour because it is composed, not sampled: the two stops are the primary
+     at 6% and at 12%, which is the AI-tint step (--ai-tint → --ai-tint-2)
+     stretched across the width instead of stacked as two flat surfaces.
+     Over #FFFFFF the stops resolve to #F2F5FF → #E4EBFF, i.e. it starts where
+     --ai-tint already sits and ends one step past --ai-tint-2.
+     ALPHA, not opaque, so the card underneath decides what it tints. A user of
+     this token must therefore paint an opaque background as well (bg-card);
+     a gradient alone over the canvas would tint the shell ground instead. */
+  --surface-accent-gradient: linear-gradient(
+    100deg,
+    rgb(var(--primary) / 0.06) 0%,
+    rgb(var(--primary) / 0.12) 100%
+  );
 
   /* ---- Status (chips ONLY — status colour never leaves a chip) -------- */
   --success: 43 113 83; /* #2B7153 */
@@ -102,6 +126,11 @@
 
   /* ---- Geometry (§1.4) — 8px grid with a 4px half-step ---------------- */
   --radius-control: 8px;
+  /* The tightening brief's §6 middle step: a panel that sits INSIDE a card and
+     must read as a panel rather than a second card. Between control and card
+     on purpose — 10px is the radius at which a full-width band stops looking
+     like a button and stops looking like a nested card. */
+  --radius-panel: 10px;
   --radius-card: 12px;
   --radius-card-lg: 14px; /* RecordHeader card and some shells */
   --radius-modal: 18px; /* profile modal */
@@ -122,8 +151,9 @@
   /* Only the tokens the §1.2 map changes. Geometry, type and spacing are
      identical across themes by design. */
 
-  --canvas: 13 17 23; /* #0D1117 */
-  --sidebar: 19 24 32; /* #131820 */
+  /* 27 of 27 dark frames in the pack draw the shell ground at #131820. */
+  --canvas: 19 24 32; /* #131820  the shell ground, behind and around the card */
+  --sidebar: var(--canvas);
   --card: 23 28 37; /* #171C25 */
   --surface: 27 33 43; /* #1B212B */
   --surface-hover: 30 37 48; /* #1E2530 */
@@ -145,6 +175,17 @@
 
   --ai-tint: 22 33 58; /* #16213A */
   --ai-tint-2: 27 42 71; /* #1B2A47 */
+
+  /* The accent band, dark. The alphas are raised because a tint loses contrast
+     against a dark ground far faster than against white: 6% of #4C82FF over
+     #171C25 is almost invisible, where 6% over #FFFFFF is already readable.
+     10% → 20% resolves to #1C263B → #223051, which lands on the same two steps
+     the light values do relative to --ai-tint and --ai-tint-2. */
+  --surface-accent-gradient: linear-gradient(
+    100deg,
+    rgb(var(--primary) / 0.1) 0%,
+    rgb(var(--primary) / 0.2) 100%
+  );
 
   --success: 111 211 160; /* #6FD3A0 */
   --success-fill: 18 42 32; /* #122A20 */
