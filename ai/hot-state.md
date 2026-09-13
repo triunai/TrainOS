@@ -409,8 +409,28 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > confirmed. 001-013 confirmed applied to no hosted project. Full detail
 > in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 22:5x — PR #24 (011-013) BLOCK, 3 CRIT
-> not 2 (T1 omitted from the original report); fixes routed to fix-014.
+> **BLAST 13 Sep 23:0x +08** — `fix-014` pushed `ff01f2b` to
+> `cloud/migrations` (not yet a PR), folding in PR #23's re-review items.
+> N-1 closed in full: all seven `run:read` tables gated (not just
+> `run_node_io`), nine tables total across three permissions — catalog
+> now says "the rest is a gap, not a posture." T11a's tautology fixed:
+> the shipped privilege set is read before any GRANT/REVOKE runs, closing
+> exactly the false-pass PR #23 found. Structural: policy-stamp ownership
+> now a required `p_migration` argument; `'UNGATE'` replaced by a named
+> `app.ungate_tenant_policy()` function. Negative result worth keeping
+> verbatim: "two dead escapes on one control in one night" — the
+> replacement function's first version had the same dead-on-arrival bug
+> as the string it replaced, found only by running it. HIGH-4 closed both
+> sides (APPROVE now refuses with no diff hash, REJECT still works
+> without one). N-8 narrowed, not fixed (needs a schema change 007 never
+> gave). Correction confirmed as a crossed message, not new information:
+> 015-017 were already recorded landed in `bdd49aa` two updates ago.
+> Counts unchanged: 18/18, 17 pins, 52/52, `check:grants` 0, `test_014`
+> grant count still 121. Next on `fix-014`: the 011-013 amendments. Full
+> detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:0x — fix-014 folds in PR #23's items at
+> ff01f2b; N-1 fully closed (9 tables), T11a fixed, HIGH-4 closed.
 
 ### Focus
 

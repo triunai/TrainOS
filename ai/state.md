@@ -287,6 +287,23 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:0x — fix-014 folds in PR #23's 014 re-review items at ff01f2b; N-1 fully closed (9 tables), T11a fixed, HIGH-4 closed both sides
+
+- `fix-014` confirmed pushed `ff01f2b` to `cloud/migrations` (not yet a
+  PR): all seven run:read tables now gated (nine total across three
+  permissions, catalog says "gap, not posture"); T11a's tautology fixed
+  by reading the shipped privilege set before any GRANT/REVOKE runs;
+  pin header range corrected. Structural: stamp ownership via required
+  p_migration, UNGATE replaced by named app.ungate_tenant_policy()
+  function. Negative result worth remembering: the replacement function
+  had the same dead-on-arrival bug as the string it replaced, found only
+  by running it ("two dead escapes on one control in one night"). HIGH-4
+  closed both sides (APPROVE refuses with no hash, REJECT still works
+  without one). N-8 narrowed not fixed (needs a schema change). 015-017
+  "still open" clarified as a crossed message, not new information.
+  Counts unchanged: 18/18, 17 pins, 52/52, check:grants 0, grant count 121. Next on fix-014: the 011-013 amendments. See `ai/project-log.md`
+  23:0x block for full detail.
+
 ## 2026-09-13 22:5x — PR #24 (011-013) BLOCK; severity count corrected to 3 CRIT/7 HIGH/13 MED (not 2/4/9); fixes routed to fix-014
 
 - PR #24 confirmed merged (`b9bca03`): Opus thermonuclear + security

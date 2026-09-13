@@ -15,6 +15,122 @@
 
 ---
 
+## 2026-09-13 23:0x — fix-014 folds in PR #23's 014 re-review items at ff01f2b; N-1 fully closed, T11a fixed, HIGH-4 closed both sides
+
+**`fix-014` pushed `ff01f2b` to `origin/cloud/migrations`** — confirmed
+present on the remote, not yet opened as a PR. Folds in everything PR
+#23's re-review (docs/reviews/2026-09-13-codex-retrofit-014-rereview.md)
+and the thermonuclear pass raised.
+
+**N-1 closed in full, confirmed against the migration's own `VALUES`
+list, not just the commit's prose claim.** All seven `run:read`-governed
+tables — `runs`, `run_nodes`, `run_node_io`, `run_events`,
+`run_state_cards`, `run_checkpoints`, `run_snapshots` — are now gated,
+not just `run_node_io` as the earlier fix left it. Together with the two
+tables the original HIGH-1 fix already gated under their own
+permissions, **nine tables across three permissions are now gated
+total**, matching the commit's own count exactly. The catalog no longer
+frames the ungated remainder as a deliberate posture; confirmed
+word-for-word it now states: "the rest is a gap, not a posture." Worth
+recording as the second time this session a catalog's "deliberate
+posture" framing for an ungated table turned out to need correcting once
+someone actually re-examined it rather than trusting the prose.
+
+**T11a's tautology closed, confirmed exactly against the diff.** The
+assertion now reads the shipped privilege set into a variable _before_
+any GRANT or REVOKE in the file runs, rather than checking privilege
+state after the pin's own probe already mutated it. This closes
+precisely the false-pass PR #23 found: the pre-fix database's actual
+`has_table_privilege(...,'DELETE')` reads `true`, and the new assertion
+reads that state directly rather than the pin's own post-probe residue.
+
+**Pin header range corrected**: the file now states explicitly why the
+migration header's own 001-014 figures and the pin's 001-017 figures are
+both correct, rather than one silently contradicting the other the way
+PR #23 found.
+
+**Structural fixes, confirmed against the diff:**
+
+- Policy-comment stamping now takes `p_migration` as a required
+  argument rather than caller-supplied prose — closes F1's
+  split-ownership finding. 017 now passes `'017'` explicitly.
+- The `'UNGATE'` magic string is replaced by a named function,
+  `app.ungate_tenant_policy()` — closes F3.
+- Gate detection now reads both `polqual` and `polwithcheck` — closes
+  F5.
+- T16 now exercises six branches, confirmed via the diff's own updated
+  pin text.
+
+**Negative result for the log, confirmed word-for-word from the commit
+body and worth keeping verbatim: "two dead escapes on one control in one
+night."** `app.ungate_tenant_policy()`'s first version had the exact
+same class of bug as the `'UNGATE'` string it replaced — it called back
+into the very refusal it exists to bypass, so it was dead on arrival
+too, found only by running it rather than by reading it. Fixed by
+dropping the gated policy first, before routing through anything that
+could refuse.
+
+**HIGH-4 closed on both sides, confirmed exactly.** PR #17, already
+merged to main, made the client always send `p_expected_diff_hash`.
+`core.decide_approval` now refuses an APPROVE that carries no hash at
+all — `T15c` is flipped from asserting the old defect to asserting the
+refusal — and `T15d` confirms a REJECT without a hash still works, so
+the fix didn't overcorrect into refusing every decision without a hash.
+
+**N-9 closed**: `apply_tenant_policies` now refuses a permission every
+role holds (which would have let `dashboard:read` be accepted as a
+no-op gate, turning the whole mechanism into decoration) rather than
+only checking that the permission exists.
+
+**N-8 narrowed rather than fixed, confirmed stated as such rather than
+silently left as a loose end.** The share-token gate restores only the
+role half of migration 002's original intent; adding the scope half
+needs an owner column migration 007 never gave the table
+(`created_by_id` is text, not a user id) — a schema change, not a
+predicate change, stated in both the file and the catalog with an owner
+named.
+
+**Correction, confirmed as a crossed message rather than new
+information requiring a spine correction of its own**: an earlier report
+characterized 015-017's fix slices as "still open." This thread had
+already independently confirmed those slices landed in `bdd49aa` two
+updates ago (see the 22:4x block above) — nothing here contradicts that,
+it was a reporting mix-up on the other side, not a fact this thread got
+wrong.
+
+**Validation counts, confirmed exactly**: 18/18 forward apply, 17/17
+pins pass (post-rollback pin correctly refusing counts as a pass),
+rollback 017→014 clean, R1-R4 pass, re-apply clean, 17/17 pins pass
+again, nine gated tables measured, `lint:sql` 52/52, `check:grants` 0,
+`check:rpc` 4 pass/0 broken. `test_014`'s own grant-count assertion
+confirmed unchanged at 121.
+
+**Next on `fix-014`, reported: the 011-013 amendments** (PR #24's
+findings) — not yet independently confirmed by this thread; a report to
+verify next round.
+
+**Things worth telling future-me:**
+
+1. A "deliberate posture" label in a catalog is worth treating as a
+   claim to re-examine, not a settled fact — this is the second time
+   this session such a label turned out to be provenance dressed up as
+   a decision (the first was N-1 itself, before this fix; this entry
+   records the fix closing it).
+2. The same structural bug shape recurring twice in one control (the
+   original `'UNGATE'` dead branch, then the replacement function
+   calling back into its own refusal) is worth a standing suspicion
+   whenever a security mechanism's fix is "replace the broken thing with
+   a differently-shaped version of the same idea" — running the
+   replacement, not just reading it, is what caught the second one.
+3. A tautological assertion and a false-pass are the same failure mode
+   wearing different names; the fix here (reading state into a variable
+   before any mutation happens) is a reusable pattern worth remembering
+   for any future pin that needs to assert "what the migration itself
+   produced" rather than "what the test harness's own probes left
+   behind."
+
+---
+
 ## 2026-09-13 22:5x — PR #24 (011-013) BLOCK; severity count corrected to 3 CRIT/7 HIGH/13 MED, not 2/4/9; fixes routed to fix-014
 
 **PR #24 confirmed MERGED at `b9bca03`**, one file —

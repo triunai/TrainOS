@@ -950,6 +950,76 @@ exactly against the doc's own count.
   apply for this whole migration line stays gated on PR #6's eventual
   clean verdict.
 
+✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
+`origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
+a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header
+range mismatch, and HIGH-4, confirmed against the commit body:
+
+- **N-1 closed in full, confirmed against the diff's own `VALUES`
+  list**: all seven `run:read`-governed tables (`runs`, `run_nodes`,
+  `run_node_io`, `run_events`, `run_state_cards`, `run_checkpoints`,
+  `run_snapshots`) are now gated, not just `run_node_io` — confirmed
+  directly in the migration's own gate-registration block. Together with
+  the two tables HIGH-1's earlier fix already gated under their own
+  permissions, **nine tables across three permissions are now gated
+  total**, matching the commit's own count. The catalog no longer calls
+  the remaining blanket-SELECT tables a "deliberate posture"; it now
+  states plainly, confirmed word-for-word: "the rest is a gap, not a
+  posture."
+- **T11a's tautology closed, confirmed exactly**: the assertion now
+  reads the shipped privilege set into a variable _before_ any
+  GRANT/REVOKE in the file runs, rather than checking privilege state
+  after the pin's own probe already mutated it — confirmed this closes
+  precisely the failure mode PR #23 found (the assertion passing even
+  against the unpatched database).
+- **Pin header range corrected**: now states explicitly why the
+  migration header's own 001–014 figures and the pin's 001–017 figures
+  are both correct, rather than one silently contradicting the other.
+- **Structural fixes, confirmed against the diff**: policy-comment
+  stamping now takes `p_migration` as a required argument rather than
+  caller-supplied prose (closes F1's split-ownership finding — 017 now
+  passes `'017'` explicitly). `'UNGATE'` the magic string is replaced by
+  a named function, `app.ungate_tenant_policy()` (closes F3), with gate
+  detection now reading both `polqual` and `polwithcheck` (closes F5).
+  T16 now exercises six branches, confirmed via the diff's own updated
+  pin text.
+- **Negative result for the log, confirmed word-for-word from the
+  commit body, worth keeping verbatim: "two dead escapes on one control
+  in one night."** `app.ungate_tenant_policy()`'s first version had the
+  same class of bug as the `'UNGATE'` string it replaced — it called
+  back into the very refusal it exists to bypass, so it was dead on
+  arrival too, found only by running it. Fixed by dropping the gated
+  policy first rather than routing through the refusal path.
+- **HIGH-4 closed on both sides, confirmed exactly**: PR #17 (already
+  merged to main) made the client always send `p_expected_diff_hash`;
+  `core.decide_approval` now refuses an APPROVE that carries no hash at
+  all (`T15c` flipped from asserting the old defect to asserting the
+  refusal), and `T15d` confirms a REJECT without a hash still works, so
+  the fix didn't overcorrect into "no decision without a hash ever."
+- **N-9 closed**: `apply_tenant_policies` now refuses a permission every
+  role holds (would have let `dashboard:read` be accepted as a no-op
+  gate) rather than only checking the permission exists.
+- **N-8 narrowed rather than fixed, confirmed stated as such**: the
+  share-token gate restores only the role half of 002's intent; adding
+  the scope half needs an owner column `007` never gave the table
+  (`created_by_id` is text, not a user id) — a schema change, stated in
+  the file and catalog with an owner rather than silently left as a
+  loose end.
+- **Correction, confirmed and worth recording rather than silently
+  reconciling**: an earlier report characterized 015–017's fix slices as
+  "still open" — this thread had already independently confirmed those
+  slices landed in `bdd49aa` two updates ago, so this was a crossed
+  message on the reporting side, not new information requiring a spine
+  correction.
+- **Validation counts, confirmed exactly**: 18/18 forward apply, 17/17
+  pins pass (post-rollback pin correctly refusing counts as a pass),
+  rollback 017→014 clean, R1–R4 pass, re-apply clean, 17/17 pins again,
+  nine gated tables measured, `lint:sql` 52/52, `check:grants` 0,
+  `check:rpc` 4 pass/0 broken. `test_014`'s grant-count assertion
+  confirmed unchanged at 121.
+- **Next on `fix-014`, reported: the 011–013 amendments** (PR #24's
+  findings) — not yet independently confirmed by this thread.
+
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
 `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero
