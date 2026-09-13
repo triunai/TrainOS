@@ -158,6 +158,13 @@ REVOKE USAGE ON SCHEMA app FROM anon, authenticated, service_role;
 -- hardening behind would be convenient and would also mean this file does not
 -- restore the prior state, which is the one thing a rollback is for.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;
+-- Forward step 1c (the hosted auto-expose revoke) is deliberately NOT reversed.
+-- Its prior state is environment-specific — present on hosted Supabase, absent
+-- on bare Postgres — and 001 kept no record of which, so a re-grant here would
+-- invent default rights on databases that never had them. It is also the one
+-- default this file would restore that makes every new public table readable
+-- and writable by anon. To get it back on hosted, re-enable automatic exposure
+-- of new tables and functions in the Data API settings.
 GRANT ALL ON SCHEMA public TO PUBLIC;
 REVOKE USAGE ON SCHEMA core FROM anon, authenticated, service_role;
 
