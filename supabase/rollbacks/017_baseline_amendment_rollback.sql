@@ -202,6 +202,11 @@ ALTER TABLE core.contact_consents DROP COLUMN IF EXISTS purpose;
 ALTER TABLE core.contact_consents DROP COLUMN IF EXISTS notice_version;
 
 -- ── 6 · SST columns, BEFORE the table they reference ────────────────────────
+-- The resolver trigger first (017:725, 017:794-796). Left behind, it survives
+-- the column drops and every quotation INSERT/UPDATE then fails with
+-- `record "new" has no field "sst_reason"`.
+DROP TRIGGER IF EXISTS trg_quotations_resolve_sst ON core.quotations;
+DROP FUNCTION IF EXISTS core.resolve_quotation_sst();
 ALTER TABLE core.quotations DROP CONSTRAINT IF EXISTS quotations_exempt_needs_reason;
 ALTER TABLE core.quotations DROP CONSTRAINT IF EXISTS quotations_sst_exempt_has_no_rate;
 ALTER TABLE core.quotations DROP CONSTRAINT IF EXISTS quotations_sst_reason_check;
@@ -267,7 +272,8 @@ BEGIN
 
   IF pg_catalog.to_regproc('app.resolve_tax_policy') IS NOT NULL
      OR pg_catalog.to_regproc('core.retrieve_knowledge') IS NOT NULL
-     OR pg_catalog.to_regproc('app.seed_compliance_check_keys') IS NOT NULL THEN
+     OR pg_catalog.to_regproc('app.seed_compliance_check_keys') IS NOT NULL
+     OR pg_catalog.to_regproc('core.resolve_quotation_sst') IS NOT NULL THEN
     RAISE EXCEPTION 'ROLLBACK 017 incomplete: a 017 function survives';
   END IF;
 
