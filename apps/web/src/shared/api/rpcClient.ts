@@ -1,0 +1,651 @@
+import type {
+  ActionResponse,
+  AgentEval,
+  ApprovalBulkDecideResponse,
+  ApprovalDecideResponse,
+  ApprovalDetail,
+  ApprovalListResponse,
+  ApprovalRequestRef,
+  BadgeCounts,
+  Budget,
+  ChannelConsent,
+  CollectionRule,
+  ComplianceRule,
+  Contact,
+  Enquiry,
+  EnquiryDetail,
+  ErrorCode,
+  ErrorDetails,
+  HrdcDeadline,
+  KnowledgeSource,
+  ListResponse,
+  Me,
+  MeProfile,
+  ModelTier,
+  NavigationTree,
+  Opportunity,
+  Organisation,
+  OrganisationRelations,
+  PageRequest,
+  PipelineConfig,
+  PipelineObject,
+  Policy,
+  Programme,
+  ProgrammeDelivery,
+  Proposal,
+  Quotation,
+  RuleChangeSet,
+  SavedView,
+  Template,
+  TemplateType,
+  Tna,
+  TnaRecommendationsResponse,
+  Trainer,
+} from "@trainos/contract";
+import { ERROR_STATUS } from "@trainos/contract";
+
+import type {
+  ActionInput,
+  BulkDecideInput,
+  DecideInput,
+  ProposalInput,
+  QuotationInput,
+  TrainOsClient,
+} from "./client";
+import { fail, ok, transportError, type ApiError, type DomainError, type Result } from "./errors";
+import { getSupabase } from "./supabase";
+
+/**
+ * The Supabase implementation of `TrainOsClient` — the ONLY place in the app
+ * that calls `supabase.rpc()` or reads a table.
+ *
+ * Kept out of `client.ts` because the contract gate parses that file textually
+ * and a class body at two spaces of indent is indistinguishable, to its regex,
+ * from a malformed method signature. See the header of `client.ts`.
+ *
+ * WHY A TUPLE AND NOT A THROW. A `FORBIDDEN` or a `FLOOR_PRICE_BREACH` is the
+ * server ANSWERING, not the request failing. Returned as a value, the refusal
+ * path is something every caller has to get past in the type system; thrown, it
+ * is something a caller can forget, and the result is a stack trace rendered
+ * over a policy decision the reader could have acted on.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Transport shapes
+ * ------------------------------------------------------------------ */
+
+/** What supabase-js hands back. Structural, so a mock satisfies it too. */
+export interface TransportResponse {
+  data: unknown;
+  error: TransportFailure | null;
+}
+
+/** The PostgrestError fields this module reads. */
+export interface TransportFailure {
+  message: string;
+  code?: string | null;
+  details?: string | null;
+  hint?: string | null;
+}
+
+/**
+ * The SQLSTATE the database raises for every deliberate domain refusal.
+ *
+ * 011 refuses by `RAISE EXCEPTION … USING ERRCODE = 'TRNOS', DETAIL = '<jsonb
+ * carrying code>'` rather than by returning `app.err()`, so without this branch
+ * every policy refusal in the app would arrive classified as a transport
+ * failure: a retry button drawn over a decision the server already made, and
+ * "Something went wrong" printed over a message that named the missing role.
+ *
+ * Matched on SQLSTATE, never on message text. A reworded error must not change
+ * how a refusal is classified.
+ */
+const DOMAIN_SQLSTATE = "TRNOS";
+
+/**
+ * "That function is not deployed." Matched on CODE, never on message text.
+ *
+ * A missing function is a deployment fact, not flakiness: the feature must
+ * degrade to unsupported rather than to a generic failure that invites a retry
+ * of something that can never succeed. Every RPC this client names is specified
+ * but unbuilt today, so this path is the app's normal state until the
+ * migrations lane lands.
+ */
+const MISSING_FUNCTION_CODES = new Set(["PGRST202", "42883", "42P01"]);
+
+/** PostgREST's JWT rejections, plus Postgres' own privilege refusal. */
+const UNAUTHENTICATED_CODES = new Set(["PGRST301", "PGRST302", "42501"]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A code the contract knows, or something the database invented? */
+function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(ERROR_STATUS, value);
+}
+
+/**
+ * `app.err()` writes no `message` — its envelope is `{code[, details]}` only.
+ *
+ * The contract's `ErrorEnvelope` requires one and `readableMessage()` shows it
+ * to a person, so the client supplies a floor rather than rendering `undefined`
+ * into the UI. A server that does send a message always wins.
+ */
+export function messageForCode(code: ErrorCode): string {
+  switch (code) {
+    case "VALIDATION_FAILED":
+      return "Some of what you entered is not valid.";
+    case "NOT_FOUND":
+      return "That record no longer exists.";
+    case "FORBIDDEN":
+      return "You do not have permission to do that.";
+    case "POLICY_APPROVAL_REQUIRED":
+      return "This needs an approval before it can run.";
+    case "ATTENDANCE_LOCKED":
+      return "Attendance is locked and cannot be edited.";
+    case "FLOOR_PRICE_BREACH":
+      return "This price is below the floor.";
+    case "SYNC_FAILED":
+      return "The accounting sync did not complete.";
+    case "AGENT_PAUSED":
+      return "That agent is paused.";
+    case "SLA_BREACHED":
+      return "This approval is past its SLA.";
+    default:
+      return "That key was already used with a different request.";
+  }
+}
+
+function domainError(code: ErrorCode, message: string, bag: Record<string, unknown>): DomainError {
+  const { approvalRequestId, ...details } = bag;
+  return {
+    kind: "domain",
+    code,
+    message,
+    status: ERROR_STATUS[code],
+    ...(Object.keys(details).length === 0 ? {} : { details: details as ErrorDetails }),
+    ...(typeof approvalRequestId === "string" ? { approvalRequestId } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * The unwrap rule
+ * ------------------------------------------------------------------ */
+
+/**
+ * Showroom's rule, unchanged: strip `success`; if exactly one key `data`
+ * remains, unwrap it; otherwise pass the rest through.
+ *
+ * THIS IS A WHOLE INCIDENT CLASS IN FOUR LINES. One sibling key added beside
+ * `data` silently flips every caller from auto-unwrap to pass-through, and a
+ * consumer's cast hides the resulting shape change from the compiler — a live
+ * page white-screened on exactly that, and only on the session-restore path.
+ * It is why `app.ok()` carries the comment "never add a third top-level key",
+ * why E1 forbids a hand-built envelope, and why this rule is implemented once
+ * rather than re-derived per method.
+ *
+ * The four shapes collapse to one behaviour:
+ *
+ * ```
+ * { success: true, data: T }                 -> T
+ * { success: true, data: T, extra }          -> { data, extra }
+ * { success: true }                          -> {}
+ * { success: true, count, items }            -> { count, items }
+ * a scalar or array with no `success` key    -> itself
+ * ```
+ */
+export function unwrapEnvelope(body: unknown): Result<unknown> {
+  if (!isRecord(body) || !("success" in body)) return ok(body);
+
+  if (body.success === false) {
+    const raw = isRecord(body.error) ? body.error : {};
+    const { code, message, details, ...rest } = raw;
+    const resolved: ErrorCode = isErrorCode(code) ? code : "VALIDATION_FAILED";
+    const bag = isRecord(details) ? { ...details, ...rest } : rest;
+    const text = typeof message === "string" ? message : messageForCode(resolved);
+    return fail(domainError(resolved, text, bag));
+  }
+
+  const rest: Record<string, unknown> = { ...body };
+  delete rest.success;
+  const keys = Object.keys(rest);
+  return ok(keys.length === 1 && keys[0] === "data" ? rest.data : rest);
+}
+
+/** A supabase-js failure, split into the domain and transport branches. */
+export function classifyTransportFailure(failure: TransportFailure): ApiError {
+  const code = failure.code ?? "";
+
+  if (code === DOMAIN_SQLSTATE) {
+    let parsed: unknown = null;
+    if (typeof failure.details === "string") {
+      try {
+        parsed = JSON.parse(failure.details);
+      } catch {
+        parsed = null;
+      }
+    }
+    if (!isRecord(parsed)) return domainError("VALIDATION_FAILED", failure.message, {});
+    const { code: raised, ...bag } = parsed;
+    const resolved: ErrorCode = isErrorCode(raised) ? raised : "VALIDATION_FAILED";
+    return domainError(resolved, failure.message, bag);
+  }
+
+  if (MISSING_FUNCTION_CODES.has(code)) {
+    return transportError("SERVER", `${failure.message} — endpoint not deployed`, { status: 404 });
+  }
+
+  if (UNAUTHENTICATED_CODES.has(code)) {
+    return transportError("UNAUTHENTICATED", failure.message, { status: 401 });
+  }
+
+  return transportError("SERVER", failure.message, { status: 500, cause: failure });
+}
+
+/**
+ * `POLICY_APPROVAL_REQUIRED` and `SLA_BREACHED` are NOT the error branch.
+ *
+ * The §1 table gives the first a 202 carrying `approvalRequestId` and the
+ * second a 200 surfaced as a flag on the approval. A client that routes either
+ * into `error` renders an approval queue as a failure — the write was
+ * intercepted by policy, which is the system working rather than refusing.
+ *
+ * `app.perform_action` already returns the queued case as a success payload, so
+ * this handles the other shape: a database that answers
+ * `app.err('POLICY_APPROVAL_REQUIRED', {approvalRequest})`. Without the
+ * `approvalRequest` there is nothing to route the user to, so the refusal
+ * stands rather than being turned into a success with a hole in it.
+ */
+export function liftPolicyOutcome(result: Result<ActionResponse>): Result<ActionResponse> {
+  if (result.error === null || result.error.kind !== "domain") return result;
+  if (result.error.code !== "POLICY_APPROVAL_REQUIRED") return result;
+
+  const approvalRequest = result.error.details?.approvalRequest;
+  if (!isApprovalRequestRef(approvalRequest)) return result;
+  return ok({ status: "QUEUED_FOR_APPROVAL", approvalRequest });
+}
+
+/**
+ * A runtime guard rather than a cast.
+ *
+ * E2 forbids the double cast in this folder, and it is right to: the value here
+ * came out of a jsonb `details` bag, which the type system knows nothing about.
+ * Asserting the shape would turn "the database sent a partial approval" into
+ * `undefined.ref` on the screen that routes the user to it. Checking it means a
+ * partial payload leaves the refusal standing, which is the honest outcome.
+ */
+function isApprovalRequestRef(value: unknown): value is ApprovalRequestRef {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.ref === "string" &&
+    typeof value.policyId === "string" &&
+    typeof value.approverRole === "string" &&
+    typeof value.slaDueAt === "string" &&
+    typeof value.createdAt === "string"
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The §8 buckets, named
+ * ------------------------------------------------------------------ */
+
+/**
+ * The §8 PostgREST view reads — the ONE place TrainOS departs from showroom's
+ * "RPC only" rule, licensed by `config.toml` exposing the `core` schema.
+ *
+ * A read qualifies only when one view row maps 1:1 onto the contract shape:
+ * no `page` envelope to compose, no provenance to assemble. Everything else is
+ * an RPC, because a flat table read cannot build `{ data, page,
+ * appliedFilters }`.
+ *
+ * Only `v_contact_consent_current` (005) exists today. The rest are named here
+ * so the migrations lane has the list and the gap is one grep, not a code read.
+ */
+export const VIEW_READS = {
+  templates: "v_templates",
+  policies: "v_policies",
+  pipelines: "v_pipeline_configs",
+  views: "v_saved_views",
+  trainers: "v_trainers",
+  contacts: "v_contacts",
+  contactConsent: "v_contact_consent_current",
+  programmes: "v_programmes",
+  programmeDeliveries: "v_programme_deliveries",
+  organisationRelations: "v_organisation_relations",
+  hrdcDeadlines: "v_hrdc_deadlines",
+  collectionRules: "v_collection_rules",
+  complianceRules: "v_compliance_rules",
+  ruleChanges: "v_rule_change_sets",
+  evals: "v_agent_evals",
+  knowledgeSources: "v_knowledge_sources",
+  aiTiers: "v_model_tiers",
+  aiBudgets: "v_budgets",
+} as const;
+
+/**
+ * Every RPC name this client calls, so the gap between "the client asks for it"
+ * and "001–011 defines it" is one grep rather than a code read.
+ *
+ * NONE of these exists in `core` today. 011 defines `app.perform_action`,
+ * `app.decide_approval` and `app.bulk_decide`, but all three are granted to
+ * `service_role` only and `app` is deliberately not a PostgREST-exposed schema
+ * — so there is no path from a browser to any of them. The three marked
+ * `wraps011` need a thin `core` wrapper and a grant; the rest are new SQL.
+ * Both are specified in `docs/architecture/09-golden-path-rpc-specs.md`.
+ */
+export const RPC_NAMES = {
+  wraps011: ["perform_action", "decide_approval", "bulk_decide_approvals"],
+  newSql: [
+    "me",
+    "me_profile",
+    "navigation",
+    "badge_counts",
+    "list_enquiries",
+    "get_enquiry",
+    "get_organisation",
+    "get_opportunity",
+    "get_tna",
+    "get_tna_recommendations",
+    "create_proposal",
+    "get_proposal",
+    "get_quotation",
+    "put_quotation",
+    "list_approvals",
+    "get_approval",
+    "get_policy",
+    "get_pipeline_config",
+    "get_contact",
+    "get_programme",
+    "get_compliance_rule",
+  ],
+} as const;
+
+/**
+ * The §1 query grammar, flattened into RPC arguments.
+ *
+ * `filter[field][op]=value` is a URL grammar; an RPC takes jsonb. The three
+ * parts stay separate rather than collapsing into one bag so a SQL function can
+ * validate each independently — a malformed sort must not read as a missing
+ * filter.
+ */
+export function pageArgs(query: PageRequest): Record<string, unknown> {
+  return {
+    p_filter: query.filter ?? [],
+    p_sort: query.sort ?? null,
+    p_page: { size: query.page?.size ?? 50, cursor: query.page?.cursor ?? null },
+    p_view: query.view ?? null,
+  };
+}
+
+const asList = <T>(rows: T[]): ListResponse<T> => ({
+  data: rows,
+  page: { next: null, total: rows.length },
+});
+
+/* ------------------------------------------------------------------ *
+ * The client
+ * ------------------------------------------------------------------ */
+
+export class SupabaseRpcClient implements TrainOsClient {
+  /**
+   * Every `supabase.rpc()` call in the app funnels through here.
+   *
+   * `.schema("core")` because PostgREST's default is `public` and every
+   * client-callable function lives in `core`. `app` is deliberately unexposed,
+   * which is what keeps the gate internals unreachable from a browser.
+   */
+  private async call<T>(name: string, args: Record<string, unknown> = {}): Promise<Result<T>> {
+    let response: TransportResponse;
+    try {
+      response = await getSupabase().schema("core").rpc(name, args);
+    } catch (thrown) {
+      const message = thrown instanceof Error ? thrown.message : "Request failed";
+      return fail(transportError("NETWORK", message, { cause: thrown }));
+    }
+    if (response.error !== null) return fail(classifyTransportFailure(response.error));
+
+    const unwrapped = unwrapEnvelope(response.data);
+    if (unwrapped.error !== null) return fail(unwrapped.error);
+    return ok(unwrapped.data as T);
+  }
+
+  /**
+   * A §8 view read, wrapped in the same `Result` and split the same way.
+   *
+   * `page.total` is the count of what came back, not a server-side total. These
+   * endpoints were bucketed as views precisely because the contract gives them
+   * no `page` envelope; a view that later needs real keyset paging is a view
+   * that should have been an RPC.
+   */
+  private async view<T>(
+    name: string,
+    match?: Record<string, string>,
+  ): Promise<Result<ListResponse<T>>> {
+    let response: TransportResponse;
+    try {
+      const query = getSupabase().schema("core").from(name).select("*");
+      response = await (match === undefined ? query : query.match(match));
+    } catch (thrown) {
+      const message = thrown instanceof Error ? thrown.message : "Request failed";
+      return fail(transportError("NETWORK", message, { cause: thrown }));
+    }
+    if (response.error !== null) return fail(classifyTransportFailure(response.error));
+    return ok(asList((response.data ?? []) as T[]));
+  }
+
+  me(): Promise<Result<Me>> {
+    return this.call<Me>("me");
+  }
+
+  meProfile(): Promise<Result<MeProfile>> {
+    return this.call<MeProfile>("me_profile");
+  }
+
+  navigation(): Promise<Result<NavigationTree>> {
+    return this.call<NavigationTree>("navigation");
+  }
+
+  badges(): Promise<Result<BadgeCounts>> {
+    return this.call<BadgeCounts>("badge_counts");
+  }
+
+  listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>> {
+    return this.call<ListResponse<Enquiry>>("list_enquiries", pageArgs(query));
+  }
+
+  getEnquiry(id: string): Promise<Result<EnquiryDetail>> {
+    return this.call<EnquiryDetail>("get_enquiry", { p_id: id });
+  }
+
+  getOrganisation(id: string): Promise<Result<Organisation>> {
+    return this.call<Organisation>("get_organisation", { p_id: id });
+  }
+
+  /**
+   * A view read that returns ONE row, so the empty case is a 404 and not an
+   * empty list. The contract types this endpoint as a record, not a collection.
+   */
+  async getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>> {
+    const rows = await this.view<OrganisationRelations>(VIEW_READS.organisationRelations, {
+      organisation_id: id,
+    });
+    if (rows.error !== null) return fail(rows.error);
+    const first = rows.data.data[0];
+    if (first === undefined) {
+      return fail(domainError("NOT_FOUND", messageForCode("NOT_FOUND"), { id }));
+    }
+    return ok(first);
+  }
+
+  getOpportunity(id: string): Promise<Result<Opportunity>> {
+    return this.call<Opportunity>("get_opportunity", { p_id: id });
+  }
+
+  getTna(id: string): Promise<Result<Tna>> {
+    return this.call<Tna>("get_tna", { p_id: id });
+  }
+
+  getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>> {
+    return this.call<TnaRecommendationsResponse>("get_tna_recommendations", { p_id: id });
+  }
+
+  createProposal(input: ProposalInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("create_proposal", {
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  getProposal(id: string): Promise<Result<Proposal>> {
+    return this.call<Proposal>("get_proposal", { p_id: id });
+  }
+
+  getQuotation(id: string): Promise<Result<Quotation>> {
+    return this.call<Quotation>("get_quotation", { p_id: id });
+  }
+
+  putQuotation(id: string, input: QuotationInput): Promise<Result<Quotation>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Quotation>("put_quotation", {
+      p_id: id,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  listApprovals(query: PageRequest): Promise<Result<ApprovalListResponse>> {
+    return this.call<ApprovalListResponse>("list_approvals", pageArgs(query));
+  }
+
+  getApproval(id: string): Promise<Result<ApprovalDetail>> {
+    return this.call<ApprovalDetail>("get_approval", { p_id: id });
+  }
+
+  decideApproval(id: string, input: DecideInput): Promise<Result<ApprovalDecideResponse>> {
+    return this.call<ApprovalDecideResponse>("decide_approval", {
+      p_approval_id: id,
+      p_decision: input.decision,
+      p_note: input.note,
+      p_idempotency_key: input.idempotencyKey,
+    });
+  }
+
+  bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>> {
+    return this.call<ApprovalBulkDecideResponse>("bulk_decide_approvals", {
+      p_ids: input.ids,
+      p_decision: input.decision,
+      p_note: input.note ?? null,
+      p_idempotency_key: input.idempotencyKey,
+    });
+  }
+
+  /**
+   * `POST /v1/actions`, the one endpoint every write in the app goes through.
+   *
+   * The argument names are `app.perform_action`'s own, passed straight through
+   * the `core` wrapper. A rename on either side is a break the compiler cannot
+   * see, so the two lists are kept identical on purpose.
+   */
+  async performAction(input: ActionInput): Promise<Result<ActionResponse>> {
+    const result = await this.call<ActionResponse>("perform_action", {
+      p_type: input.type,
+      p_target_ref: input.targetRef,
+      p_payload: input.payload ?? {},
+      p_requested_by: input.requestedBy,
+      p_confidence: input.confidence ?? null,
+      p_reasoning: input.reasoning ?? null,
+      p_evidence: input.evidence ?? [],
+      p_idempotency_key: input.idempotencyKey,
+    });
+    return liftPolicyOutcome(result);
+  }
+
+  listTemplates(type: TemplateType): Promise<Result<ListResponse<Template>>> {
+    return this.view<Template>(VIEW_READS.templates, { type });
+  }
+
+  listPolicies(): Promise<Result<ListResponse<Policy>>> {
+    return this.view<Policy>(VIEW_READS.policies);
+  }
+
+  getPolicy(id: string): Promise<Result<Policy>> {
+    return this.call<Policy>("get_policy", { p_id: id });
+  }
+
+  getPipelineConfig(object: PipelineObject): Promise<Result<PipelineConfig>> {
+    return this.call<PipelineConfig>("get_pipeline_config", { p_object: object });
+  }
+
+  listViews(): Promise<Result<ListResponse<SavedView>>> {
+    return this.view<SavedView>(VIEW_READS.views);
+  }
+
+  listTrainers(): Promise<Result<ListResponse<Trainer>>> {
+    return this.view<Trainer>(VIEW_READS.trainers);
+  }
+
+  listContacts(): Promise<Result<ListResponse<Contact>>> {
+    return this.view<Contact>(VIEW_READS.contacts);
+  }
+
+  getContact(id: string): Promise<Result<Contact>> {
+    return this.call<Contact>("get_contact", { p_id: id });
+  }
+
+  getContactConsent(id: string): Promise<Result<ListResponse<ChannelConsent>>> {
+    return this.view<ChannelConsent>(VIEW_READS.contactConsent, { contact_id: id });
+  }
+
+  listProgrammes(): Promise<Result<ListResponse<Programme>>> {
+    return this.view<Programme>(VIEW_READS.programmes);
+  }
+
+  getProgramme(id: string): Promise<Result<Programme>> {
+    return this.call<Programme>("get_programme", { p_id: id });
+  }
+
+  getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>> {
+    return this.view<ProgrammeDelivery>(VIEW_READS.programmeDeliveries, { programme_id: id });
+  }
+
+  listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>> {
+    return this.view<HrdcDeadline>(VIEW_READS.hrdcDeadlines);
+  }
+
+  listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>> {
+    return this.view<CollectionRule>(VIEW_READS.collectionRules);
+  }
+
+  listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>> {
+    return this.view<ComplianceRule>(VIEW_READS.complianceRules);
+  }
+
+  getComplianceRule(id: string): Promise<Result<ComplianceRule>> {
+    return this.call<ComplianceRule>("get_compliance_rule", { p_id: id });
+  }
+
+  listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>> {
+    return this.view<RuleChangeSet>(VIEW_READS.ruleChanges);
+  }
+
+  listEvals(): Promise<Result<ListResponse<AgentEval>>> {
+    return this.view<AgentEval>(VIEW_READS.evals);
+  }
+
+  listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>> {
+    return this.view<KnowledgeSource>(VIEW_READS.knowledgeSources);
+  }
+
+  listAiTiers(): Promise<Result<ListResponse<ModelTier>>> {
+    return this.view<ModelTier>(VIEW_READS.aiTiers);
+  }
+
+  listBudgets(): Promise<Result<ListResponse<Budget>>> {
+    return this.view<Budget>(VIEW_READS.aiBudgets);
+  }
+}
+
+/** The client the seam mounts when `VITE_API_MODE=supabase`. */
+export const createRpcClient = (): TrainOsClient => new SupabaseRpcClient();
