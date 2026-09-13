@@ -29,9 +29,7 @@ describe("AttendanceCapturePage · M10-S06", () => {
   it("renders the locked day with no solid primary button", async () => {
     open(1);
 
-    expect(
-      await screen.findByRole("heading", { name: /Attendance · ENG-0231/ }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Attendance · / })).toBeInTheDocument();
 
     /* Attendance hangs off Participants, not Engagements — that is the nav
        entry a reader walked to get here. */

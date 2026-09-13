@@ -113,9 +113,17 @@ export function AttendanceCapturePage() {
   return (
     <div className="flex flex-col">
       <RecordHeader
-        title={`Attendance · ${record.ref}`}
+        /* §15a. The ref moves out of the h1 and into `recordRef`, which is what
+           that prop is for: CLAUDE.md gives the mono identity line the refs and
+           the title the record's NAME. `record.title` leaves `meta` in the same
+           move — it was the name, printed in the second row while the first row
+           printed the ref. */
+        accent
+        collapsible
+        recordType="attendance"
+        title={`Attendance · ${record.title}`}
+        recordRef={record.ref}
         meta={[
-          record.title,
           record.dates.map(formatDate).join(" – "),
           record.owner.name ? `captured by ${record.owner.name}` : null,
           sheet.approvedBy?.name ? `approved by ${sheet.approvedBy.name}` : null,
