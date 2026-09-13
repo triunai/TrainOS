@@ -19,9 +19,18 @@ import { useSinglePrimary } from "./useSinglePrimary";
 const BASE =
   "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-control border text-[13px] transition-colors disabled:cursor-not-allowed";
 
+/*
+ * `primary` fills with `--primary-solid`, not `--primary`.
+ *
+ * The two are the same electric #1F5BFF in light. They diverge in dark, where
+ * `--primary` is lifted to #4C82FF so the accent can be READ as text and as a
+ * mark on #171C25 — and a near-white label on that lifted value measures
+ * 3.24:1. The fill keeps the brand hex in both themes and carries
+ * `--on-primary` at 4.82:1. See the `--primary-solid` note in `tokens.css`.
+ */
 const KIND = {
   primary:
-    "border-primary bg-primary px-4 py-2 font-semibold text-on-primary hover:bg-primary-hover disabled:border-border disabled:bg-surface disabled:text-ink-disabled",
+    "border-primary-solid bg-primary-solid px-4 py-2 font-semibold text-on-primary hover:border-primary-solid-hover hover:bg-primary-solid-hover disabled:border-border disabled:bg-surface disabled:text-ink-disabled",
   secondary:
     "border-border bg-card px-3.5 py-2 font-medium text-ink hover:bg-surface-hover disabled:bg-surface disabled:text-ink-disabled",
   ghost:
