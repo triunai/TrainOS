@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { MESSAGE_CHANNELS } from "@trainos/contract";
 import type {
   ActionResponse,
   Enquiry,
   EnquiryChannel,
+  MessageChannel,
   PageRequest,
   SavedView,
 } from "@trainos/contract";
@@ -24,6 +26,7 @@ import {
   SecondaryButton,
   SplitWorkspace,
   StatusChip,
+  channelLabel,
   describeActionError,
   humanise,
   tabsFromViews,
@@ -53,17 +56,34 @@ import { useEnquiryAction, useEnquiries, useEnquiry, useEnquiryViews } from "./a
  * a `RefChip`, which spent a bordered pill and an uppercase mono word on the
  * least interesting fact in the row.
  *
- * The kit's `channelLabel` covers only EMAIL and WHATSAPP — the contract's
- * `EnquiryChannel` has four members and the kit's `MessageChannel` has two — so
- * the map is local and keyed by the contract's union, which makes a fifth
- * channel a compile error here rather than a blank glyph.
+ * The GLYPH is all this screen still owns. The spelling is not: it used to be a
+ * second copy of "WhatsApp" in a local map, which is the divergence 07b65a2
+ * removed everywhere else — and the reason that commit exists is that
+ * `humanise` once lower-cased it to "Whatsapp" on two screenshots.
+ *
+ * The two vocabularies stay apart, because the contract keeps them apart on
+ * purpose: `MessageChannel` is the two channels a template can be SENT on, and
+ * `EnquiryChannel` is the four an enquiry can ARRIVE by. Widening the kit's map
+ * to four would merge them and put a rate-bearing union in reach of a web form.
+ * So the label comes from `channelLabel` where the contract says the value is a
+ * `MessageChannel` and from `humanise` otherwise — and membership is read off
+ * `MESSAGE_CHANNELS` rather than written out here, so a channel promoted into
+ * that union follows automatically instead of silently taking the else branch
+ * (R14).
  */
-const CHANNEL: Record<EnquiryChannel, { glyph: string; label: string }> = {
-  EMAIL: { glyph: "✉", label: "Email" },
-  WHATSAPP: { glyph: "◉", label: "WhatsApp" },
-  WEB_FORM: { glyph: "◌", label: "Web form" },
-  PHONE: { glyph: "☎", label: "Phone" },
+const CHANNEL_GLYPH: Record<EnquiryChannel, string> = {
+  EMAIL: "✉",
+  WHATSAPP: "◉",
+  WEB_FORM: "◌",
+  PHONE: "☎",
 };
+
+const isMessageChannel = (channel: EnquiryChannel): channel is MessageChannel =>
+  (MESSAGE_CHANNELS as readonly string[]).includes(channel);
+
+function channelText(channel: EnquiryChannel): string {
+  return isMessageChannel(channel) ? channelLabel(channel) : humanise(channel);
+}
 
 /** The "all open" pill the saved views do not carry: no filter, everything. */
 const ALL_TAB = "view_all";
@@ -458,7 +478,6 @@ function EnquiryRow({
 }) {
   const archived = enquiry.status === "ARCHIVED";
   const needsReview = enquiry.classification.needsHumanReview === true;
-  const channel = CHANNEL[enquiry.channel];
 
   /* §16: "exception gets the component, normal data becomes typography".
      A classification the agent is confident about is a plain muted word on the
@@ -506,8 +525,8 @@ function EnquiryRow({
             on the right. The channel is a glyph and a word rather than the
             bordered uppercase capsule it was. */}
         <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-ink-muted">
-          <span aria-hidden="true">{channel.glyph}</span>
-          <span className="shrink-0">{channel.label}</span>
+          <span aria-hidden="true">{CHANNEL_GLYPH[enquiry.channel]}</span>
+          <span className="shrink-0">{channelText(enquiry.channel)}</span>
           <span aria-hidden="true">·</span>
           {classification}
           <span aria-hidden="true">·</span>

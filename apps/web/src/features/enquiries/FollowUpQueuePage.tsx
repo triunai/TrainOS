@@ -18,6 +18,7 @@ import {
   SplitWorkspace,
   StatusChip,
   WhatsAppCostStrip,
+  channelLabel,
   describeActionError,
   FOLLOW_UP_TONE,
   type ActionError,
@@ -245,7 +246,7 @@ export function FollowUpQueuePage() {
                       <ExceptionBanner
                         severity="DANGER"
                         title="No PDPA consent on file for this channel"
-                        subtitle={`${selected.contact.name} has not consented to ${TITLE_CHANNEL[draft.data.channel]}. Sending is blocked until consent is recorded.`}
+                        subtitle={`${selected.contact.name} has not consented to ${channelLabel(draft.data.channel)}. Sending is blocked until consent is recorded.`}
                       />
                     ) : null}
 
@@ -293,7 +294,7 @@ export function FollowUpQueuePage() {
                         ) : null}
 
                         <p className="text-[12px] text-ink-secondary">
-                          Consent on file: {TITLE_CHANNEL[draft.data.channel]}{" "}
+                          Consent on file: {channelLabel(draft.data.channel)}{" "}
                           {draft.data.consent.granted ? "✓" : "✕"}
                           {draft.data.consent.recordedAt ? (
                             <>
@@ -397,9 +398,4 @@ const TITLE: Record<FollowUpStatus, string> = {
   OVERDUE: "Overdue",
   SENT: "Sent",
   DISMISSED: "Dismissed",
-};
-
-const TITLE_CHANNEL: Record<"EMAIL" | "WHATSAPP", string> = {
-  EMAIL: "Email",
-  WHATSAPP: "WhatsApp",
 };
