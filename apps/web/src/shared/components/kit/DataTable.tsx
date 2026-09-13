@@ -85,9 +85,12 @@ export interface DataTableProps<Row> {
   className?: string;
 }
 
+/* Kit.dc.html draws every cell at 12px horizontal — `px-4` was a rounding of
+   that to the nearest Tailwind step, and four extra pixels on both sides of
+   five columns is most of why the agent table on M01-S01 read as heavy. */
 const PAD: Record<Density, string> = {
-  comfortable: "px-4 py-[11px]",
-  compact: "px-4 py-1.5",
+  comfortable: "px-3 py-[11px]",
+  compact: "px-3 py-1.5",
 };
 
 export function DataTable<Row>({
@@ -161,7 +164,7 @@ export function DataTable<Row>({
         <thead className={cn("bg-surface text-left", stickyHeader && "sticky top-0 z-10")}>
           <tr className="border-b border-border">
             {selectable ? (
-              <th scope="col" className="w-10 px-4 py-2">
+              <th scope="col" className="w-9 px-3 py-2">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -184,7 +187,7 @@ export function DataTable<Row>({
                     sorted ? (sortDirection === "desc" ? "descending" : "ascending") : undefined
                   }
                   className={cn(
-                    "whitespace-nowrap px-4 py-2 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-ink-muted",
+                    "whitespace-nowrap px-3 py-2 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-ink-muted",
                     column.align === "right" && "text-right",
                   )}
                 >
@@ -264,7 +267,7 @@ function TableBlock<Row>({
           <th
             colSpan={columnCount}
             scope="colgroup"
-            className="border-b border-t border-divider bg-surface px-4 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
+            className="border-b border-t border-divider bg-surface px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
           >
             <span className="inline-flex items-center gap-2">
               {block.caption}
@@ -294,7 +297,7 @@ function TableBlock<Row>({
             )}
           >
             {selectable ? (
-              <td className={cn("w-10", PAD[density])}>
+              <td className={cn("w-9", PAD[density])}>
                 <input
                   type="checkbox"
                   checked={selected}

@@ -17,7 +17,7 @@ import { useNavigate } from "react-router-dom";
 import type { AgentDaily, DashboardMetric } from "@trainos/contract";
 import {
   AutonomyChip,
-  CostBudgetBar,
+  BudgetHeadline,
   DataTable,
   DateText,
   EmptyState,
@@ -27,6 +27,7 @@ import {
   MetricStrip,
   MiniBar,
   MoneyText,
+  PairedBars,
   PrimaryButton,
   SecondaryButton,
   StatusChip,
@@ -34,6 +35,7 @@ import {
   humanise,
   type Column,
   type MetricCellProps,
+  type PairedBarsSeries,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
@@ -45,6 +47,16 @@ import { useExecutiveDashboard, useProposalsVsWon } from "./api";
 const PERIOD = "2026-11";
 const PERIOD_LABEL = "November 2026";
 const CHART_MONTHS = 6;
+
+/**
+ * The chart's two series, in artboard order: the quiet one behind, the ink one
+ * in front. Sent is the volume and won is the outcome, and painting the outcome
+ * darker is the only emphasis the chart spends.
+ */
+const CHART_SERIES: [PairedBarsSeries, PairedBarsSeries] = [
+  { label: "Sent", tone: "track" },
+  { label: "Won", tone: "ink" },
+];
 
 /**
  * Metric key → the screen it drills to.
@@ -150,7 +162,10 @@ export function ExecutiveDashboard() {
       {
         key: "autonomy",
         label: "Autonomy",
-        accessor: (row) => <AutonomyChip level={row.autonomy} />,
+        /* `fluid` drops the chip's 118px column floor. That floor exists so the
+           ladder lines up on the autonomy matrix; here it only pads four short
+           words out to the width of the longest rung and widens the column. */
+        accessor: (row) => <AutonomyChip level={row.autonomy} fluid />,
       },
       {
         key: "cost",
@@ -212,7 +227,6 @@ export function ExecutiveDashboard() {
   }
 
   const series = chart.data?.series ?? [];
-  const peak = Math.max(1, ...series.map((point) => point.sent));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -247,10 +261,7 @@ export function ExecutiveDashboard() {
             />
           ) : null}
 
-          <Section
-            title={`Proposals sent vs won · ${CHART_MONTHS} months`}
-            link={{ label: "Open filtered list", to: navPath("Sales", "Proposals") }}
-          >
+          <Section title={`Proposals sent vs won · ${CHART_MONTHS} months`}>
             {chart.isPending ? (
               <LoadingState rows={CHART_MONTHS} label="Loading the proposals report" />
             ) : series.length === 0 ? (
@@ -259,39 +270,27 @@ export function ExecutiveDashboard() {
                 description="Nothing was sent in the last six months, so there is nothing to compare."
               />
             ) : (
-              <ul className="flex flex-col gap-2">
-                {series.map((point) => (
-                  <li key={point.period} className="flex items-center gap-3">
-                    <span className="w-8 shrink-0 font-mono text-[11px] text-ink-muted">
-                      {formatPeriod(point.period)}
-                    </span>
-                    {/* Capped, so the pair reads as a chart rather than as six
-                        rules running the width of the column. */}
-                    <div className="flex min-w-0 max-w-[260px] flex-1 flex-col gap-1">
-                      <span className="flex items-center gap-2">
-                        <MiniBar
-                          value={point.sent / peak}
-                          label={`Sent in ${point.period}`}
-                          valueText={`${point.sent} sent`}
-                        />
-                        <span className="w-16 shrink-0 font-mono text-[11px] text-ink-muted">
-                          {point.sent} sent
-                        </span>
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <MiniBar
-                          value={point.won / peak}
-                          label={`Won in ${point.period}`}
-                          valueText={`${point.won} won`}
-                        />
-                        <span className="w-16 shrink-0 font-mono text-[11px] text-ink">
-                          {point.won} won
-                        </span>
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              /* The drill link rides in the legend row rather than up beside the
+                 caption — the artboard puts it there, and it reads better at the
+                 foot of the thing it filters than above it. */
+              <PairedBars
+                label={`Proposals sent versus won over ${CHART_MONTHS} months`}
+                series={CHART_SERIES}
+                points={series.map((point) => ({
+                  key: point.period,
+                  label: formatPeriod(point.period),
+                  values: [point.sent, point.won],
+                }))}
+                action={
+                  <button
+                    type="button"
+                    onClick={() => navigate(navPath("Sales", "Proposals"))}
+                    className="whitespace-nowrap text-[12px] text-primary-hover hover:underline"
+                  >
+                    Open filtered list ›
+                  </button>
+                }
+              />
             )}
           </Section>
 
@@ -304,6 +303,10 @@ export function ExecutiveDashboard() {
               columns={agentColumns}
               rows={data.agentActivity}
               rowKey={(row) => row.agentId}
+              /* A five-row reporting table on a dashboard, not a list screen
+                 someone works through: the artboard draws it at 38px rows, and
+                 comfortable spacing here buys nothing but scroll. */
+              density="compact"
               stickyHeader={false}
               empty={
                 <EmptyState
@@ -335,7 +338,9 @@ export function ExecutiveDashboard() {
                       onClick={() => navigate(`${APPROVALS_PATH}/${approval.ref}`)}
                       className="flex w-full flex-col gap-0.5 py-2.5 text-left hover:text-ink"
                     >
-                      <span className="text-[13px] font-semibold text-ink">{approval.subject}</span>
+                      <span className="text-[13px] font-semibold leading-snug text-ink">
+                        {approval.subject}
+                      </span>
                       <span
                         className={`font-mono text-[11px] ${
                           approval.slaBreached ? "text-danger" : "text-ink-muted"
@@ -363,8 +368,13 @@ export function ExecutiveDashboard() {
                   <span className="w-[126px] shrink-0 text-[13px] text-ink-secondary">
                     {humanise(slice.level)}
                   </span>
+                  {/* Ink for the three rungs a human still drives, accent for
+                      the one that runs itself — the artboard's own emphasis,
+                      and the only place on this screen where a bar is blue. */}
                   <MiniBar
                     value={slice.rate}
+                    size="md"
+                    state={slice.level === "AUTONOMOUS" ? "primary" : "neutral"}
                     label={`${humanise(slice.level)} share`}
                     valueText={`${Math.round(slice.rate * 100)}%`}
                   />
@@ -380,10 +390,10 @@ export function ExecutiveDashboard() {
           </Section>
 
           <Section title="Agent spend · November">
-            <CostBudgetBar
+            <BudgetHeadline
               used={data.agentSpend.spent}
               limit={data.agentSpend.budget}
-              label="Spend against budget"
+              label="Agent spend against budget"
             />
           </Section>
         </aside>

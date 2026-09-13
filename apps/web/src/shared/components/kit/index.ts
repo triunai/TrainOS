@@ -83,6 +83,13 @@ export { DateText, type DateTextProps } from "./DateText";
 export { KeyboardShortcut, type KeyboardShortcutProps } from "./KeyboardShortcut";
 export { MiniBar, type BarState, type MiniBarProps } from "./Bar";
 export {
+  PairedBars,
+  type PairedBarsPoint,
+  type PairedBarsProps,
+  type PairedBarsSeries,
+  type PairedBarsTone,
+} from "./PairedBars";
+export {
   Skeleton,
   SkeletonText,
   SkeletonTable,
@@ -206,9 +213,11 @@ export {
 /* ---- AI operations (Kit §10) ---------------------------------------- */
 export {
   BudgetBar,
+  BudgetHeadline,
   TokenBudgetBar,
   CostBudgetBar,
   type BudgetBarProps,
+  type BudgetHeadlineProps,
   type CostBudgetBarProps,
   type TokenBudgetBarProps,
 } from "./BudgetBar";

@@ -45,7 +45,9 @@ export function ExceptionBanner({
     <div
       role={severity === "INFO" ? "status" : "alert"}
       className={cn(
-        "flex flex-wrap items-center gap-3.5 rounded-control border px-3.5 py-3",
+        /* 10px/14px and a 12px gap, from the M01-S01 artboard. A banner is an
+           interruption; the tallest thing in it should be its own button. */
+        "flex flex-wrap items-center gap-3 rounded-control border px-3.5 py-2.5",
         TONE[severity],
         className,
       )}

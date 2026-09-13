@@ -92,3 +92,48 @@ export function CostBudgetBar({ used, limit, label = "Cost", className }: CostBu
     />
   );
 }
+
+export interface BudgetHeadlineProps {
+  used: Money;
+  limit: Money;
+  /** Accessible name for the bar, e.g. "Agent spend against budget". */
+  label: string;
+  /** Contract state. The server decides the colour; the ratio never does. */
+  state?: BudgetState;
+  className?: string;
+}
+
+/**
+ * The budget bar with the spend as the headline. M01-S01's "Agent spend ·
+ * November" block: the figure at 22px mono, the cap as a muted phrase beside
+ * it, the track underneath.
+ *
+ * The same numbers as `BudgetBar` in the opposite order of importance, and the
+ * order is the whole point. `BudgetBar` labels a bar that sits among other bars
+ * — a row in a list of agents, where the caption has to say which agent. This
+ * one IS the section: the caption above it already said "Agent spend", so
+ * repeating that as a 12px label and shrinking the number it introduces buries
+ * the one fact the block exists to report.
+ */
+export function BudgetHeadline({
+  used,
+  limit,
+  label,
+  state = "WITHIN",
+  className,
+}: BudgetHeadlineProps) {
+  const ratio = limit.amount === 0 ? 0 : used.amount / limit.amount;
+  const valueText = `${formatMoney(used)} of ${formatMoney(limit)}`;
+
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-2", className)}>
+      <p className="flex flex-wrap items-baseline gap-2">
+        <span className="font-mono text-[22px] font-semibold tracking-[-0.01em] text-ink">
+          {formatMoney(used)}
+        </span>
+        <span className="text-[12px] text-ink-muted">of {formatMoney(limit)} budget</span>
+      </p>
+      <MiniBar value={ratio} size="md" state={STATE[state]} label={label} valueText={valueText} />
+    </div>
+  );
+}

@@ -33,6 +33,15 @@ import { cn } from "@/shared/lib/utils";
 
 export type BarState =
   | "neutral"
+  /**
+   * The accent fill. Reserved for a slice that IS the AI story rather than a
+   * quantity beside it — M01-S01 paints the autonomous share of the autonomy
+   * mix in accent and leaves the other three rungs ink, so the one number the
+   * screen is really reporting is the one that carries colour. It is not a
+   * severity and it is not a fourth status hue; a bar reaching for emphasis
+   * for any other reason wants `neutral`.
+   */
+  | "primary"
   | "warning"
   | "danger"
   /** Budget vocabulary. Same three fills; prefer the general names above. */
@@ -42,6 +51,7 @@ export type BarState =
 
 const FILL: Record<BarState, string> = {
   neutral: "bg-ink",
+  primary: "bg-primary",
   warning: "bg-[rgb(var(--warning-accent))]",
   danger: "bg-danger",
   within: "bg-ink",

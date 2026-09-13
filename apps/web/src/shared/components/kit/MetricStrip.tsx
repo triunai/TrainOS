@@ -134,28 +134,51 @@ export function MetricCell({
         ) : null}
       </span>
 
-      {delta ? (
-        <span className={cn("whitespace-nowrap text-[12px]", DELTA_INK[delta.severity ?? "INFO"])}>
-          {/* The arrow is decoration; the direction is a word in the accessible
-              text. An arrow glyph on its own is not a reading. */}
-          <span aria-hidden="true">{DELTA_ARROW[delta.direction]} </span>
-          <span className="sr-only">{DELTA_WORD[delta.direction]} </span>
-          {Math.abs(Math.round(delta.rate * 100))}%
-          {delta.comparedTo ? ` vs ${formatPeriod(delta.comparedTo)}` : ""}
-        </span>
-      ) : null}
+      {/* ONE line under the number, never two.
+          The artboards give every cell a caption, a value and a single muted
+          line, and the strip's whole job is that five of them scan as one row.
+          A cell that prints the movement AND the count on separate lines is
+          taller than its neighbours, and a strip of ragged cells is a strip
+          with no baseline to read along. So the movement and the count sit on
+          the same line, separated by the pack's middot — both facts kept, one
+          line spent. */}
+      {delta || sub || estimate ? (
+        <span className="flex flex-wrap items-baseline gap-x-1.5 text-[12px]">
+          {delta ? (
+            <span className={cn("whitespace-nowrap", DELTA_INK[delta.severity ?? "INFO"])}>
+              {/* The arrow is decoration; the direction is a word in the
+                  accessible text. An arrow glyph on its own is not a reading. */}
+              <span aria-hidden="true">{DELTA_ARROW[delta.direction]} </span>
+              <span className="sr-only">{DELTA_WORD[delta.direction]} </span>
+              {Math.abs(Math.round(delta.rate * 100))}%
+              {delta.comparedTo ? ` vs ${formatPeriod(delta.comparedTo)}` : ""}
+            </span>
+          ) : null}
 
-      {sub ? <span className="whitespace-nowrap text-[12px] text-ink-muted">{sub}</span> : null}
+          {delta && (sub || estimate) ? (
+            <span aria-hidden="true" className="text-ink-muted">
+              ·
+            </span>
+          ) : null}
 
-      {estimate ? (
-        <span className="text-[11px] text-ink-muted">
-          {typeof estimate === "string" ? estimate : ESTIMATE_DEFAULT}
+          {sub ? <span className="whitespace-nowrap text-ink-muted">{sub}</span> : null}
+
+          {estimate ? (
+            <span className="text-ink-muted">
+              {typeof estimate === "string" ? estimate : ESTIMATE_DEFAULT}
+            </span>
+          ) : null}
         </span>
       ) : null}
     </>
   );
 
-  const shape = "group flex flex-col items-start gap-[3px] rounded-control px-2 py-1.5 text-left";
+  /* 2px 16px 2px 8px with the left padding pulled back out, from the artboard.
+     The hover fill needs the padding to land on; the row does not need the
+     height, and `py-1.5` was adding 8px to a strip that is meant to read as a
+     single line of facts. */
+  const shape =
+    "group -ml-2 flex flex-col items-start gap-[3px] rounded-control py-0.5 pl-2 pr-4 text-left";
 
   if (!onDrill) {
     /* Informational-only: no hover, no pointer, no chevron. */
@@ -185,14 +208,14 @@ export function MetricStrip({ cells, bare, className }: MetricStripProps) {
     <div
       className={cn(
         "flex flex-wrap items-stretch gap-y-2.5",
-        !bare && "border-t border-divider pt-3",
+        !bare && "border-t border-divider pb-0.5 pt-3",
         className,
       )}
     >
       {cells.map((cell, index) => (
         <div key={cell.label} className="flex items-stretch">
           {index > 0 ? (
-            <div aria-hidden="true" className="mx-5 my-0.5 w-px shrink-0 bg-border" />
+            <div aria-hidden="true" className="my-0.5 ml-1 mr-5 w-px shrink-0 bg-border" />
           ) : null}
           <MetricCell {...cell} />
         </div>
