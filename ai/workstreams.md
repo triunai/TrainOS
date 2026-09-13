@@ -31,7 +31,16 @@ authorised by the user for after 014 passes `migration-retrofit-qa` — apply
 via the Supabase MCP's `apply_migration` against project `balzmmsmrawzmefkavte`
 (ap-southeast-1, ACTIVE_HEALTHY, zero migrations applied), not psql; region
 Singapore is confirmed by the user and by the project itself. **Do not apply
-anything to the hosted project before that QA gate passes.**
+anything to the hosted project before that QA gate passes.** PR #6 does not
+merge before `codex-review-014-017` reports its verdict either — see below.
+
+**Confirmed directly 19:5x: `core` is still not exposed on the hosted
+project.** Probed the live REST endpoint myself (`curl .../rest/v1/<table>`
+with `Accept-Profile: core`, using the publishable key from the Supabase MCP)
+and got back exactly `PGRST106`: `"Only the following schemas are exposed:
+public, graphql_public"`. R-F (expose `core` in the dashboard) is a real,
+still-open user action — not resolved by anything a lane can do — and
+nothing else currently blocks the hosted apply once 014 passes review.
 
 **Scope:** Everything under `supabase/`. Migrations, rollbacks, the executable
 pins, the catalog, and the architecture documents they implement.
@@ -61,6 +70,19 @@ gpt-5.6-sol xhigh via `codex-rescue`, worktree
 Fallback order if Codex is unavailable: Kimi (not installed locally, so
 effectively skipped), then a second Opus reviewer. Codex quota was reported
 back as of a 19:29 probe (not independently verified here).
+
+**Second review gates PR #6:** `codex-review-014-017` (Codex gpt-5.6-sol
+xhigh, its own shim on port 5435, worktree
+`~/Repos/personal-work/trainos-wt/codex-014-017` — checked out in detached
+HEAD at `826bb52`, "feat(supabase): 014 RLS policies, client grants and the
+core envelope wrappers," which is the tip of `cloud/migrations` at review
+time) runs the retrofit gate on PR #6 and reports MERGE / MERGE-WITH-FIXES /
+BLOCK to `docs/reviews/2026-09-13-codex-retrofit-014-017.md`. PR #6 does not
+merge before that verdict lands. PR #6 also fails Grant Hygiene as of 19:5x —
+confirmed the exact finding: `supabase/tests/test_014_rls_policies_and_client_grants.sql:513`
+defines a `SECURITY DEFINER` function, which the guard flags because a test
+must not be able to create the privilege escalation it exists to check for.
+The review must explain or fix this before MERGE.
 
 ⚠ **Carried from the paused state, not re-verified this session.** Critic Part
 2 (7 CRITICAL, 29 HIGH against 001–009 as of 2026-09-12) — whether 010–013
@@ -95,26 +117,42 @@ real client: `packages/contract`, the `TrainOsClient` seam in `apps/web`, and
 the hosted Supabase apply path.
 
 **State:** `cloud/web-swap` opened PR #5 (`refactor(web): enquiries, proposals
-and approvals through the TrainOsClient seam`); PR #6 is `cloud/migrations`.
-Hosted project `balzmmsmrawzmefkavte` is ACTIVE_HEALTHY with zero migrations
-applied. Still open for the user: `core` exposed in the dashboard (R-F), n8n
-in the proposal.
+and approvals through the TrainOsClient seam`); `cloud/migrations` opened PR
+#6 (`feat(supabase): migrations 014–017`); `ci/gitleaks` opened PR #7 (`ci:
+run gitleaks binary directly, no license needed`). Hosted project
+`balzmmsmrawzmefkavte` is ACTIVE_HEALTHY with zero migrations applied. Still
+open for the user: `core` exposed in the dashboard (R-F, confirmed live —
+see SUPABASE SCHEMA above), n8n in the proposal.
 
-⚠ **PR #5's CI is not "green except Gitleaks."** Checked directly against the
-run (`gh pr checks 5`, run 34754549631) at 19:40: four checks fail, not one.
-**Gitleaks** — as reported: `gitleaks-action@v2` refuses to run on an org
-repo without a `GITLEAKS_LICENSE` secret; `ci-gitleaks` (worktree
-`~/Repos/personal-work/trainos-wt/ci-gitleaks`, branch `ci/gitleaks`) is
-swapping it for the pinned binary. **Prettier (drift check)** — real drift in
-`apps/web/scripts/check-barrels.mjs`, unrelated to Gitleaks, needs a format
-pass. **npm audit (high+)** — 8 real vulnerabilities (5 moderate, 1 high, 2
-critical) in the `vite`/`vite-node` and `react-router`/`react-router-dom`
-dependency chains; `npm audit fix --force` would pull a breaking
-`react-router-dom@7.18.3`, so this needs a deliberate call, not an auto-fix.
-**Vite build** — the build step itself passes; only the
-`actions/upload-artifact@v4` step fails, and it fails on
-`Artifact storage quota has been hit`, a GitHub Actions account-level limit,
-not a code defect. Merge order stays web-swap → migrations regardless.
+⚠ **PR #5's CI is not "green except Gitleaks,"** and the root cause is
+upstream of PR #5 entirely. Checked directly against the run (`gh pr checks
+5`, run 34754549631) at 19:40: four checks fail. **Main itself has been red
+since `9fdcb4d`** (run 34753909066, confirmed 19:5x) on the same four:
+Gitleaks (license), Prettier (drift check), Vite build (artifact-upload
+quota, build itself passes), and npm audit (high+, 8 vulnerabilities: 5
+moderate, 1 high, 2 critical in the `vite`/`vite-node` and
+`react-router`/`react-router-dom` chains — `npm audit fix --force` would
+force a breaking `react-router-dom@7.18.3`). PR #5 and PR #6 both inherit
+all four from main; they are not lane-specific defects.
+
+**Fix lane, and a naming mismatch worth flagging.** A lane was redirected to
+fix main's CI first, then merge main into `cloud/web-swap`, reported as
+running on branch `fix/main-ci`. The actual worktree on disk is
+`~/Repos/personal-work/trainos-wt/fix-pr5`, on branch `fix/pr5` (not
+`fix/main-ci`), tracking `cloud/web-swap`, and its last commit as of 19:5x is
+`refactor(web): route the approval screens through the seam` — web-swap
+feature work, not a CI fix. Either the branch was renamed only in the report,
+or the redirection has not actually started yet; resume by checking
+`git log` on that worktree before assuming CI fixes are in progress there.
+
+**PR #7 (`ci/gitleaks`) is not "checks green so far" either.** Gitleaks
+itself now passes (the fix works), but the same three main-red failures —
+Prettier drift, Vite build (artifact quota), npm audit high+ — appear on PR
+#7 too, confirmed via `gh pr checks 7` (run 34754819325). Fixing Gitleaks
+alone does not turn any PR green; Prettier, the dependency audit and the
+artifact-quota setting all need separate fixes regardless of which PR lands
+first. Merge order: web-swap → migrations; where `ci/gitleaks` (PR #7) lands
+relative to those is not yet stated by any lane.
 
 **Refs:** `ai/briefs/2026-09-13-api-phase-plan.md`, `ai/resume-brief.md`,
 `docs/architecture/07-api-layer-decision.md`,
@@ -284,9 +322,12 @@ way — recheck before assuming they are set.
 **Scope:** `.github/workflows/ci.yml`, branch protection, CI secrets.
 
 **State:** Seventeen jobs are written and now run on every PR to main (PR #5,
-PR #6 confirmed). The three Supabase-coupled checks passed on PR #5. What
+#6, #7 confirmed). The three Supabase-coupled checks passed on PR #5. What
 remains open: (1) branch protection is blocked on a plan/visibility decision,
-not implementation; (2) the four real failures on PR #5 above.
+not implementation; (2) **main itself has been red since `9fdcb4d`** (run
+34753909066, confirmed 19:5x) on the same four checks PR #5 fails, so every
+open PR inherits them regardless of its own diff — see API-PHASE for the fix
+lane and the branch-name discrepancy found while verifying it.
 
 ⚠ **This is the one blocker that makes every other green claim provisional.**
 The pipeline is decoration until the checks are required, and it is untested

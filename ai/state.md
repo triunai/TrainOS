@@ -276,6 +276,16 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 19:5x — main CI red since 9fdcb4d; PR #6/#7 open; R-F confirmed live
+
+- Main fails the same four checks as PR #5. PR #6 gated on
+  `codex-review-014-017`'s verdict and fails Grant Hygiene (a test defines
+  its own `SECURITY DEFINER` function). PR #7's Gitleaks passes but three
+  main-red failures remain. Fix lane's actual branch is `fix/pr5`, not the
+  reported `fix/main-ci`. R-F (core not exposed) confirmed by a direct
+  `PGRST106` probe. Full detail in `ai/project-log.md` and
+  `ai/workstreams.md`.
+
 ## 2026-09-13 19:4x — PR #5/#6 open; PR #5 has four real CI failures, not one
 
 - Corrected the report of "gates green except Gitleaks": Prettier drift, npm

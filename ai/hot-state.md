@@ -34,8 +34,23 @@
 > `ai/workstreams.md` API-PHASE, SEEDS, SUPABASE SCHEMA and CI AND BRANCH
 > PROTECTION threads for detail.
 
-> **Last updated:** 2026-09-13 19:4x — six lanes now running; PR #5 has four
-> real CI failures, not one; nothing from this block has landed yet.
+> **BLAST 13 Sep 19:5x +08** — root cause found: main has been red since
+> `9fdcb4d` on the same four checks (Gitleaks, Prettier, npm audit, Vite
+> artifact-upload), so PR #5, #6 and #7 all inherit them regardless of their
+> own diffs. PR #6 (`cloud/migrations`) and PR #7 (`ci/gitleaks`) are open;
+> PR #7's Gitleaks check now passes but its other three main-red failures do
+> not. PR #6 also fails Grant Hygiene (a test file defines its own
+> `SECURITY DEFINER` function) and is gated on `codex-review-014-017`'s
+> MERGE/MERGE-WITH-FIXES/BLOCK verdict before it can land. A fix lane is
+> meant to be repairing main's CI on branch `fix/main-ci`, but the actual
+> worktree on disk is on branch `fix/pr5` with a web-swap feature commit, not
+> a CI fix — flagged, not yet resolved. R-F confirmed live: probing the
+> hosted project's REST endpoint directly returned `PGRST106`, `core` is not
+> exposed. See `ai/workstreams.md` for full detail.
+
+> **Last updated:** 2026-09-13 19:5x — main itself is red, not just PR #5;
+> R-F confirmed via a live probe; a lane's branch name does not match its
+> reported name. Nothing from this block has landed yet.
 
 ### Focus
 
@@ -52,12 +67,13 @@ into the kit per CLAUDE.md's consolidation rule once merged.
 
 ### Blockers
 
-Four items still need the user: exposing `core` in the dashboard (R-F),
-n8n in the proposal, and the four UI rulings tracked in
-`ai/resume-brief.md`. Hosted apply (L3) is gated on 014 passing retrofit QA
-first. Branch protection on `main` cannot be set at all on the current
-GitHub plan/visibility (403, confirmed 19:40) — needs a user decision to
-upgrade or make the repo public.
+Four items still need the user: exposing `core` in the dashboard (R-F,
+**confirmed still not exposed** by a direct `PGRST106` probe at 19:5x — this
+is the one thing actually blocking the first hosted apply once 014 passes
+review), n8n in the proposal, and the four UI rulings tracked in
+`ai/resume-brief.md`. Branch protection on `main` cannot be set at all on the
+current GitHub plan/visibility (403, confirmed 19:40) — needs a user decision
+to upgrade or make the repo public.
 
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 

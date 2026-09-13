@@ -15,6 +15,66 @@
 
 ---
 
+## 2026-09-13 19:5x — main CI red since 9fdcb4d, PR #6/#7 open, fix-lane name mismatch, R-F confirmed live
+
+**Main is red, not just PR #5.** Checked `gh run view` on run 34753909066
+(triggered by `9fdcb4d`, "docs(state): pack v3 merged") directly: it fails
+Gitleaks, Prettier (drift check), Vite build and npm audit (high+) — the same
+four PR #5 fails. Every PR opened since inherits all four regardless of its
+own diff. A lane (Opus) was redirected to fix main's CI first, then merge
+main into `cloud/web-swap`, reportedly on branch `fix/main-ci`.
+
+**Naming mismatch found while verifying.** The actual worktree is
+`~/Repos/personal-work/trainos-wt/fix-pr5`, on branch `fix/pr5` (tracking
+`cloud/web-swap`), not `fix/main-ci`. Its tip commit as of this check is
+`refactor(web): route the approval screens through the seam` — web-swap
+feature work, not a CI fix. Recorded as-is rather than assuming either the
+report or the branch is wrong; whoever resumes this should check that
+worktree's log before assuming CI repair has started there.
+
+**PR #6 (`cloud/migrations`, "feat(supabase): migrations 014–017") is open**
+and gated on `codex-review-014-017` (Codex gpt-5.6-sol xhigh, its own shim on
+port 5435) reporting MERGE / MERGE-WITH-FIXES / BLOCK to
+`docs/reviews/2026-09-13-codex-retrofit-014-017.md`; it does not merge before
+that verdict. It also fails Grant Hygiene — confirmed the exact finding:
+`supabase/tests/test_014_rls_policies_and_client_grants.sql:513` defines a
+`SECURITY DEFINER` function, which `check:grants` flags because a test must
+not be able to create the privilege escalation it is meant to check for. The
+review must explain or fix this.
+
+**PR #7 (`ci/gitleaks`, "ci: run gitleaks binary directly, no license
+needed") is open.** Gitleaks itself now passes on it — the fix works — but
+`gh pr checks 7` (run 34754819325) shows the same three main-red failures
+(Prettier, Vite build, npm audit) still present. The report that PR #7's
+"checks [are] green so far" is wrong by the same margin as PR #5's report
+was; fixing one gate does not clear the other three, which are repo-wide, not
+lane-specific.
+
+**R-F confirmed by direct probe, not just reported.** Got the hosted
+project's URL and publishable key from the Supabase MCP
+(`get_project_url`, `get_publishable_keys` for `balzmmsmrawzmefkavte`) and
+called its REST endpoint myself with `Accept-Profile: core`. Response was
+exactly `PGRST106`: `"Only the following schemas are exposed: public,
+graphql_public."` This matches the report precisely — `core` is genuinely
+not exposed, and it is the one thing actually blocking the first hosted
+apply once 014 clears review.
+
+**Two things worth telling future-me:**
+
+1. A status report and the underlying evidence can each be individually true
+   and still add up to a wrong overall claim. "PR #5 is green except
+   Gitleaks" and "PR #7's checks are green so far" were both probably true at
+   the instant Gitleaks was the freshest signal someone looked at — but
+   `gh pr checks` for both PRs had three more failures sitting in the same
+   output the whole time. Read the full check list, not the most recent job.
+2. A lane's reported branch name is not guaranteed to match what is on disk.
+   `fix/main-ci` does not exist; `fix/pr5` does, tracking a different intent
+   (web-swap fixes) than what was reported (main CI fixes). Worth a `git
+worktree list` / `git log` check before trusting a branch name in a status
+   report, the same way a commit hash or a CI claim gets checked.
+
+---
+
 ## 2026-09-13 19:4x — PR #5/#6 open, RPC gap found, seeds and codex-review lanes, repo-name note
 
 **PR status (verified, not taken on trust).** PR #5 (`cloud/web-swap`) and PR
