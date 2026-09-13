@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { fixtureClient } from "@trainos/fixtures";
-import { currentPrimaries } from "@/shared/components/kit";
+import { currentPrimaries, SPLIT_HEADER_HEIGHT } from "@/shared/components/kit";
 import { EnquiryInboxPage } from "../EnquiryInboxPage";
 import { EnquiryDetailPage } from "../EnquiryDetailPage";
 import { FollowUpQueuePage } from "../FollowUpQueuePage";
@@ -104,8 +104,15 @@ describe("M03-S01 · enquiry inbox", () => {
     const detailTitle = await within(preview).findByRole("heading", { level: 2 });
     const detailHeader = detailTitle.closest("div")?.parentElement;
 
-    expect(listHeader.className).toContain("h-[72px]");
-    expect(detailHeader?.className).toContain("h-[72px]");
+    /* Asserted against the KIT constant, not against a copy of its value: the
+       point of promoting it out of this screen is that one edit moves every
+       master/detail pane, and a test carrying its own "h-[72px]" would keep
+       passing while the panes drifted apart. */
+    expect(listHeader.className).toContain(SPLIT_HEADER_HEIGHT);
+    expect(detailHeader?.className).toContain(SPLIT_HEADER_HEIGHT);
+    expect(listHeader.className.match(/h-\[\d+px\]/)?.[0]).toBe(
+      detailHeader?.className.match(/h-\[\d+px\]/)?.[0],
+    );
 
     /* Both would grow past 72px on a long subject or a third filter chip. */
     expect(listHeader.className).toContain("flex-nowrap");
