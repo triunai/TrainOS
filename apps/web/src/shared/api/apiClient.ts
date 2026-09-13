@@ -151,6 +151,7 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     listApprovals: async (page?: PageRequest) => must(await rpc.listApprovals(page ?? {})),
     getApproval: async (id: string) => must(await rpc.getApproval(id)),
+    getAudit: async (resourceType: string, id: string) => must(await rpc.audit(resourceType, id)),
     decideApproval: async (id: string, body: ApprovalDecideRequest, options?: RequestOptions) =>
       must(
         await rpc.decideApproval(id, {

@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { APPROVAL_AURORA } from "@trainos/contract";
-import { fixtureClient } from "@trainos/fixtures";
+import { fixtureClient } from "@/shared/api";
 import { ApprovalDetail } from "../ApprovalDetail";
 import { APPROVAL_DETAIL_PATTERN, APPROVALS_PATH, approvalPath } from "../paths";
 import { render } from "@testing-library/react";

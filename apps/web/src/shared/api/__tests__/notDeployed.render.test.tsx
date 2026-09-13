@@ -8,6 +8,7 @@ import { BreadcrumbProvider } from "@/shared/components/layout";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { EnquiryInboxPage } from "@/features/enquiries";
 import { ProposalsListPage } from "@/features/proposals";
+import { ApprovalInbox } from "@/features/approvals";
 
 import { createRpcApiClient } from "../apiClient";
 import { ApiProvider } from "../useApi";
@@ -84,6 +85,14 @@ describe("an undeployed `core` schema reads as a state, not as a failure", () =>
     renderWithRpcClient(<ProposalsListPage />, "/sales/proposals");
 
     expect(await screen.findByText(/The proposal list is not available here yet/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("M02-S01 · the approval inbox says the queue is not available yet", async () => {
+    renderWithRpcClient(<ApprovalInbox />, "/approvals");
+
+    expect(await screen.findByText(/The approval queue is not available here yet/)).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

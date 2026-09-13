@@ -5,6 +5,7 @@ import type {
   ApprovalDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AuditEntry,
   ApprovalRequestRef,
   BadgeCounts,
   Budget,
@@ -369,6 +370,7 @@ export const RPC_NAMES = {
     "get_rate_card",
     "list_approvals",
     "get_approval",
+    "get_audit",
     "get_policy",
     "get_pipeline_config",
     "get_contact",
@@ -628,6 +630,23 @@ export class SupabaseRpcClient implements TrainOsClient {
       p_decision: input.decision,
       p_note: input.note ?? null,
       p_idempotency_key: input.idempotencyKey,
+    });
+  }
+
+  /**
+   * §2 `GET /v1/{resourceType}/{id}/audit`.
+   *
+   * `resourceType` is a plain string because the contract keys the trail by
+   * one: `approvals::{ref}`, `proposals::{ref}`. Narrowing it to a union here
+   * would be a shape this client invented, and E3 exists to stop exactly that.
+   *
+   * The approval IS the resource on M02-S02, not the thing it acts on: the
+   * trail an approver needs is how this decision reached them.
+   */
+  audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>> {
+    return this.call<ListResponse<AuditEntry>>("get_audit", {
+      p_resource_type: resourceType,
+      p_id: id,
     });
   }
 

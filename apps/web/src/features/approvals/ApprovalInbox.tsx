@@ -42,7 +42,14 @@ import {
   type RowGroup,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, readableMessage, toApiError, type ApiError } from "@/shared/api";
+import {
+  isDomainError,
+  isNotDeployed,
+  notDeployedState,
+  readableMessage,
+  toApiError,
+  type ApiError,
+} from "@/shared/api";
 import {
   useApprovalInbox,
   useApprovalViews,
@@ -303,6 +310,17 @@ export function ApprovalInbox() {
       <div className="flex flex-col">
         {headerRow()}
         <LoadingState rows={7} label="Loading the approval queue" className="px-5" />
+      </div>
+    );
+  }
+
+  /* Before the error branch: `list_approvals` not existing is a fact about
+     this environment, and neither a retry nor a refusal explains it. */
+  if (isNotDeployed(inbox.error)) {
+    return (
+      <div className="flex flex-col">
+        {headerRow()}
+        <EmptyState {...notDeployedState("The approval queue")} />
       </div>
     );
   }

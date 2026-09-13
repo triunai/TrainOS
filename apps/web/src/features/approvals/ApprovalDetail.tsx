@@ -60,7 +60,7 @@ import {
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, toApiError } from "@/shared/api";
+import { isDomainError, isNotDeployed, notDeployedState, toApiError } from "@/shared/api";
 import { useApproval, useApprovalAudit, useApprovalInbox, useDecideApproval } from "./api";
 import { APPROVALS_PATH, approvalPath } from "./paths";
 
@@ -165,6 +165,14 @@ export function ApprovalDetail() {
     return (
       <div className="flex flex-col">
         <LoadingState rows={8} label="Loading the approval" className="px-5" />
+      </div>
+    );
+  }
+
+  if (isNotDeployed(approval.error)) {
+    return (
+      <div className="flex flex-col">
+        <EmptyState {...notDeployedState("This approval")} />
       </div>
     );
   }
@@ -536,7 +544,9 @@ export function ApprovalDetail() {
           <Block title={audit.data ? `Audit trail · ${audit.data.data.length}` : "Audit trail"}>
             {audit.isPending ? <LoadingState rows={2} label="Loading the audit trail" /> : null}
 
-            {audit.isError ? (
+            {isNotDeployed(audit.error) ? (
+              <EmptyState className="px-0 py-6" {...notDeployedState("The audit trail")} />
+            ) : audit.isError ? (
               <ErrorState
                 className="px-0 py-6"
                 title="The audit trail did not load"

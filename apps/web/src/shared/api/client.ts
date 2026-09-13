@@ -8,6 +8,7 @@ import type {
   ApprovalBulkDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AuditEntry,
   BadgeCounts,
   Budget,
   ChannelConsent,
@@ -160,6 +161,7 @@ export interface TrainOsClient {
   getApproval(id: string): Promise<Result<ApprovalDetail>>;
   decideApproval(id: string, input: DecideInput): Promise<Result<ApprovalDecideResponse>>;
   bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>>;
+  audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>>;
   performAction(input: ActionInput): Promise<Result<ActionResponse>>;
   listTemplates(type?: TemplateType): Promise<Result<ListResponse<Template>>>;
   listPolicies(): Promise<Result<ListResponse<Policy>>>;
