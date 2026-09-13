@@ -201,3 +201,5 @@ its own body — so the app now has two role mechanisms and only one of them is
 at the route.
 **Owner:** the web lane. **Trigger:** the moment the HTTP client lands. Guards
 wrap the element, not the path.
+
+- [ ] **Design tightening pass** (13 Sep, user-endorsed critique): see docs/design/2026-09-13-design-tightening-brief.md — kit typography/radius/surface tokens, flatten containers, sidebar two-mechanism hierarchy, table typography; Collections page is the reference. Owner: next session, first UI item after verifier.
