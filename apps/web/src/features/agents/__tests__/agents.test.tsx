@@ -53,8 +53,13 @@ describe("M18-S01 · agent registry", () => {
     renderScreen(<AgentRegistryScreen />);
     const table = await screen.findByRole("table", { name: "Agent registry" });
     expect(within(table).getAllByText("STRONG-1").length).toBeGreaterThan(0);
+    /* A configured jury is never "No jury": ESCALATE is the tinted "Jury 2 of
+       3" because it can block, GATE runs at promotion time and SAMPLE runs
+       after the human decides, and the column says which. */
     expect(within(table).getAllByText(/Jury 2 of 3/).length).toBeGreaterThan(0);
-    expect(within(table).getAllByText("No jury").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText("Jury at promotion").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText("Jury sampled").length).toBeGreaterThan(0);
+    expect(within(table).queryByText("No jury")).not.toBeInTheDocument();
     /* Lead Agent: cacheHitRate30d 0.71, costPerRun30d RM 0.01. */
     expect(within(table).getAllByText("71%").length).toBeGreaterThan(0);
   });

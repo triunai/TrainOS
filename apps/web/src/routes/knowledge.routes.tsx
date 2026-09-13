@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
+import type { RouteObject } from "react-router-dom";
 import { LoadingState } from "@/shared/components/states";
 import { KNOWLEDGE_SOURCES_PATH } from "@/features/knowledge";
-import type { FeatureRoute } from "./enquiries.routes";
 
 /**
  * The knowledge feature's route registration — M16-S05.
@@ -15,10 +15,9 @@ const KnowledgeSourcesScreen = lazy(() =>
   import("@/features/knowledge").then((module) => ({ default: module.KnowledgeSourcesScreen })),
 );
 
-export const knowledgeRoutes: FeatureRoute[] = [
+export const routes: RouteObject[] = [
   {
     path: KNOWLEDGE_SOURCES_PATH,
-    label: "Knowledge sources",
     element: (
       <Suspense fallback={<LoadingState label="Loading knowledge sources" />}>
         <KnowledgeSourcesScreen />
@@ -26,3 +25,6 @@ export const knowledgeRoutes: FeatureRoute[] = [
     ),
   },
 ];
+
+/** The name `routes.tsx` imports today. Same array — see enquiries.routes.tsx. */
+export const knowledgeRoutes = routes;

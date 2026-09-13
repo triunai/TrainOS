@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Budget, TierKey, UsageBreakdownRow } from "@trainos/contract";
 import {
-  Breadcrumb,
   BUDGET_TONE,
   BudgetBar,
   ContentCard,
@@ -25,6 +24,7 @@ import {
   type Column,
   type PillTab,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { useBudgets, usePutBudget, useUsage, type UsageGroupBy } from "./api";
 import { AI_MODELS_PATH, PROVIDERS_PATH } from "./paths";
 
@@ -76,6 +76,8 @@ function proposedCap(budget: Budget) {
 
 export function UsageBudgetsScreen() {
   const navigate = useNavigate();
+  useBreadcrumb([{ label: "Settings" }, { label: "Usage" }, { label: "November 2026" }]);
+
   const [groupBy, setGroupBy] = useState<UsageGroupBy>("TIER");
   const usage = useUsage(PERIOD, groupBy);
   const budgets = useBudgets();
@@ -184,12 +186,6 @@ export function UsageBudgetsScreen() {
 
   return (
     <div className="flex flex-col gap-4 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[{ label: "Settings" }, { label: "Usage" }, { label: "November 2026" }]}
-        />
-      </div>
-
       <RecordHeader
         withoutCondensed
         title="Usage"

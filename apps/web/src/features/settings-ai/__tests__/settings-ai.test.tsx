@@ -73,9 +73,15 @@ describe("M20-S20 · AI models, tiers and routing", () => {
   it("renders the jury as a mode, never as a boolean", async () => {
     renderScreen(<AiModelsScreen />);
     await screen.findByText("Proposal draft");
+    /* The chip names which kind of jury the row has; the cell under it names
+       the mode. Nine of the twelve rows are GATE or SAMPLE, neither of which
+       can block a live action. */
+    expect(screen.getAllByText("Jury at promotion").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Jury sampled").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Jury 2 of 3/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Gate").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/^Sample · 5%$/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/^Escalate · below 0\.[78] confidence$/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sample").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Escalate").length).toBeGreaterThan(0);
   });
 
   it("clears staged edits without applying them", async () => {

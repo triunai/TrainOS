@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { AutomationRun, JuryVote, TraceNode } from "@trainos/contract";
 import {
   AgentRunCard,
-  Breadcrumb,
   ContentCard,
   DataTable,
   ErrorState,
@@ -27,6 +26,7 @@ import {
   TraceTreeNode,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { useAgentRegistry, useDeadLetterRun, useRetryRun, useRun, useRuns } from "./api";
 import { RunNowPanel } from "./RunNowPanel";
 import { AGENT_REGISTRY_PATH, RUNS_PATH, runTracePath } from "./paths";
@@ -88,6 +88,8 @@ function juryOf(run: AutomationRun) {
 
 export function RunTraceScreen() {
   const { runRef } = useParams<{ runRef: string }>();
+  useBreadcrumb([{ label: "Automation" }, { label: "Runs" }, { label: runRef ?? "Latest" }]);
+
   const navigate = useNavigate();
   const runs = useRuns();
   const registry = useAgentRegistry();
@@ -195,17 +197,6 @@ export function RunTraceScreen() {
 
   return (
     <div className="flex flex-col gap-4 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[{ label: "Automation" }, { label: "Runs", href: RUNS_PATH }]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         title={`Run ${run.ref} · ${run.orchestrator ? humanise(run.orchestrator) : agentName}`}
         meta={[

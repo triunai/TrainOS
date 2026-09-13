@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ProviderKey, ProviderKeyStatus } from "@trainos/contract";
 import {
-  Breadcrumb,
   BudgetBar,
   ContentCard,
   DateText,
@@ -21,6 +20,7 @@ import {
   TierChip,
   tierLabel,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { AddProviderKeyDrawer } from "./AddProviderKeyDrawer";
 import { useProviders, useRevealProvider, useTestProvider } from "./api";
 import { AI_MODELS_PATH, USAGE_PATH } from "./paths";
@@ -65,6 +65,8 @@ function daysUntil(date: string | undefined, from = new Date("2026-11-14T10:32:0
 
 export function ProviderKeysScreen() {
   const navigate = useNavigate();
+  useBreadcrumb([{ label: "Settings" }, { label: "Providers" }, { label: "Keys" }]);
+
   const providers = useProviders();
   const test = useTestProvider();
   const reveal = useRevealProvider();
@@ -100,10 +102,6 @@ export function ProviderKeysScreen() {
 
   return (
     <div className="flex flex-col gap-4 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Settings" }, { label: "Providers" }, { label: "Keys" }]} />
-      </div>
-
       <RecordHeader
         withoutCondensed
         title="Providers"

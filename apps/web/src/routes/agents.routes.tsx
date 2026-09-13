@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
+import type { RouteObject } from "react-router-dom";
 import { LoadingState } from "@/shared/components/states";
 import { AGENT_REGISTRY_PATH, RUNS_PATH, RUN_TRACE_PATH } from "@/features/agents";
-import type { FeatureRoute } from "./enquiries.routes";
 
 /**
  * The agents feature's route registrations — M18-S01 and M18-S04.
@@ -31,10 +31,9 @@ const RunTraceScreen = lazy(() =>
   import("@/features/agents").then((module) => ({ default: module.RunTraceScreen })),
 );
 
-export const agentsRoutes: FeatureRoute[] = [
+export const routes: RouteObject[] = [
   {
     path: AGENT_REGISTRY_PATH,
-    label: "Agent registry",
     element: (
       <Suspense fallback={<LoadingState label="Loading the agent registry" />}>
         <AgentRegistryScreen />
@@ -43,7 +42,6 @@ export const agentsRoutes: FeatureRoute[] = [
   },
   {
     path: RUNS_PATH,
-    label: "Runs",
     element: (
       <Suspense fallback={<LoadingState label="Loading the most recent run" />}>
         <RunTraceScreen />
@@ -52,7 +50,6 @@ export const agentsRoutes: FeatureRoute[] = [
   },
   {
     path: RUN_TRACE_PATH,
-    label: "Run trace",
     element: (
       <Suspense fallback={<LoadingState label="Loading the run trace" />}>
         <RunTraceScreen />
@@ -60,3 +57,6 @@ export const agentsRoutes: FeatureRoute[] = [
     ),
   },
 ];
+
+/** The name `routes.tsx` imports today. Same array — see enquiries.routes.tsx. */
+export const agentsRoutes = routes;

@@ -6,7 +6,6 @@ import type {
   RetrievalScope,
 } from "@trainos/contract";
 import {
-  Breadcrumb,
   ContentCard,
   DataTable,
   DateText,
@@ -25,6 +24,7 @@ import {
   StatusChip,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { useCheckSource, useKnowledgeSources, useReingestSource } from "./api";
 
 /**
@@ -70,6 +70,8 @@ const SCOPE_LABEL: Record<RetrievalScope, string> = {
 
 export function KnowledgeSourcesScreen() {
   const sources = useKnowledgeSources();
+  useBreadcrumb([{ label: "Knowledge" }, { label: "Sources" }, { label: "Corpus" }]);
+
   const check = useCheckSource();
   const reingest = useReingestSource();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -219,10 +221,6 @@ export function KnowledgeSourcesScreen() {
 
   return (
     <div className="flex flex-col gap-4 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Knowledge" }, { label: "Sources" }, { label: "Corpus" }]} />
-      </div>
-
       <RecordHeader
         withoutCondensed
         title="Sources"

@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import type { Agent, AutonomyGrant } from "@trainos/contract";
 import {
   AutonomyChip,
-  Breadcrumb,
   ContentCard,
   DataTable,
   DateText,
@@ -26,6 +25,7 @@ import {
   type Column,
   type PillTab,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { Switch } from "@/shared/components/ui/switch";
 import { usePauseAgent, useAgentRegistry } from "./api";
 import { AGENT_REGISTRY_PATH, RUNS_PATH } from "./paths";
@@ -118,6 +118,11 @@ function AutonomyCell({ grants }: { grants: AutonomyGrant[] }) {
 }
 
 export function AgentRegistryScreen() {
+  /* The breadcrumb lives in the Topbar, not in the content card. CLAUDE.md:
+     the breadcrumb owns the path and RecordHeader owns the identity, and a
+     trail inside the card breaks both halves at once. */
+  useBreadcrumb([{ label: "Automation" }, { label: "Agents" }, { label: "Registry" }]);
+
   const registry = useAgentRegistry();
   const pause = usePauseAgent();
   const [tab, setTab] = useState<string>(TAB_ALL);
@@ -191,22 +196,12 @@ export function AgentRegistryScreen() {
         key: "jury",
         label: "Jury",
         accessor: (agent) => (
-          <div className="flex flex-col items-start gap-1">
-            {/* A GATE or SAMPLE jury never blocks a live action, so only an
-                ESCALATE policy earns the AI-tinted chip. The mode is printed
-                either way — "no jury" and "a jury that runs at promotion time"
-                are different facts. */}
-            {agent.jury?.mode === "ESCALATE" ? (
-              <JuryChip
-                jury={{ quorum: agent.jury.quorum, of: agent.jury.of, agreed: [], dissented: [] }}
-              />
-            ) : (
-              <JuryChip />
-            )}
-            {agent.jury ? (
-              <span className="text-[11px] text-ink-muted">{humanise(agent.jury.mode)}</span>
-            ) : null}
-          </div>
+          /* The chip takes the POLICY, not a fabricated result. A configured
+             jury has not voted, so there is nothing honest to put in
+             `agreed[]`; the kit renders the mode and tints only ESCALATE,
+             which is the only mode that can stand between a user and the
+             action in front of them. */
+          <JuryChip policy={agent.jury} />
         ),
         width: "105px",
       },
@@ -295,21 +290,6 @@ export function AgentRegistryScreen() {
 
   return (
     <div className="flex flex-col gap-4 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[
-            { label: "Automation" },
-            { label: "Agents", href: AGENT_REGISTRY_PATH },
-            { label: "Registry" },
-          ]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         withoutCondensed
         title="Agents"

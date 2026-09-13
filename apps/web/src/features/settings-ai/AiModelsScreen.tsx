@@ -4,7 +4,6 @@ import { TIER_KEYS } from "@trainos/contract";
 import type { CacheStrategy, ModelTier, RoutingEntry, TierKey } from "@trainos/contract";
 import {
   AllowedHoursStrip,
-  Breadcrumb,
   BudgetBar,
   ContentCard,
   DataTable,
@@ -24,6 +23,7 @@ import {
   tierLabel,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { useAiRouting, useAiTiers, usePutAiRouting } from "./api";
 import { PROVIDERS_PATH, USAGE_PATH } from "./paths";
 
@@ -102,6 +102,8 @@ function proposeEdits(entries: RoutingEntry[], tiers: ModelTier[]): Map<string, 
 
 export function AiModelsScreen() {
   const navigate = useNavigate();
+  useBreadcrumb([{ label: "Settings" }, { label: "AI Models" }, { label: "Tiers and routing" }]);
+
   const tiers = useAiTiers();
   const routing = useAiRouting();
   const apply = usePutAiRouting();
@@ -265,12 +267,6 @@ export function AiModelsScreen() {
 
   return (
     <div className="flex flex-col gap-4 pb-10">
-      <div className="px-5 pt-4">
-        <Breadcrumb
-          items={[{ label: "Settings" }, { label: "AI Models" }, { label: "Tiers and routing" }]}
-        />
-      </div>
-
       <RecordHeader
         withoutCondensed
         title="AI models"
@@ -507,26 +503,15 @@ export function AiModelsScreen() {
 
                       <td className="border-t border-divider px-3 py-2">
                         <div className="flex flex-col items-start gap-1">
-                          {entry.jury.mode === "ESCALATE" ? (
-                            <JuryChip
-                              jury={{
-                                quorum: entry.jury.quorum,
-                                of: entry.jury.of,
-                                agreed: [],
-                                dissented: [],
-                              }}
-                            />
-                          ) : (
-                            <JuryChip />
-                          )}
+                          <JuryChip policy={entry.jury} />
+                          {/* The mode word, because §4 asks this column to
+                              render the jury OBJECT and not a boolean. The
+                              full sentence — quorum, triggers, whether it ever
+                              blocks — is on the chip's title, from the kit's
+                              own `describeJuryPolicy`, so the two cannot
+                              disagree. */}
                           <span className="text-[11px] text-ink-muted">
                             {humanise(entry.jury.mode)}
-                            {entry.jury.mode === "SAMPLE" && entry.jury.sampleRate
-                              ? ` · ${Math.round(entry.jury.sampleRate * 100)}%`
-                              : ""}
-                            {entry.jury.mode === "ESCALATE" && entry.jury.triggers
-                              ? ` · below ${entry.jury.triggers.minConfidence} confidence`
-                              : ""}
                           </span>
                         </div>
                       </td>
