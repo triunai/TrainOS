@@ -363,8 +363,30 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > `codex-review-018` lane confirmed shut down. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 22:3x — PR #22 independently confirms
-> all 6 of 018's Blockers with real G6 execution; two nuances recorded.
+> **BLAST 13 Sep 22:4x +08** — PR #23 confirmed MERGED (`db0ec94`), one
+> file: an Opus thermonuclear + security re-review of 014's own fix
+> commits, with G6 comparing OLD/NEW SQL directly. VERDICT
+> MERGE-WITH-FIXES: both original CRITICALs confirmed genuinely closed
+> by execution. New HIGH confirmed: `run:read` governs seven `core`
+> tables in 013, this fix pack gates only one (`run_state_cards` and
+> `run_snapshots` still open, not a regression, a pre-existing gap named
+> only for the one table the original review happened to check). Two
+> pin-only defects found by running rather than reading it: T11a is a
+> tautology (still passes against the pre-fix database), and the pin's
+> own header contradicts its own assertion counts (claims 001-014,
+> actually needs 001-017). Codex still owed until 00:29. Separately,
+> `fix-014` confirmed pushed 015-017's fixes to `cloud/migrations` at
+> `bdd49aa` (not yet a PR): 015's overload guard, 016's rollback rescoped
+> to its own derivation, 017's SST trigger/backfill/VALIDATE/PDPA guards,
+> finding #19 closed via a registry table, RLS added on three new
+> tables. Two premise corrections recorded (015's trap aborted for a
+> different reason than claimed; the post-rollback policy count is
+> 228→234→228, not `<> 222`). 016's hardcoded `dated` ref-prefix conflict
+> with the domain model deliberately left unfixed, needs a human ruling
+> — added to `ai/state.md`'s Backlog. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 22:4x — PR #23 (014) MERGE-WITH-FIXES;
+> fix-014 pushed 015-017's fixes at bdd49aa; new human ruling needed.
 
 ### Focus
 

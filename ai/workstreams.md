@@ -718,6 +718,144 @@ against `apps/web/src/shared/api/rpcClient.ts` — the doc states plainly
 neither of the two static passes attempted either. `codex-review-018`'s
 worktree confirmed shut down (gone from disk).
 
+⛔ **PR #23 confirmed MERGED at `db0ec94`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-014-rereview.md` — an Opus
+thermonuclear + security re-review of 014's own fix commits (`d9834b7`
+through `21ec975`), G6 executed comparing the OLD (`826bb52`) and NEW
+(`21ec975`) SQL directly. **VERDICT: MERGE-WITH-FIXES.** Both original
+CRITICALs confirmed genuinely closed by execution (G6 ran the actual
+DELETE attack against both databases: succeeds on OLD, refused `42501` on
+NEW; the rollback reproduces 002's five-table grant set verbatim,
+confirmed by a full round trip including a 017-applied refusal). Codex
+`gpt-5.6-sol` still hard quota-blocked until 00:29, recorded as OWED, not
+substituted — matches the gate's own rule.
+
+- **New HIGH (N-1), confirmed exactly against the doc: `run:read` governs
+  seven `core` tables in 013** (`runs, run_nodes, run_node_io, run_events,
+run_state_cards, run_checkpoints, run_snapshots`), and this fix pack
+  gates only one. `run_state_cards` is confirmed worse than the gated
+  table — its own 013 header concedes it skips the 30-day redaction
+  sweep `run_node_io` gets. **Not a regression** — the gap existed at
+  `826bb52` too, and the original review only named the one table it
+  happened to check — but the catalog's "deliberate posture" framing
+  (confirmed present: `110 of 113 core tables keep blanket tenant-scoped
+SELECT; run_snapshots, run_state_cards and run_events are the same data
+class as run_node_io and are NOT gated`) is a provenance argument, not a
+  security one. Routed to `fix-014`.
+- **Two defects found only by running the pin, not reading it, confirmed
+  directly:** (1) **T11a is a tautology** — it `REVOKE`s DELETE at line
+  975 then asserts the absence of that same privilege one statement
+  later, so it still passes against the original, defective `826bb52`
+  database; only T11b (the behavioral delete attempt) actually catches
+  CRIT-1, meaning the pin has one working detector, not the two it
+  believes it has. (2) **The pin's own header contradicts its own
+  assertions**: line 5 says "run against the complete 001-014 set," but
+  lines 235/258 assert counts (116 policy pairs, 121 SELECT grants) that
+  only a 001-017 database produces — confirmed by G6 running the pin
+  against a clean 001-014-only stack exactly as instructed and getting an
+  immediate `T1a FAIL: ... found 113`. Not this review's error — the
+  file's own, still open.
+- **Corroboration across independent lenses, confirmed present, not
+  claimed:** a separate thermonuclear-lens pass (structural/maintainability,
+  its own BLOCK verdict on structural grounds only) landed on some of the
+  same coupling from a different angle — F5 independently found the same
+  `polqual`-only gate-detection gap N-11 (security pass) already named;
+  F1 and F8 are new structural findings (policy-comment stamping
+  ownership split between 014 and 017; the 017-applied rollback refusal
+  hardcodes one table name rather than a generic later-migration check).
+- **Could not verify, confirmed stated in the doc's own words, worth
+  keeping on record rather than silently dropped:** migrations 003, 005,
+  006, 008, 009, 010, 012 were not re-verified line-by-line beyond what
+  014 touches, so whether other `run:read`-style permission/table
+  mismatches exist elsewhere in the pack is still open; frontend/worker
+  consumers of the changed grant/policy shapes were not traced (Codex's
+  specific brief, still not run).
+
+✅ **`fix-014` pushed 015–017's fixes to `origin/cloud/migrations`, tip
+`bdd49aa`** — confirmed present on the remote, NOT yet a PR/merge to
+main. Closes the assigned findings from
+`docs/reviews/2026-09-13-codex-retrofit-015-017.md` (PR #18's review).
+**015 MERGE-WITH-FIXES, 016 and 017 BLOCK, closed**, confirmed against
+the commit body:
+
+- **015**: explicit `DROP FUNCTION` before `CREATE`, an exact overload
+  assertion, a `to_regprocedure` check on the signature the cron command
+  actually calls (T6). **Premise corrected, confirmed word-for-word**:
+  the finding said the trap "fails invisibly with a green-looking cron
+  table" — measured instead that 015's existing command check ALREADY
+  aborts (`to_regproc` returns NULL for an ambiguous bare name), just
+  with a misleading error pointing at the wrong cause; the real exposure
+  is a LATER migration adding the overload.
+- **016**: the rollback's unqualified `DELETE FROM core.ref_formats WHERE
+NOT EXISTS (allocated)` is now scoped to rows matching 016's own
+  `pg_trigger` derivation (prefix, entity, width); confirmed
+  end-to-end that a hand-configured format survives a real rollback that
+  removes all 32 seeded rows. A preflight now refuses rolling 016 back
+  while 017 is applied, same reasoning as 014's. T7 pins it.
+- **017**: (a) **CRITICAL SST fixed** — the NOT NULL DEFAULT
+  `sst_rate=0`/`sst_reason='STANDARD_RATED'` pair is gone, replaced by a
+  BEFORE INSERT OR UPDATE trigger resolving from policy plus a guarded
+  backfill that refuses rather than guesses for quotations older than the
+  earliest policy; T11 pins six behaviors. (b) The NOT VALID/VALIDATE
+  lock-safety claim was false (one transaction, ACCESS EXCLUSIVE held to
+  COMMIT) — corrected to an honest statement of the real lock window;
+  **not split, recorded as owed** (a change to the pack's shape). (c) The
+  unguarded `VALIDATE` on `evaluation_responses_overall_score_range` now
+  counts and refuses first, naming the count and highest value, rather
+  than aborting mid-flight. (d) The rollback's false "none is customer
+  data" claim is corrected — a guard now counts and refuses if
+  `core.data_breach_register` (a statutory PDPA s.12B register),
+  retention policies, consent purpose, or the SST columns are non-empty.
+  (e) T3b/T5b, confirmed previously never executing (empty fixture table,
+  `IF FOUND` silently false) now run against a named nine-row fixture
+  chain and assert the actual arithmetic, not just non-nullity.
+- **Finding #19 closed via a registry, confirmed**: `app.tenant_seed_checks`
+  (new in 016), seeded with 011's and 016's expectations and consulted by
+  `app.provision_tenant`'s completeness guard; 017 registers its own
+  check-key seed beside its trigger; 018 will add a row, not an edit. T12
+  pins it by disabling 017's trigger and proving provisioning is refused.
+- **Finding #5 closed**: the three new tables (confirmed: RLS assertions
+  added via T13, reading `core.data_breach_register` directly as
+  `authenticated` with another tenant's claims, requiring zero rows) —
+  the prior cross-tenant probe went through a definer function as owner,
+  proving that function's filter, not the policy.
+- **Second premise correction, confirmed word-for-word**: the review's
+  post-rollback policy count claim (`< 220`, "228 minus six should leave
+  222," recommending `<> 222`) is wrong in both directions — 014 leaves
+  228, 017 takes it to 234, rolling 017 back returns to 228. Now derived
+  from the catalog so it tracks later packs automatically.
+- **Deliberately not done, confirmed as an open item, not silently
+  dropped**: 017's single 1,340-line transaction was not split (a
+  pack-shape change, recorded as owed). **The original review's finding
+  #2 — 016's hardcoded `dated` flag list for entities that can't derive it
+  conflicts with `docs/architecture/01-domain-model.md` on several
+  prefixes (`OPP`, `FUP`, `ENG`, `SES`), and refs are immutable once
+  allocated, so a wrong value is permanent per tenant from day one — was
+  explicitly left for a HUMAN ruling, not fixed.** The original review
+  itself flagged this as "not independently confirmed by the security
+  pass" and worth a manual re-check given the severity of getting it
+  wrong; added to the user's pending decisions below rather than resolved
+  by this thread.
+- **Validation counts, confirmed exactly against the commit's own
+  numbers**: 18/18 forward apply from a dropped database, 17/17 pins pass
+  (the post-rollback pin correctly refusing while 017 is applied still
+  counts as a pass), rollback 017→014 clean, post-rollback pin R1-R4
+  pass, re-apply clean, 17/17 pins pass again, `lint:sql` 52/52,
+  `check:grants` 0. `test_014`'s own grant-count assertion confirmed
+  unchanged at 121, matching PR #23's own G6 citations above. The
+  `check:grants` `pg_temp` exemption (from `fix-014`'s earlier 014 work)
+  confirmed still present on this tip.
+
+**Re-review of 015–017 against `bdd49aa` reported dispatched** — not yet
+independently confirmed by this thread; a report to verify.
+
+⚠ **New pending decision for the user, not resolved here**: 016's
+hardcoded `dated` prefix flags (`OPP`, `FUP`, `ENG`, `SES` and others)
+conflict with the domain model on whether those entity types can derive
+a date; refs are immutable once allocated, so getting this wrong ships a
+permanent per-tenant defect from day one. Needs a human ruling against
+`docs/architecture/01-domain-model.md`, not a lane decision.
+
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
 `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero

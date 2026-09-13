@@ -51,6 +51,17 @@ is role-filtered but every route mounts for anyone who types the URL. That is
 correct today — there is no session and no data — and must not stay true once
 the HTTP client lands. Guards wrap the element, not the path.
 
+**OPEN (2026-09-13, PR #23/fix-014) — MIGRATION 016's HARDCODED `dated` REF
+PREFIXES CONFLICT WITH THE DOMAIN MODEL.** `016`'s hardcoded `dated` flag
+list disagrees with `docs/architecture/01-domain-model.md` on whether
+several prefixes (`OPP`, `FUP`, `ENG`, `SES` among them) should be treated
+as date-bearing refs. Refs are immutable once allocated, so a wrong value
+here ships a permanent per-tenant defect from day one. The original
+015-017 review flagged this itself as "not independently confirmed by the
+security pass," and `fix-014` deliberately left it unfixed pending a human
+call rather than guessing. Needs someone who knows the domain model to
+rule which prefixes are actually dated before 016 merges.
+
 ## Decisions
 
 <!-- Latest first. SUPERSEDE, never delete. -->
@@ -275,6 +286,27 @@ such.
 ## Session Log
 
 <!-- Latest first, append-only. -->
+
+## 2026-09-13 22:4x — PR #23 (014 re-review) MERGE-WITH-FIXES; fix-014 pushed 015-017 fixes at bdd49aa; new human ruling needed on 016's dated refs
+
+- PR #23 confirmed merged (`db0ec94`): Opus thermonuclear + security
+  re-review of 014's fixes, both original CRITICALs confirmed genuinely
+  closed by G6 execution. New HIGH: `run:read` governs seven `core`
+  tables, only one is gated. Two pin-only defects found by running it:
+  T11a is a tautology (passes even against the pre-fix database), and
+  the pin's own header contradicts its own assertion counts (says
+  001-014, needs 001-017). Codex still owed until 14 Sep 00:29.
+- `fix-014` separately pushed 015-017's fixes to `cloud/migrations` at
+  `bdd49aa` (not yet a PR): 015's overload guard, 016's rollback now
+  scoped to its own derivation, 017's SST trigger/backfill plus VALIDATE
+  and PDPA rollback guards. Two premise corrections recorded in place
+  (015's trap already aborted for a different reason than claimed; the
+  post-rollback policy count is 228→234→228, not `<> 222`). 016's
+  hardcoded `dated` ref-prefix conflict with the domain model was
+  deliberately left unfixed — added to the Backlog as a new OPEN item
+  needing a human ruling. Re-review of 015-017 reported dispatched, not
+  yet independently confirmed. See `ai/project-log.md` 22:4x block and
+  `ai/workstreams.md` SUPABASE SCHEMA thread for full detail.
 
 ## 2026-09-13 22:3x — PR #22 independently confirms all 6 of 018's Blockers via real G6 execution; two nuances on B4/B6
 

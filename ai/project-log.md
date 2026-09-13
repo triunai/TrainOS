@@ -15,6 +15,169 @@
 
 ---
 
+## 2026-09-13 22:4x — PR #23 (014 re-review) MERGE-WITH-FIXES; fix-014 pushes 015-017 fixes at bdd49aa; new human ruling needed on 016's dated refs
+
+**PR #23 confirmed MERGED at `db0ec94`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-014-rereview.md` — an Opus
+thermonuclear + security re-review of the fix-014 lane's seven 014
+commits (`d9834b7` through `21ec975`), with G6 executed comparing the
+OLD (`826bb52`) and NEW (`21ec975`) SQL directly against the same pins.
+**VERDICT: MERGE-WITH-FIXES.**
+
+**Both original CRITICALs confirmed genuinely closed by execution, not
+just by reading the diff.** G6 ran the actual DELETE attack directly
+against the OLD database (`DELETE 1; rows_left 0` — the escalation
+succeeds) and the NEW database (refused at `42501`). The rollback now
+reproduces migration 002's five-table grant set verbatim, checked by a
+new pin against all seven privilege types in both directions, and G6
+reproduced the exact sixteen-line failure text from the OLD rollback
+before confirming all four assertions pass against the NEW one,
+including a full round trip through a 017-applied rollback refusal.
+
+**New HIGH (N-1), confirmed exactly**: the `run:read` permission this fix
+pack uses to gate `core.run_node_io` actually governs **seven** `core`
+tables from migration 013 (`runs, run_nodes, run_node_io, run_events,
+run_state_cards, run_checkpoints, run_snapshots`). This fix pack gates
+one. `run_state_cards` is confirmed worse off than the gated table — its
+own 013 header concedes it is not subject to the 30-day redaction sweep
+`run_node_io` gets, and may carry client text verbatim; `run_snapshots`
+holds every tool call's raw output for every run in the tenant. **Not a
+regression** — the gap existed at `826bb52` too, and the original review
+happened to name only the one table it checked — but the catalog's own
+"deliberate posture" language (110 of 113 core tables keep blanket
+tenant-scoped SELECT; the other two are named the same data class as
+`run_node_io` and NOT gated) is a provenance argument, not a security
+one, and is exactly the rationalized-gap pattern this gate exists to
+catch.
+
+**Two defects found only by running the pin, not reading it — the most
+consequential new finding in this pass:**
+
+1. **T11a is a tautology.** It `REVOKE`s DELETE on `public.memberships`
+   one statement before asserting the absence of that same privilege —
+   asserting something the pin itself just guaranteed, not something the
+   migration guarantees. Run against the original, defective `826bb52`
+   database, T11a **still passes**. Only T11b (the behavioral delete
+   attempt) actually catches CRIT-1. The fix pack's claim that either
+   layer alone would catch this is not true for the grant-layer half as
+   written: a future regression that reintroduced the grant AND removed
+   the policy would still show T11a passing.
+2. **The pin's own header contradicts its own assertions.** Line 5 says
+   "run against the complete 001-014 set." Lines 235 and 258 assert
+   counts (116 policy pairs, 121 SELECT grants) that only a 001-**017**
+   database can produce — confirmed by G6 running the pin against a
+   clean 001-014-only stack, exactly as the header instructs, and getting
+   an immediate `T1a FAIL: ... found 113`. Not this review's error — the
+   file's own, and every PASS claimed anywhere in the fix pack's commit
+   messages was necessarily measured against 001-017, not 001-014.
+
+**Corroboration across independent lenses, confirmed present rather than
+merely claimed**: a separate thermonuclear-lens pass (structural,
+BLOCK-on-structural-grounds only) landed on some of the same coupling
+from a different angle — F5 independently found the same `polqual`-only
+gate-detection gap the security pass's N-11 already named from execution;
+F1 and F8 are genuinely new structural findings about ownership splits
+and hardcoded one-off checks that will need editing again for 018.
+
+**Codex `gpt-5.6-sol` still hard quota-blocked until 14 Sep 00:29,
+recorded as owed, not substituted.** Could-not-verify, stated in the
+doc's own words: migrations 003, 005, 006, 008, 009, 010, 012 were not
+re-verified beyond what 014 touches or claims, so whether other
+`run:read`-style mismatches exist elsewhere in the pack is still open;
+frontend/worker consumers of the changed grant/policy shapes were not
+traced — Codex's specific brief, still not run against this pack.
+
+---
+
+**Separately, `fix-014` pushed 015–017's fixes to `origin/cloud/migrations`
+at `bdd49aa`** — confirmed present on the remote, **not yet opened as a
+PR to main**. Closes the assigned findings from
+`docs/reviews/2026-09-13-codex-retrofit-015-017.md` (PR #18's review).
+**015 MERGE-WITH-FIXES, 016 and 017 BLOCK, closed**, confirmed against
+the commit body:
+
+- **015**: explicit `DROP FUNCTION` before `CREATE`, an exact overload
+  assertion, a `to_regprocedure` check on the signature the cron command
+  actually calls (T6). Premise corrected, confirmed word-for-word: the
+  finding said the trap "fails invisibly with a green-looking cron
+  table" — measured instead that 015's existing command check ALREADY
+  aborts (`to_regproc` returns NULL for an ambiguous bare name), just
+  with a misleading error pointing at the wrong cause; the real exposure
+  is a LATER migration adding the overload.
+- **016**: the rollback's unqualified `DELETE FROM core.ref_formats
+WHERE NOT EXISTS (allocated)` is now scoped to rows matching 016's own
+  `pg_trigger` derivation (prefix, entity, width), confirmed end-to-end
+  that a hand-configured format survives a real rollback removing all 32
+  seeded rows. A preflight now refuses rolling 016 back while 017 is
+  applied, the same reasoning as 014's.
+- **017**: (a) the CRITICAL SST default-zero-tax trap is fixed — the NOT
+  NULL DEFAULT pair is gone, replaced by a BEFORE INSERT OR UPDATE
+  trigger resolving from policy plus a guarded backfill refusing rather
+  than guessing for pre-policy quotations. (b) The false NOT
+  VALID/VALIDATE lock-safety claim is corrected to an honest statement of
+  the real lock window; not split, recorded as owed. (c) The unguarded
+  `VALIDATE` on `evaluation_responses_overall_score_range` now counts and
+  refuses first rather than aborting mid-flight. (d) The rollback's false
+  "none is customer data" claim is corrected with a guard counting the
+  PDPA register, retention policies, consent purpose and SST columns.
+  (e) T3b/T5b, previously never executing against an empty fixture, now
+  run against a named nine-row chain and assert the actual arithmetic.
+- **Finding #19 closed via a registry**: `app.tenant_seed_checks` (new in
+  016), seeded with 011's and 016's expectations, consulted by the
+  provisioning completeness guard; 017 registers its own check-key seed.
+  **Finding #5 closed**: RLS assertions added on the three new tables,
+  reading the breach register directly as another tenant and requiring
+  zero rows, rather than only probing through a definer function.
+- **Second premise correction, confirmed word-for-word**: the original
+  review's post-rollback policy count claim (`< 220`, "228 minus six
+  should leave 222," recommending `<> 222`) is wrong in both directions —
+  014 leaves 228, 017 takes it to 234, rolling 017 back returns to 228.
+  Now derived from the catalog rather than hardcoded.
+- **Deliberately not done, recorded as open rather than silently
+  dropped**: 017's single 1,340-line transaction was not split (a
+  pack-shape change, owed). **The original review's finding #2 — 016's
+  hardcoded `dated` ref-prefix list conflicts with
+  `docs/architecture/01-domain-model.md` on several prefixes (`OPP`,
+  `FUP`, `ENG`, `SES`), and refs are immutable once allocated, so a wrong
+  value ships a permanent per-tenant defect — was explicitly left for a
+  HUMAN ruling.** The original review itself flagged this as "not
+  independently confirmed by the security pass" and worth a manual
+  re-check given the severity; added to `ai/state.md`'s Backlog as a new
+  OPEN item rather than resolved here.
+- **Validation counts, confirmed exactly**: 18/18 forward apply, 17/17
+  pins pass (the post-rollback pin correctly refusing while 017 is
+  applied counts as a pass), rollback 017→014 clean, post-rollback pin
+  R1-R4 pass, re-apply clean, 17/17 pins pass again, `lint:sql` 52/52,
+  `check:grants` 0. `test_014`'s own grant-count assertion confirmed
+  unchanged at 121, consistent with PR #23's own G6 citations above.
+
+**Re-review of 015–017 against `bdd49aa` reported dispatched** — not yet
+independently confirmed by this thread; a report to verify next round.
+
+**Things worth telling future-me:**
+
+1. A green pin suite and a closed CRITICAL are not the same claim as "the
+   pin file itself is trustworthy" — T11a passing against both the
+   patched and the unpatched database is exactly the failure mode a
+   tautological assertion produces, and it only showed up because G6 ran
+   the pin against the OLD database on purpose, not because anyone read
+   the assertion text more carefully.
+2. A test file's own header range claim ("run against 001-014") can be
+   stale evidence of what it actually requires — the two are supposed to
+   be the same fact, and here they silently diverged the moment later
+   packs' data became load-bearing for its own counts.
+3. Two independent reviewers converging on the same underlying coupling
+   from different angles (a security-severity framing and a
+   structural-maintainability framing) is stronger evidence than either
+   alone — worth treating "different lenses agree" as a signal in its own
+   right, not just tallying finding counts.
+4. A finding explicitly marked "not independently confirmed" by the
+   original reviewer is a flag to route to a human, not a flag to accept
+   or dismiss on a later pass's own authority — `fix-014` got this right
+   by declining to guess at the `dated` ref-prefix question.
+
+---
+
 ## 2026-09-13 22:3x — PR #22 independently confirms all 6 of 018's Blockers with real G6 execution; two nuances on B4 and B6
 
 **PR #22 confirmed MERGED at `279edc3`**, one file —
