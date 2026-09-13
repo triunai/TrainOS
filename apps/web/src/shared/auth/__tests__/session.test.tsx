@@ -224,7 +224,7 @@ describe("OAuth callback", () => {
     expect(screen.getByTestId("where").textContent).toMatch(/dashboard/);
   });
 
-  it("reports the exchange's error and offers sign-in again", async () => {
+  it("reports a failed exchange in its own words, not the URL's, and offers sign-in again", async () => {
     const port = fakeAuth(null, {
       ready: vi.fn(async () => ({ error: "Unable to exchange external code: access_denied" })),
     });
@@ -233,7 +233,12 @@ describe("OAuth callback", () => {
     const heading = await screen.findByRole("heading", { name: "Sign-in didn't complete" });
     const card = heading.closest("main");
     expect(card).not.toBeNull();
-    expect(within(card as HTMLElement).getByText(/access_denied/)).toBeVisible();
+    /* The exchange's error can carry `error_description` straight from the
+       callback URL, which anyone can write. The card says a fixed sentence. */
+    expect(within(card as HTMLElement).queryByText(/access_denied/)).toBeNull();
+    expect(
+      within(card as HTMLElement).getByText(/Google didn't finish signing you in/),
+    ).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "Back to sign in" }));
     expect(await screen.findByRole("button", { name: "Continue with Google" })).toBeVisible();

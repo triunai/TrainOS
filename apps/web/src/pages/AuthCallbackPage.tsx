@@ -17,6 +17,9 @@ import { SIGN_IN_PATH, takeReturnPath, useAuth } from "@/shared/auth";
  * origin — exchanges nothing and leaves no session. Both end in the same place:
  * start again.
  */
+const EXCHANGE_FAILED =
+  "Google didn't finish signing you in. It may have been cancelled or the link may have expired. Start the sign-in again from this browser.";
+
 export function AuthCallbackPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -27,7 +30,10 @@ export function AuthCallbackPage() {
     let active = true;
     void auth.completeSignIn().then(({ error, user }) => {
       if (!active) return;
-      if (error !== null) return setFailure(error);
+      /* Never the error text itself: it can be the callback URL's
+         `error_description`, which anyone can write into a link, and the
+         TrainOS domain would show it as its own sentence. */
+      if (error !== null) return setFailure(EXCHANGE_FAILED);
       if (user === null) {
         return setFailure(
           "No session came back from Google. Start the sign-in again from this browser.",
