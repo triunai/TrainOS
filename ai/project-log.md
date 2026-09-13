@@ -15,6 +15,78 @@
 
 ---
 
+## 2026-09-13 22:3x — PR #22 independently confirms all 6 of 018's Blockers with real G6 execution; two nuances on B4 and B6
+
+**PR #22 confirmed MERGED at `279edc3`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-018.md` — an independent review of
+018 plus the actual G6 execution the static thermonuclear pass never ran.
+Reviewed at the same tip as PR #21, `fc9550c`. **VERDICT: BLOCK, agreeing
+with the thermo report, and all 6 Blockers independently confirmed** with
+fresh `fc9550c` citations rather than trusted from the earlier report —
+headings confirmed present for B1 through B6, each marked "CONFIRMED."
+
+**G6 confirmed run for real this time**: 18/18 pins pass on a full
+reset-and-apply, and pass again through a rollback→reapply→pin cycle,
+twice. Confirmed explicitly, worth repeating verbatim: this does NOT
+clear B1, B3, H2, H3 or H4 — the doc's own words: "the pin suite's
+fixtures are too narrow to have ever caught B1/B3/H2/H3/H4 on their own."
+Execution passing is not the same claim as the code being correct.
+
+**Two genuine nuances found by executing rather than only reading, both
+confirmed exactly:**
+
+- **B4** — reproducing the claimed standalone `test_014` failure found it
+  actually fails one assertion earlier than the original report cited, at
+  `T1a` (`v_pairs = 116`), not the grant-count assertion. Tracing that
+  number directly against `origin/cloud/migrations` at 018's own base
+  commit (before 018 touches anything) found the "116" figure already
+  there — this specific failure predates 018 by one full pack, introduced
+  by 017's own amendment pass, recorded in that pack's own catalog
+  history. This lowers the "018 introduced a new defect" framing but does
+  NOT clear B4: `test_014` genuinely still isn't self-contained after
+  either 017 or 018, and 018 additionally pushed the grant-count assertion
+  further (121→124, the original citation) into a file it doesn't own,
+  when it had the option of asserting its own three-grant delta inside
+  `test_018` instead. Both things are true at once: an older, unrelated
+  defect exists, and 018 made the same class of problem worse rather than
+  fixing it.
+- **B6** — the reviewer independently ran the actual scenario rather than
+  only reading it: inserted a real tenant, confirmed the trigger seeds 2
+  pipelines/16 steps, ran the rollback, confirmed the rows survive while
+  the trigger and functions are dropped, confirmed a post-rollback tenant
+  correctly gets zero pipelines. The data-preservation design itself is
+  empirically correct and confirmed NOT a design defect — keeping
+  FK-referenced rows on rollback is the right call. The defect B6 names
+  stands regardless: R4 checks the wrong trigger (016's ref-format
+  trigger, unrelated to the pipeline seed) and would not fire if a future
+  edit broke the row-preservation behavior it claims to guard. Today's
+  behavior is correct; the safety net for tomorrow is checking the wrong
+  object.
+
+**Codex slot confirmed still owed until 14 Sep 00:29**, with named
+priorities for the re-run, confirmed exactly: the pipeline-seed
+trigger/backfill/id-collision safety, and the ten client-derived RPCs
+against `apps/web/src/shared/api/rpcClient.ts` — the doc states plainly
+neither of the two static passes attempted either. `codex-review-018`'s
+worktree confirmed shut down (gone from disk).
+
+**Things worth telling future-me:**
+
+1. Running a scenario, not just reading a claim about it, is what
+   surfaced both nuances here — the B4 assertion-line discrepancy and the
+   B6 "right behavior, wrong guard" split would not have shown up from a
+   text-only re-read of the earlier thermo report.
+2. "Does not clear B1/B3/H2/H3/H4" needs to be recorded next to any green
+   pin-suite number from this point forward — an 18/18 pass is evidence
+   about execution, not about the severity table, and the two are easy to
+   conflate in a compressed status line.
+3. A defect predating the PR under review by one full pack is not the
+   same claim as "this PR is clean of it" — 018 still owns making the
+   grant-count assertion worse even though it didn't originate the
+   underlying number.
+
+---
+
 ## 2026-09-13 22:2x — PR #21 adds Blocker B6 to 018; fix-014's work confirmed complete and pushed; Codex quota-blocked, no 014 verdict yet
 
 **PR #21 confirmed MERGED at `3fb8ea8`**, 35 additions/2 deletions, one

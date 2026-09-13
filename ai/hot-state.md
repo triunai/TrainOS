@@ -341,8 +341,30 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > thermonuclear + security pass, Codex slot recorded as owed. Full detail
 > in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 22:2x — 018 now 6 blockers (B6 confirmed);
-> 014's fixes pushed but Codex quota-blocked, no verdict yet.
+> **BLAST 13 Sep 22:3x +08** — PR #22 confirmed MERGED (`279edc3`), one
+> file: an independent review of 018 plus the actual G6 execution the
+> static thermo pass never ran. VERDICT BLOCK confirmed, agreeing with
+> the thermo report; all 6 Blockers independently re-confirmed with fresh
+> `fc9550c` citations. G6 confirmed genuinely run: 18/18 pins clean twice
+> through rollback/reapply — **confirmed explicitly this does NOT clear
+> B1/B3/H2/H3/H4**, the pin fixtures are too narrow to have ever caught
+> them. Two nuances confirmed exactly: **B4** — the standalone
+> `test_014` failure actually trips one assertion earlier than first
+> cited, at a count (116) traced directly to predate 018 by one pack
+> (017's own amendment); B4 still stands because 018 separately pushes
+> the grant-count assertion further into a file it doesn't own. **B6** —
+> independently re-ran the actual rollback scenario and confirmed the
+> data-preservation behavior itself is empirically correct (not a design
+> defect); the defect is only that R4's assertion checks the wrong
+> trigger and wouldn't catch a future regression. Codex slot confirmed
+> still owed until 00:29, named priorities: pipeline-seed
+> trigger/backfill/id-collision safety, and the ten client-derived RPCs
+> against `rpcClient.ts` — neither static pass attempted either.
+> `codex-review-018` lane confirmed shut down. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 22:3x — PR #22 independently confirms
+> all 6 of 018's Blockers with real G6 execution; two nuances recorded.
 
 ### Focus
 

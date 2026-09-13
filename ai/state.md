@@ -276,6 +276,18 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 22:3x — PR #22 independently confirms all 6 of 018's Blockers via real G6 execution; two nuances on B4/B6
+
+- PR #22 confirmed merged (`279edc3`): independent review + actual G6 run
+  (18/18 pins, twice through rollback/reapply) BLOCKs, agreeing with the
+  thermo report — all 6 Blockers reconfirmed, execution pass does NOT
+  clear B1/B3/H2/H3/H4. B4's `test_014` failure traced one pack earlier
+  than 018 (017's fault) but 018 still worsens it. B6's row-preservation
+  design is empirically correct; only its guard (R4) checks the wrong
+  trigger. Codex slot still owed until 14 Sep 00:29, priorities named:
+  pipeline-seed trigger/backfill/id-collision safety + ten client RPCs
+  vs `rpcClient.ts`. See `ai/project-log.md` 22:3x block for full detail.
+
 ## 2026-09-13 22:2x — PR #21 adds Blocker B6 to 018 (now 6); fix-014 confirmed complete and pushed; Codex quota-blocked, no verdict
 
 - PR #21 confirmed merged: 018 now 6 Blocker/5 High/8 Medium/6 Low. New

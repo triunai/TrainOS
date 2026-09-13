@@ -665,6 +665,59 @@ already been pushed, so no work was lost, but the near-miss is worth a
 standing rule: **never prune a worktree before its lane has confirmed
 shutdown**, regardless of how idle it appears.
 
+⛔ **PR #22 confirmed MERGED at `279edc3`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-018.md` — an independent review
+plus the actual G6 execution the static thermonuclear pass never ran.
+Reviewed at the same tip, `fc9550c`. **VERDICT: BLOCK, agreeing with the
+thermo report, and all 6 Blockers independently confirmed** with fresh
+`fc9550c` citations rather than trusted from the earlier report — headings
+confirmed present for all of B1–B6, each marked "CONFIRMED."
+
+✅ **G6 confirmed run for real this time**: 18/18 pins pass on a full
+reset-and-apply, and pass again through a rollback→reapply→pin cycle,
+twice. **Confirmed explicitly, and worth repeating verbatim: this does
+NOT clear B1, B3, H2, H3 or H4** — the doc's own words: "the pin suite's
+fixtures are too narrow to have ever caught B1/B3/H2/H3/H4 on their own."
+Execution passing is not the same claim as the code being correct.
+
+⚠ **Two genuine nuances found by executing rather than just reading,
+both confirmed exactly and both important not to over-simplify:**
+
+- **On B4**: reproducing the claimed standalone `test_014` failure found
+  it actually fails ONE ASSERTION EARLIER than the original report cited
+  — at `T1a` (`v_pairs = 116`), not at the grant-count assertion. Tracing
+  that number directly against `origin/cloud/migrations` at 018's own
+  base commit (before 018 touches anything) found **the "116" figure
+  already there — this specific failure predates 018 by one full pack**,
+  introduced by 017's own amendment pass, and recorded in that pack's own
+  catalog history. **This lowers the "018 introduced a new defect"
+  framing but does NOT clear B4**: `test_014` genuinely still isn't a
+  self-contained pin after either 017 or 018, and 018 additionally pushed
+  the grant-count assertion further (121→124, the original citation) into
+  a file it doesn't own, when it had the option of asserting its own
+  three-grant delta inside `test_018` instead. Both things are true at
+  once: an older, unrelated defect exists, and 018 made the same class of
+  problem worse rather than fixing it.
+- **On B6**: the reviewer independently ran the actual scenario rather
+  than only reading it — inserted a real tenant, confirmed the trigger
+  seeds 2 pipelines/16 steps, ran the rollback, confirmed the rows
+  survive while the trigger and functions are dropped, confirmed a
+  post-rollback tenant correctly gets zero pipelines. **The
+  data-preservation design itself is empirically correct and is
+  confirmed NOT a design defect** — keeping FK-referenced rows on
+  rollback is the right call. The defect B6 names stands regardless: R4
+  checks the wrong trigger (016's ref-format trigger, unrelated to the
+  pipeline seed) and would not fire if a future edit broke the
+  row-preservation behavior it claims to guard. Today's behavior is
+  correct; the safety net for tomorrow is checking the wrong object.
+
+**Codex slot confirmed still owed until 14 Sep 00:29, with named
+priorities for the re-run, confirmed exactly**: the pipeline-seed
+trigger/backfill/id-collision safety, and the ten client-derived RPCs
+against `apps/web/src/shared/api/rpcClient.ts` — the doc states plainly
+neither of the two static passes attempted either. `codex-review-018`'s
+worktree confirmed shut down (gone from disk).
+
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
 `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero
