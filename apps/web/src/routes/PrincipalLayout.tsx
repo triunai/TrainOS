@@ -4,6 +4,7 @@ import { ApiProvider } from "@/shared/api";
 import { RequireSession } from "@/shared/auth";
 import { MeProvider } from "@/shared/hooks/MeProvider";
 import { I18nProvider } from "@/shared/i18n";
+import { NoWorkspacePage } from "@/pages/NoWorkspacePage";
 
 /**
  * Everything that needs a principal, as ONE layout route.
@@ -15,7 +16,8 @@ import { I18nProvider } from "@/shared/i18n";
  * is no `Me` to give `I18nProvider` or `ApiProvider` before somebody signs in.
  *
  * `RequireSession` goes first and is a pass-through in fixtures mode, so the
- * fixture app renders the exact tree it rendered before, one level lower.
+ * fixture app renders the exact tree it rendered before, one level lower. The
+ * `unlinked` page is only ever drawn in supabase mode.
  *
  * A layout route's element stays mounted while its children change, so the
  * role toggle's state survives navigation the way it did above the router.
@@ -23,7 +25,7 @@ import { I18nProvider } from "@/shared/i18n";
 export function PrincipalLayout() {
   return (
     <RequireSession>
-      <MeProvider>
+      <MeProvider unlinked={<NoWorkspacePage />}>
         <I18nProvider>
           <ApiProvider>
             <Outlet />

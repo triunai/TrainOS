@@ -3,6 +3,7 @@ import { cn } from "@/shared/lib/utils";
 import { Avatar, ProfileModal } from "@/shared/components/kit";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
 import { ROLE_LABEL, scopeLabels } from "@/shared/config/roles";
+import { useAuth } from "@/shared/auth";
 import { useMe } from "@/shared/hooks/useMe";
 import { useMeProfile } from "./useMeProfile";
 import { ThemeSwitch } from "./ThemeSwitch";
@@ -121,6 +122,9 @@ export interface SidebarProfileProps {
 
 export function SidebarProfile({ collapsed }: SidebarProfileProps) {
   const { me } = useMe();
+  /* `null` over fixtures, where there is no session to end and the modal's
+     sign-out stays drawn-but-inert exactly as before. */
+  const auth = useAuth();
   const [open, setOpen] = useState(false);
   /* Not fetched until the modal is opened — see `useMeProfile`. */
   const profile = useMeProfile(open);
@@ -185,6 +189,14 @@ export function SidebarProfile({ collapsed }: SidebarProfileProps) {
            and a control that cannot act is worse than an honest label. */
         { label: "Language & timezone", value: "Coming soon", pending: true },
       ]}
+      onSignOut={
+        auth === null
+          ? undefined
+          : () => {
+              setOpen(false);
+              void auth.signOut();
+            }
+      }
     />
   );
 
