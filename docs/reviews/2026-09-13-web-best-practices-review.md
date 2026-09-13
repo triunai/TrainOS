@@ -821,6 +821,11 @@ domain/transport split — they are the mechanism behind W-03 and W-25.
 
 ## W-40 · `apiErrorFromThrown` — two byte-identical files
 
+**RESOLVED during this review.** The `finisher` agent landed
+`apps/web/src/shared/api/useApi.ts` and deleted both `features/dashboard/client.ts`
+and `features/approvals/client.ts` after this section was written. Kept for the
+record; no action needed. The original finding follows.
+
 **MEDIUM** · `features/dashboard/client.ts:35` and `features/approvals/client.ts:35`
 
 `diff` reports **one line differs** — the comment naming the other copy. Note this
