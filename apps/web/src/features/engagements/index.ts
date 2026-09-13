@@ -6,16 +6,18 @@
  * `.dependency-cruiser.cjs` forbids importing a feature's internals from
  * outside it.
  */
-/** The record paths, owned here so `routes/engagements.routes.tsx` cannot drift. */
-export const ENGAGEMENT_DETAIL_PATTERN = "/training/engagements/:id";
-export const ATTENDANCE_CAPTURE_PATTERN = "/training/participants/:id/attendance";
-
-/** Build a link to one engagement, so no screen concatenates the path itself. */
-export const engagementPath = (ref: string) => `/training/engagements/${ref}`;
-export const attendancePath = (ref: string, day?: number) =>
-  `/training/participants/${ref}/attendance${day === undefined ? "" : `?day=${day}`}`;
+export {
+  ATTENDANCE_CAPTURE_PATTERN,
+  ENGAGEMENTS_LIST_PATH,
+  ENGAGEMENT_DETAIL_PATTERN,
+  PARTICIPANTS_LIST_PATH,
+  attendancePath,
+  engagementPath,
+} from "./paths";
 
 export { EngagementDetailPage } from "./EngagementDetailPage";
+export { EngagementsListPage } from "./EngagementsListPage";
+export { ParticipantsListPage } from "./ParticipantsListPage";
 export { AttendanceCapturePage } from "./AttendanceCapturePage";
 export {
   absentees,
@@ -32,8 +34,10 @@ export {
   useAttendanceDays,
   useCaptureAttendance,
   useComplianceChecks,
+  useAllParticipants,
   useEngagement,
   useEngagementParticipants,
+  useEngagements,
   useExportAttendance,
   useOrganisation,
   useEngagementAction,

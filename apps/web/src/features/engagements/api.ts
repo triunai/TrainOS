@@ -11,11 +11,11 @@ import type {
   AttendanceSheet,
   ComplianceChecksResponse,
   ListResponse,
+  Engagement,
   Organisation,
   Participant,
   PipelineConfig,
 } from "@trainos/contract";
-import { type EngagementProjection } from "@trainos/fixtures";
 import { useAction, useActor, useApi } from "@/shared/api";
 
 /**
@@ -46,6 +46,7 @@ import { useAction, useActor, useApi } from "@/shared/api";
  */
 export const engagementKeys = {
   all: ["engagements"] as const,
+  list: (actor: string) => ["engagements", actor, "list"] as const,
   detail: (actor: string, id: string) => ["engagements", actor, "detail", id] as const,
   participants: (actor: string, id: string) =>
     ["engagements", actor, "detail", id, "participants"] as const,
@@ -66,7 +67,45 @@ export function usePipelineConfig(object: string): UseQueryResult<PipelineConfig
   });
 }
 
-export function useEngagement(id: string): UseQueryResult<EngagementProjection> {
+/**
+ * Every engagement, for the list half of M09-S02.
+ *
+ * The key carries the actor for the same reason `detail` does: `listEngagements`
+ * returns the same role-dependent projection per row, so an OPS reader's page
+ * and a SALES reader's page are different documents and must not share a cache
+ * entry. Nothing here filters — the screen does that over the page it gets, so
+ * a facet change costs no round trip.
+ */
+export function useEngagements(): UseQueryResult<ListResponse<Engagement>> {
+  const api = useApi();
+  const actorId = useActor().id;
+  return useQuery({
+    queryKey: engagementKeys.list(actorId),
+    queryFn: () => api.listEngagements(),
+  });
+}
+
+/**
+ * Every participant of every engagement, for M10's list half.
+ *
+ * There is no participants endpoint: `Participant` hangs off an engagement, so
+ * the only honest list is the fan-out. `useQueries` keeps each engagement's
+ * page its own cache entry — the same shape `useAttendanceDays` uses — rather
+ * than one composite key that a single engagement's refetch would invalidate
+ * wholesale.
+ */
+export function useAllParticipants(refs: string[]) {
+  const api = useApi();
+  const actorId = useActor().id;
+  return useQueries({
+    queries: refs.map((ref) => ({
+      queryKey: engagementKeys.participants(actorId, ref),
+      queryFn: () => api.getEngagementParticipants(ref),
+    })),
+  });
+}
+
+export function useEngagement(id: string): UseQueryResult<Engagement> {
   const api = useApi();
   const actorId = useActor().id;
   return useQuery({

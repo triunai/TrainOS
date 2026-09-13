@@ -1,9 +1,15 @@
 import { lazy, Suspense, type ReactElement } from "react";
 import { LoadingState } from "@/shared/components/states";
-import { ATTENDANCE_CAPTURE_PATTERN, ENGAGEMENT_DETAIL_PATTERN } from "@/features/engagements";
+import {
+  ATTENDANCE_CAPTURE_PATTERN,
+  ENGAGEMENTS_LIST_PATH,
+  ENGAGEMENT_DETAIL_PATTERN,
+  PARTICIPANTS_LIST_PATH,
+} from "@/features/engagements";
 
 /**
- * The engagements feature's route registrations — M09-S02 and M10-S06.
+ * The engagements feature's route registrations — M09-S02 and M10-S06, each
+ * with the list half the nav leaf points at.
  *
  * Paths follow `shared/config/nav`'s one path rule: a child lives under its
  * parent's slug, so a record hangs off `/training/engagements`. Attendance
@@ -25,6 +31,14 @@ export interface FeatureRoute {
   label: string;
 }
 
+const EngagementsListPage = lazy(() =>
+  import("@/features/engagements").then((module) => ({ default: module.EngagementsListPage })),
+);
+
+const ParticipantsListPage = lazy(() =>
+  import("@/features/engagements").then((module) => ({ default: module.ParticipantsListPage })),
+);
+
 const EngagementDetailPage = lazy(() =>
   import("@/features/engagements").then((module) => ({ default: module.EngagementDetailPage })),
 );
@@ -34,6 +48,24 @@ const AttendanceCapturePage = lazy(() =>
 );
 
 export const engagementsRoutes: FeatureRoute[] = [
+  {
+    path: ENGAGEMENTS_LIST_PATH,
+    label: "Engagements",
+    element: (
+      <Suspense fallback={<LoadingState label="Loading the engagements" />}>
+        <EngagementsListPage />
+      </Suspense>
+    ),
+  },
+  {
+    path: PARTICIPANTS_LIST_PATH,
+    label: "Participants",
+    element: (
+      <Suspense fallback={<LoadingState label="Loading the participant directory" />}>
+        <ParticipantsListPage />
+      </Suspense>
+    ),
+  },
   {
     path: ENGAGEMENT_DETAIL_PATTERN,
     label: "Engagement detail",
