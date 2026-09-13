@@ -1,9 +1,7 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Ref } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
-import { Collapse, DisclosureButton } from "./Collapse";
 import { MetricStrip, type MetricCellProps } from "./MetricStrip";
-import { useRememberedFlag } from "./useRememberedFlag";
 import { CondensedPrimaryEcho } from "./useSinglePrimary";
 
 /**
@@ -64,7 +62,7 @@ export interface RecordHeaderProps {
    *
    * The slot exists so a screen can hand over a `MetricStrip` in its
    * `accentCard` variant — the full-width gradient band that is itself a
-   * dropdown (tightening brief §15) — without this component learning what is
+   * dropdown (tightening brief §15a) — without this component learning what is
    * inside it. Row 3 is still row 3; only its rendering is delegated.
    */
   metricsCard?: ReactNode;
@@ -72,21 +70,6 @@ export interface RecordHeaderProps {
   stepper?: ReactNode;
   /** Turn off the condensed bar where the page does not scroll. */
   withoutCondensed?: boolean;
-  /**
-   * Turns rows 2 and 3 into a disclosure. Collapsed leaves ONE row — title,
-   * chips, actions, chevron — so the decision stays reachable while the record
-   * gets out of the way; expanded is the header as it has always been.
-   *
-   * The condensed scroll bar is a different mechanism and both can be on at
-   * once: that one reacts to scroll position and this one to a click.
-   */
-  collapsible?: boolean;
-  /**
-   * The record TYPE — `"approval"`, `"programme"` — not the record. The
-   * collapsed/expanded choice is remembered against it, so the preference
-   * survives moving to the next item in a queue. Only read when `collapsible`.
-   */
-  recordType?: string;
   className?: string;
 }
 
@@ -102,20 +85,10 @@ export function RecordHeader({
   metricsCard,
   stepper,
   withoutCondensed,
-  collapsible,
-  recordType,
   className,
 }: RecordHeaderProps) {
   const sentinel = useRef<HTMLDivElement>(null);
   const [condensed, setCondensed] = useState(false);
-
-  const detailsId = useId();
-  /* Default expanded: a record a user has never met should show its facts.
-     The preference only exists once they have said otherwise. */
-  const [expanded, setExpanded] = useRememberedFlag(
-    collapsible && recordType ? `record-header:${recordType}` : undefined,
-    true,
-  );
 
   useEffect(() => {
     if (withoutCondensed) return;
@@ -134,8 +107,7 @@ export function RecordHeader({
 
   const metaLine = [recordRef, ...(meta ?? [])].filter(Boolean).join(" · ");
 
-  /* Rows 2 and 3. Rendered in one place and mounted in one of two ways, so a
-     collapsible header and a plain one can never drift into two layouts. */
+  /* Rows 2 and 3. */
   const details = (
     <>
       {metaLine ? (
@@ -152,47 +124,21 @@ export function RecordHeader({
 
   return (
     <>
-      {/* The row gap moves INSIDE the clipped region when the header is
-          collapsible: a `gap` on the header survives the collapse as a residual
-          band under the title row, which is the whole reason this pattern is
-          usually got wrong. */}
-      <header className={cn("flex flex-col px-5 pb-4 pt-5", !collapsible && "gap-3.5", className)}>
+      <header className={cn("flex flex-col gap-3.5 px-5 pb-4 pt-5", className)}>
         <div className="flex min-h-9 flex-wrap items-center gap-2.5">
           <h1 className="whitespace-nowrap text-[22px] font-semibold tracking-[-0.015em]">
             {title}
           </h1>
           {chips}
-          {actions || primaryAction || collapsible ? (
+          {actions || primaryAction ? (
             <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
               {actions}
               {primaryAction}
-              {collapsible ? (
-                <>
-                  {/* A hairline in front of the chevron, so it reads as chrome
-                      rather than as a fourth action competing with
-                      Reject / Request changes / Approve. */}
-                  {actions || primaryAction ? (
-                    <div aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
-                  ) : null}
-                  <DisclosureButton
-                    open={expanded}
-                    onToggle={() => setExpanded(!expanded)}
-                    controls={detailsId}
-                    label="the record details"
-                  />
-                </>
-              ) : null}
             </div>
           ) : null}
         </div>
 
-        {collapsible ? (
-          <Collapse open={expanded} id={detailsId}>
-            <div className="flex flex-col gap-3.5 pt-3.5">{details}</div>
-          </Collapse>
-        ) : (
-          details
-        )}
+        {details}
       </header>
 
       <div ref={sentinel} aria-hidden="true" className="h-px" />

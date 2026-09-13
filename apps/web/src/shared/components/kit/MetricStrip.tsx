@@ -111,16 +111,41 @@ export function MetricCell({
   onDrill,
   delta,
   estimate,
-}: MetricCellProps) {
+  onAccent,
+}: MetricCellProps & {
+  /**
+     Renders the cell for the accent band: full white throughout, because the
+     band is vivid and every muted step fails AA on it. Set by the band, never
+     by a screen — a cell does not decide what it is sitting on.
+   */
+  onAccent?: boolean;
+}) {
   const body = (
     <>
-      <span className={cn(MONO_LABEL, "whitespace-nowrap")}>{label}</span>
+      <span
+        className={cn(
+          MONO_LABEL,
+          "whitespace-nowrap",
+          /* On the accent band the muted step cannot be a lighter ink or a
+             lower opacity — both fail AA at 11px over #1F5BFF. Full white, and
+             the caption/value hierarchy is carried by the size, weight and
+             tracking MONO_LABEL already sets. */
+          onAccent && "text-[rgb(var(--on-accent))]",
+        )}
+      >
+        {label}
+      </span>
 
       <span className="flex items-center gap-2">
         {typeof bar === "number" ? (
           <MiniBar value={bar} state={barState} width="64px" size="md" label={label} />
         ) : null}
-        <span className="whitespace-nowrap font-mono text-[16px] font-semibold tracking-[-0.01em] text-ink">
+        <span
+          className={cn(
+            "whitespace-nowrap font-mono text-[16px] font-semibold tracking-[-0.01em] text-ink",
+            onAccent && "text-[rgb(var(--on-accent))]",
+          )}
+        >
           {isMoney(value) ? <MoneyText value={value} compact /> : value}
         </span>
         {/* The drill affordance. Hidden until hover OR keyboard focus — a
@@ -129,7 +154,10 @@ export function MetricCell({
         {onDrill ? (
           <span
             aria-hidden="true"
-            className="text-ink-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+            className={cn(
+              "opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100",
+              onAccent ? "text-[rgb(var(--on-accent))]" : "text-ink-muted",
+            )}
           >
             ›
           </span>
@@ -158,15 +186,27 @@ export function MetricCell({
           ) : null}
 
           {delta && (sub || estimate) ? (
-            <span aria-hidden="true" className="text-ink-muted">
+            <span
+              aria-hidden="true"
+              className={onAccent ? "text-[rgb(var(--on-accent))]" : "text-ink-muted"}
+            >
               ·
             </span>
           ) : null}
 
-          {sub ? <span className="whitespace-nowrap text-ink-muted">{sub}</span> : null}
+          {sub ? (
+            <span
+              className={cn(
+                "whitespace-nowrap",
+                onAccent ? "text-[rgb(var(--on-accent))]" : "text-ink-muted",
+              )}
+            >
+              {sub}
+            </span>
+          ) : null}
 
           {estimate ? (
-            <span className="text-ink-muted">
+            <span className={onAccent ? "text-[rgb(var(--on-accent))]" : "text-ink-muted"}>
               {typeof estimate === "string" ? estimate : ESTIMATE_DEFAULT}
             </span>
           ) : null}
@@ -276,13 +316,20 @@ export function MetricStrip({
 /**
  * The accent band. `MetricStrip variant="accentCard"` renders this; it is not
  * exported, because a screen that reaches for it directly is building a second
- * metric vocabulary and the whole point of §15 is that there is one.
+ * metric vocabulary and the whole point of §15a is that there is one.
  *
- * THE COLOUR. `--surface-accent-gradient` is alpha over `bg-card`, so the card
- * decides what the tint lands on and the band follows the theme with no second
- * value. No border: the tint IS the boundary, and CLAUDE.md's hierarchy rule
- * says a border that changes nothing comes out. Status colour does not enter
- * here — a chip inside a cell still carries its own, but the band never does.
+ * THE COLOUR. `--surface-accent-gradient` is the pack's tenant-banner gradient:
+ * opaque, vivid, identical in both themes. It paints the SUMMARY ROW only. The
+ * disclosed detail below it sits on `bg-card` with ordinary ink, which is the
+ * one place this departs from a literal reading of §15a ("expands the card into
+ * the detail sections") and it is not a style choice: the detail is several
+ * hundred words of 13px prose, and prose on a vivid banner is unreadable at any
+ * opacity. So the band stays a band — a lid on the card — and the card below it
+ * stays a card. Flagged rather than assumed.
+ *
+ * No border anywhere: the gradient IS the boundary, and CLAUDE.md's hierarchy
+ * rule says a border that changes nothing comes out. Status colour does not
+ * enter — a chip inside a cell still carries its own, but the band never does.
  *
  * THE SPREAD. `repeat(n, minmax(0, 1fr))` is an inline style because `n` is
  * data: a class name assembled from a runtime number is a class Tailwind never
@@ -315,14 +362,9 @@ function AccentMetricCard({
   const disclosable = Boolean(expandable && children);
 
   return (
-    <section
-      className={cn(
-        "overflow-hidden rounded-[var(--radius-panel)] bg-card text-ink",
-        "bg-[image:var(--surface-accent-gradient)]",
-        className,
-      )}
-    >
-      <div className="flex items-stretch">
+    <section className={cn("overflow-hidden rounded-[var(--radius-panel)] bg-card", className)}>
+      {/* ---- The band: the summary row, on the gradient ------------------ */}
+      <div className="flex items-stretch bg-[image:var(--surface-accent-gradient)]">
         <div
           className="grid min-w-0 flex-1"
           style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}
@@ -331,40 +373,48 @@ function AccentMetricCard({
             <div
               key={cell.label}
               className={cn(
+                /* Transparent. §15a: no per-cell slabs — the cells are windows
+                   onto one gradient, so the ramp runs unbroken across all five
+                   instead of restarting in each. */
                 /* Top-aligned, not centred. A cell whose value is a chip is
                    taller than one whose value is text, and centring five cells
                    of two different heights puts their captions on five
                    different baselines — the exact raggedness the strip exists
                    to avoid. */
-                "flex min-w-0 flex-col justify-start py-3.5 pl-4 pr-3",
-                /* A tinted hairline, not --border: a neutral rule over a blue
-                   tint reads as a seam between two surfaces. Drawn from the
-                   accent already in play, so no new colour enters. */
-                index > 0 && "border-l border-primary/15",
+                "flex min-w-0 flex-col justify-start py-4 pl-4 pr-3",
+                /* One hairline, white at 20%, per §15a. Not --border and not
+                   --primary: a neutral or a darker blue rule over the band
+                   reads as a seam between two surfaces rather than as a
+                   division within one. */
+                index > 0 && "border-l border-[rgb(var(--on-accent)/0.2)]",
               )}
             >
-              <MetricCell {...cell} />
+              <MetricCell {...cell} onAccent />
             </div>
           ))}
         </div>
 
         {disclosable ? (
-          <div className="flex shrink-0 items-center border-l border-primary/15 px-3">
+          /* The card's right EDGE, per §15a — one chevron for the whole card,
+             not one per section. */
+          <div className="flex shrink-0 items-center border-l border-[rgb(var(--on-accent)/0.2)] px-3">
             <DisclosureButton
               open={open}
               onToggle={() => setOpen(!open)}
               controls={detailId}
               label={expandLabel}
+              tone="onAccent"
             />
           </div>
         ) : null}
       </div>
 
+      {/* ---- The detail, on the card ------------------------------------- */}
       {disclosable ? (
         <Collapse open={open} id={detailId}>
           {/* Spacing inside the clipped row; a padded wrapper would leave a
               residual band when the card closes. */}
-          <div className="border-t border-primary/15 px-4 pb-5 pt-4">{children}</div>
+          <div className="px-4 pb-5 pt-5">{children}</div>
         </Collapse>
       ) : null}
     </section>

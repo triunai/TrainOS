@@ -13,15 +13,19 @@
  * it answers the approver's real question. Everything above it is held together
  * by spacing and type, per CLAUDE.md's hierarchy rule.
  *
- * PROTOTYPE (tightening brief §15). This screen is the first and, for now, the
- * ONLY opt-in to the upgraded RecordHeader: `collapsible` plus the `metricsCard`
- * slot carrying a `MetricStrip variant="accentCard"`. The narrative above has
- * not been rewritten — it has been re-parented. It now renders as the detail of
- * the metric band, so the five facts (Value · Agent · Confidence · Margin ·
- * Risk) are literally the summary row of the case that rests on them rather
- * than a strip sitting above an unrelated column. Every other record screen
- * still gets the header's default rendering; the variants are additive and
- * nothing else changed.
+ * PROTOTYPE (tightening brief §15a). This screen is the first and, for now, the
+ * ONLY opt-in to the upgraded RecordHeader — through one prop, the `metricsCard`
+ * slot, carrying a `MetricStrip variant="accentCard"`.
+ *
+ * The title row is deliberately UNCHANGED and carries no chevron: §15a withdrew
+ * the collapsible header after the user saw it. The metric group is the only
+ * card on the screen, and its chevron is the only one.
+ *
+ * The narrative below has not been rewritten — it has been re-parented. It now
+ * renders as the detail of that card, so the five facts (Value · Agent ·
+ * Confidence · Margin · Risk) are literally the summary row of the case that
+ * rests on them rather than a strip sitting above an unrelated column. Every
+ * other record screen still gets the header's default rendering.
  */
 
 import { useEffect, useState } from "react";
@@ -29,6 +33,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { ApprovalDecision, DiffLine } from "@trainos/contract";
 import {
   AIChip,
+  AI_GLYPH,
   APPROVAL_TONE,
   CitationChip,
   DangerButton,
@@ -187,15 +192,18 @@ export function ApprovalDetail() {
     ...(detail.value ? [{ label: "Value", value: detail.value }] : []),
     {
       label: "Agent",
+      /* An AIChip here would be a white pill on a vivid blue band — the
+         per-cell slab §15a rules out, and a 6% tint means nothing on this
+         ground anyway. CLAUDE.md's actual requirement is the ✦ glyph plus a
+         text label, which survives intact as plain white type. The provenance
+         popover is not lost: it is on the AIChip in Recommendation, one
+         disclosure below, where it sits on an ordinary card surface. */
       value:
         detail.requestedBy.kind === "AGENT" ? (
-          <AIChip
-            variant="suggested"
-            label={detail.requestedBy.name}
-            {...(detail.recommendation.provenance
-              ? { provenance: detail.recommendation.provenance }
-              : { withoutPopover: true })}
-          />
+          <span className="truncate">
+            <span aria-hidden="true">{AI_GLYPH} </span>
+            {detail.requestedBy.name}
+          </span>
         ) : (
           detail.requestedBy.name
         ),
@@ -350,8 +358,6 @@ export function ApprovalDetail() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RecordHeader
-        collapsible
-        recordType="approval"
         title={detail.subject}
         recordRef={detail.ref}
         meta={metaLine}

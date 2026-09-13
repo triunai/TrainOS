@@ -95,6 +95,12 @@ export interface DisclosureButtonProps {
    * the name is carried in screen-reader text instead of dropped.
    */
   label: string;
+  /**
+   * `"onAccent"` puts the button on the vivid accent band, where the ink pair
+   * and the hover fill both have to come from white rather than from the ink
+   * ramp — an ink-muted chevron on #1F5BFF is invisible.
+   */
+  tone?: "ink" | "onAccent";
   className?: string;
 }
 
@@ -103,8 +109,10 @@ export function DisclosureButton({
   onToggle,
   controls,
   label,
+  tone = "ink",
   className,
 }: DisclosureButtonProps) {
+  const onAccent = tone === "onAccent";
   return (
     <button
       type="button"
@@ -113,10 +121,16 @@ export function DisclosureButton({
       aria-controls={controls}
       className={cn(
         "flex h-7 w-7 shrink-0 items-center justify-center rounded-control",
-        /* --ink-secondary, well past the 3:1 floor CLAUDE.md sets for a
-           non-text affordance, in both themes. */
-        "text-ink-secondary hover:bg-surface-hover hover:text-ink",
+        /* Before the tone, so the accent tone's ring colour wins the merge. */
         FOCUS_RING,
+        onAccent
+          ? /* Full white on the band — 4.6:1 at the band's lightest visible
+               point, past the 3:1 floor CLAUDE.md sets for a non-text
+               affordance with room to spare. The hover fill is white at 15%,
+               because a surface-hover grey would read as a hole in the band. */
+            "text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--on-accent)/0.15)] focus-visible:ring-[rgb(var(--on-accent))] focus-visible:ring-offset-transparent"
+          : /* --ink-secondary, well past the same floor, in both themes. */
+            "text-ink-secondary hover:bg-surface-hover hover:text-ink",
         className,
       )}
     >

@@ -144,19 +144,22 @@ describe("M02-S02 approval detail", () => {
     expect(within(aside).getByText(/Discount below floor/)).toBeInTheDocument();
   });
 
-  /* Tightening brief §15, prototyped on this screen only. */
+  /* Tightening brief §15a, prototyped on this screen only. */
   it("hangs the whole case off the metric band, inside the header", async () => {
     const user = userEvent.setup();
     renderDetail();
 
     const why = await screen.findByText("Why this needs you");
-    const header = why.closest("header");
 
     /* The narrative is INSIDE the RecordHeader now, as the detail of the
-       gradient band — not a column sitting beside it. */
-    expect(header).not.toBeNull();
-    const band = why.closest("section[class*='surface-accent-gradient']") as HTMLElement;
+       accent card — not a column sitting beside it. `Block` renders a
+       `<section>` of its own, so the card is found from the band outwards
+       rather than from the prose inwards. */
+    const band = document.querySelector("[class*='surface-accent-gradient']") as HTMLElement;
     expect(band).not.toBeNull();
+    const card = band.closest("section") as HTMLElement;
+    expect(card.closest("header")).not.toBeNull();
+    expect(card.contains(why)).toBe(true);
 
     /* The five facts are the band's always-visible summary row, spread evenly
        rather than clustered left. */
@@ -165,13 +168,18 @@ describe("M02-S02 approval detail", () => {
     expect(within(summary).getByText("Value")).toBeInTheDocument();
     expect(within(summary).getByText("Risk")).toBeInTheDocument();
 
-    /* Closing the band keeps the five facts and takes the case away. */
-    await user.click(screen.getByRole("button", { name: "Hide the full case" }));
-    expect(band.querySelector("[data-open]")?.getAttribute("data-open")).toBe("false");
-    expect(within(summary).getByText("Confidence")).toBeInTheDocument();
+    /* §15a: the title row is NOT collapsible. The only chevron on the screen
+       is the card's, and the only solid button is still Approve. */
+    const chevrons = screen
+      .getAllByRole("button")
+      .filter((button) => /^(Show|Hide) /.test(button.textContent ?? ""));
+    expect(chevrons).toHaveLength(1);
 
-    /* And collapsing the header leaves one row with the decision still on it. */
-    await user.click(screen.getByRole("button", { name: "Hide the record details" }));
+    /* Closing the card keeps the five facts and takes the case away, with the
+       decision still on the unchanged title row. */
+    await user.click(screen.getByRole("button", { name: "Hide the full case" }));
+    expect(card.querySelector("[data-open]")?.getAttribute("data-open")).toBe("false");
+    expect(within(summary).getByText("Confidence")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "Send proposal · Aurora Manufacturing Sdn Bhd",

@@ -96,15 +96,43 @@ describe("MetricStrip accentCard", () => {
     const { container } = render(<MetricStrip variant="accentCard" cells={cells} />);
 
     const card = container.querySelector("section") as HTMLElement;
-    expect(card.className).toContain("bg-[image:var(--surface-accent-gradient)]");
     expect(card.className).toContain("rounded-[var(--radius-panel)]");
-    /* No border: the tint is the boundary. */
+    /* No border: the gradient is the boundary. */
     expect(card.className).not.toMatch(/(^|\s)border(\s|$)/);
 
-    const grid = card.querySelector(".grid") as HTMLElement;
+    /* The gradient paints the SUMMARY ROW, not the whole card — the disclosed
+       prose below it has to stay on an ordinary card surface to be readable. */
+    const band = card.querySelector("[class*='surface-accent-gradient']") as HTMLElement;
+    expect(band).not.toBeNull();
+
+    const grid = band.querySelector(".grid") as HTMLElement;
     /* Five equal columns, not a left-clustered flex row. `n` is data, so the
        template is an inline style rather than a class Tailwind never saw. */
     expect(grid.style.gridTemplateColumns).toBe("repeat(5, minmax(0, 1fr))");
+  });
+
+  it("writes the band in white, with one 20% white hairline between cells", () => {
+    const { container } = render(<MetricStrip variant="accentCard" cells={cells} />);
+    const band = container.querySelector("[class*='surface-accent-gradient']") as HTMLElement;
+
+    /* §15a: no per-cell slabs. The cells are windows onto one gradient, so
+       none of them paints a background of its own. */
+    const cellBoxes = [...(band.querySelector(".grid")?.children ?? [])] as HTMLElement[];
+    expect(cellBoxes).toHaveLength(5);
+    for (const box of cellBoxes) {
+      expect(box.className).not.toMatch(/\bbg-/);
+    }
+
+    /* Four hairlines for five cells — the first cell has none. */
+    const ruled = cellBoxes.filter((box) =>
+      box.className.includes("border-[rgb(var(--on-accent)/0.2)]"),
+    );
+    expect(ruled).toHaveLength(4);
+    expect(cellBoxes[0].className).not.toContain("border-l");
+
+    /* Every ink on the band is the accent's white, not an ink-ramp step. */
+    expect(band.querySelector(".text-ink-muted")).toBeNull();
+    expect(screen.getByText("Value").className).toContain("text-[rgb(var(--on-accent))]");
   });
 
   it("is a dropdown: the metrics stay visible, the children collapse", () => {
@@ -120,6 +148,11 @@ describe("MetricStrip accentCard", () => {
 
     const region = container.querySelector("[data-open]") as HTMLElement;
     expect(region.dataset.open).toBe("true");
+
+    /* The disclosed detail is NOT on the gradient: prose on a vivid banner is
+       unreadable at any opacity, so the band is a lid and the card below it
+       stays a card. */
+    expect(region.closest("[class*='surface-accent-gradient']")).toBeNull();
 
     fireEvent.click(chevron);
 
