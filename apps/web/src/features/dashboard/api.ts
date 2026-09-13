@@ -8,7 +8,13 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import type { ExecutiveDashboard, HoursSavedReport, ProposalsVsWonReport } from "@trainos/contract";
+import type {
+  ApprovalListResponse,
+  ExecutiveDashboard,
+  HoursSavedReport,
+  PageRequest,
+  ProposalsVsWonReport,
+} from "@trainos/contract";
 import { ApiErrorException, queryKeys, toApiError, useApi } from "@/shared/api";
 
 const call = async <T>(work: () => Promise<T>): Promise<T> => {
@@ -26,6 +32,31 @@ export function useExecutiveDashboard(period: string) {
   return useQuery<ExecutiveDashboard, ApiErrorException>({
     queryKey: [...queryKeys.executiveDashboard, period],
     queryFn: () => call(() => api.getExecutiveDashboard(period)),
+  });
+}
+
+/**
+ * The pending rail's fallback — §7 `GET /v1/approvals`, used ONLY while the
+ * dashboard read itself is not deployed.
+ *
+ * The database already serves the approval list, so the one section of this
+ * page a signed-in reader can act on need not wait for the dashboard endpoint.
+ * `enabled` keeps it silent wherever the dashboard answers, which is every
+ * environment that serves the dashboard and the fixtures.
+ */
+const PENDING_APPROVALS: PageRequest = {
+  filter: [{ field: "status", op: "eq", value: "PENDING" }],
+  sort: "slaDueAt",
+  page: { size: 5 },
+};
+
+export function usePendingApprovals(enabled: boolean) {
+  const api = useApi();
+
+  return useQuery<ApprovalListResponse, ApiErrorException>({
+    queryKey: [...queryKeys.approvals.list(PENDING_APPROVALS), "dashboard"],
+    queryFn: () => call(() => api.listApprovals(PENDING_APPROVALS)),
+    enabled,
   });
 }
 
