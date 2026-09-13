@@ -228,6 +228,24 @@ export function humanise(value: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+/**
+ * `plural(1, "suggestion")` → `"1 suggestion"`, `plural(4, "suggestion")` →
+ * `"4 suggestions"`.
+ *
+ * Every count line in this product reads "N things", and writing the count and
+ * the noun separately is how "1 suggested next steps" reaches a screenshot —
+ * it did, on the renewals header. One helper rather than a conditional at each
+ * call site, and the irregular plural is a parameter because "1 company" does
+ * not become "2 companys".
+ *
+ * The number is part of the returned string on purpose: a caller that formats
+ * the count itself and asks only for the noun has to repeat the `=== 1` test
+ * to know which noun to ask for.
+ */
+export function plural(count: number, one: string, many?: string): string {
+  return `${count} ${count === 1 ? one : (many ?? `${one}s`)}`;
+}
+
 /* ---- Lifecycle ------------------------------------------------------ */
 
 const STATE_WORD: Record<LifecycleStep["state"], string> = {

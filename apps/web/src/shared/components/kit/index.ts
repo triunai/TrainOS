@@ -43,6 +43,7 @@ export {
   tierLabel,
   initials,
   humanise,
+  plural,
   stepLabel,
   describeSteps,
 } from "./format";
