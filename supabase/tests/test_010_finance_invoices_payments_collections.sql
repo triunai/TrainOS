@@ -576,19 +576,29 @@ $t14$;
 DO $t15$
 DECLARE v_bad text;
 BEGIN
+  -- ⚠ AMENDED BY 014 (2026-09-13). Was: no client role may hold SELECT on the
+  -- finance tables "before 014 writes any policy". 014 has written the policies
+  -- and granted the reads, so the sweep now covers `anon` — which must still hold
+  -- nothing — and, for `authenticated`, the privileges that would let a browser
+  -- move money without an action_request: INSERT, UPDATE and DELETE. A finance
+  -- table a client can write directly is a payment with no ledger entry.
   SELECT string_agg(DISTINCT c.relname, ', ') INTO v_bad
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   CROSS JOIN unnest(ARRAY['anon','authenticated']) AS r(role_name)
+  CROSS JOIN unnest(ARRAY['INSERT','UPDATE','DELETE']) AS w(priv)
   WHERE n.nspname = 'core' AND c.relkind = 'r'
     AND c.relname IN ('tenant_tax_profiles','invoices','invoice_lines',
                       'invoice_sync_entries','payments','credit_notes',
                       'credit_note_lines','aging_buckets','collection_rules',
                       'collections_cases')
-    AND has_table_privilege(r.role_name, c.oid, 'SELECT');
+    AND (has_table_privilege(r.role_name, c.oid, w.priv)
+         OR (r.role_name = 'anon' AND has_table_privilege('anon', c.oid, 'SELECT')));
   ASSERT v_bad IS NULL,
-    format('T15a FAIL: client role(s) hold SELECT on %s before 014 writes any '
-           'policy - that is a cross-tenant read with no policy to stop it', v_bad);
+    format('T15a FAIL: a client role can WRITE (or anon can read) %s. After 014 '
+           'the finance tables are readable by authenticated within one tenant and '
+           'writable by nobody: a direct write is a payment, invoice or credit note '
+           'with no action_request, no approval and no audit row behind it.', v_bad);
 
   SELECT string_agg(p.proname, ', ') INTO v_bad
   FROM pg_catalog.pg_proc p

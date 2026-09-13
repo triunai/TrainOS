@@ -257,8 +257,29 @@ BEGIN
      'app.outbox'::regclass,'app.job_type_map'::regclass,
      'app.dead_letters'::regclass,'app.submission_counters'::regclass,
      'app.webhook_deliveries'::regclass,'app.webhook_routes'::regclass);
-  ASSERT v_count = 1,
-    pg_catalog.format('T1d FAIL: expected exactly 1 policy, found %s', v_count);
+  -- ⚠ AMENDED BY 014 (2026-09-13). Was 1 — the global catalogue's — on the
+  -- ground that "a permissive policy on a tenant-scoped table here would be a
+  -- cross-tenant read grant". That was true while there were no grants. 014 adds
+  -- its two-policy tenant posture to the two tenant-scoped core tables in this
+  -- set (core.events, core.event_subjects), so the count is 1 + 2x2 = 5, and the
+  -- cross-tenant read it warned about is what those policies now prevent. The
+  -- eight app.* relations in the list still carry no 014 policy and no grant,
+  -- which is asserted separately below rather than folded into a number.
+  ASSERT v_count = 5,
+    pg_catalog.format('T1d FAIL: expected 5 policies (app.job_type_map''s global '
+      'catalogue policy, plus 014''s select+isolation pair on each of core.events '
+      'and core.event_subjects), found %s', v_count);
+  SELECT pg_catalog.count(*)::integer INTO v_count
+    FROM pg_catalog.pg_policy AS policy
+   WHERE policy.polrelid IN (
+     'app.event_redactions'::regclass,'app.event_subscriptions'::regclass,
+     'app.outbox'::regclass,'app.dead_letters'::regclass,
+     'app.submission_counters'::regclass,'app.webhook_deliveries'::regclass,
+     'app.webhook_routes'::regclass);
+  ASSERT v_count = 0,
+    pg_catalog.format('T1d2 FAIL: an app.* relation in the 012 set carries a '
+      'policy. 014 policies core only; app is unexposed and ungranted, and a '
+      'policy here would imply somebody intends to grant it. Found %s', v_count);
   ASSERT (SELECT policy.polrelid FROM pg_catalog.pg_policy AS policy
            WHERE policy.polname = 'job_type_map_definer_read')
          = 'app.job_type_map'::regclass,
@@ -1217,8 +1238,24 @@ BEGIN
         ('app.webhook_deliveries'),('app.webhook_routes'),('core.audit_entries')
       ) AS relation(name)
     LOOP
-      ASSERT NOT pg_catalog.has_table_privilege(v_role, v_relation, 'SELECT'),
-        pg_catalog.format('T11c FAIL: %s has SELECT on %s', v_role, v_relation);
+      -- ⚠ AMENDED BY 014 (2026-09-13). Was: neither client role may hold SELECT
+      -- on anything 012 created. 014 grants `authenticated` a tenant-scoped read
+      -- on the two core relations and the audit view; `anon` still gets nothing,
+      -- and the eight app.* relations are granted to nobody because `app` is
+      -- neither exposed nor granted. The write half is absolute for both roles:
+      -- core.events is append-only by revoke, by a row trigger AND by a
+      -- statement-level BEFORE TRUNCATE trigger, and a client INSERT privilege
+      -- would make the first of those three a lie.
+      IF v_role = 'anon' OR v_relation::text LIKE 'app.%' THEN
+        ASSERT NOT pg_catalog.has_table_privilege(v_role, v_relation, 'SELECT'),
+          pg_catalog.format('T11c FAIL: %s has SELECT on %s', v_role, v_relation);
+      END IF;
+      ASSERT NOT pg_catalog.has_table_privilege(v_role, v_relation, 'INSERT')
+         AND NOT pg_catalog.has_table_privilege(v_role, v_relation, 'UPDATE')
+         AND NOT pg_catalog.has_table_privilege(v_role, v_relation, 'DELETE'),
+        pg_catalog.format('T11c2 FAIL: %s can WRITE %s. The event log is the '
+          'business record and is append-only by three independent mechanisms; a '
+          'client write privilege defeats the first one.', v_role, v_relation);
       ASSERT NOT pg_catalog.has_table_privilege(v_role, v_relation, 'INSERT'),
         pg_catalog.format('T11d FAIL: %s has INSERT on %s', v_role, v_relation);
       ASSERT NOT pg_catalog.has_table_privilege(v_role, v_relation, 'UPDATE'),
