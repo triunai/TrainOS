@@ -52,10 +52,10 @@ export type BarState =
 const FILL: Record<BarState, string> = {
   neutral: "bg-ink",
   primary: "bg-primary",
-  warning: "bg-[rgb(var(--warning-accent))]",
+  warning: "bg-warning-accent",
   danger: "bg-danger",
   within: "bg-ink",
-  near: "bg-[rgb(var(--warning-accent))]",
+  near: "bg-warning-accent",
   over: "bg-danger",
 };
 

@@ -48,13 +48,7 @@ function StepDot({ state, size }: { state: LifecycleState; size: number }) {
         />
       );
     case "BLOCKED":
-      return (
-        <span
-          aria-hidden="true"
-          style={style}
-          className={cn(common, "bg-[rgb(var(--warning-accent))]")}
-        />
-      );
+      return <span aria-hidden="true" style={style} className={cn(common, "bg-warning-accent")} />;
     case "SKIPPED":
       return (
         <span

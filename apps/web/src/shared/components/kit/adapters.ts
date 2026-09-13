@@ -1,12 +1,13 @@
 import type {
   AppliedFilter,
   AutonomyLevel,
+  JuryPolicy,
   EvidenceType,
   Provenance,
   ProvenanceOrigin,
   SavedView,
 } from "@trainos/contract";
-import { humanise } from "./format";
+import { formatMoney, humanise } from "./format";
 
 /**
  * Contract shape → kit prop shape, in one leaf module.
@@ -105,6 +106,36 @@ export const AUTONOMY_LADDER: AutonomyLevel[] = [
 /** The wording a rung uses, so a screen's copy cannot drift from the chip's. */
 export function autonomyCaption(level: AutonomyLevel): string {
   return AUTONOMY_RUNGS[level].caption;
+}
+
+/* ---- Jury ----------------------------------------------------------- */
+
+/** What a configured jury will actually do, as a sentence for the tooltip. */
+export function describeJuryPolicy(policy: JuryPolicy): string {
+  const quorum = `${policy.quorum} of ${policy.of}`;
+
+  if (policy.mode === "GATE") {
+    return `Gate · ${quorum} at promotion time against the golden set. Never blocks a live action.`;
+  }
+
+  if (policy.mode === "SAMPLE") {
+    const rate =
+      typeof policy.sampleRate === "number"
+        ? ` ${Math.round(policy.sampleRate * 100)}% of actions.`
+        : "";
+    return `Sample · ${quorum} after the human decides, for drift monitoring.${rate} Never blocks.`;
+  }
+
+  const triggers = policy.triggers;
+  if (!triggers) return `Escalate · ${quorum} when a trigger fires.`;
+
+  const conditions = [
+    `below confidence ${triggers.minConfidence}`,
+    `above ${formatMoney(triggers.maxValue, true)}`,
+    triggers.firstOfKind ? "first-of-kind" : null,
+  ].filter(Boolean);
+
+  return `Escalate · ${quorum} blocks ${conditions.join(", or ")}.`;
 }
 
 /* ---- Typed record tags ---------------------------------------------- */

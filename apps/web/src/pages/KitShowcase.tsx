@@ -653,6 +653,27 @@ export default function KitShowcase() {
                 dissented: [{ model: "Gemini 3", note: "Price below the usual floor" }],
               }}
             />
+            {/* A configured jury that has not voted. Only ESCALATE is tinted:
+                per contract §18 a GATE jury runs at promotion time and a
+                SAMPLE jury runs after the human decides, so neither can ever
+                hold the action a user is looking at. */}
+            <JuryChip
+              policy={{
+                mode: "ESCALATE",
+                quorum: 2,
+                of: 3,
+                tiers: ["STRONG_1"],
+                triggers: {
+                  minConfidence: 0.7,
+                  maxValue: money(5000000),
+                  firstOfKind: true,
+                },
+              }}
+            />
+            <JuryChip policy={{ mode: "GATE", quorum: 2, of: 3, tiers: ["STRONG_1"] }} />
+            <JuryChip
+              policy={{ mode: "SAMPLE", quorum: 2, of: 3, tiers: ["STRONG_1"], sampleRate: 0.05 }}
+            />
             <JuryChip />
             <CitationChip>§ HRD-014</CitationChip>
             <RefChip type="ORGANISATION" />

@@ -17,14 +17,22 @@
  * A match on a line that is not a comment is a defect.
  */
 
+/*
+ * These three were arbitrary values — `bg-[rgb(var(--ai-popover))]` — while the
+ * tokens existed in CSS but not in the Tailwind colours block. They are real
+ * colours now, so the escape hatch is gone: `bg-ai-popover` says what it means,
+ * the arbitrary form said how it was plumbed. Kept as constants because the
+ * three carry rules worth stating once rather than at each call site.
+ */
+
 /** Background of the AI badge's hover popover. Kit §02. */
-export const AI_POPOVER_BG = "bg-[rgb(var(--ai-popover))]";
+export const AI_POPOVER_BG = "bg-ai-popover";
 
 /** The amber dot that marks low confidence on an otherwise blue AI chip. Kit §02. */
-export const WARNING_ACCENT_BG = "bg-[rgb(var(--warning-accent))]";
+export const WARNING_ACCENT_BG = "bg-warning-accent";
 
 /** The expensive-hours band on the allowed-hours strip. Kit §10. */
-export const PEAK_BG = "bg-[rgb(var(--peak))]";
+export const PEAK_BG = "bg-peak";
 
 /**
  * The focus ring every interactive kit element wears.

@@ -58,6 +58,7 @@ export {
   autonomyCaption,
   chipsFromFilters,
   describeActionError,
+  describeJuryPolicy,
   tabsFromViews,
   TYPE_TAG,
   type ActionError,
@@ -150,7 +151,7 @@ export { AIChip, AIBadge, type AIChipProps } from "./AIChip";
 export { ProvenanceBlock, ProvenancePanel, type ProvenanceBlockProps } from "./ProvenanceBlock";
 export { AutonomyChip, type AutonomyChipProps } from "./AutonomyChip";
 export { TierChip, type TierChipProps } from "./TierChip";
-export { JuryChip, describeJuryPolicy, type JuryChipProps } from "./JuryChip";
+export { JuryChip, type JuryChipProps } from "./JuryChip";
 export { CitationChip, type CitationChipProps } from "./CitationChip";
 export { RefChip, type RefChipProps } from "./RefChip";
 

@@ -20,18 +20,6 @@ import { LoadingState } from "@/shared/components/states";
  * It renders inside the real `AppShell`, which is the right place for it: a kit
  * component that only looks correct outside the app's own sidebar, top bar and
  * content card is not finished.
- *
- * KNOWN GAP, and it belongs to the build config rather than to this file.
- * `routes.tsx` mounts dev routes behind `import.meta.env.DEV`, so the ROUTE
- * does not exist in production and the chunk is unreachable there. The chunk is
- * still EMITTED — about 175 kB raw, 55 kB gzipped, in its own file that nothing
- * ever fetches. Rollup creates a chunk at every `import()` site it can resolve
- * statically, and wrapping the reference in a dead `import.meta.env.DEV` branch
- * does not change that; it was tried and measured. Removing it needs
- * `vite.config.ts` to alias `@/pages/KitShowcase` to an empty module in a
- * production build, and that file is the scaffold's. Reported to them. The cost
- * today is dist size only: the main bundle is unchanged and no user downloads
- * this.
  */
 
 const KitShowcase = lazy(() => import("@/pages/KitShowcase"));
