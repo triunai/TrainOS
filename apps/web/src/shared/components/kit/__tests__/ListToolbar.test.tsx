@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ListToolbar } from "@/shared/components/kit/ListToolbar";
 import { PillTabGroup } from "@/shared/components/kit/PillTabGroup";
-import { FilterBar } from "@/shared/components/kit/FilterBar";
+import { FilterBar, FilterSearch } from "@/shared/components/kit/FilterBar";
 import { PrimaryButton } from "@/shared/components/kit/Button";
 
 function renderToolbar(actions?: React.ReactNode) {
@@ -60,6 +60,61 @@ describe("ListToolbar", () => {
     expect(row?.className).not.toContain("flex-nowrap");
     const right = container.querySelector("[data-list-toolbar] > div:nth-of-type(2)");
     expect(right?.className).not.toContain("flex-nowrap");
+  });
+
+  /* jsdom has no layout engine, so the wrap itself is a browser measurement.
+     The BASIS is what decides it, and that is assertable here. Measured at
+     1440x900 in both themes, against the page's real toolbar content box:
+
+       screen         segments  track   box     headroom at 300
+       proposals      7         617px   1144px  +211
+       engagements    8         776px   1133px  +41
+       participants   8         806px   1133px  +11
+
+     Participants is the binding case: three-digit counts widen its segments,
+     and its scroller takes a 13px gutter, so it has 1133px rather than 1144.
+     360 missed it by 49px and 320 still missed by 9; 300 is what closed it. */
+  it("sizes the filter group's basis so the widest real track still holds one row", () => {
+    const { container } = renderToolbar();
+    const right = container.querySelector("[data-list-toolbar] > div:nth-of-type(2)");
+
+    expect(right?.className).toContain("basis-[300px]");
+    expect(right?.className).not.toContain("basis-[360px]");
+    /* `grow` is what spends the headroom, so the count still reaches the right
+       edge on a screen with a narrow track. Without it 300 would be the width. */
+    expect(right?.className).toContain("grow");
+  });
+
+  /* The basis is only safe because the group's contents can live inside it.
+     `FilterSearch` prefers 184px and may shrink to 160, which is what lets a
+     300px group carry the search, the selects and the counter on one line
+     instead of collapsing the input to its intrinsic minimum. Drop this floor
+     and 300 goes back to squeezing — the 155px bug this row was written for. */
+  it("lets the search shrink to 160px inside the group rather than to nothing", () => {
+    render(
+      <ListToolbar
+        tabs={
+          <PillTabGroup
+            label="Views"
+            activeId="a"
+            onSelect={vi.fn()}
+            tabs={[{ id: "a", label: "All", count: 6 }]}
+          />
+        }
+        filters={
+          <FilterBar filters={[]} shown={1} total={6}>
+            <FilterSearch label="Search" value="" onChange={vi.fn()} />
+          </FilterBar>
+        }
+      />,
+    );
+
+    const search = screen.getByRole("searchbox", { name: "Search" });
+    expect(search.className).toContain("w-[184px]");
+    expect(search.className).toContain("min-w-[160px]");
+    /* Without `max-w-full` a fixed width cannot yield at all, which is how the
+       input came to sit on top of the tabs in the first place. */
+    expect(search.className).toContain("max-w-full");
   });
 
   it("strips the FilterBar's own row padding, which this row already owns", () => {

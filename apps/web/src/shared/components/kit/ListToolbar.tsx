@@ -68,13 +68,29 @@ export function ListToolbar({ tabs, filters, actions, className }: ListToolbarPr
       {filters || actions ? (
         <div
           className={cn(
-            /* `grow basis-[360px]` is what decides the wrap. Flex breaks a line
+            /* `grow basis-[300px]` is what decides the wrap. Flex breaks a line
                on an item's BASIS, so the filters stay on the tabs' row while at
-               least 360px is left for them and take a row of their own when it
+               least 300px is left for them and take a row of their own when it
                is not — no breakpoint, and no squeezing them into 155px. `grow`
                then spends whatever is actually left, and `justify-end` keeps
-               the count on the right edge on either row. */
-            "flex min-w-0 grow basis-[360px] flex-wrap items-center justify-end gap-x-3 gap-y-2",
+               the count on the right edge on either row.
+
+               300, not the 360 this shipped with and not the 320 the ruling
+               reached for first. Both were measured at 1440 and both left
+               participants on a second row: its eight status segments are
+               806px wide because its counts run to three digits, and the main
+               scroller takes a 13px gutter on a list that long, so the row has
+               1133px to spend rather than engagements' 1144px. 806 + the 16px
+               gap leaves 311, which 360 misses by 49 and 320 still misses by
+               9. At 300 there is 11px of headroom and the filters stay put.
+
+               The floor under this is `FilterSearch`'s own: the input prefers
+               184px and may shrink to 160, so a 300px group holds the search,
+               the selects and the counter without any of them collapsing. Do
+               not lower this further without lowering that first — a basis
+               below the group's real minimum stops being a wrap rule and goes
+               back to squeezing, which is the 155px bug §10b was written for. */
+            "flex min-w-0 grow basis-[300px] flex-wrap items-center justify-end gap-x-3 gap-y-2",
             /* The FilterBar's row padding, removed for the one case where it is
                not a row. Scoped to the element it belongs to rather than to
                every child, so an action button keeps its own geometry. */
