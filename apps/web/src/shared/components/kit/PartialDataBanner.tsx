@@ -1,4 +1,10 @@
-import { isDomainError, isRetryable, readableMessage, type ApiError } from "@/shared/api";
+import {
+  isDomainError,
+  isNotDeployed,
+  isRetryable,
+  readableMessage,
+  type ApiError,
+} from "@/shared/api";
 import { ExceptionBanner } from "./ExceptionBanner";
 import { SecondaryButton } from "./Button";
 
@@ -27,6 +33,10 @@ import { SecondaryButton } from "./Button";
  *    failed supporting read on a screen into a single banner rather than
  *    stacking one per read, because three banners is how a page teaches people
  *    to ignore all of them.
+ *  - `NOT_DEPLOYED`. A read this environment does not serve yet is not a
+ *    failure, so when that is ALL that went wrong the banner is a quiet status
+ *    naming what is missing, with no retry. Mixed with a real failure it counts
+ *    as neither refusal nor fault and the real failure decides the banner.
  */
 
 export interface PartialRead {
@@ -60,8 +70,22 @@ export function PartialDataBanner({ reads, className }: PartialDataBannerProps) 
 
   if (failed.length === 0) return null;
 
+  if (failed.every((read) => isNotDeployed(read.error))) {
+    const missing = joinLabels(failed.map((read) => read.label));
+    return (
+      <ExceptionBanner
+        severity="INFO"
+        title="Part of this page is not available here yet"
+        subtitle={`${missing.charAt(0).toUpperCase()}${missing.slice(1)}: this environment does not serve that yet, and retrying will not change it.`}
+        {...(className === undefined ? {} : { className })}
+      />
+    );
+  }
+
   const labels = joinLabels(failed.map((read) => read.label));
-  const refusedOnly = failed.every((read) => isDomainError(read.error));
+  const refusedOnly = failed.every(
+    (read) => isDomainError(read.error) || isNotDeployed(read.error),
+  );
   const retryable = failed.filter((read) => read.retry && isRetryable(read.error));
 
   /* The first failure's own sentence. A domain message is written for a person

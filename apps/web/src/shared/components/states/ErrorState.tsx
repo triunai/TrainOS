@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 import { isDomainError, readableMessage, type ApiError } from "@/shared/api/errors";
+import { isNotDeployed, notDeployedState } from "@/shared/api/notDeployed";
+import { EmptyState } from "./EmptyState";
 
 export interface ErrorStateProps {
   /** What failed, in the reader's terms. */
@@ -26,6 +28,12 @@ export interface ErrorStateProps {
  * It says what failed and what the reader can do. A retry button is offered
  * only when a retry could plausibly work: a domain refusal is a fact about the
  * request, and a retry button on one trains people to click through refusals.
+ *
+ * A `NOT_DEPLOYED` failure is not drawn as an error at all. It is a fact about
+ * this environment — the endpoint has not shipped to this database — so it gets
+ * the standard not-available empty state: no alert, no retry. Deciding it here
+ * rather than per screen is what lets every screen over an unserved endpoint say
+ * the true thing without each one learning the rule.
  */
 export function ErrorState({
   title = "Something went wrong",
@@ -35,6 +43,15 @@ export function ErrorState({
   action,
   className,
 }: ErrorStateProps) {
+  if (isNotDeployed(error)) {
+    return (
+      <EmptyState
+        {...notDeployedState("This part of TrainOS")}
+        {...(className === undefined ? {} : { className })}
+      />
+    );
+  }
+
   const message = description ?? (error ? readableMessage(error) : undefined);
   const refused = error !== undefined && isDomainError(error);
 

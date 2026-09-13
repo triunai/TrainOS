@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -9,8 +9,11 @@ import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { EnquiryInboxPage } from "@/features/enquiries";
 import { ProposalsListPage } from "@/features/proposals";
 import { ApprovalInbox } from "@/features/approvals";
+import { InvoicesListScreen } from "@/features/finance";
 
 import { createRpcApiClient } from "../apiClient";
+import { isRetryable, toApiError } from "../errors";
+import { isNotDeployed } from "../notDeployed";
 import { ApiProvider } from "../useApi";
 import { __setTransportForTests } from "../supabase";
 import { unexposedSchemaTransport } from "./oracleTransport";
@@ -94,5 +97,51 @@ describe("an undeployed `core` schema reads as a state, not as a failure", () =>
     expect(await screen.findByText(/The approval queue is not available here yet/)).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+});
+
+/**
+ * A method the Supabase client has NO ADAPTER for is the same deployment fact
+ * as a function PostgREST cannot find — it just fails one step earlier, before
+ * a request is made. Fifty of the fixture client's methods are in that state,
+ * and every screen built on one of them was drawing "Something went wrong. Try
+ * again." over a feature that simply has not shipped to this database.
+ */
+describe("a method with no Supabase adapter reads as not deployed", () => {
+  beforeEach(() => {
+    __setTransportForTests(unexposedSchemaTransport());
+  });
+
+  afterEach(() => {
+    __setTransportForTests(null);
+    vi.restoreAllMocks();
+  });
+
+  it("rejects as a non-retryable NOT_DEPLOYED, before any request is made", async () => {
+    const thrown = await createRpcApiClient()
+      .listInvoices()
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    const error = toApiError(thrown);
+    expect(error).toMatchObject({ kind: "transport", code: "NOT_DEPLOYED" });
+    expect(isRetryable(error)).toBe(false);
+    expect(isNotDeployed(thrown)).toBe(true);
+  });
+
+  it("M16-S01 · the invoice list renders the not-available state, not an error", async () => {
+    const consoleError = vi.spyOn(console, "error");
+    renderWithRpcClient(<InvoicesListScreen />, "/finance/invoices");
+
+    expect(await screen.findByText("This part of TrainOS is not available here yet")).toBeVisible();
+    /* The supporting directory read is also unadapted: it says so quietly, as a
+       status rather than an alert, and neither surface offers a retry. */
+    expect(await screen.findByText("Part of this page is not available here yet")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });
