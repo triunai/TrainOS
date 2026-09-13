@@ -1384,3 +1384,79 @@ Per R11, three of these should land with a machine assertion in the same pass:
 a check that every fire-and-forget `useMutation` carries `toastOnError`; a check
 that `ErrorState` is never given `onRetry` without `error`; and a narrowed
 `useSinglePrimary` that a test can actually fail.
+
+---
+
+# Applied · 2026-09-13
+
+Every CRITICAL and every HIGH in `apps/web` is closed except the three that need
+`packages/contract`, which are listed as deferred below. Root gates —
+`npm run typecheck && npm run lint && npm test -- --run && npm run arch:graph` —
+were green after each commit.
+
+| Finding | Commit | Status |
+| ------- | ------ | ------ |
+| W-01 · silent denied writes (R3) | `f45d99f` | Applied, with the R11 control `refusal-surfaces.test.ts` |
+| W-02 · idempotency key unique per attempt | `1ebde39` | Applied — `stableIdempotencyKey` is `useAction`'s default |
+| W-03 · `ErrorState` bypassed at 14 sites (R2) | `f0fde1f` | Applied, with the R11 scan `error-state-retry.test.tsx` |
+| W-04 · one-primary guard compared labels | `9d12d48` | Applied — counts instances; `CondensedRecordHeader` marks its subtree an echo |
+| W-05 · the `Set` that deduplicated the assertion | `9d12d48` | Applied — compared as an array |
+| W-06 · identity duplicated in the breadcrumb | `d109235` | Applied at all seven, plus the engagement detail |
+| W-07 · in-content breadcrumb | `d109235` | Applied for both programmes screens; nine other screens still render one — see below |
+| W-08 · status colour on text | `17535f3` | Applied at six of eight; two `ApprovalDetail` sites deferred — see below |
+| W-09 · the test that pinned W-08 | `17535f3` | Applied — `StatusChip` carries `data-tone` and the assertion reads it |
+| W-10 · tone derived inline | `bce824f` | Applied — two of the three were also colouring the wrong states |
+| W-11 · nine local tone maps | `bce824f` | Applied; `PROGRAMME_TONE` deferred — see below |
+| W-15 · hardcoded pipeline stage | `c61709a` | Applied — resolved through `pipeline.data.stages`, label rendered from config |
+| W-19 · `RunEventRow` in a feature | `c61709a` | Applied — promoted, local `tier()` deleted |
+| W-20 · missing invalidation ×3 | `6a0d197` | Applied |
+| W-24 · raw `error.message` | `a8996ef`, `607e6f7` | Applied at the three named sites and three more found in the same shape |
+| W-25 · untyped `ErrorCode` comparison | `607e6f7` | Applied |
+| W-30 · labels with no accessible name | `908bdf1` | Applied — the id is generated inside the kit's `Field` |
+| W-35 · `TextField` ×5 | `908bdf1` | Applied — `TextField`/`DateField`/`TextArea`/`Field` shipped, five copies deleted |
+| W-36 · `renderScreen` ×10 | `cff6e8a` | Applied — `src/test/renderScreen.tsx`; three differently-shaped harnesses kept |
+| W-37 · shadowing `toApiError` ×3 | `607e6f7` | Applied |
+| W-38 · `RefusalBanner` trapped in one feature | `a8996ef` | Applied |
+| W-39 · `errorCodeOf`/`errorMessageOf` ×5 (+2) | `607e6f7` | Applied |
+| W-40 · `apiErrorFromThrown` ×2 | — | Already resolved before this pass |
+
+## Deferred, with the reason
+
+**Needs `packages/contract`, which this pass does not own.**
+
+- **W-63** · a status chip for a record the contract gives no status.
+- **W-64** · a screen typed against fixtures instead of the contract (R1).
+- **W-65** · a local type re-declaring contract fields that do not exist.
+- **`PROGRAMME_TONE`** (part of W-11). `Programme.status` is typed `string`, so
+  a tone map could not be total over an enum and would be a lie about its own
+  exhaustiveness. The `ProgrammeDetailPage` ternary stays until the enum exists.
+- **The `ATTENDANCE_LOCKED` literal** (part of W-15). `LifecycleStep.key` is
+  `string`. The stage is now resolved through the pipeline and the printed word
+  comes from configuration, but the key itself is still a named constant.
+
+**Blocked by concurrent work.**
+
+- **W-08 at `ApprovalDetail.tsx:322` and `:442`.** The file is being rewritten
+  by another agent for the tightening brief §15 prototype. Both are the
+  `slaBreached ? "text-danger"` shape already fixed elsewhere in `17535f3`.
+
+**Out of scope for this pass (MEDIUM and LOW), unchanged and still open.**
+
+- W-12, W-13, W-14, W-16, W-17, W-18, W-21, W-22, W-23, W-26, W-27, W-28, W-29,
+  W-31, W-32, W-33, W-34, W-41 through W-62, W-66 through W-75.
+- **Nine more in-content breadcrumbs**, beyond W-07's two: `settings-ai` ×3,
+  `agents` ×2, `knowledge`, `tna`, `proposals` ×2. Same defect as W-07, found
+  while applying it.
+
+## Controls added, per R11
+
+Three findings were controls that could not fail on the thing they were built to
+catch. Each now can, and each was verified by reintroducing the defect:
+
+| Control | Fails on |
+| ------- | -------- |
+| `shared/api/__tests__/refusal-surfaces.test.ts` | a feature `useMutation` with neither the flag nor a named refusal surface |
+| `test/error-state-retry.test.tsx` | an `ErrorState` given `onRetry` without `error` |
+| `test/idempotency.test.tsx` | a key that changes per attempt, and a key blind to the payload |
+| `kit/useSinglePrimary.ts` + its suite | two solid primaries, including two that share a label |
+| `approvals/__tests__/ApprovalInbox.test.tsx` | status colour on a non-chip, via `StatusChip`'s `data-tone` |
