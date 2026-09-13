@@ -15,6 +15,125 @@
 
 ---
 
+## 2026-09-13 21:3x — PR #17 merged, PR #11 rebased with five confirmed findings, an SST fix reported but not found in the diff
+
+**PR #17 confirmed MERGED at `e20e1ba`.** Line references checked, not
+taken on trust: `011:2598` (rpc argument), `011:2784` (`DIFF_CHANGED`
+detail keys), `011:2775` (APPROVE-only guard) are all real lines in the
+migration. Both lanes (`fix-approval-hash` and its reviewer) confirmed
+genuinely shut down — worktrees gone from disk, not just reported.
+
+**A caveat worth carrying forward rather than letting the green suite
+speak for itself:** the conformance test's "rpc" side runs through an
+oracle transport into the fixture client, not a real Postgres connection.
+No test anywhere in this repository executes migration 011's actual
+`RAISE` path for `DIFF_CHANGED`. A green conformance suite here proves the
+two client shapes agree with each other; it does not prove the database
+guard fires. That proof is what the first hosted-mode run after 014
+applies is for.
+
+**PR #11 (018) confirmed rebased onto `cloud/migrations`**, not `main` —
+checked via `gh pr view 11 --json baseRefName` directly. Now 30 RPCs, 3
+views (`v_budgets`, `v_model_tiers`, plus `v_organisation_relations`), 11
+helpers, 228 assertions, per the report, not independently re-run (needs
+the shim). Merges after PR #6; reviewed separately by `codex-review-018`
+(its own shim, port 5437). `lane/rpc-018`'s worktree confirmed shut down.
+
+**Five findings from the rebase, each confirmed directly against the
+diff:**
+
+1. 014 and 018 both created the three action-envelope gate wrappers
+   (`perform_action`, `decide_approval`, `bulk_decide_approvals`) with
+   different arity. `CREATE OR REPLACE FUNCTION` matches on the argument
+   list, so the two did not replace one another — they became overloads
+   differing by a defaulted trailing argument, and every short call
+   became ambiguous. Confirmed via the migration's own comment, which
+   quotes the exact verify-time error it caught: "core.decide_approval
+   has 2 definitions, expected exactly 1." 014 keeps its five-argument
+   version (the one exposing `p_expected_diff_hash`); 018 drops its own
+   four-argument one, confirmed via an explicit `DROP FUNCTION IF EXISTS`
+   in the diff.
+2. Migration 017 left SST half-wired: `core.quotations.sst_rate` and
+   `sst_reason` are plain columns defaulting to 0 and `'STANDARD_RATED'`
+   with no trigger behind them, confirmed in the diff. 018's
+   `put_quotation` now resolves the real rate via
+   `app.resolve_tax_policy` on the write path. The table-level fix (a
+   trigger, so paths other than this one RPC are covered too) is routed
+   to `fix-014` in PR #6 rather than fixed here.
+3. `core.provenance.origin` is immutable at the schema level, confirmed;
+   the contract's origin flip is derived in the read projection instead
+   of being written.
+4. **A premise correction, confirmed by reading the script itself rather
+   than trusting the claim:** `npm run check:rpc` does not detect a
+   missing RPC. `scripts/check-rpc-contract.mjs`'s own header states its
+   three checks are envelope shape, forbidden casts, and type source — it
+   never reads `RPC_NAMES` and has no notion of function existence. A
+   missing function surfaces only as `PGRST202` at runtime. Recorded as a
+   genuine gap: "check:rpc existence gate" added to the backlog.
+5. The pipeline stage seed for new tenants is blocked on a real
+   architecture decision, not busywork: doc 01 §9 Q10's `DEAL_CHAIN`
+   ambiguity is unresolved, `core.pipeline_steps` has no `outcome` column
+   for R16's terminal WON/LOST states (needing an `ALTER` on 004), and a
+   provisioning trigger would break two existing tests plus hit an
+   alphabetical AFTER-trigger ordering trap. Consistent with what the
+   SEEDS thread already records: 018 ships no per-tenant pipeline seed,
+   and the fixture world owns its own pipeline rows instead.
+
+**PR #16 now at 9 commits, not the reported `900995a` — but the gap is
+inert, confirmed.** The two commits on top of `900995a` are the id-formula
+commit itself and a docs-only follow-up whose own message states plainly:
+"Only the comments change. Every id, every row and every assertion is
+byte for byte what 900995a emitted, which is what --check reports." So
+the report's head was accurate at the time and nothing behavioral changed
+since.
+
+**The pipeline-stage-id rule was corrected by measurement, and both the
+wrong version and the right one are worth keeping — this is exactly the
+kind of negative result this log exists for.** The originally proposed
+rule ("UUIDv5 if `uuid-ossp` is installed, else md5") would have produced
+different ids on the shim versus a hosted project if the extension's
+availability ever differed between them — a determinism rule that isn't
+actually deterministic across environments is worse than no rule. A plain
+`'pipeline:' || stage_key` key also collides, because `WON` is a step
+name shared by more than one pipeline; the real uniqueness is on
+`(tenant, pipeline, step_key)`, not `step_key` alone. Both defects were
+caught before shipping. Final rule, confirmed exactly in the current
+diff: `md5(tenant_id::text || 'pipeline:' || object)::uuid` for the
+pipeline row, and the same expression with `|| ':' || step_key` appended
+for each step. `uuid-ossp` is confirmed not installed anywhere in
+001–017, so the abandoned fallback path was never actually available to
+begin with. Two new pins, `T2k` and `T2l`, confirmed present and matching
+exactly, including `T2l`'s failure message spelling out the full
+expression.
+
+**Confirmed exactly three trainers are accredited, not four.** `TRN-0024`
+Noora Idris carries `FALSE`/`NULL` across `ttt_certified`, `ttt_ref`,
+`ttt_valid_to`, `hrd_tdf`, `hrd_tdf_valid_to` in the current row —
+confirmed directly in the SQL values, consistent with (and slightly more
+precise than) what was already on record.
+
+⚠ **The SST ruling reported as corrected is NOT yet reflected in the
+committed diff — checked directly, not assumed resolved because it was
+reported.** Searched `quotationsSql` at the current head (`e1dca98`)
+directly: it still writes no `sst_rate` or `sst_reason` field at all,
+relying on 017's column defaults — the exact state the report says was
+fixed to `SST-G-TRAINING-8` at 8%. Two explanations are equally possible
+— the implementing commit hasn't been pushed yet, or it landed somewhere
+this search didn't cover — and neither is assumed; this is recorded as an
+open discrepancy for the next check to resolve, not silently corrected in
+either direction. The narrower remaining USER DECISION, as reported,
+survives regardless: whether tenant `akademi-perdana` is Education-Act
+exempt is a policy-row decision, not a seed-code change.
+
+**One thing worth telling future-me:** a report that says "corrected" is
+a claim about intent, not a claim this log should accept without opening
+the diff. Every other claim in this same message checked out precisely;
+the SST one is the one exception, and finding it required actually
+grepping the seed file rather than trusting the pattern that everything
+else in the message was accurate.
+
+---
+
 ## 2026-09-13 21:2x — trainer TDF entry re-corrected (a later commit superseded the last correction), PR #15 confirmed blocked, PR #17 confirmed
 
 **Re-correction, not a new mistake: the trainer HRD-TDF entry from the

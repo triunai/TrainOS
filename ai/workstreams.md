@@ -208,18 +208,30 @@ not disputed, since "lane shut down" and "worktree not yet cleaned up" are
 different claims.
 
 🟢 **PR #17 (`fix(web): decideApproval sends the expected diff hash`,
-branch `fix/approval-diff-hash`) confirmed open, 3 commits, matching its
-description exactly.** Closes the client half of 014's HIGH finding #6.
-Confirmed in the diff: `ApprovalRequest.diffHash` and a required
-`ApprovalDecideRequest.diffHash` added to the contract; a new
-`DIFF_CHANGED` error code, confirmed mapped to HTTP `409` in
+branch `fix/approval-diff-hash`) confirmed MERGED at `e20e1ba`** (`gh pr
+view 17`: mergedAt 2026-09-13T12:37:17Z), after `review-pr17`'s MERGE
+verdict — matches at `011:2598` (rpc argument), `011:2784` (`DIFF_CHANGED`
+detail keys) and `011:2775` (APPROVE-only guard) all confirmed as real
+line references in the migration, not invented. Closes the client half of
+014's HIGH finding #6. Confirmed in the diff: `ApprovalRequest.diffHash`
+and a required `ApprovalDecideRequest.diffHash` added to the contract; a
+new `DIFF_CHANGED` error code, confirmed mapped to HTTP `409` in
 `ERROR_STATUS`; `rpcClient.decideApproval` now sends
 `p_expected_diff_hash`; the fixture client enforces the same guard on
 `APPROVE` only, matching 011's own scope; a new conformance test proving
 both clients refuse a stale hash identically and accept a fresh one
 identically. **1504 tests confirmed exactly** — the PR's own test plan
 states "1118 + 189 + 107 + 90 tests, all passing," which sums to 1504.
-Under review by `review-pr17`.
+`fix-approval-hash`'s worktree confirmed gone from disk — lane genuinely
+shut down, not just reported as such.
+
+⚠ **Caveat on what the conformance test actually proves, worth recording
+plainly:** the "rpc" side of the conformance suite runs through an oracle
+transport into the fixture client, not against a real Postgres — so no
+test anywhere in this repository actually executes 011's real `RAISE`
+path for `DIFF_CHANGED`. That is precisely what the first hosted-mode run
+after 014 is applied is for; a green conformance suite here is necessary
+but not sufficient evidence the database-side guard fires correctly.
 
 **014–017 author-reported execution findings** (separate from the D-012
 security review above — these are the authoring lane's own notes, negative
@@ -242,13 +254,25 @@ results for the log, partially spot-checked):
   yet. Codex second pass requested on 015–017 and on nineteen edits made to
   earlier (001–013) pins.
 
+⚠ **PR #11 was rebased and grew substantially — confirmed via `gh pr
+view 11 --json baseRefName`: base is now `cloud/migrations`, not `main`.**
+Current figures, per the report: 30 RPCs, 3 views (`v_budgets`,
+`v_model_tiers` under the names the client reads via `.from()`, confirmed
+present in the diff, plus `v_organisation_relations` named alongside them
+in a comment), 11 helpers, 228 assertions, forward/test/rollback/forward
+clean on 001–017. Not independently re-run (needs the shim). Merges after
+PR #6. Under review by `codex-review-018` (worktree
+`~/Repos/personal-work/trainos-wt/review-018`, branch `review/codex-018`,
+its own shim on port 5437) — `lane/rpc-018`'s own worktree is confirmed
+shut down (gone from disk), with a separate detached-HEAD worktree
+(`codex-018`) pinned to the same tip for the reviewer.
+
 **018 (PR #11) findings, confirmed directly against the diff:**
 
 - 23 of 24 `RPC_NAMES` implemented; `me_profile` (the 24th) is NOT
   implemented — confirmed in the migration's own comment: "the 24th name in
-  `RPC_NAMES`... needs an HR table for eleven required fields." One view,
-  nine `app.*` helpers, 160 pin assertions + 28 in-migration verify;
-  `check:rpc` 0 BROKEN, `check:grants` OK, `lint:sql` 42/42 reported (not
+  `RPC_NAMES`... needs an HR table for eleven required fields." `check:rpc`
+  0 BROKEN, `check:grants` OK, `lint:sql` 42/42 reported (not
   independently re-run). Shim rebuilt from `initdb` on port 5433 with a
   hand-written platform shim (four Supabase roles, `auth.*`, a storage
   stub, a realtime publication).
@@ -271,6 +295,53 @@ results for the log, partially spot-checked):
 - Doc 09's `search_path` pin was found to assert a string PostgreSQL never
   actually stores — this is exactly [[postgres-search-path-footgun]] from
   memory, the quoted-list form being a silent no-op.
+
+**Five more findings from the rebase, confirmed against the diff:**
+
+1. **014 and 018 both created the three action-envelope gate wrappers with
+   different arity, confirmed exactly as described.** 014's signature is
+   `(uuid, text, text, text, text)` (exposes `p_expected_diff_hash`); 018's
+   original was `(uuid, text, text, text)`. `CREATE OR REPLACE FUNCTION`
+   matches on the argument list, so the two did not replace one another —
+   they became overloads differing by a defaulted trailing argument, which
+   made every short call ambiguous (`PGRST203`), confirmed via the
+   migration's own comment quoting the exact verify-time error: "core.
+   decide_approval has 2 definitions, expected exactly 1." 014 keeps its
+   five-argument version; 018 drops its own four-argument one
+   (`DROP FUNCTION IF EXISTS core.decide_approval(uuid, text, text,
+text)`), confirmed in the diff.
+2. **017 left SST half-wired, confirmed exactly.** `core.quotations`
+   gained `sst_rate` (defaults 0) and `sst_reason` (defaults
+   `'STANDARD_RATED'`) as plain columns with no trigger behind them — 017
+   itself flags this: "A missing policy must not silently become a zero
+   rate: that is an invoice filed with no SST and no reason." 018's
+   `put_quotation` now resolves the rate via `app.resolve_tax_policy` on
+   write. The table-level fix (a trigger, so paths other than this one RPC
+   are also covered) is routed to `fix-014` in PR #6, not done here.
+3. `core.provenance.origin` is immutable at the schema level, confirmed;
+   the contract's origin flip is therefore derived in the read projection
+   rather than written to the row.
+4. **Premise correction, confirmed by reading the script itself:**
+   `npm run check:rpc` does NOT detect a missing RPC. Read directly:
+   `scripts/check-rpc-contract.mjs`'s own header states its three checks
+   are envelope shape (E1), forbidden casts (E2) and type source (E3) — it
+   never reads `RPC_NAMES` and has no notion of "does this function
+   exist." A missing function surfaces only as `PGRST202` at runtime.
+   Recorded as a real gap: "check:rpc existence gate" added to the
+   backlog.
+5. **The pipeline stage seed for new tenants is BLOCKED on a genuine
+   architecture decision, not busywork.** Three concrete blockers,
+   confirmed consistent with what this thread already tracks: doc 01 §9
+   Q10 is unresolved (`DEAL_CHAIN` as its own contract object vs. `PACKET`
+   vs. two rows on one object — the exact divergence already pinned
+   elsewhere in 018); `core.pipeline_steps` has no `outcome` column for
+   R16's WON/LOST terminal states, needing an `ALTER` on 004; and a
+   provisioning trigger would break `test_008`/`test_009` on
+   `pipelines_one_default_uq` plus hit an alphabetical AFTER-trigger
+   ordering trap (`seed_pipelines` firing before `seed_ref_formats`).
+   Consistent with the SEEDS thread's own note that 018 ships no per-tenant
+   stage seed and the fixture-world seed owns its pipeline rows instead,
+   converging by an agreed id formula rather than a shared writer.
 
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
@@ -460,7 +531,7 @@ the report and consistent with everything confirmed above.
 
 ---
 
-## 🟢 SEEDS — PR #16 open at f5aa04a, targets 001–017, merges right after PR #6 (2026-09-13)
+## 🟢 SEEDS — PR #16 open at e1dca98 (9 commits), pipeline-id formula corrected by measurement (2026-09-13)
 
 **Resume:** Read PR #16's own body first — 22 schema gaps are enumerated
 there in full; this thread only summarizes. Then `ai/resume-brief.md`
@@ -473,20 +544,41 @@ independently timed here since PR #6 itself is still blocked.
 and an executable pin — plus `packages/fixtures/scripts/` for the
 generator that emits the SQL.
 
-**State:** PR #16 confirmed open at head `f5aa04a`, now 7 commits, 17
-files, 9920+ additions (base figures: 4560 in `supabase/seeds/*.sql`, the
-rest in `emit-seed.ts` and its slices — the exact "3,848 lines" figure
-reported earlier was never reproduced precisely by this count and is not
-disputed further). Targets 001–017, confirmed by the 6th commit's title
-and diff. One more commit still coming, per the report: deterministic
-pipeline stage ids — **kept unconfirmed here on purpose**, since the
-formula is a ruling agreed between two lanes and not yet code on either
-side; do not treat it as landed until both `lane/seeds` and `lane/rpc-018`
-actually push it. Four SQL parts, a wipe script and a pin confirmed
+**State:** PR #16 confirmed open, now 9 commits at head `e1dca98` (the
+report's `900995a` is two commits behind current head; the two commits on
+top — `900995a` itself and `e1dca98` — are the pipeline-id derivation and
+a docs-only follow-up whose own message states "every id, every row and
+every assertion is byte for byte what 900995a emitted," confirmed, so
+nothing behavioral changed after the report). 17 files, 9920+ additions
+(base figures: 4560 in `supabase/seeds/*.sql`, the rest in `emit-seed.ts`
+and its slices — the exact "3,848 lines" figure reported earlier was
+never reproduced precisely by this count and is not disputed further).
+Targets 001–017. Four SQL parts, a wipe script and a pin confirmed
 matching by filename. Generated by the committed `emit-seed.ts` generator
 with a `--check` flag CI can use to prove the generator and its output
-agree, confirmed in the diff. On the shim: T0–T10 all pass, per the
-report, not independently re-run (needs the shim).
+agree, confirmed in the diff. On the shim: T0–T10 all pass at `564dd64`
+on 001–017, per the report, not independently re-run (needs the shim).
+
+⚠ **The pipeline-stage-id ruling was corrected by measurement, and both
+the wrong and the right version are worth recording — this is exactly
+the kind of negative result the log exists for.** The original proposed
+rule ("v5 if `uuid-ossp` else md5") would have split ids between the
+shim and a hosted project if the extension's availability differed, and
+a plain `'pipeline:'||stage_key` key collides because `WON` is a step
+name shared by more than one pipeline (the actual unique constraint is on
+`(tenant, pipeline, step_key)`, not `step_key` alone). Both defects were
+found before shipping, not after. **Final rule, confirmed exactly in the
+current diff:** `md5(tenant_id::text || 'pipeline:' || object)::uuid`
+for the pipeline row, and `md5(tenant_id::text || 'pipeline:' || object
+|| ':' || step_key)::uuid` for each step — `uuid-ossp` is confirmed NOT
+installed anywhere in 001–017, so the fallback path was never optional to
+begin with. Two new pins confirmed present and matching exactly: `T2k`
+(every pipeline carries the derived id) and `T2l` (every step carries the
+derived id, spelled out in the failure message with the full expression).
+018 ships no per-tenant pipeline seed itself (blocked on the architecture
+decision recorded in the SUPABASE SCHEMA thread above); the fixture world
+owns its pipeline rows, and a later provisioning seed converges onto the
+same rows by computing the identical formula, not by a shared writer.
 
 ⚠ **T10, the new RLS-visibility pin, confirmed exactly against the actual
 test file.** After provisioning through 016 the seed now impersonates
@@ -547,17 +639,30 @@ RLS.
    dropped). Both this entry and the one it supersedes were accurate for
    the commit each one read; the lesson is to check PR head freshness
    before restating a finding, not that either check was sloppy.
-6. Pipeline step ids are deterministic, confirmed in the generator:
-   `uuidFor(childKey(\`pipeline:${object}\`, "step", stage.key))`. This
-is close to but not literally the `(tenant_id, 'pipeline:'||stage_key)`formula reported — the actual key composes the pipeline object, a`"step"` literal, and the stage key, not the tenant id. **The claim that
-   018 computes an identical formula stays explicitly unconfirmed, per
-   the team lead's own instruction**: this is a ruling agreed between the
-   seeds and rpc-018 lanes, not yet code on either side.
+   **Confirmed exactly three trainers are accredited, not four**: `TRN-0024`
+   Noora Idris carries `FALSE`/`NULL` across `ttt_certified`, `ttt_ref`,
+   `ttt_valid_to`, `hrd_tdf`, `hrd_tdf_valid_to` in the current row —
+   confirmed directly in the SQL values.
+6. **Superseded — see the pipeline-stage-id ruling in this thread's State
+   section above, now confirmed with the corrected formula and its own
+   pins (`T2k`, `T2l`).** The formula recorded here two updates ago
+   (`uuidFor(childKey(...))`, unconfirmed against 018) has since been
+   replaced by a measured, corrected rule shared between both lanes.
 
-⚠ **USER DECISION queued, not resolved here:** SST treatment of the three
-fixture quotations. They currently carry `STANDARD_RATED` at 0%; Malaysian
-training is often exempt under the seeded Education Act policy, so this
-needs the user's ruling on which treatment the fixture world should model.
+⚠ **SST ruling reported as corrected, but NOT YET reflected in the
+committed diff — checked directly, not assumed.** The report says the
+three fixture quotations were moved onto the 017 default policy
+`SST-G-TRAINING-8` (8%), pinned against the policy row rather than a
+literal, because the earlier `STANDARD_RATED` at 0% was inconsistent with 017. Searched `quotationsSql` in the current head (`e1dca98`) directly:
+it still writes no `sst_rate` or `sst_reason` field at all, relying on
+017's column defaults (0 / `STANDARD_RATED`) — the same state the report
+says was corrected. Either the commit implementing this hasn't been
+pushed yet, or it landed somewhere this check didn't look; recorded as an
+open discrepancy rather than assumed resolved. **The remaining USER
+DECISION, as reported, is narrower than the tax rate itself**: whether
+tenant `akademi-perdana` is Education-Act exempt is a policy-row decision,
+not a seed-code change, and stays open regardless of which SST state the
+seed currently reflects.
 
 ⚠ **Twenty-two schema gaps enumerated in the PR body** — the margin-floor
 column is one of them; the rest are listed in full there rather than

@@ -276,6 +276,20 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 21:3x — PR #17 merged; PR #11 rebased with 5 confirmed findings; SST fix reported but missing from PR #16's diff
+
+- PR #17 confirmed merged, both lanes shut down. Conformance suite caveat
+  recorded: no test executes 011's real RAISE path (oracle transport, not
+  real Postgres). PR #11 confirmed rebased onto cloud/migrations with 5
+  findings verified (arity overload/PGRST203, SST half-wired, immutable
+  provenance.origin, check:rpc existence-gate gap, pipeline seed blocked
+  on a real architecture decision). PR #16 pipeline-id formula corrected
+  by measurement (two real defects caught before shipping), confirmed
+  exactly with new pins T2k/T2l. Confirmed exactly 3 trainers accredited.
+  SST ruling reported as fixed but NOT found in the current diff --
+  flagged as an open discrepancy. Full detail in `ai/project-log.md` and
+  `ai/workstreams.md`.
+
 ## 2026-09-13 21:2x — trainer TDF re-corrected (later commit superseded it); PR #15 confirmed blocked; PR #17 confirmed
 
 - Re-checked the trainer HRD-TDF item at PR #16's current head: a later

@@ -213,8 +213,31 @@ FUNCTION` confirmed load-bearing (a bare `CREATE OR REPLACE` with a
 > unconfirmed per instruction — a ruling, not yet code on either lane.
 > Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 21:2x — trainer TDF entry re-corrected to
-> true (superseding commit); PR #15 confirmed blocked, not just draft.
+> **BLAST 13 Sep 21:3x +08** — PR #17 confirmed MERGED (`e20e1ba`), both
+> lanes genuinely shut down (worktrees gone). Caveat recorded: the
+> conformance suite's "rpc" side runs through an oracle into the fixture
+> client, so no test anywhere executes 011's real RAISE path — the first
+> hosted run after 014 applies is what actually proves it. PR #11 (018)
+> rebased onto `cloud/migrations`, now 30 RPCs/3 views/11 helpers/228
+> assertions, confirmed. Five findings confirmed: a 014/018 arity overload
+> caused PGRST203 (018 drops its variant, 014 keeps its five-arg one); 017
+> left SST half-wired (018's `put_quotation` resolves it, table-level fix
+> routed to `fix-014`); `check:rpc` genuinely does not detect a missing RPC
+> (confirmed by reading the script itself — added to backlog); pipeline
+> stage seeding is blocked on a real doc 01 §9 Q10 decision plus a trigger
+> ordering trap. PR #16 now 9 commits (report's `900995a` is 2 behind, the
+> extra commit is docs-only, confirmed byte-identical). Pipeline-id formula
+> corrected by measurement after two real defects were caught before
+> shipping (extension-dependent, and a step-name collision) — final rule
+> `md5(tenant_id::text || 'pipeline:' || object [|| ':' || step_key])::uuid`,
+> confirmed exactly, pinned by new `T2k`/`T2l`. Confirmed exactly 3
+> trainers accredited (Noora Idris is not). **SST ruling reported as fixed
+> is NOT yet in the diff** — checked directly, quotations still default to
+> 0%/STANDARD_RATED; recorded as an open discrepancy. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 21:3x — PR #17 merged; PR #11 rebased with
+> 5 confirmed findings; SST fix reported but not found in PR #16's diff.
 
 ### Focus
 
