@@ -199,6 +199,18 @@ routes carry ten or more. Worst: `/automation/runs` 33, `/dev/demo` 27,
 eyebrow) still unapplied at kit level, and it is the single change that would
 move the most screens.
 
+> **Correction and follow-up (ui/tokens, same day).** The kit-level half is
+> applied and measured in §10. Two things about this row did not survive
+> re-measurement. First, the counts here are not all violations: a run is
+> counted as mono-uppercase whenever the text carries no lowercase letter, and
+> a record reference (`PAR-1182`, `ENQ-2026-0931`) satisfies that while being
+> the use §1 explicitly KEEPS in mono. `/training/participants`, the headline
+> number in this table, is 350 of 354 record references in a 136-row table and
+> was never the violation it looked like. Second, the counts are dominated by
+> per-row content, so they scale with fixture size rather than with how many
+> distinct mono treatments a screen uses. Both are reasons to read §10's
+> per-class breakdown rather than the totals.
+
 **Breadcrumb ends at a record reference on 7 routes** — §CLAUDE.md "the
 breadcrumb owns the path", so the trail must stop at the list crumb:
 
@@ -376,9 +388,9 @@ Ranked by readers affected × rule severity. "Lane" names who owns the file.
 | # | Fix | Files | Rule | Lane |
 |---|---|---|---|---|
 | 1 | ~~Dark-theme contrast on the sidebar idle label and the AI tint panel~~ **DONE, and it was not the token map.** Measured per pair: the dark idle label is 8.33:1, the caption 5.67:1 and the dots 4.55:1, so `PARENT_IDLE` was misattributed. The single failure was `PARENT_LIT` pairing `bg-ai-tint-2` with `text-primary` (4.05:1 dark) where PillTabGroup, FilterBar, CommandPalette, LifecycleStepper and RelationPicker all pair that tint with `text-primary-hover` (7.48:1). One class name, no dark token changed | `Sidebar.tsx:104` | text 4.5:1 | tokens-fix |
-| 1b | **NEW, light mode.** `--ai-tint-2` is also the selected DATA ROW, and `--ink-muted` on it measures **4.36:1** — under AA, and unrelated to the dark map. Lightening the tint is not the fix: it would land 0.9 L\* from `--ai-tint` and the two AI surfaces would collapse into one. A selected row should raise its muted cells to `--ink-secondary` (6.6:1) | `DataTable.tsx:338` | text 4.5:1 | kit |
-| 1c | `--on-primary` on a solid `bg-primary` button measures **3.24:1** in dark. `--primary` is asked to be a fill carrying near-white text AND text sitting on tints; clearing the first needs it darker, the second lighter, and no single value does both. Needs splitting into a fill blue and a text blue | `tokens.css` dark map, `Button`, every `text-primary` call site | text 4.5:1 | kit |
-| 2 | Mono down 70–80% and kill the tracked uppercase eyebrow, at kit level | kit section-caption component, `tokens.css` `--font-ui`/`--font-code` | §1, §9 | kit |
+| 1b | ~~**NEW, light mode.** `--ai-tint-2` is also the selected DATA ROW, and `--ink-muted` on it measures **4.36:1**~~ **DONE (ui/tokens).** Neither retargeting the cells nor lightening the tint was available — the muted ink lives in the cell renderers a SCREEN passes, which the kit never sees, and a lighter tint lands 0.9 L\* from `--ai-tint`. The selected surface rebinds the token for its own subtree instead: `SELECTED_TINT` carries `bg-ai-tint-2` and `[--ink-muted:var(--ink-secondary)]` together, so every `text-ink-muted` descendant follows and no call site has to know. Read out of the running app, a muted span inside a selected approval row paints rgb(80,86,95) at **6.54:1** light and **6.69:1** dark. `DataTable`'s rows, its bulk bar and both `CalendarGrid` selected surfaces use it | `kit/tokens.ts`, `DataTable.tsx`, `CalendarGrid.tsx` | text 4.5:1 | kit |
+| 1c | ~~`--on-primary` on a solid `bg-primary` button measures **3.24:1** in dark.~~ **DONE (ui/tokens).** Split, and the split was cheaper than the row expected: only four call sites paint the accent as a FILL under text, so `--primary-solid` / `--primary-solid-hover` took those and `--primary` kept every text and mark. The fill is #1F5BFF in BOTH themes and is deliberately absent from the dark map — no new colour, the brand hex painted where "solid blue means a human triggered it" applies. Dark: the label goes 3.24:1 → **4.82:1**, the fill holds 3.25:1 / 3.39:1 / 3.01:1 against card, canvas and L1. Confirmed in the app: the dark "Add source" and "Review next" buttons paint rgb(31,91,255) | `tokens.css`, `tailwind.config.ts`, `Button.tsx`, `ProfileModal.tsx` | text 4.5:1 | kit |
+| 2 | ~~Mono down 70–80% and kill the tracked uppercase eyebrow, at kit level~~ **DONE at kit level (ui/tokens); the remainder is screen-level.** `MONO_LABEL` → `SECTION_LABEL` (UI font, 12px, sentence case) and `MoneyText` off mono were most of it. `--font-ui`/`--font-code` added and `--font-sans`/`--font-mono` retired. See §10 for measured before/after per route, and for the two owners of what is left | `kit/tokens.ts` + 26 kit files, `tokens.css`, `tailwind.config.ts` | §1, §9 | kit |
 | 3 | §16 on the enquiry inbox row: channel loses its capsule, money becomes a right column in tabular numerals, `AIChip` only below threshold | `EnquiryInboxPage.tsx:468, :485–490, :493–497` | §16 | screens |
 | 4 | `ListToolbar` on the three M03 screens and the agent registry | `EnquiryInboxPage.tsx:185/:203`, `FollowUpQueuePage.tsx:183/:206`, `AgentRegistryScreen.tsx:338` | §10b | screens |
 | 5 | Migrate `CollectionsQueueScreen` to `RecordHeader` + `ListToolbar` — the reference screen must stop teaching the defect | `CollectionsQueueScreen.tsx:190–217, :231–242` | §10b, b0ef662 | screens |
@@ -454,3 +466,139 @@ the live tree is not safe here; patch the live file.**
   profile type reaching the app, the migrations, the splitpane work on the
   enquiry inbox, and the proto-header propagation beyond the two proofs.
   Anything those lanes land after `091e3e0` is unverified here.
+
+---
+
+## 10 · Applied by the `ui/tokens` lane (13 Sep, evening)
+
+Three commits on `ui/tokens`, off `main`, in a worktree with its own
+`node_modules` — `node_modules/@trainos/*` resolves into this worktree's own
+`packages/`, checked with `readlink` before anything was measured, per §0.
+
+### 10.1 · The two open contrast rows are closed
+
+| Row | Was | Is | Proof |
+|---|---|---|---|
+| 1b · muted cell on a selected row, light | 4.36:1 | **6.54:1** light, **6.69:1** dark | painted colour read back from the running app |
+| 1c · `--on-primary` on the solid primary, dark | 3.24:1 | **4.82:1** | painted fill read back as rgb(31,91,255) |
+
+Both are also asserted out of the stylesheet. `tokens.contrast.test.ts` goes
+**33 cases to 49**: the two KNOWN-GAP cases that recorded these rows as failing
+are gone, replaced by the pairs that now pass plus the mechanisms they rest on —
+the dark map must not override either fill token, the fill must equal light
+`--primary`, `--primary` must stay AA as text on the dark card, the two AI
+tints must stay at least 2 L\* apart, and `tailwind.config.ts` must still be
+reading `--font-ui` / `--font-code`.
+
+**1c cost less than the row predicted.** The row said the split "spans Button
+and every `text-primary` call site". It does not: of twenty `bg-primary`
+occurrences only four are a fill under text, and the rest are marks — sidebar
+dots, a switch thumb, bar fills — which are non-text affordances and correctly
+keep the lifted dark `--primary`. So `--primary-solid` took `Button`'s primary
+and `ProfileModal`'s avatar badge, and nothing else moved.
+
+**The fill does not theme-swap.** It is #1F5BFF in both themes, absent from the
+dark map on purpose. No fourth accent, no change to #1F5BFF: the one accent
+CLAUDE.md names, painted at the one place the rule "solid blue means a human
+triggered it" is about. A promise that changes colour between themes is a
+weaker promise.
+
+### 10.2 · Mono-uppercase, measured before and after
+
+Method, stated because §0's counter was never published and this is an
+independent measure: a **mono run** is the closest mono-font ancestor of its own
+visible text, counted once; a **mono-caps run** is a mono run that is also
+uppercase, by `text-transform` or by carrying two or more letters and no
+lowercase. Own Chromium, own browser context, 1440×900, both themes, every
+screenshot over 20 KB, zero console errors. Light and dark produced identical
+counts on every route.
+
+| Route | mono before → after | mono-caps before → after |
+|---|---|---|
+| `/dashboard` | 54 → 33 | **29 → 11** |
+| `/sales/enquiries` | 78 → 64 | **34 → 21** |
+| `/training/participants` | 361 → 359 | 354 → 353 |
+| `/compliance/hrd-corp` | 50 → 24 | **22 → 12** |
+| `/finance/invoices` | 52 → 35 | **36 → 22** |
+| `/automation/runs` | 142 → 81 | **53 → 17** |
+| `/settings/ai-models` | 84 → 60 | 55 → 45 |
+| `/settings/providers` | 50 → 24 | **28 → 12** |
+| `/my-tasks` | 31 → 24 | 23 → 18 |
+| `/dev/kit` | 466 → 220 | **274 → 103** |
+
+Two constants carried most of it. `MONO_LABEL` was
+`font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted`, read by nine
+kit components, and is now `SECTION_LABEL` — `DataTable`'s already-migrated
+column head verbatim, so the kit has one heading style rather than two.
+`MoneyText` dropped `font-mono` and kept `tabular-nums`, which is brief §1's own
+rule that a number aligns with tabular figures rather than with a second
+typeface.
+
+### 10.3 · What is left, and who owns it
+
+`/training/participants` did NOT move, and the reason is the correction in §3:
+272 runs of `PAR-…` and 78 of `CERT-…` are record references in a 136-row
+table, which §1 keeps in mono. There is no kit lever on them and there should
+not be one. `/settings/ai-models` is mostly `TierChip` (`FAST`, `MID`) and a
+hand-rolled `<table>`; the tier label is a machine value and was deliberately
+left alone.
+
+Everything still counted on the five reported routes belongs to a file this
+lane does not own:
+
+| Source | Runs/route | Lane |
+|---|---|---|
+| `Sidebar.tsx:272` group caption (`MAIN`, `OPERATIONS`) — mono, uppercase, tracked | 3 on every route | shell-fix |
+| `SidebarFooter.tsx` ×4, `states/ErrorState.tsx` ×1 | shell + states | shell-fix, states |
+| Hand-rolled `font-mono … uppercase` in feature screens: `ClaimPacketScreen.tsx:159`, `ExecutiveDashboard.tsx`, `InvoiceDetailScreen.tsx` and `AiModelsScreen.tsx` `<th>`s, `Organisation360Page.tsx` ×5, `EnquiryDetailPage.tsx` ×5, `TnaDetailPage.tsx` ×4, `RulesRegistryScreen.tsx` ×4, `DemoIndex.tsx` ×3, and nine more at ×1 | 1–5 each | screens |
+| `pages/KitShowcase.tsx` ×5 | dev route | kit showcase |
+
+The two hand-rolled `<table>`s are already §5 item 5 and §7 row 9: adopting kit
+`DataTable` closes their mono `<th>`s as a side effect of a fix that is wanted
+anyway.
+
+### 10.4 · Two defects found, not fixed, because the files are another lane's
+
+- **`--on-primary` on `--danger` is 2.22:1 in dark.** `tailwind.config.ts` maps
+  shadcn's `destructive.foreground` to `--on-primary`, and `ui/toast.tsx` paints
+  `bg-destructive text-destructive-foreground`. Light is 5.62:1. The alias is in
+  a file this lane owns; the call site is a shadcn primitive in
+  `shared/components/ui/`, which is not in this lane's allowed set, so changing
+  the alias alone would move the failure rather than close it.
+- **`ui/button.tsx` has no importers.** It carries `bg-primary
+  text-primary-foreground` and a `destructive` variant, and nothing in the app
+  renders it. Dead, and a second button vocabulary beside kit `Button` — the
+  divergence CLAUDE.md names. Deleting it is a `shared/components/ui/` change.
+
+### 10.5 · Gates at `5f01e57`
+
+| Gate | Result |
+|---|---|
+| `npm run typecheck` | pass |
+| `npm run typecheck:strict` | pass |
+| `npm run lint` | pass — 0 errors, 8 pre-existing `react-refresh` warnings, the same 8 as §1 |
+| `npm test -- --run` | pass — 996 web, 90 worker, fixtures and agent-runtime clean |
+| `npm run build` | pass — 1.93s |
+| `npm run check:barrels` | pass — 32 barrels |
+| `tokens.contrast.test.ts` | pass — 49 cases, was 33 |
+
+One test changed rather than added: `Money.test.tsx` asserted `font-mono` on
+`MoneyText` and now asserts `tabular-nums` and the absence of `font-mono`. It
+pinned the shape the brief asked to change, so it moved with it.
+
+### 10.6 · What this lane could not verify
+
+- **The counts are not comparable to the notes column in §3.** That counter was
+  never published; §10.2's method is stated so it is at least reproducible, and
+  before and after were measured with the same one.
+- **Anything behind an interaction.** The selected-row proof drove a real
+  checkbox, but hover and focus states, drawers, the command palette and the
+  profile modal were not opened. The `--primary-solid-hover` fill is asserted
+  from the stylesheet only; its 2.41:1 separation from the dark card is a
+  deliberate accepted trade, not a measured screen.
+- **The 58 routes this lane did not capture.** Ten routes were measured, chosen
+  as the five named in the brief plus the next-worst five from §3. A kit change
+  reaches every route, but only these ten have numbers.
+- **The other lanes' work.** These commits sit on `main`, not on the live tree,
+  so anything shell-fix, ui-lists, ui-states or the cloud web-swap lane lands
+  afterwards is unmeasured here.
