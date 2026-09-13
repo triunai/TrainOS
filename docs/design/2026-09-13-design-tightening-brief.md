@@ -93,3 +93,4 @@ The pack's topbar has an EN | BM switch; the app has no i18n. Now (shell-fix): t
 - The **metric group is the only card**. Its background is the kit ProfileModal tenant-banner gradient (vivid primary → lighter blue, left→right), tokenised as `--surface-accent-gradient`, same in both themes; white text (labels ~70% white). The earlier "6–12% tint" caution is withdrawn — the user wants the vivid banner.
 - No per-cell slabs or heavy dividers: transparent cells on the gradient, evenly spread, at most a 1px 20%-white hairline.
 - One chevron at the card's right edge expands the card into the detail sections (eased, leak-free).
+- Gradient rule (11:56): blue family only, **2–3 colour stops max**, creativity via angle/stop positions/hue pairing (deep indigo-blue → electric #1F5BFF, or electric → cyan-leaning blue); white text AA on every stop; two candidates rendered, one chosen.
