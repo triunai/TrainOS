@@ -15,6 +15,121 @@
 
 ---
 
+## 2026-09-13 21:5x — GitHub Actions down on billing (confirmed), PR #16 final with SST landed, PR #11 pipeline seed shipped (only DEAL_CHAIN blocked)
+
+⛔ **GitHub Actions has been unavailable on every branch, `main` included,
+since roughly 20:36–20:40 on 13 Sep — confirmed directly, not taken on
+the report.** `gh api
+repos/PARALLELPARADIGMS/alex-project/check-runs/103725755232/annotations`
+returns the literal message: "The job was not started because recent
+account payments have failed or your spending limit needs to be
+increased. Please check the 'Billing & plans' section in your settings."
+Confirmed independently on the most recent push to `main`: every job in
+that run completed in 0–3 seconds carrying the identical annotation, most
+never starting at all (duration `0s`). `gh run list --branch main` shows
+the pattern beginning in exactly this window. Org billing endpoints
+require `admin:org`, which the available token does not have — **this
+needs the user directly, in GitHub's Billing & plans for
+`PARALLELPARADIGMS`.** Noted as a likely proximate cause, not confirmed:
+`Vitest (unit)` alone has been running roughly 14 minutes per push across
+roughly twenty pushes tonight.
+
+**Policy in effect until this is fixed:** remaining merges (#6, #11, #16,
+and any report PRs) proceed on the lane's own local gate output plus an
+independent review verdict, each recorded here with "CI unavailable,
+billing" rather than a CI run reference. PR #15 stays draft regardless —
+its blocker (the Radix-menu test timeout) is unrelated to CI
+availability.
+
+**PR #16 confirmed final at head `f8d00fc`, 10 commits, lane shut down,
+merges right after PR #6.** The SST fix flagged as unlanded two updates
+ago, then confirmed queued one update ago, has now genuinely landed —
+confirmed directly, closing the loop through all three states by
+measurement rather than trust at any step. `quotationsSql` now resolves
+SST via `app.resolve_tax_policy()` rather than a literal, matching the
+stated reasoning exactly: tax-policy ids are `gen_random_uuid()` per
+database, so a hardcoded literal could never match one across
+environments. Resolves to `SST-G-TRAINING-8`, 800 bps,
+`STANDARD_RATED` today, confirmed exactly in the diff's own comments.
+Three new pins confirmed present and matching their descriptions
+precisely: `T7d` (the stored rate matches what the resolver returns for
+that tenant/date), `T7e` (the cited tax-policy id matches the resolver's,
+not a wrong-but-plausible one), `T7f` (an exempt override fails
+`quotations_exempt_needs_reason` by name rather than the seed silently
+storing an unjustified exemption). Spot-checked `QUO-2026-0184`:
+`sell_price_sen` confirmed `1850000` in the raw INSERT; the SST amount
+and gross price are resolved/generated columns rather than literals in
+this file, but the arithmetic is internally consistent with the reported
+148,000 SST and 1,998,000 gross (1,850,000 × 8%). Two USER DECISIONs
+remain open in the PR body, both already tracked in this log: the
+realised 29% margin has no column anywhere (T5 pins the absence on
+purpose), and the fixture world's action-policy ids collide with two of
+tenant provisioning's 22 under a frozen `action_type`.
+
+⚠ **Correction to this log's own prior entry: the pipeline stage seed was
+NOT blocked — only the `DEAL_CHAIN` pipeline object specifically stays
+blocked, and the earlier finding overstated the scope of what was
+actually gated.** Confirmed directly at PR #11's new head `fc9550c`: the
+seed shipped as a fourth AFTER INSERT trigger on `public.tenants`
+(`trg_tenants_z_seed_pipelines`), confirmed present, deliberately named
+to sort after 016's ref-format trigger alphabetically — resolving the
+exact ordering trap this log previously recorded as a blocker, rather
+than working around it or leaving it open. Ships with a backfill (36 rows
+over two tenants, 0 rows moved on re-run, per the report — not
+independently re-run here) and a new `T30` pin. Ids use the md5
+expression this log already has on record from the previous
+pipeline-stage-id correction; the abandoned "v5 if `uuid-ossp`, else md5"
+branch is confirmed fully dropped from the code, and `uuid-ossp` is
+confirmed never created anywhere across 001–017. **What remains genuinely
+blocked, confirmed narrowly rather than broadly:** only the `DEAL_CHAIN`
+pipeline object itself, because 004's own CHECK constraint still cannot
+store it as a value — divergence 14.2 in the newly-added
+`docs/architecture/09` §14 pins that it still cannot be inserted,
+confirmed present at that exact section number.
+
+**PR #11 now confirmed at exactly 7 files** — `docs/architecture/09`, the
+018 forward migration, its rollback, `test_008`, `test_009`, `test_014`,
+`test_018`, confirmed via `gh pr diff 11` — at head `fc9550c`. Three of
+the seven confirmed as real fixes, not incidental diffs:
+
+1. `test_008` and `test_009` now seed `is_default = false` for their
+   local pipeline fixtures, because 018 now seeds every tenant a genuine
+   default pipeline via the trigger above, and a test-local one no longer
+   needs the flag to avoid `pipelines_one_default_uq`.
+2. `test_009`'s engagement-creation query is confirmed to have carried a
+   real, previously-undetected defect: an **unconstrained cross join over
+   `core.pipelines`**. With 018's seed, a tenant now owns three pipelines
+   rather than one, so without a predicate the INSERT wrote three
+   engagement rows and `RETURNING ... INTO v_eng` kept whichever one
+   happened to come last — meaning every assertion downstream of it was
+   measuring an arbitrary row, not the intended one. Confirmed via the
+   diff's own comment describing exactly this mechanism and calling it "a
+   latent defect now fixed" — real independent value from the rebase, not
+   busywork.
+3. `test_014`'s exact grant count moved `121 → 124`, confirmed via the
+   diff's own comment stating both numbers directly, framed as "CHANGED
+   BY 018, and the exactness is the point."
+
+`docs/architecture/09` gained a full §14 enumerating ten divergences
+between the RPC spec and what 018 actually built, confirmed present,
+including 14.2 (`DEAL_CHAIN`, above) and 14.10 (`core.me_profile()`,
+still unbuildable for lack of an HR table, already tracked in this log).
+The 018 rollback drops the seed trigger and deliberately keeps
+already-seeded rows rather than deleting them, confirmed. `lane/rpc-018`'s
+own worktree confirmed shut down; both 018 reviewers (`codex-review-018`
+and its detached-HEAD counterpart) re-pinned to `fc9550c`.
+
+**One thing worth telling future-me:** a "blocked" finding needs the same
+scope discipline as any other claim. The earlier entry correctly
+identified three real obstacles (the Q10 ambiguity, the missing
+`outcome` column, the trigger-ordering trap) but then concluded the
+whole feature was blocked, when in fact the lane had already solved two
+of the three obstacles and only the genuinely unresolved one — a schema
+question needing the user — remained. A list of real blockers is not the
+same claim as "therefore nothing shipped."
+
+---
+
 ## 2026-09-13 21:4x — second D-012 pass BLOCKs all of 014–017 (not on main yet), scratchpad collision, SST discrepancy resolved
 
 **Second D-012 review pass confirmed via `git show` on branch

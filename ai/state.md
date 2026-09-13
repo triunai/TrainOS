@@ -276,6 +276,18 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 21:5x — GitHub Actions down on billing (confirmed); PR #16 final with SST landed; PR #11 pipeline seed shipped
+
+- GitHub Actions confirmed unavailable on every branch since ~20:36
+  (billing annotation confirmed verbatim via the API). Merges now go on
+  local gates + independent review until the user fixes billing. PR #16
+  final at f8d00fc: SST fix confirmed landed via app.resolve_tax_policy(),
+  three new pins (T7d/T7e/T7f) confirmed. Corrected this session's own
+  prior finding: the pipeline stage seed was NOT blocked, only DEAL_CHAIN
+  itself is -- confirmed the seed shipped as a fourth tenant trigger at
+  PR #11's new head fc9550c, plus a real cross-join defect fix in
+  test_009. Full detail in `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 21:4x — second D-012 pass BLOCKs all of 014-017 (branch only, not on main); scratchpad collision; SST confirmed queued
 
 - Confirmed via git show on branch review/codex-014-017 (not merged, no

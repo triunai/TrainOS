@@ -396,19 +396,46 @@ text)`), confirmed in the diff.
    exist." A missing function surfaces only as `PGRST202` at runtime.
    Recorded as a real gap: "check:rpc existence gate" added to the
    backlog.
-5. **The pipeline stage seed for new tenants is BLOCKED on a genuine
-   architecture decision, not busywork.** Three concrete blockers,
-   confirmed consistent with what this thread already tracks: doc 01 §9
-   Q10 is unresolved (`DEAL_CHAIN` as its own contract object vs. `PACKET`
-   vs. two rows on one object — the exact divergence already pinned
-   elsewhere in 018); `core.pipeline_steps` has no `outcome` column for
-   R16's WON/LOST terminal states, needing an `ALTER` on 004; and a
-   provisioning trigger would break `test_008`/`test_009` on
-   `pipelines_one_default_uq` plus hit an alphabetical AFTER-trigger
-   ordering trap (`seed_pipelines` firing before `seed_ref_formats`).
-   Consistent with the SEEDS thread's own note that 018 ships no per-tenant
-   stage seed and the fixture-world seed owns its pipeline rows instead,
-   converging by an agreed id formula rather than a shared writer.
+5. ⚠ **Correction: the pipeline stage seed itself was NOT blocked — only
+   `DEAL_CHAIN` specifically stays blocked, and finding 5 above
+   overstated the scope.** Verified directly at PR #11's new head
+   `fc9550c`: the seed shipped as a fourth AFTER INSERT trigger on
+   `public.tenants`, `trg_tenants_z_seed_pipelines`, confirmed present in
+   the diff and deliberately named to sort after 016's ref-format trigger
+   alphabetically — resolving the ordering trap this thread previously
+   flagged as a blocker rather than working around it. Ships with a
+   backfill (36 rows over two tenants, 0 on re-run, per the report) and a
+   new `T30` pin. Ids use the md5 expression this thread already recorded
+   (the abandoned v5-if-uuid-ossp branch is confirmed dropped; `uuid-ossp`
+   is confirmed never created anywhere in 001–017). **What remains
+   genuinely blocked, confirmed narrowly**: only the `DEAL_CHAIN` pipeline
+   object itself, because 004's own CHECK constraint still cannot store
+   it — divergence 14.2 in the updated `docs/architecture/09` pins that it
+   still cannot be inserted, confirmed present at that exact section
+   number.
+
+**PR #11 now confirmed at 7 files** (`docs/architecture/09`, the 018
+migration, its rollback, `test_008`, `test_009`, `test_014`, `test_018`
+— confirmed exact via `gh pr diff 11`), head `fc9550c`. Three of those
+seven confirmed as real fixes, not incidental diffs: `test_008`/`test_009`
+now seed `is_default = false` (018 seeds every tenant a real default
+pipeline now, so a test-local one no longer needs the flag);
+`test_009`'s engagement-creation query is confirmed to have carried an
+**unconstrained cross join over `core.pipelines`** — with 018's seed a
+tenant now owns three pipelines instead of one, so without a predicate
+the insert wrote three engagements and `RETURNING ... INTO` kept
+whichever came last, meaning every downstream assertion measured an
+arbitrary row; now fixed with the missing predicate, confirmed in the
+diff's own comment describing exactly this mechanism. `test_014`'s exact
+grant count moved `121 → 124`, confirmed via the diff's own comment
+calling out the exact old and new numbers. `docs/architecture/09` gained
+a full §14 section enumerating ten divergences between the RPC spec and
+what 018 actually built, confirmed present, including 14.2 (`DEAL_CHAIN`,
+above) and 14.10 (`core.me_profile()`, still unbuildable for lack of an
+HR table, already tracked). The rollback drops the seed trigger and
+deliberately keeps already-seeded rows, confirmed. `lane/rpc-018`'s
+worktree confirmed shut down; both 018 reviewers (`codex-review-018` and
+its detached-HEAD counterpart) re-pinned to `fc9550c`.
 
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
@@ -504,6 +531,29 @@ a loud NOTICE on skip) were both still open as of the same date.
 
 ## 🟢 API-PHASE — PR #5 MERGED; hosted apply still gated on 014's D-012 review (2026-09-13)
 
+⛔ **BLOCKER, confirmed directly, not taken on the report: GitHub Actions
+has been unavailable on every branch, `main` included, since roughly
+20:36–20:40 on 13 Sep.** Confirmed via the exact call given:
+`gh api repos/PARALLELPARADIGMS/alex-project/check-runs/103725755232/annotations`
+returns the literal message: "The job was not started because recent
+account payments have failed or your spending limit needs to be
+increased. Please check the 'Billing & plans' section in your settings."
+Confirmed independently on the most recent push to `main`: every job
+completes in 0–3 seconds carrying that same annotation, most never
+starting at all (`0s`). `gh run list --branch main` shows the pattern
+starting exactly around this window. Org billing endpoints need
+`admin:org`, which the available token lacks — **this needs the user, in
+GitHub's Billing & plans for `PARALLELPARADIGMS`.** Likely proximate
+cause, worth noting rather than confirming: `Vitest (unit)` alone has been
+running ~14 minutes per push across roughly twenty pushes tonight.
+
+**Policy in effect until this is fixed, as instructed:** remaining merges
+(#6, #11, #16, and any report PRs) proceed on the lane's own local gate
+output plus an independent review verdict, each merge recorded with "CI
+unavailable, billing" in the log rather than a CI check reference. PR #15
+stays draft regardless — its own blocker (the Radix-menu test timeout) is
+unrelated to CI availability and unaffected by this.
+
 **PR #5 (`cloud/web-swap`) confirmed MERGED** at `3faa627` (`gh pr view 5`:
 mergedAt 2026-09-13T12:10:20Z), found while verifying an unrelated report —
 not announced separately by any lane. Enquiries → proposals → approvals are
@@ -598,7 +648,29 @@ the report and consistent with everything confirmed above.
 
 ---
 
-## 🟢 SEEDS — PR #16 open at e1dca98 (9 commits), pipeline-id formula corrected by measurement (2026-09-13)
+## 🟢 SEEDS — PR #16 final at f8d00fc (10 commits), SST resolved via the tax-policy registry, lane shut down (2026-09-13)
+
+✅ **Confirmed final: PR #16 at head `f8d00fc`, 10 commits, lane shut
+down.** The SST fix flagged as "queued, not yet in the diff" two updates
+ago has now landed — confirmed directly: `quotationsSql` resolves SST via
+`app.resolve_tax_policy()` rather than a literal (the report's own
+reasoning holds up: tax-policy ids are `gen_random_uuid()` per database,
+so a hardcoded literal could never match one). Resolves to
+`SST-G-TRAINING-8`, 800 bps, `STANDARD_RATED` today — confirmed exactly
+in the diff's own comments. Three new pins confirmed present and matching
+their descriptions: `T7d` (stored rate matches the resolver's), `T7e`
+(cited tax policy id matches what the resolver returns), `T7f` (an exempt
+override would fail `quotations_exempt_needs_reason` by name rather than
+storing a lie — the seed refuses to fabricate a reason for an exemption
+it can't justify). Spot-checked `QUO-2026-0184`: `sell_price_sen`
+confirmed `1850000` in the raw INSERT; the SST rate and gross are
+resolved/generated rather than literals, but the arithmetic is
+consistent (1,850,000 × 8% = 148,000 SST, 1,998,000 gross), matching the
+report's figures. Merges right after PR #6, per the report. **Two USER
+DECISIONs remain open in the PR body, both already tracked in this
+thread**: the realised 29% margin has no column (T5 pins the absence
+deliberately), and the fixture action-policy ids collide with two of
+provisioning's 22 under a frozen `action_type`.
 
 **Resume:** Read PR #16's own body first — 22 schema gaps are enumerated
 there in full; this thread only summarizes. Then `ai/resume-brief.md`
@@ -716,17 +788,11 @@ RLS.
    (`uuidFor(childKey(...))`, unconfirmed against 018) has since been
    replaced by a measured, corrected rule shared between both lanes.
 
-✅ **The earlier "SST fix reported but not found" flag is resolved, not
-a discrepancy after all: confirmed directly that the fix is queued, not
-yet applied.** The team lead's own follow-up states the SST ruling (quote
-at the 017 default policy `SST-G-TRAINING-8`, pinned against the policy
-row) "is applied next by the seeds lane" — matching exactly what this
-thread already found by reading `quotationsSql` and seeing no `sst_rate`
-change. Both checks agree: the fix is real and planned, just not yet in
-the diff as of `e1dca98`. Recheck after the next `lane/seeds` push before
-assuming it has landed. **The remaining USER DECISION, unaffected either
-way**: whether tenant `akademi-perdana` is Education-Act exempt is a
-policy-row decision, not a seed-code change.
+✅ **The SST discrepancy flagged two updates ago is now fully closed: the
+fix landed at `f8d00fc`** (see the confirmed final state above) — resolved
+by measurement each step of the way: "not found" → confirmed "queued" →
+now confirmed "landed," each check against the actual diff rather than
+either report on its own.
 
 ⚠ **Scratchpad collision incident, recorded as reported — this is about
 the fleet's shared filesystem, not the git repo, so not independently

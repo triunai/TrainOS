@@ -260,8 +260,32 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > lane files go under `<scratchpad>/<lane-name>/`. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 21:4x — second D-012 pass: all of 014-017
-> now BLOCK/MERGE-WITH-FIXES; not yet on main; SST fix confirmed queued.
+> **BLAST 13 Sep 21:5x +08** — ⛔ **GitHub Actions is unavailable on every
+> branch since ~20:36, confirmed directly**: `gh api
+.../check-runs/103725755232/annotations` returns the literal billing
+> message, and the most recent push to `main` shows every job failing in
+> 0-3s with the same annotation. Needs the user in GitHub Billing &
+> plans. Policy until fixed: merges proceed on local gate output plus an
+> independent review verdict, logged as "CI unavailable, billing." PR #16
+> confirmed final at `f8d00fc` (10 commits): the SST fix flagged unlanded
+> last round has now landed, resolved via `app.resolve_tax_policy()`
+> rather than a literal (policy ids are `gen_random_uuid()` per database,
+> so a literal could never match) — resolves to `SST-G-TRAINING-8`, 800
+> bps; three new pins (`T7d`/`T7e`/`T7f`) confirmed present and matching.
+> Seeds lane shut down; merges right after PR #6. **Correction to this
+> session's own prior finding: the pipeline stage seed was NOT blocked —
+> only `DEAL_CHAIN` itself stays blocked.** Confirmed at PR #11's new head
+> `fc9550c`: the seed shipped as a fourth tenant trigger, named to sort
+> after 016's alphabetically, resolving the ordering trap this thread
+> previously called a blocker. PR #11 now 7 files, confirmed exact,
+> including a real cross-join defect fix in `test_009` (an unconstrained
+> join over `core.pipelines` was silently measuring an arbitrary
+> engagement) and `test_014`'s grant count moving 121→124. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 21:5x — GitHub Actions down on billing
+> since ~20:36 (confirmed); PR #16 final with SST landed; PR #11 pipeline
+> seed shipped, not blocked.
 
 ### Focus
 
@@ -277,6 +301,13 @@ update, by `spine-keeper`), then fold ui/tokens, ui/lists and ui/states back
 into the kit per CLAUDE.md's consolidation rule once merged.
 
 ### Blockers
+
+**GitHub Actions is down for billing reasons on every branch, confirmed
+directly, since ~20:36 on 13 Sep — needs the user in GitHub Billing &
+plans for `PARALLELPARADIGMS`.** No CI signal is available anywhere until
+this is fixed; merges proceed on local gates plus independent review in
+the meantime, logged as "CI unavailable, billing" rather than a CI
+reference.
 
 **014 is BLOCKED by the D-012 review** (two CRITICAL security findings,
 confirmed) and 015–017 are unreviewed — this now gates everything else in
