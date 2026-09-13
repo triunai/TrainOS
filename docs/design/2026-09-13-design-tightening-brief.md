@@ -89,11 +89,59 @@ Rows the artboards draw with the dot-progress stepper (done ●, current ◯ blu
 The pack's topbar has an EN | BM switch; the app has no i18n. Now (shell-fix): the switch, an I18nProvider (locale from /me, persisted, `<html lang>`), and shell strings in EN + BM. Next pass: a real catalogue (react-i18next or a typed dictionary), every screen's UI strings keyed, BM translations reviewed by a native speaker, date/number formatting via Intl for `ms-MY`, and the portal page localised (client-facing). Contract already carries `locale` on /me.
 
 ### 15a. RecordHeader upgrade — CORRECTED after eyeballing (11:55)
-- The title row (title · status chip · actions) is **not** collapsible and gets no chevron; it renders exactly as before. Approve keeps the original solid primary.
-- The **metric group is the only card**. Its background is the kit ProfileModal tenant-banner gradient (vivid primary → lighter blue, left→right), tokenised as `--surface-accent-gradient`, same in both themes; white text (labels ~70% white). The earlier "6–12% tint" caution is withdrawn — the user wants the vivid banner.
-- No per-cell slabs or heavy dividers: transparent cells on the gradient, evenly spread, at most a 1px 20%-white hairline.
-- One chevron at the card's right edge expands the card into the detail sections (eased, leak-free).
-- Gradient rule (11:56): blue family only, **2–3 colour stops max**, creativity via angle/stop positions/hue pairing (deep indigo-blue → electric #1F5BFF, or electric → cyan-leaning blue); white text AA on every stop; two candidates rendered, one chosen.
+**Superseded twice; this is what is BUILT.** The 11:55 note withdrew the
+collapsible title row and the 6–12% tint; the 13:0x ruling from the user's own
+screenshots (44/45.png) and the pack's artboard 11-13 (46.png) then made the
+whole header one blue card. §15's "spread the metrics evenly, not clustered
+left" survives all of it and is the one place the build departs from the
+artboards on purpose.
+
+**The card.** `RecordHeader accent` renders the entire header as one blue
+gradient card at `--radius-panel`: title row (title · status chips · round
+chevron · action cluster), mono meta line, a white-at-18% hairline, then the
+metric strip. `collapsible` adds the chevron; collapsed the card shrinks to the
+title row plus the meta line — no residual strip, no condensed metric summary.
+`plainWhenCollapsed` drops to the page surface instead, built because 45.png and
+the artboard's "one component, three configs" disagree.
+
+**Opt-in, not default.** `RecordHeader` also serves every list page (ruling
+b0ef662: no PageHeader, a list is this component with no `recordRef`, with
+`withoutCondensed`, count via `meta`). Record pages pass `accent`; lists never do.
+
+**Nothing inside is told it is on blue.** `onAccent` is a context the card
+provides and `Button`, `StatusChip`, `MetricCell`, `MiniBar` and
+`LifecycleStepper` read. A screen's header markup is identical either way, which
+is what keeps the remaining record screens one prop from adopting it.
+
+**Three artboard details that do not survive contrast, all measured:**
+- Reject keeps no red. No pale red reaches 4.5:1 on this blue — #FFDEDB, already
+  almost white, peaks at 3.63:1. The three actions escalate by WEIGHT: ghost,
+  white-outlined, solid white.
+- Chips lose their hue and keep `data-tone`. A warning fill is built for a
+  near-white card and is a bright slab on saturated blue.
+- The solid button's label is `--accent-ink` #0F2FA8 (10.54:1 on white), not
+  `--primary`, whose dark value is 3.53:1 on white.
+- Same reasoning takes the state hues off the mini bar and the stepper dots on
+  the card. Shape and fill length carry those states; the chips and banners
+  below the card are where they are diagnosed.
+
+**Gradient.** Two candidates, both three stops, blue family, #1F5BFF anchored,
+identical in both themes, no sheen layer (a white overlay eats the contrast
+headroom the white labels need). `--surface-accent-gradient` is A "indigo rise",
+`115deg #0F2FA8 → #1F5BFF 58% → #3A68FF`, worst white 4.56:1.
+`--surface-accent-gradient-alt` is B "violet edge", `128deg #1A34C4 → #1F5BFF
+50% → #4A4FE6`, worst white 5.25:1, at `?gradient=alt`. Delete the loser and the
+URL toggle once picked.
+
+**Blue chroma**, mean over the 1440×900 frame, against the committed
+before-screenshot of the approval detail: light 0.49% → 12.87% expanded / 7.29%
+collapsed; dark 5.62% → 17.24% / 12.06%. The dark figures carry ~5.6 points of
+the shell's own blue-grey neutrals, so the surface spends about 12 points in
+both themes. Over the 5–15% guidance when expanded on dark; the user overrode
+the budget for this surface, so it is reported rather than diluted.
+
+**Proofs built:** M02-S02 approval detail, then M04-S02 Organisation 360 (the
+config with the mini bar and the chain stepper inside the card).
 
 ## 18. Knowledge → Sources (M16-S05) — "hide the machinery until somebody needs it"
 Page answers one question: are my sources healthy, and does anything need me? Then the inventory.

@@ -1,4 +1,5 @@
 import { cn } from "@/shared/lib/utils";
+import { useOnAccent } from "./onAccent";
 
 /**
  * The one progress bar in the system.
@@ -94,6 +95,13 @@ export function MiniBar({
 }: MiniBarProps) {
   const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
 
+  /* On the blue record card the bar is white on white-at-25%. The state hues go
+     with the ink for the same reason the chips' do: amber and red are
+     unreadable on saturated blue, and a bar that changes colour to say
+     "warning" says nothing there. The FILL LENGTH is the reading either way,
+     and `aria-valuetext` carries the rest for anyone not reading colour at all. */
+  const onAccent = useOnAccent();
+
   return (
     <div
       role="progressbar"
@@ -104,13 +112,17 @@ export function MiniBar({
       aria-valuetext={valueText}
       style={width ? { width } : undefined}
       className={cn(
-        "overflow-hidden rounded-pill bg-divider",
+        "overflow-hidden rounded-pill",
+        onAccent ? "bg-[rgb(var(--on-accent)/0.25)]" : "bg-divider",
         HEIGHT[size],
         width ? "shrink-0" : "w-full",
         className,
       )}
     >
-      <div className={cn("h-full rounded-pill", FILL[state])} style={{ width: `${pct}%` }} />
+      <div
+        className={cn("h-full rounded-pill", onAccent ? "bg-[rgb(var(--on-accent))]" : FILL[state])}
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }

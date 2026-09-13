@@ -443,6 +443,13 @@ function RecordHeaderBlock({
 
   return (
     <RecordHeader
+      /* §15a / M04-S02: "the record-page pattern every entity in the chain
+         inherits". The second proof of the accent card, and the first one with
+         a stepper and a mini bar inside it — both of which read the card
+         through `useOnAccent`, so nothing here says "blue". */
+      accent
+      collapsible
+      recordType="organisation"
       title={org.name}
       recordRef={org.ref}
       meta={[

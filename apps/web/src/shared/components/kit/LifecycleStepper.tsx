@@ -1,5 +1,6 @@
 import type { LifecycleState, LifecycleStep, PipelineStage } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
+import { useOnAccent } from "./onAccent";
 import { DateText } from "./DateText";
 import { describeSteps, stepLabel } from "./format";
 import { FOCUS_RING } from "./tokens";
@@ -35,6 +36,64 @@ function StepDot({ state, size }: { state: LifecycleState; size: number }) {
   const style = { width: size, height: size };
 
   const common = "shrink-0 rounded-pill";
+
+  /* On the blue record card the whole grammar is drawn in white (§15a, M04-S02).
+     The SHAPES carry the states there, exactly as they do on a white card: solid
+     for done, ringed for current, dashed for skipped, hollow for pending. Only
+     the two status hues are spent differently — amber and red are unreadable on
+     saturated blue, so blocked and failed keep their form and drop their fill,
+     and the row of chips and banners below the card is where those states are
+     actually diagnosed. */
+  const onAccent = useOnAccent();
+  if (onAccent) {
+    const white = "bg-[rgb(var(--on-accent))]";
+    switch (state) {
+      case "DONE":
+        return <span aria-hidden="true" style={style} className={cn(common, white)} />;
+      case "CURRENT":
+        return (
+          <span
+            aria-hidden="true"
+            style={style}
+            className={cn(common, "border-2 border-[rgb(var(--on-accent))] bg-transparent")}
+          />
+        );
+      case "BLOCKED":
+        return (
+          <span
+            aria-hidden="true"
+            style={style}
+            className={cn(common, "border-2 border-[rgb(var(--on-accent))]", white)}
+          />
+        );
+      case "SKIPPED":
+        return (
+          <span
+            aria-hidden="true"
+            style={style}
+            className={cn(
+              common,
+              "border border-dashed border-[rgb(var(--on-accent)/0.7)] bg-transparent",
+            )}
+          />
+        );
+      case "FAILED":
+        return (
+          <span aria-hidden="true" style={style} className={cn(common, "relative", white)}>
+            <span className="absolute left-1/2 top-1/2 h-px w-[70%] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[rgb(var(--accent-ink))]" />
+          </span>
+        );
+      case "PENDING":
+      default:
+        return (
+          <span
+            aria-hidden="true"
+            style={style}
+            className={cn(common, "border border-[rgb(var(--on-accent)/0.55)] bg-transparent")}
+          />
+        );
+    }
+  }
 
   switch (state) {
     case "DONE":
@@ -97,6 +156,9 @@ export function LifecycleStepper({
   variant = "header",
   className,
 }: LifecycleStepperProps) {
+  /* Read before the early return: hooks run in the same order every render. */
+  const onAccent = useOnAccent();
+
   if (steps.length === 0) return null;
 
   const description = describeSteps(steps, stages);
@@ -182,9 +244,17 @@ export function LifecycleStepper({
                   aria-hidden="true"
                   className={cn(
                     "h-px flex-1",
-                    step.state === "DONE" ? "bg-ink" : "bg-connector",
+                    onAccent
+                      ? step.state === "DONE"
+                        ? "bg-[rgb(var(--on-accent))]"
+                        : "bg-[rgb(var(--on-accent)/0.45)]"
+                      : step.state === "DONE"
+                        ? "bg-ink"
+                        : "bg-connector",
                     step.state === "SKIPPED" &&
-                      "bg-transparent [border-top:1px_dashed_rgb(var(--border-strong))]",
+                      (onAccent
+                        ? "bg-transparent [border-top:1px_dashed_rgb(var(--on-accent)/0.7)]"
+                        : "bg-transparent [border-top:1px_dashed_rgb(var(--border-strong))]"),
                   )}
                 />
               )}
@@ -194,16 +264,33 @@ export function LifecycleStepper({
               <span
                 className={cn(
                   "truncate text-[12px]",
-                  step.state === "CURRENT" ? "font-medium text-ink" : "text-ink-secondary",
-                  step.state === "SKIPPED" && "text-ink-muted",
+                  onAccent
+                    ? cn("text-[rgb(var(--on-accent))]", step.state === "CURRENT" && "font-medium")
+                    : cn(
+                        step.state === "CURRENT" ? "font-medium text-ink" : "text-ink-secondary",
+                        step.state === "SKIPPED" && "text-ink-muted",
+                      ),
                 )}
               >
                 {stepLabel(step, stages)}
               </span>
               {step.at ? (
-                <DateText value={step.at} className="text-[11px] text-ink-muted" />
+                <DateText
+                  value={step.at}
+                  className={cn(
+                    "text-[11px]",
+                    onAccent ? "text-[rgb(var(--on-accent))]" : "text-ink-muted",
+                  )}
+                />
               ) : step.note ? (
-                <span className="truncate text-[11px] text-ink-muted">{step.note}</span>
+                <span
+                  className={cn(
+                    "truncate text-[11px]",
+                    onAccent ? "text-[rgb(var(--on-accent))]" : "text-ink-muted",
+                  )}
+                >
+                  {step.note}
+                </span>
               ) : null}
             </div>
           </li>
