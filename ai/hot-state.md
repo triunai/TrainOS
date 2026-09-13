@@ -174,8 +174,28 @@
 > npm audit — both inherited main-red, not its own defects. PR #15 stays
 > DRAFT, not for merge. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 21:0x — PR #14 merged, main red on Grant
-> Hygiene only; PR #16 (seeds) and PR #13 both open; new fix-approval-hash lane.
+> **BLAST 13 Sep 21:1x +08** — PR #13 confirmed MERGED (`47d56e1`) —
+> carrying the same two inherited main-red failures, not because they
+> resolved first, confirmed on its own CI run. PR #16 (seeds) now retargets
+> 001–017 (6th commit) and its new T10 pin checks RLS visibility as Alex
+> Selvarajah — exact counts confirmed verbatim in the pin (6 orgs, 10
+> engagements, 136 participants, 78 certs, 10 invoices, 7 approvals, 16
+> pipeline steps; another tenant reads 0). `cloud/migrations` pushed
+> `564dd64` adding `p_id` to `app.provision_tenant`, with a mandatory `DROP
+FUNCTION` confirmed load-bearing (a bare `CREATE OR REPLACE` with a
+> changed param list creates an overload, breaking every existing caller).
+> **Correction to a ruling as reported: the seed does NOT invent an HRD-TDF
+> expiry for accredited trainers — confirmed the opposite in the file**:
+> all four get `hrd_tdf = false` on purpose, because inventing a
+> compliance-sensitive expiry date would be worse than a known-wrong
+> boolean. New USER DECISION queued: SST treatment of three fixture
+> quotations (0% now; Malaysian training is often exempt). `fix-pr5`'s
+> Radix-test diagnosis confirmed precise: the slowness is `asyncAct` +
+> floating-ui scheduling, not Radix; `testTimeout` now `30_000`, a ceiling
+> not a budget. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 21:1x — PR #13 merged; PR #16 retargets
+> 001-017 with a real RLS pin; one ruling as reported was backwards.
 
 ### Focus
 

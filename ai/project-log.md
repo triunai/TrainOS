@@ -15,6 +15,99 @@
 
 ---
 
+## 2026-09-13 21:1x — PR #13 merged, seeds now on 001–017 with a real RLS pin, a reported ruling corrected as backwards
+
+**PR #13 confirmed MERGED at `47d56e1`.** Its own CI run still shows `CI
+Summary`, Grant Hygiene and npm audit as `fail`, checked directly — it
+merged carrying the two inherited main-red failures this log already
+tracks, not because they resolved first. Not a defect in PR #13's diff.
+
+**PR #16 (seeds) retargets 001–017.** A 6th commit
+("feat(supabase): target 001-017, provision through 016, pin RLS
+visibility") landed on top of the original five. It adds **T10**, the
+pin's only assertion that measures what the product actually serves
+rather than what the superuser loader can see: it impersonates Alex
+Selvarajah via `authenticated` role and his JWT claims, then counts
+landmark rows back through migration 014's live RLS policies. Confirmed
+verbatim in the pin's own literal: `{"organisations":6,"engagements":10,
+"participants":136,"certificates":78,"invoices":10,"approval_requests":7,
+"pipeline_steps":16}`. The same query as a fabricated member of a
+different tenant must read 0 organisations and 0 participants — also
+confirmed verbatim (`T10c`). Every other assertion (T0–T9) runs as the
+migration role, which is a superuser on the shim and sees past RLS
+entirely; T10 is the one check standing between "the rows exist" and "the
+app can actually read them."
+
+**`cloud/migrations` resumed at the seeds lane's request, pushed
+`564dd64`.** `app.provision_tenant` gains `p_id uuid DEFAULT NULL`, with
+an explicit `DROP FUNCTION IF EXISTS app.provision_tenant(text,text,text)`
+ahead of the new `CREATE OR REPLACE` — confirmed mandatory by reading the
+migration's own comment, not assumed from the commit message: a bare
+`CREATE OR REPLACE` with a changed parameter list creates a second
+overload rather than replacing the function, and with both overloads
+carrying defaults that cover a two- and three-argument call, every
+existing caller — the pack's own test included — would fail with
+`function app.provision_tenant(unknown, unknown) is not unique`. The
+comment states this was reproduced on the shim before the line was
+written, not assumed. The rollback drops both the pre- and
+post-amendment signatures, so a database that was rolled back and forward
+around the amendment can't strand either one. Four new assertions land in
+`test_016`: the returned id and the stored row both carry the supplied
+value; supplying an id does not bypass provisioning; explicit `NULL`
+still generates one; a duplicate id is refused by the primary key rather
+than silently attaching a new tenant to another tenant's rows.
+
+⚠ **A ruling reported to this log was backwards, and it matters which
+direction: confirmed directly against the file, not taken on trust.** The
+report said the four accredited trainers "get invented hrd_tdf expiry +
+reference (synthetic fixture, 017's CHECK requires it)." The file does the
+opposite: all four get `hrd_tdf = false`, `hrd_tdf_valid_to = null`,
+`hrd_tdf_ref = null`, even though three of them are TDF-accredited in the
+underlying fixture data — specifically BECAUSE 017's
+`trainers_hrd_tdf_needs_expiry` CHECK refuses `hrd_tdf = true` without a
+valid-to date, and the seed has no genuine one to supply. The file's own
+comment: "A wrong boolean that the pin asserts and the PR names beats a
+fabricated expiry." The seed chose a known-wrong value over inventing a
+compliance-sensitive date an auditor could later act on — the
+conservative direction, not the fabricating one. Corrected in
+`ai/workstreams.md`'s SEEDS thread with the direction stated explicitly,
+since "backwards" is easy to silently re-invert on the next pass if only
+the fact ("invents an expiry" vs "doesn't") is corrected without also
+recording which way is actually safer and why.
+
+**Pipeline step ids, checked rather than assumed identical to 018's.**
+Confirmed deterministic in the generator:
+`uuidFor(childKey(\`pipeline:${object}\`, "step", stage.key))`— close to
+but not literally the reported`(tenant_id, 'pipeline:'||stage_key)`
+formula. The claim that 018 computes an identical formula was not
+confirmed and could not be: 018's own pipeline-stage seed is still an
+open follow-up per an earlier entry in this log, so there is no 018-side
+code yet to compare against. Recorded as unconfirmed rather than assumed
+true because it sounded plausible.
+
+**New USER DECISION queued:** SST treatment of the three fixture
+quotations, currently `STANDARD_RATED` at 0%, against Malaysian training
+often being exempt under the seeded Education Act policy — not resolved
+here. Two more open items from PR #16: the seed's check keys overwrite two
+provisioning-created positions (mechanism not independently traced), and
+the action-policy scheme collision already tracked in an earlier entry.
+
+**`fix-pr5`'s diagnosis of the three slow Radix-menu tests confirmed
+precise, not a guess — read directly from the branch's own new code
+comment.** Measured: the menu item lands in the DOM 13ms after the
+keypress, and a synchronous `getByRole` against it costs 1ms. The 6–9
+seconds each test actually takes is spent inside the `findBy*` wrapper's
+`asyncAct`, while floating-ui keeps scheduling position work for the open
+menu — none of it is Radix, none of it is the UI being slow. The real fix
+(swap those `findBy*` awaits for a settle plus a synchronous `getByRole`,
+returning roughly 21 seconds to the suite) is left for its own change
+because it touches three files outside this branch's remit. The 15-second
+timeout was a guess and it failed on the runner; `testTimeout` is now
+`30_000`, stated explicitly in the comment as "a ceiling for a hung test,
+not a budget."
+
+---
+
 ## 2026-09-13 21:0x — PR #14 merged (main red on Grant Hygiene only), PR #16 seeds open, fix-approval-hash lane, new review-branch rule
 
 **014's file staying on `main` via PR #12 is intentional, confirmed by

@@ -276,6 +276,18 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 21:1x — PR #13 merged; seeds now on 001-017 with a real RLS pin; one reported ruling was backwards
+
+- PR #13 confirmed merged despite still-failing inherited checks. PR #16
+  retargets 001-017 and adds T10, an RLS-visibility pin with exact counts
+  (6/10/136/78/10/7/16) confirmed verbatim. cloud/migrations pushed
+  564dd64 adding provision_tenant(p_id) with a confirmed-mandatory DROP
+  FUNCTION. Corrected a reported ruling that was backwards: the seed does
+  NOT invent a trainer's HRD-TDF expiry, it deliberately writes a
+  known-wrong false rather than fabricate a compliance date. fix-pr5's
+  Radix-test slowness confirmed as asyncAct/floating-ui, not Radix. Full
+  detail in `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 21:0x — PR #14 merged (main red on Grant Hygiene only); PR #16 seeds open; new review-branch rule
 
 - PR #14 confirmed merged, npm audit genuinely passes on main now. Main
