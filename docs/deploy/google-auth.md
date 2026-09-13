@@ -4,10 +4,25 @@ What a person has to click, in order, to sign in to TrainOS with Google against
 the hosted project `balzmmsmrawzmefkavte`. The app side is in `apps/web`
 (`/sign-in`, `/auth/callback`, `shared/auth`); none of this is automated.
 
-Line references are to `supabase/migrations` at `66ad184` (PR #11, 018+019
-on top of PR #6). Prerequisites: migrations 001–019 applied, and `core` ticked
-under **Project Settings → Data API → Exposed schemas** (the app calls
-`core.me()`).
+Citations name the SQL object first and the line second, because lines move.
+`002` and `016` line numbers are at `origin/cloud/migrations` `e913c84` (002 is
+byte-identical at PR #11's `66ad184`); 018 and 019 come from PR #11.
+
+## Where the hosted project stands
+
+Migrations 001–019 are applied to `balzmmsmrawzmefkavte`. What is left, in
+order — each step is detailed below:
+
+1. Google provider enabled (Google Cloud client, then §2 step 1–2).
+2. **Project Settings → Data API → Exposed schemas**: add `core` (the app calls
+   `core.me()`).
+3. **Authentication → Auth Hooks → Customize Access Token (JWT) Claims** →
+   Postgres → schema `app` → function `custom_access_token_hook` (§2 step 3).
+4. Render: `VITE_API_MODE=supabase`, `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_PUBLISHABLE_KEY`, then redeploy (§3).
+5. Sign in with Google → the app shows "Your account isn't linked to a
+   workspace yet" → an orchestrator links the account in the SQL Editor (§4)
+   → **Check again**.
 
 `<render>` below is the Render site's origin, `https://alex-project-k3vx.onrender.com`
 (deployed from main; the app lives at `/dashboard`), with no trailing slash.
@@ -35,16 +50,24 @@ email); while it is in "Testing", add each tester's Google address under
    - Site URL: `<render>`
    - Redirect URLs: `<render>/auth/callback` and
      `http://localhost:5180/auth/callback`
-3. **Authentication → Hooks → Customize Access Token (JWT) Claims** → add hook
-   → type Postgres → schema `app`, function `custom_access_token_hook` → enable
-   (URI `pg-functions://postgres/app/custom_access_token_hook`, `002:589-592`).
+3. **Authentication → Auth Hooks → Customize Access Token (JWT) Claims** → add
+   hook → type Postgres → schema `app`, function `custom_access_token_hook` →
+   enable (URI `pg-functions://postgres/app/custom_access_token_hook`; the
+   function's `COMMENT ON FUNCTION`, `002:589-592`).
 
 Step 3 is not optional. The tenant and role are JWT claims written by that hook
-(`002_tenancy_identity_and_permissions.sql:576`; its own comment at `:589`
-names this setting). Without it every token has no `tenant_id`, `core.me()`
-refuses (`app.require_tenant_id()`, `002:399`), and every account — linked or
-not — sees "Your account isn't linked to a workspace yet". 002 already grants
-`supabase_auth_admin` what the hook reads (`002:649-667`).
+(`app.custom_access_token_hook`, `002_tenancy_identity_and_permissions.sql:576`;
+its own comment at `:589` names this setting). Without it every token has no
+`tenant_id`, `core.me()` refuses (`app.require_tenant_id()`, `002:399`), and
+every account — linked or not — sees "Your account isn't linked to a workspace
+yet". 002 already grants `supabase_auth_admin` what the hook reads
+(`002:649-667`).
+
+**Troubleshooting.** The app treats every `insufficient_privilege` (42501) from
+`core.me()` as "not linked" (`isUnlinked` in `apps/web/src/shared/hooks/MeProvider.tsx`).
+A missing `EXECUTE` grant on `core.me` raises the same code, so a correctly linked account that still
+sees the not-linked screen after **Check again** points at grants or the hook,
+not at the membership rows.
 
 ## 3 · Render (static site)
 
@@ -70,7 +93,8 @@ that origin's storage. That is why both origins are listed in steps 1 and 2.
 
 Nothing in 001–019 lets a signed-in user attach themselves to a tenant, on
 purpose: `app.provision_tenant` is revoked from every client role
-(`016_seed_and_tenant_provisioning.sql:325`), and a membership write needs an
+(`REVOKE ALL ON FUNCTION app.provision_tenant(text,text,text,uuid)`,
+`016_seed_and_tenant_provisioning.sql:410`), and a membership write needs an
 existing ADMIN at `aal2` (`memberships_write_admin`, `002:750`). The first
 link is an operator act in the **SQL Editor**.
 
@@ -95,7 +119,8 @@ link is an operator act in the **SQL Editor**.
 
    -- A new tenant. Skip this line if the tenant already exists.
    -- Seeds ref formats, action policies and the default pipeline via triggers
-   -- (016:254, 011, 019) and refuses to return a half-provisioned tenant.
+   -- (app.provision_tenant, 016:313; 011; 019) and refuses to return a
+   -- half-provisioned tenant.
    select app.provision_tenant('<tenant-slug>', '<Tenant name>', 'Asia/Kuala_Lumpur', NULL);
 
    -- status defaults to 'ACTIVE' and is_default to true (002:161-163); stated
