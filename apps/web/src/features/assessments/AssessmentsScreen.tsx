@@ -230,10 +230,18 @@ export function AssessmentsScreen() {
                 title="No deliveries yet"
                 description="A delivery owes an evaluation summary once its last day has passed."
               />
-            ) : tab === "owed" ? (
+            ) : inTab.length === 0 ? (
+              /* The TAB is empty, which is good news. Checked before the filter
+                 branch: a search that matches nothing on this tab is a
+                 different fact, and "every evaluation is in" printed over a
+                 failed search is a lie the reader cannot see through. */
               <EmptyState
-                title="Every evaluation is in"
-                description="Nothing is outstanding. Switch to All to see the deliveries already compiled."
+                title={
+                  tab === "compiled"
+                    ? "No evaluation has been compiled yet"
+                    : "Every evaluation is in"
+                }
+                description="Switch to All to see every delivery."
               />
             ) : (
               <EmptyState

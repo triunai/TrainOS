@@ -212,10 +212,15 @@ export function CertificatesScreen() {
                 title="No deliveries yet"
                 description="Certificates become due once a delivery's last day has passed."
               />
-            ) : tab === "pending" ? (
+            ) : inTab.length === 0 ? (
+              /* The tab is empty, not the filter. See the assessments register. */
               <EmptyState
-                title="Nothing is awaiting issue"
-                description="Every delivered course has had its certificates issued. Switch to All to see them."
+                title={
+                  tab === "issued"
+                    ? "No certificates have been issued yet"
+                    : "Nothing is awaiting issue"
+                }
+                description="Switch to All to see every delivery."
               />
             ) : (
               <EmptyState

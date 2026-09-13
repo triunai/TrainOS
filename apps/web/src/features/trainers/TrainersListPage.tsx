@@ -251,6 +251,16 @@ export function TrainersListPage() {
                 title="No trainers yet"
                 description="Trainers appear here once they are added to the pool and their accreditation is recorded."
               />
+            ) : inTab.length === 0 ? (
+              /* The tab is empty, not the filter. See the assessments register. */
+              <EmptyState
+                title={
+                  tab === "attention"
+                    ? "Every trainer is claim-eligible"
+                    : "No trainer is claim-eligible"
+                }
+                description="Switch to All to see the whole pool."
+              />
             ) : (
               <EmptyState
                 title="No trainer matches these filters"
