@@ -130,9 +130,15 @@ VALUES ('ccccccc1-0000-4000-8000-000000000001','11111111-1111-4111-8111-11111111
         'bbbbbbb1-0000-4000-8000-000000000001','Siti Rahman','HR Director',
         'siti@chrome.test','+60 12-448 9021',true,'HUMAN','22222222-2222-4222-8222-222222222222');
 
+-- ⚠ PURPOSE IS STATED, NOT DEFAULTED. 017 defaults `purpose` to the legacy
+-- marker `UNSPECIFIED_PRE_017` and `contact_consents_no_new_unspecified` refuses
+-- that marker on any row recorded on or after 2026-09-14. With `recorded_at =
+-- now()` and no purpose, this fixture passed until midnight 13→14 September and
+-- has failed at this INSERT ever since. New consent names what it is FOR; this
+-- one backs the enquiry follow-up draft T25 resolves consent for.
 INSERT INTO core.contact_consents
-  (tenant_id,contact_id,channel,granted,recorded_at,created_by_kind,created_by_id)
-VALUES ('11111111-1111-4111-8111-111111111111','ccccccc1-0000-4000-8000-000000000001','EMAIL',true,pg_catalog.now(),'HUMAN','22222222-2222-4222-8222-222222222222');
+  (tenant_id,contact_id,channel,granted,recorded_at,purpose,created_by_kind,created_by_id)
+VALUES ('11111111-1111-4111-8111-111111111111','ccccccc1-0000-4000-8000-000000000001','EMAIL',true,pg_catalog.now(),'ENQUIRY_RESPONSE','HUMAN','22222222-2222-4222-8222-222222222222');
 
 -- Three enquiries in tenant A, ONE in tenant B. The tenant-B row is the whole
 -- basis of T11: if a single assertion can see it, the pack leaks.
