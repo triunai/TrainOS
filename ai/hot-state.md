@@ -10,13 +10,15 @@
 ## SESSION 2026-09-13 — HEADLESS BLAST, API PHASE + UI CARRY-OVER
 
 > **BLAST 13 Sep 19:25 +08** — orchestrator launched four lanes on top of the
-> 19:05 recovery: `lane/rpc-018` (018 RPC pack, user go-ahead), `ui/tokens`
-> (kit contrast tokens + mono-uppercase reduction), `ui/lists` (HRD Corp +
+> 19:05 recovery, each in its own worktree under `~/Repos/personal-work/trainos-wt/`
+> opening a PR to main: `lane/rpc-018` (worktree `rpc-018`, 018 RPC pack, user
+> go-ahead), `ui/tokens` (worktree `ui-tokens`, kit contrast tokens +
+> mono-uppercase reduction), `ui/lists` (worktree `ui-lists`, HRD Corp +
 > Invoices list leaves, Collections §10b, zebra on two hand-rolled tables),
-> `ui/states` (nine empty states, ten tone ternaries, Drawer primary scope,
-> ListToolbar on agent registry). `cloud/migrations` (014–017) and
-> `cloud/web-swap` continue from the 19:05 entry, no PRs yet. Start from
-> `ai/resume-brief.md` BLAST 19:25 entry.
+> `ui/states` (worktree `ui-states`, nine empty states, ten tone ternaries,
+> Drawer primary scope, ListToolbar on agent registry). `cloud/migrations`
+> (014–017) and `cloud/web-swap` continue from the 19:05 entry, no PRs yet.
+> Start from `ai/resume-brief.md` BLAST 19:25 entry.
 
 > **Last updated:** 2026-09-13 19:25 — four new lanes running (one gated RPC
 > pack, three UI carry-over) alongside the two cloud lanes already in flight;

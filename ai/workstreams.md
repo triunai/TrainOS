@@ -22,8 +22,9 @@
 **Resume:** Read `supabase/HANDOFF.md` in full, then check what has actually
 landed before writing anything: `git log` on `supabase/migrations/`, then the
 status of `cloud/migrations` (014–017, no PR as of 19:25 13 Sep) and
-`lane/rpc-018` (worktree, branch `lane/rpc-018`, the 018 RPC pack, user
-go-ahead given 19:23). A network outage at ~16:00 on 13 Sep already killed one
+`lane/rpc-018` (worktree `~/Repos/personal-work/trainos-wt/rpc-018`, branch
+`lane/rpc-018`, the 018 RPC pack, user go-ahead given 19:23, opens a PR to
+main). A network outage at ~16:00 on 13 Sep already killed one
 migrations lane mid-014 with nothing lost; check for a live lane before
 re-authoring 014–017 or 018 to avoid a second collision. Hosted apply (L3) is
 authorised by the user for after 014 passes `migration-retrofit-qa` — apply
@@ -39,7 +40,8 @@ pins, the catalog, and the architecture documents they implement.
 and committed to main (013 in `bc15b17`). 014–017 (RLS, realtime+cron, and the
 remainder) are being written by cloud lane `cloud/migrations`, no PR yet as of
 19:25. 018 (the RPC pack) has the user's go-ahead as of 19:23 and is running in
-worktree lane `lane/rpc-018`. Nothing has been applied to any hosted database.
+worktree lane `lane/rpc-018` at `~/Repos/personal-work/trainos-wt/rpc-018`.
+Nothing has been applied to any hosted database.
 
 ⚠ **Carried from the paused state, not re-verified this session.** Critic Part
 2 (7 CRITICAL, 29 HIGH against 001–009 as of 2026-09-12) — whether 010–013
@@ -84,14 +86,16 @@ open for the user: `core` exposed in the dashboard (R-F), n8n in the proposal.
 ## 🟢 UI-CARRYOVER — three worktree lanes closing verifier-pass debt (2026-09-13)
 
 **Resume:** Read `ai/resume-brief.md` §"Verifier carry-over" for the full
-ranked list, then each lane's own commits on its branch. `ui/tokens`
-(worktree): kit contrast tokens plus the mono-uppercase reduction, closing the
-dark-sidebar contrast item that gates 34 of 40 failing routes. `ui/lists`
-(worktree): HRD Corp and Invoices list leaves (both nav leaves currently mount
-a detail and have no list), Collections brought into §10b conformance, zebra
-striping on the two hand-rolled tables. `ui/states` (worktree): the nine
-missing empty states, the ten tone ternaries, the Drawer opening a primary
-scope, and `ListToolbar` on the agent registry. None had a PR as of 19:25.
+ranked list, then each lane's own commits on its branch. Each lane below runs
+in its own worktree under `~/Repos/personal-work/trainos-wt/` and opens a PR
+to main. `ui/tokens` (worktree `ui-tokens`): kit contrast tokens plus the
+mono-uppercase reduction, closing the dark-sidebar contrast item that gates 34
+of 40 failing routes. `ui/lists` (worktree `ui-lists`): HRD Corp and Invoices
+list leaves (both nav leaves currently mount a detail and have no list),
+Collections brought into §10b conformance, zebra striping on the two
+hand-rolled tables. `ui/states` (worktree `ui-states`): the nine missing empty
+states, the ten tone ternaries, the Drawer opening a primary scope, and
+`ListToolbar` on the agent registry. None had a PR as of 19:25.
 
 **Scope:** `apps/web/src/shared/components/kit/**` and the feature screens
 each lane touches; no kit additions beyond what `ui/tokens` lands.

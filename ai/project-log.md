@@ -15,6 +15,21 @@
 
 ---
 
+## 2026-09-13 19:35 — correction: worktree paths for the 19:25 blast
+
+The 19:25 entry below named `lane/rpc-018`, `ui/tokens`, `ui/lists` and
+`ui/states` as worktree lanes but did not record the worktree paths, and its
+HEAD claim (a "chore: prettier pass" commit on top of `9fdcb4d`) was wrong —
+the formatter pass produced nothing to commit and `9fdcb4d` was HEAD.
+Correcting per the team lead: all four run under
+`~/Repos/personal-work/trainos-wt/{rpc-018,ui-tokens,ui-lists,ui-states}` on
+branches `lane/rpc-018`, `ui/tokens`, `ui/lists`, `ui/states` respectively,
+each opening a PR to main. `ai/workstreams.md`, `ai/hot-state.md` and
+`ai/resume-brief.md` have been updated in place with the paths since none of
+them are append-only.
+
+---
+
 ## 2026-09-13 19:25 — headless blast (API phase + UI carry-over)
 
 **Recovery context.** A network outage at ~16:00 killed the local migrations
