@@ -145,6 +145,9 @@ export function EngagementDetailPage() {
   return (
     <div className="flex flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="engagement"
         title={record.title}
         recordRef={record.ref}
         meta={[
