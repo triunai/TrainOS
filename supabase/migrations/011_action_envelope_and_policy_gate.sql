@@ -678,10 +678,17 @@ CREATE TABLE app.idempotency_keys (
   created_at        timestamptz NOT NULL DEFAULT pg_catalog.now(),
   updated_at        timestamptz NOT NULL DEFAULT pg_catalog.now(),
   UNIQUE (tenant_id, actor_id, endpoint, key),
+  -- ⚠ `results` IS THE BULK SHAPE NOW. `{data, count}` is kept so a row stored by
+  -- an earlier build still satisfies the constraint, but nothing writes it any
+  -- more: the contract's ApprovalBulkDecideResponse is `{results:[...]}`, and a
+  -- second top-level key beside `data` is what flipped the client's auto-unwrap
+  -- to pass-through and left `response.results` undefined behind a blind cast.
   CONSTRAINT idempotency_keys_response_shape CHECK (
     response IS NULL OR
     (pg_catalog.jsonb_typeof(response) = 'object'
      AND (response ? 'status'
+          OR (response ? 'results'
+              AND pg_catalog.jsonb_typeof(response -> 'results') = 'array')
           OR (response ? 'data' AND response ? 'count'
               AND pg_catalog.jsonb_typeof(response -> 'data') = 'array'
               AND pg_catalog.jsonb_typeof(response -> 'count') = 'number')))),
@@ -1963,6 +1970,40 @@ BEGIN
        AND effect.kind = 'EXTERNAL'
        AND effect.status = 'DISPATCHED'
   ) THEN
+    -- ⚠ AND NOW ACTUALLY HAND THEM TO THE WORKER. This call is the seam between
+    -- the envelope and the queue, and until it was added NOTHING CROSSED IT.
+    --
+    -- `apply_effects` marked every EXTERNAL effect `DISPATCHED` and stopped there.
+    -- `app.enqueue_effect_jobs` (012) is what turns a dispatched effect into a row
+    -- in `app.outbox` for the Node worker to claim, and a repo-wide grep found its
+    -- only caller anywhere — `apps/`, `packages/`, every migration and rollback —
+    -- was `test_012`. So every PROPOSAL_SEND, INVOICE_PUSH, REMINDER_SEND and
+    -- BROADCAST_SEND reported success, moved the action to EXECUTING, and then
+    -- waited forever for a job nobody had created. Silently: `DISPATCHED` is a
+    -- perfectly healthy-looking status and no timeout watches it.
+    --
+    -- WHY A FORWARD REFERENCE IS SAFE HERE, stated because it looks wrong. 011 is
+    -- applied before 012, so `app.enqueue_effect_jobs` does not exist when this
+    -- function is CREATEd. plpgsql resolves calls at EXECUTION time, not at
+    -- creation, so that is legal — and the explicit existence check below turns
+    -- the one case where it would matter, an 011-only database actually running an
+    -- external action, into a sentence instead of `function does not exist`.
+    -- The alternative — re-creating this function at the end of 012 — would put
+    -- one function's real body in two files, which is the drift this pack's own
+    -- rules are written against.
+    IF pg_catalog.to_regprocedure('app.enqueue_effect_jobs(uuid,uuid)') IS NULL THEN
+      RAISE EXCEPTION
+        'app.enqueue_effect_jobs is absent, so % external effect(s) on action % '
+        'would be marked DISPATCHED and never sent. 012 creates it; this database '
+        'has 011 without 012.',
+        (SELECT pg_catalog.count(*) FROM app.action_effects AS e
+          WHERE e.action_request_id = v_request.id AND e.kind = 'EXTERNAL'),
+        v_request.id
+        USING ERRCODE = 'undefined_function';
+    END IF;
+
+    PERFORM app.enqueue_effect_jobs(v_request.id, v_request.tenant_id);
+
     UPDATE core.action_requests SET status = 'EXECUTING'
      WHERE id = v_request.id;
   ELSE
@@ -1970,8 +2011,108 @@ BEGIN
        SET status = 'EXECUTED', completed_at = pg_catalog.now()
      WHERE id = v_request.id;
   END IF;
+
+  -- T8 · CLEAR THE APPLIER GUC. `app.effect_applier` names the in-flight action
+  -- request and is what `enforce_state_transition` reads to authorize a gated
+  -- write. It was set once and never cleared — harmless under PostgREST's
+  -- one-RPC-per-transaction model, and a real residue inside `app.bulk_decide`'s
+  -- loop, where the SECOND approval's effects would run with the FIRST one's
+  -- applier still named. Transaction-local, so this costs nothing and removes the
+  -- whole class.
+  PERFORM pg_catalog.set_config('app.effect_applier', '', true);
 END;
 $fn$;
+
+-- ═══ 7b · WHO MAY PERFORM AN ACTION AT ALL ═════════════════════════════════
+--
+-- THE DEFECT THIS CLOSES. `app.has_permission` was called exactly ONCE in all of
+-- 011, inside `decide_approval`. On the HUMAN path, if no `core.action_policies`
+-- row matched, dispatch fell through to a bare `EXECUTING` with NO PERMISSION
+-- CHECK OF ANY KIND. A SALES principal could execute `PAYMENT_RECORD` against an
+-- invoice whose outstanding amount happened to satisfy no policy condition, and
+-- the payment posted. Three action types have no policy row at all for a freshly
+-- provisioned tenant — measured, not assumed: `ENQUIRY_ARCHIVE`,
+-- `OPPORTUNITY_CONVERT` and `TNA_RECOMMENDATION_ACCEPT` — so for those the
+-- fall-through was not an edge case, it was the only path. 014's wrapper
+-- re-validates nothing, so nothing downstream closed it either.
+--
+-- WHY A COLUMN AND NOT A HARDCODED CASE. 002 already wrote the whole permission
+-- catalogue and 014's gates already read it through `app.has_permission`. A CASE
+-- here would be a second copy of an authorization model that exists, which is the
+-- drift this repo's rules are written against. The column makes the answer data,
+-- visible in one query, and seeded beside the action types it describes.
+--
+-- EVERY ACTIVE TYPE MUST CARRY ONE. The verify block below refuses a NULL, so a
+-- 23rd action type cannot be added without somebody deciding who may perform it —
+-- which is the question that went unasked for all 22 of these.
+ALTER TABLE app.action_types
+  ADD COLUMN IF NOT EXISTS required_permission text;
+
+UPDATE app.action_types AS t SET required_permission = m.perm
+  FROM (VALUES
+    ('PROPOSAL_SEND',              'proposal:send'),
+    ('QUOTATION_APPLY',            'quotation:apply'),
+    ('DISCOUNT_APPROVE',           'discount:approve'),
+    ('INVOICE_CREATE',             'invoice:create'),
+    ('INVOICE_PUSH',               'invoice:push'),
+    ('PAYMENT_RECORD',             'payment:record'),
+    ('ENQUIRY_ARCHIVE',            'enquiry:archive'),
+    ('OPPORTUNITY_CONVERT',        'enquiry:convert'),
+    ('TNA_RECOMMENDATION_ACCEPT',  'tna:recommendation:accept'),
+    ('TRAINER_BOOK',               'trainer:book'),
+    ('ATTENDANCE_APPROVE',         'attendance:approve'),
+    ('ATTENDANCE_UNLOCK',          'attendance:unlock'),
+    ('ENGAGEMENT_CLOSE_OUT',       'engagement:close_out'),
+    ('HRDC_PACKET_MARK_SUBMITTED', 'hrdc:mark_submitted'),
+    ('RULE_CHANGE_APPROVE',        'compliance:rule:approve'),
+    ('FOLLOWUP_SEND',              'followup:send'),
+    ('REMINDER_SEND',              'collection:remind'),
+    ('BROADCAST_SEND',             'broadcast:send'),
+    ('AGENT_PAUSE',                'agent:pause'),
+    ('AGENT_AUTONOMY_CHANGE',      'agent:autonomy'),
+    ('BUDGET_CAP_RAISE',           'ai:budget:raise'),
+    ('ACCOUNT_TRADING_HOLD',       'organisation:write')
+  ) AS m(key, perm)
+ WHERE t.key = m.key
+   AND t.required_permission IS DISTINCT FROM m.perm;
+
+DO $req_perm$
+DECLARE v_bad text;
+BEGIN
+  -- Every active type has one.
+  SELECT pg_catalog.string_agg(t.key, ', ' ORDER BY t.key) INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.active AND t.required_permission IS NULL;
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      '011: action type(s) with no required_permission: %. Every action a human '
+      'can perform needs somebody to have decided who may perform it; a NULL here '
+      'is that decision going unmade, and the HUMAN path used to treat it as '
+      '"anyone".', v_bad;
+  END IF;
+
+  -- And every one names a permission 002 actually issued. A typo would produce an
+  -- action nobody can perform, which reads as very secure and is an outage.
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format('%s -> %s', t.key, t.required_permission), ', ' ORDER BY t.key)
+    INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.required_permission IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp
+                      WHERE rp.permission = t.required_permission);
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      '011: action type(s) naming a permission no role holds: %. That is an action '
+      'nobody can perform, which is an outage wearing security''s clothes.', v_bad;
+  END IF;
+END;
+$req_perm$;
+
+COMMENT ON COLUMN app.action_types.required_permission IS
+  'The app.role_permissions key a HUMAN or CLIENT actor must hold to perform this '
+  'action. Checked by app.perform_action BEFORE dispatch, independently of whether '
+  'any core.action_policies row matches — the policy gate decides whether an action '
+  'needs APPROVAL, never whether this caller may ask for it at all. 011.';
 
 -- ═══ 8 · The action envelope ════════════════════════════════════════════════
 
@@ -2132,6 +2273,66 @@ BEGIN
                 pg_catalog.jsonb_build_object('field','type','reason','UNKNOWN_ACTION_TYPE')))::text;
   END IF;
 
+  -- ⚠ GUARD c2 · MAY THIS ACTOR PERFORM THIS ACTION AT ALL. Checked HERE —
+  -- immediately after the action type is known and BEFORE the payload is
+  -- validated — because the two questions are different, only one of them was
+  -- being asked, and answering the other one first tells an unauthorized caller
+  -- which fields the action takes. An earlier draft of this block sat after guard
+  -- d and the pin caught it: a SALES principal probing PAYMENT_RECORD got back
+  -- `{"field":"amount","reason":"REQUIRED"}`, which is the payload schema, from a
+  -- call they were never allowed to make.
+  --
+  -- `core.action_policies` decides whether an action needs APPROVAL. It was also,
+  -- accidentally, the only thing standing between a caller and execution: if no
+  -- policy row MATCHED — either because the type has none (three of the 22 have
+  -- none for a freshly provisioned tenant, measured) or because its conditions
+  -- excluded this case — dispatch fell through to a bare EXECUTING with no
+  -- permission check anywhere in 011. A SALES principal could run PAYMENT_RECORD
+  -- against an invoice whose amount satisfied no condition, and the payment
+  -- posted. `app.has_permission` was called exactly once in this entire file, in
+  -- `decide_approval`, and 014's wrapper re-validates nothing.
+  --
+  -- HUMAN and CLIENT, unconditionally: both are principals with a role, and
+  -- `required_permission` is documented (the COMMENT ON COLUMN above) as the key
+  -- a HUMAN or CLIENT actor must hold.
+  -- An AGENT's authority is the autonomy grant and the policy ceiling, which the
+  -- sections below evaluate in full and which is a different model — agents hold
+  -- no role in `app.role_permissions`. A SYSTEM actor is the database acting on
+  -- its own behalf and has no principal to check.
+  --
+  -- ⚠ CLIENT FAILS CLOSED, AND THAT IS THE DECISION, NOT AN OVERSIGHT.
+  -- `app.role_permissions` seeds the seven staff roles and no CLIENT row, so
+  -- every CLIENT-kind action is refused FORBIDDEN until a migration seeds CLIENT
+  -- permissions. An earlier version exempted CLIENT while it held no rows, to
+  -- avoid that outage. That was a fail-open: nothing ties
+  -- `memberships.actor_kind = 'CLIENT'` to anything, a tenant ADMIN can create
+  -- such a membership, and a CLIENT principal at aal1 then executed
+  -- QUOTATION_APPLY, AGENT_PAUSE and ENQUIRY_ARCHIVE with no permission check
+  -- (docs/reviews/2026-09-14-011-013-final.md §2). No code path creates a CLIENT
+  -- actor today — 018's portal writes use HUMAN branches and emit_event — so
+  -- the refusal costs nothing now, and a portal that needs CLIENT actions must
+  -- seed exactly the permissions it needs.
+  IF v_actor_kind IN ('HUMAN','CLIENT')
+  THEN
+    IF v_type.required_permission IS NULL THEN
+      RAISE EXCEPTION
+        'action type % has no required_permission, so who may perform it has '
+        'never been decided', v_type.key
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','FORBIDDEN','reason','NO_REQUIRED_PERMISSION')::text;
+    END IF;
+
+    IF NOT app.has_permission(v_type.required_permission) THEN
+      RAISE EXCEPTION
+        'this principal may not perform %', v_type.key
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','FORBIDDEN',
+                'requiredPermission', v_type.required_permission)::text;
+    END IF;
+  END IF;
+
   -- Guard d: validate the schema before using it. The explicit assertion is
   -- what makes the receiver fail closed even if 004's CHECK is ever removed.
   IF NOT (v_type.payload_schema ? 'required')
@@ -2156,8 +2357,10 @@ BEGIN
   END IF;
 
   -- H-05: assurance is checked inside the definer envelope. Agents and system
-  -- facts do not have GoTrue MFA sessions; human money commitments do.
-  IF v_type.money_moving AND v_actor_kind = 'HUMAN'
+  -- facts do not have GoTrue MFA sessions; human and client money commitments
+  -- do. CLIENT is here because it is a signed-in principal like HUMAN; leaving
+  -- it out let a CLIENT holding a money-moving permission commit at aal1.
+  IF v_type.money_moving AND v_actor_kind IN ('HUMAN','CLIENT')
      AND NOT app.aal2_verified() THEN
     RAISE EXCEPTION 'AAL2 is required for money-moving actions'
       USING ERRCODE = 'TRNOS',
@@ -2479,8 +2682,31 @@ BEGIN
   END IF;
 
   v_effects := app.plan_effects(p_type,p_target_ref,p_payload);
+
+  -- ⚠ THE HASH COVERS THE RECORD'S CURRENT VALUE, NOT ONLY THE PLANNED EFFECTS.
+  --
+  -- `app.plan_effects` is IMMUTABLE — measured, `provolatile = 'i'` — and reads
+  -- no row. It derives its output from the action type, the target ref and the
+  -- payload, all of which are columns of the request itself and none of which can
+  -- change after the request is written. So a hash over its output alone was
+  -- IDENTICAL AT DECIDE TIME TO WHAT WAS STORED AT QUEUE TIME BY CONSTRUCTION,
+  -- and `DIFF_CHANGED` could never fire. The guard existed, raised a well-written
+  -- error, and was mathematically unreachable: an approver could approve a
+  -- quotation that had been edited to a different price after being queued, with
+  -- the diff on their screen still showing the old one.
+  --
+  -- `app.action_value` is the thing that actually READS the record — it is where
+  -- the amount, currency and margin come from — so folding it into the hashed
+  -- material is what makes "the effects changed since the diff was rendered" a
+  -- statement about the world rather than about the request.
+  --
+  -- The decide-side recomputation must build this from the SAME two parts in the
+  -- SAME order or every approve fails. It is spelled identically there, and T5
+  -- pins that an edit to the underlying record moves the hash.
   v_effects_hash := pg_catalog.encode(pg_catalog.sha256(
-    pg_catalog.convert_to(v_effects::text,'UTF8')),'hex');
+    pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object('effects', v_effects, 'value', v_value)::text,
+      'UTF8')),'hex');
   v_trace := v_trace || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
     'step',6,'input','dispatch','outcome',
     CASE v_dispatch WHEN 'EXECUTING' THEN 'EXECUTED' ELSE v_dispatch END));
@@ -2729,8 +2955,9 @@ BEGIN
       USING ERRCODE = 'integrity_constraint_violation';
   END IF;
 
-  -- H-05: the decision endpoint is its own money-commitment boundary.
-  IF v_type.money_moving AND v_actor.actor_kind = 'HUMAN'
+  -- H-05: the decision endpoint is its own money-commitment boundary. CLIENT is
+  -- held to it exactly as in perform_action.
+  IF v_type.money_moving AND v_actor.actor_kind IN ('HUMAN','CLIENT')
      AND NOT app.aal2_verified() THEN
     RAISE EXCEPTION 'AAL2 is required to decide a money-moving action'
       USING ERRCODE = 'TRNOS',
@@ -2768,9 +2995,21 @@ BEGIN
   END IF;
 
   IF p_decision = 'APPROVE' THEN
+    -- The same two parts, in the same order, as the queue-time hash above — see
+    -- the comment there for why the effects alone could never change. This is the
+    -- read that makes the comparison mean something: app.action_value goes to the
+    -- record, so a quotation edited after it was queued hashes differently here.
     v_fresh := app.plan_effects(v_action.action_type,v_action.target_ref,v_action.payload);
     v_hash := pg_catalog.encode(pg_catalog.sha256(
-      pg_catalog.convert_to(v_fresh::text,'UTF8')),'hex');
+      pg_catalog.convert_to(
+        pg_catalog.jsonb_build_object(
+          'effects', v_fresh,
+          'value', app.action_value(
+                     v_action.action_type, v_action.tenant_id,
+                     app.resolve_action_target_id(v_action.action_type, v_action.tenant_id,
+                                                  v_action.target_ref, v_action.payload),
+                     v_action.payload))::text,
+        'UTF8')),'hex');
     IF v_hash IS DISTINCT FROM v_approval.diff_hash THEN
       RAISE EXCEPTION 'the effects changed since the diff was rendered'
         USING ERRCODE = 'TRNOS',
@@ -3175,8 +3414,18 @@ END;
 $fn$;
 
 
+-- ⚠ THE SIGNATURE CHANGED, AND THE OLD ONE IS DROPPED FIRST.
+--
+-- `p_ids uuid[]` became `p_items jsonb` — an array of
+-- `{"approvalId": <uuid>, "expectedDiffHash": <text>}` — because a bulk APPROVE
+-- has to carry one hash PER APPROVAL and an array of ids cannot. The old
+-- signature is dropped rather than left beside this one: `CREATE OR REPLACE`
+-- matches on the argument list, so without the DROP there would be two
+-- `app.bulk_decide`s and the four-argument call would be ambiguous.
+DROP FUNCTION IF EXISTS app.bulk_decide(jsonb, text, text, text);
+
 CREATE OR REPLACE FUNCTION app.bulk_decide(
-  p_ids uuid[],
+  p_items jsonb,
   p_decision text,
   p_note text DEFAULT NULL,
   p_idempotency_key text DEFAULT NULL
@@ -3191,20 +3440,68 @@ DECLARE
   v_tenant       uuid := app.require_tenant_id();
   v_actor        record;
   v_id           uuid;
+  v_hash         text;
+  v_item         jsonb;
+  v_ids          uuid[];
   v_blocked      jsonb;
+  v_missing      jsonb;
   v_results      jsonb := '[]'::jsonb;
+  v_one          jsonb;
   v_idempotency  app.idempotency_keys%ROWTYPE;
   v_request_hash text;
 BEGIN
   SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
-  IF p_ids IS NULL OR pg_catalog.cardinality(p_ids) = 0
-     OR pg_catalog.cardinality(p_ids) <> (
-       SELECT pg_catalog.count(DISTINCT item)::integer
-         FROM pg_catalog.unnest(p_ids) AS item) THEN
-    RAISE EXCEPTION 'ids must be a non-empty set'
+
+  IF p_items IS NULL OR pg_catalog.jsonb_typeof(p_items) <> 'array'
+     OR pg_catalog.jsonb_array_length(p_items) = 0 THEN
+    RAISE EXCEPTION 'items must be a non-empty array'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object(
               'code','VALIDATION_FAILED','reason','INVALID_APPROVAL_IDS')::text;
+  END IF;
+
+  -- The ids, in SORTED order. Sorted because the idempotency request hash is
+  -- taken over them: the client hashes its selection in click order, so the same
+  -- two approvals picked in the other order produced a different key and a
+  -- spurious refusal on the retry.
+  SELECT pg_catalog.array_agg(x ORDER BY x) INTO v_ids
+    FROM (SELECT DISTINCT (item ->> 'approvalId')::uuid AS x
+            FROM pg_catalog.jsonb_array_elements(p_items) AS item) AS ids;
+
+  IF v_ids IS NULL OR pg_catalog.cardinality(v_ids) <> pg_catalog.jsonb_array_length(p_items) THEN
+    RAISE EXCEPTION 'items must be a non-empty set of distinct approvalId values'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','reason','INVALID_APPROVAL_IDS')::text;
+  END IF;
+
+  -- ⚠ EVERY APPROVE ITEM CARRIES ITS OWN DIFF HASH, AND THIS IS THE HOLE THAT
+  -- WAS HERE. This function used to take `uuid[]` and call
+  -- `app.decide_approval(v_id, p_decision, p_note, NULL, NULL)` — the expected
+  -- hash HARDCODED NULL, once per item. 011 only compares the hash when it is
+  -- non-NULL, so bulk APPROVE skipped the optimistic-concurrency check entirely
+  -- while `core.decide_approval` refused a NULL hash on the single path. One door
+  -- locked, the door beside it wedged open, and `core.bulk_decide_approvals` is
+  -- granted to `authenticated` exactly like its sibling.
+  --
+  -- Refused here rather than left to decide_approval, so the whole batch fails
+  -- before any of it is applied: a partial bulk decide is worse than a refused
+  -- one, because the approver cannot tell which half went through.
+  IF p_decision = 'APPROVE' THEN
+    SELECT pg_catalog.jsonb_agg(item -> 'approvalId') INTO v_missing
+      FROM pg_catalog.jsonb_array_elements(p_items) AS item
+     WHERE NULLIF(pg_catalog.btrim(COALESCE(item ->> 'expectedDiffHash','')),'') IS NULL;
+    IF v_missing IS NOT NULL THEN
+      RAISE EXCEPTION
+        'every APPROVE item must carry the diff hash the approver was shown'
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','VALIDATION_FAILED',
+                'fields', pg_catalog.jsonb_build_array(
+                  pg_catalog.jsonb_build_object(
+                    'field','expectedDiffHash','reason','REQUIRED')),
+                'missingFor', v_missing)::text;
+    END IF;
   END IF;
 
   IF p_idempotency_key IS NOT NULL THEN
@@ -3216,7 +3513,7 @@ BEGIN
       v_tenant::text || ':' || v_actor.actor_id || ':' || p_idempotency_key)::bigint);
     v_request_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
       pg_catalog.jsonb_build_object(
-        'ids',p_ids,'decision',p_decision,'note',p_note)::text,'UTF8')),'hex');
+        'ids',v_ids,'decision',p_decision,'note',p_note)::text,'UTF8')),'hex');
     INSERT INTO app.idempotency_keys
       (tenant_id,actor_id,endpoint,key,request_hash)
     VALUES
@@ -3244,8 +3541,8 @@ BEGIN
   END IF;
 
   IF (SELECT pg_catalog.count(*) FROM core.approval_requests AS approval
-       WHERE approval.tenant_id = v_tenant AND approval.id = ANY (p_ids))
-     <> pg_catalog.cardinality(p_ids) THEN
+       WHERE approval.tenant_id = v_tenant AND approval.id = ANY (v_ids))
+     <> pg_catalog.cardinality(v_ids) THEN
     RAISE EXCEPTION 'one or more approvals were not found'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
@@ -3257,7 +3554,7 @@ BEGIN
                 ELSE 'MONEY_MOVING_TYPE' END))
     INTO v_blocked
     FROM core.approval_requests AS approval
-   WHERE approval.tenant_id = v_tenant AND approval.id = ANY (p_ids)
+   WHERE approval.tenant_id = v_tenant AND approval.id = ANY (v_ids)
      AND NOT approval.bulk_approvable;
   IF v_blocked IS NOT NULL THEN
     RAISE EXCEPTION 'one or more approvals may not be decided in bulk'
@@ -3266,12 +3563,37 @@ BEGIN
               'code','BULK_NOT_PERMITTED','notBulkApprovable',v_blocked)::text;
   END IF;
 
-  FOREACH v_id IN ARRAY p_ids LOOP
+  FOR v_item IN SELECT item FROM pg_catalog.jsonb_array_elements(p_items) AS item LOOP
+    v_id   := (v_item ->> 'approvalId')::uuid;
+    v_hash := NULLIF(pg_catalog.btrim(COALESCE(v_item ->> 'expectedDiffHash','')),'');
+
+    -- The per-item hash, passed through. Each approval has its own diff and
+    -- therefore its own hash; there is no batch-level hash that could stand in
+    -- for them, which is why the argument had to become an array of objects.
+    v_one := app.decide_approval(v_id,p_decision,p_note,v_hash,NULL);
+
+    -- ⚠ `{id, ref, status, effects}`, NOT the raw decide body. The contract's
+    -- ApprovalBulkDecideResponse is `{results:[{id,ref,status,effects?}]}` and
+    -- this used to return `{data:[...],count:n}` whose elements carried no `id`
+    -- and no `ref`. Two consequences, both silent: `app.ok` wraps this in
+    -- `{success,data}`, the client's unwrapEnvelope only auto-unwraps when `data`
+    -- is the SOLE non-success key, and `count` beside it flipped it to
+    -- pass-through — so `response.results` was `undefined` at runtime behind a
+    -- blind `as T` cast. And even unwrapped, the inbox could not tell WHICH of N
+    -- approvals got which outcome, because the elements were anonymous.
     v_results := v_results || pg_catalog.jsonb_build_array(
-      app.decide_approval(v_id,p_decision,p_note,NULL,NULL));
+      pg_catalog.jsonb_build_object(
+        'id',      v_id,
+        'ref',     (SELECT approval.ref FROM core.approval_requests AS approval
+                     WHERE approval.id = v_id),
+        'status',  v_one ->> 'status',
+        'effects', COALESCE(v_one -> 'effects', v_one -> 'result' -> 'effects', '[]'::jsonb)));
   END LOOP;
-  v_results := pg_catalog.jsonb_build_object(
-    'data',v_results,'count',pg_catalog.jsonb_array_length(v_results));
+
+  -- ONE top-level key. `app.ok` adds `{success, data}` around this, and a sibling
+  -- key here is what flips the client's auto-unwrap to pass-through — 001's own
+  -- comment on app.ok says so in as many words, and `count` was that sibling.
+  v_results := pg_catalog.jsonb_build_object('results', v_results);
 
   IF v_idempotency.id IS NOT NULL THEN
     UPDATE app.idempotency_keys
@@ -3367,11 +3689,28 @@ BEGIN
     INTO v_open,v_failed
     FROM app.action_effects AS effect
    WHERE effect.action_request_id = v_effect.action_request_id;
+  -- ⚠ `PARTIALLY_FAILED` IS IN THIS LIST, AND IT WAS NOT.
+  --
+  -- The guard read `AND status = 'EXECUTING'` alone, which is correct for the
+  -- first pass and wrong for a replay. Dead-lettering an effect moves the request
+  -- to PARTIALLY_FAILED; the replay then settles that effect, `v_open` reaches 0
+  -- and `v_failed` reaches 0 — and this UPDATE matched NOTHING, because the
+  -- request had already left EXECUTING. So a successfully replayed invoice left
+  -- the effect SETTLED and the request PARTIALLY_FAILED forever, with nothing
+  -- able to correct it. Live-reproduced. The ledger and the request disagreed and
+  -- the request is the one the product reads.
+  --
+  -- EXECUTED is deliberately NOT in the list: a request that finished cleanly is
+  -- terminal, and a late report against it is a bug to surface rather than a state
+  -- to recompute. The recomputation itself is unchanged — if some effect is still
+  -- dead-lettered the request stays PARTIALLY_FAILED, it is just written again
+  -- with the same value.
   IF v_open = 0 THEN
     UPDATE core.action_requests
        SET status = CASE WHEN v_failed > 0 THEN 'PARTIALLY_FAILED' ELSE 'EXECUTED' END,
            completed_at = pg_catalog.now()
-     WHERE id = v_effect.action_request_id AND status = 'EXECUTING';
+     WHERE id = v_effect.action_request_id
+       AND status IN ('EXECUTING','PARTIALLY_FAILED');
   END IF;
 END;
 $fn$;
@@ -3409,7 +3748,7 @@ GRANT EXECUTE ON FUNCTION app.perform_action(text,text,jsonb,jsonb,numeric,text,
   TO service_role;
 GRANT EXECUTE ON FUNCTION app.decide_approval(uuid,text,text,text,text)
   TO service_role;
-GRANT EXECUTE ON FUNCTION app.bulk_decide(uuid[],text,text,text)
+GRANT EXECUTE ON FUNCTION app.bulk_decide(jsonb,text,text,text)
   TO service_role;
 GRANT EXECUTE ON FUNCTION app.report_effect_result(bigint,app.effect_status,jsonb,jsonb)
   TO service_role;

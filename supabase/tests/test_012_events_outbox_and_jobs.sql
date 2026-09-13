@@ -68,6 +68,15 @@
 -- look thorough - checked against pg_trigger, not assumed.
 -- ============================================================================
 
+--
+-- ⚠ WHICH DATABASE THIS RUNS AGAINST: 001-014, NOT 001-012.
+-- Some assertions below require migration 014's client grants to be present —
+-- T11c asserts that `app` holds no client privilege, which is a statement about grants 014 makes elsewhere — so running this pin against a 001-012-only database fails for a reason
+-- that is about the harness, not about this pack. Confirmed by execution: run at
+-- 001-012 alone it fails there; apply 014 and it passes. The catalog says the
+-- same. This is a real ordering dependency of the PIN, not of the MIGRATION: 0012
+-- itself applies and verifies cleanly with nothing after it.
+
 BEGIN;
 
 SET LOCAL plpgsql.check_asserts = on;
@@ -1698,5 +1707,134 @@ BEGIN
     'on the retry state, and the reaper is bounded (H-18).';
 END;
 $t14$;
+
+
+-- ─── T15 · CRIT · a replayed job can still settle its effect ───────────────
+-- The finding: `app.replay_dead_letter` copies `effect_id` onto the replacement
+-- job — deliberately, because a replay is a second attempt at ONE effect and not
+-- a second effect. But dead-lettering had already moved that effect to
+-- DEAD_LETTERED, and `app.report_effect_result` (011:3502) returns early and
+-- SILENTLY on an effect that is already SETTLED or DEAD_LETTERED. So when the
+-- replay SUCCEEDED and `complete_job` reported it, the report was a no-op: an
+-- invoice that really was pushed stayed recorded as permanently failed in the
+-- effect ledger. And nothing could correct it later, because the
+-- PARTIALLY_FAILED reconciliation is guarded `AND status = 'EXECUTING'` and the
+-- action had already left that state.
+--
+-- The replay now reopens the effect to DISPATCHED first. This pin walks the whole
+-- round trip rather than asserting the UPDATE exists: fail a job to death, replay
+-- it, complete the replacement, and require the effect to reach SETTLED.
+DO $t15$
+DECLARE
+  v_effect  bigint;
+  v_tenant  uuid;
+  v_job     uuid;
+  v_dl      uuid;
+  v_new     uuid;
+  v_status  text;
+BEGIN
+  -- Pick the JOB first, not the effect: this file's earlier checks already kill
+  -- some of the fixture jobs, and selecting an effect that happens to have a DEAD
+  -- job would make the setup below fail for a reason that has nothing to do with
+  -- replays. A QUEUED job with an effect behind it is exactly the starting state
+  -- this pin needs.
+  SELECT o.id, o.effect_id, o.tenant_id INTO v_job, v_effect, v_tenant
+    FROM app.outbox AS o
+    JOIN app.action_effects AS e ON e.id = o.effect_id
+   WHERE o.state = 'QUEUED'
+     AND o.effect_id IS NOT NULL
+     AND e.status = 'DISPATCHED'
+     AND o.run_after <= pg_catalog.now()
+   ORDER BY o.created_at
+   LIMIT 1;
+
+  ASSERT v_job IS NOT NULL,
+    'T15 SETUP FAIL: no QUEUED job with a live external effect behind it. Since '
+    '011 now calls app.enqueue_effect_jobs there should be one; if there is not, '
+    'the seam regressed and test_011 T16 is the pin that says so.';
+
+  -- Kill it, through the real lease path rather than by hand-editing state:
+  -- app.outbox carries invariants tying state to claimed_at/finished_at, and a
+  -- pin that sets columns directly is testing its own UPDATE, not the product's.
+  PERFORM app.claim_jobs('t015-worker', v_tenant, NULL, 50, interval '60 seconds', 200);
+
+  ASSERT (SELECT o.state FROM app.outbox AS o WHERE o.id = v_job) = 'CLAIMED',
+    pg_catalog.format('T15 SETUP FAIL: the job is %s after claim_jobs, not '
+      'CLAIMED (run_after=%s, visible_after=%s).',
+      (SELECT o.state FROM app.outbox AS o WHERE o.id = v_job),
+      (SELECT o.run_after FROM app.outbox AS o WHERE o.id = v_job),
+      (SELECT o.visible_after FROM app.outbox AS o WHERE o.id = v_job));
+
+  -- retryable = false is the immediate dead-letter path: no backoff, no second
+  -- attempt, straight to app.dead_letters and the effect to DEAD_LETTERED.
+  PERFORM app.fail_job(v_job, v_tenant, 't015-worker',
+    pg_catalog.jsonb_build_object(
+      'code','PROVIDER_DOWN','message','staged failure','retryable',false),
+    false);
+
+  SELECT e.status::text INTO v_status FROM app.action_effects AS e WHERE e.id = v_effect;
+  ASSERT v_status = 'DEAD_LETTERED',
+    pg_catalog.format('T15 SETUP FAIL: after a non-retryable failure the effect '
+      'is %s, not DEAD_LETTERED, so the state this pin is about was never '
+      'reached.', v_status);
+
+  SELECT d.id INTO v_dl FROM app.dead_letters AS d WHERE d.origin_id = v_job LIMIT 1;
+  ASSERT v_dl IS NOT NULL, 'T15 SETUP FAIL: no dead letter was written.';
+
+  -- THE REPLAY.
+  v_new := app.replay_dead_letter(v_dl, v_tenant,
+    pg_catalog.jsonb_build_object('kind','SYSTEM','id','t015','name',NULL));
+  ASSERT v_new IS NOT NULL, 'T15a FAIL: replay_dead_letter returned no job.';
+
+  -- T15b · the effect is REOPENED. Against the pre-fix SQL it is still
+  -- DEAD_LETTERED here, and everything below still "passes" — the completion
+  -- reports into a silent early return and the ledger keeps the lie.
+  SELECT e.status::text INTO v_status FROM app.action_effects AS e WHERE e.id = v_effect;
+  ASSERT v_status = 'DISPATCHED',
+    pg_catalog.format('T15b FAIL: after a replay the effect is %s. It has to be '
+      'back in a state a worker report can move, or complete_job''s call to '
+      'report_effect_result hits the SETTLED/DEAD_LETTERED early return and does '
+      'nothing at all.', v_status);
+
+  -- T15c · and the successful replay actually settles it. Claimed through the
+  -- real path again, for the same reason.
+  PERFORM app.claim_jobs('t015-worker', v_tenant, NULL, 50, interval '60 seconds', 200);
+  ASSERT (SELECT o.state FROM app.outbox AS o WHERE o.id = v_new) = 'CLAIMED',
+    'T15 SETUP FAIL: the replacement job was not claimable.';
+  PERFORM app.complete_job(v_new, v_tenant, 't015-worker',
+    pg_catalog.jsonb_build_object('ok',true), NULL);
+
+  -- T15d · AND THE REQUEST AGREES WITH THE LEDGER. The effect reaching SETTLED is
+  -- only half of "the replay worked": `core.action_requests` is what the product
+  -- reads, and its reconciliation was guarded `AND status = 'EXECUTING'` — which
+  -- the request had already left when dead-lettering moved it to
+  -- PARTIALLY_FAILED. So the effect settled, the request stayed PARTIALLY_FAILED
+  -- forever, and nothing could correct it. The first version of this pin asserted
+  -- only the effect status and would have passed against exactly that.
+  ASSERT (SELECT a.status FROM core.action_requests AS a
+           WHERE a.id = (SELECT e.action_request_id FROM app.action_effects AS e
+                          WHERE e.id = v_effect)) = 'EXECUTED',
+    pg_catalog.format('T15d FAIL: the replay settled its effect but the action '
+      'request is %s, not EXECUTED. The ledger and the request disagree, and the '
+      'request is the one the product reads.',
+      (SELECT a.status FROM core.action_requests AS a
+        WHERE a.id = (SELECT e.action_request_id FROM app.action_effects AS e
+                       WHERE e.id = v_effect)));
+
+  SELECT e.status::text INTO v_status FROM app.action_effects AS e WHERE e.id = v_effect;
+  ASSERT v_status = 'SETTLED',
+    pg_catalog.format('T15c FAIL: the replay succeeded and the effect is %s, not '
+      'SETTLED. An invoice that really was pushed is recorded as permanently '
+      'failed, and nothing can correct it later — the PARTIALLY_FAILED '
+      'reconciliation is guarded AND status = ''EXECUTING'' and the action has '
+      'left that state.', v_status);
+
+  RAISE NOTICE
+    'T15 PASS - a dead-lettered effect is reopened to DISPATCHED by the replay, '
+    'reaches SETTLED when the replacement job completes, and the action request '
+    'moves off PARTIALLY_FAILED to EXECUTED — the ledger and the request agree.';
+END;
+$t15$;
+
 
 ROLLBACK;

@@ -3,9 +3,9 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 14 · **Applied:** 0 · **Authored, not applied:** 14
+**Migrations:** 19 · **Applied:** 0 · **Authored, not applied:** 19
 **Last snapshot of `tables/`:** never
-**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place)
+**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
 ---
 
@@ -14,7 +14,68 @@
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
 
-**Last updated:** 2026-09-13 — **014: the database stops being deny-all, and three defects were found by granting rather than by reading.**
+**Last updated:** 2026-09-13 — **017: the amendment pass. Nine PUBLIC grants nobody intended, seven unconstrained jsonb columns, two wrong numeric precisions, and the regulatory shape the September research says the baseline is missing.**
+Three tables, four functions, two views, nine REVOKEs, seven CHECKs, two type changes, eight new columns, one unique constraint and the HRD Corp registry rows. **Applied nowhere.** This is the most dangerous migration in the pack: every statement runs against a table that may already hold rows, and two of them change a column's TYPE.
+
+**The nine PUBLIC grants, and why 014 is what made them urgent.** 001 measured that doc 02 §4.1's `ALTER DEFAULT PRIVILEGES … REVOKE ALL ON FUNCTIONS FROM PUBLIC` **does not take** — it records no `pg_default_acl` row and a function created afterwards is still executable by PUBLIC — kept the line as documented baseline, and named the real guard as per-object REVOKE plus a sweep. Nine `core` functions from 007 and 009 slipped through it. Eight are trigger functions, where the grant is harmless because the executor invokes them regardless. **`core.apply_rule_offset` is not**: it takes a date, an integer and an offset unit, returns a date, and is the arithmetic behind every HRD Corp deadline in the registry — the one of the nine PostgREST will actually call, because the other eight take no arguments and return `trigger`. Before 014 none of it was reachable, since `authenticated` had no `USAGE ON SCHEMA core`; **014 granted that USAGE and turned a latent defect into a live one**, which is why the revoke lands immediately after it rather than being filed. T1 sweeps the catalogue for PUBLIC-executable functions rather than checking the nine by name, and separately proves `apply_rule_offset` is refused to an impersonated caller with `42501`.
+
+**R-JSONB on the last seven columns, TYPE HALF ONLY, said out loud.** 012's sweep re-derived against the full set leaves exactly seven. All seven get `jsonb_typeof` and none gets a key assertion, and the file states why rather than letting a reader assume: **none of the seven has a consumer that declares any keys** — no SQL reads them, no comment names a shape, no contract entry fixes one. Inventing required keys would freeze a shape nobody agreed on a table that may hold rows. 013 set the same precedent. The type half is not nothing: `jsonb` accepts `"hello"`, `42` and `true` as valid scalars, every one survives an `IS NOT NULL` guard, and every one breaks the first `->>` a consumer writes — T2 feeds `"hello"` to `saved_views.filters` and watches it refused. `filters` gets `'array'` rather than `'object'` because it defaults to `'[]'`; flattening all seven to `object` would have made that table unwritable at its own default.
+
+**Two precisions, and one of them could have moved money.** `core.quotations.margin_rate` was bare `numeric` while its two neighbours on the same row, `floor_margin_rate` and `commission_rate`, were already `numeric(6,4)` — so the binding floor was stored at four decimals and the margin compared against it was not, and that comparison is the below-floor decision 007 derives. `evaluation_responses.overall_score` was `numeric(3,2)` where the rule says three decimals and gained the 0..1 bound it never had. **Both directions are widening, which is what makes the change safe**, and the forward guard refuses rather than rounding: a margin silently rounded from 0.28571 to 0.2857 can cross the floor that decided whether a quotation needed an approval, and a migration is not the place to make that call. T3 proves the conversion by STORING 0.867 and reading it back, because a catalogue check alone passes against a column that was never really converted.
+
+**SST is a table, never a column default (ruling R-C).** `core.tax_policies` is tenant-scoped with a national fallback and **bitemporal like 009** — validity and known, with a GiST exclusion so "which policy applied on this date as known on that date" has exactly one answer. The research is unambiguous about the position: corporate training is taxable under **Group G (Professionals) at 8% since 1 March 2024**, and the education exemption "applies only to institutions **registered under the Education Act 1996**… a private, HRD Corp-accredited corporate training provider is not that". Both policies are seeded because the exempt one is genuinely selectable. **Rates are basis points, deliberately against root CLAUDE.md's `numeric(6,4)` for tax rates**, and the file argues it: that rule governs the rate stored ON A DOCUMENT; this is a configuration value that is compared, ordered and versioned, where an integer has one representation per value. The invoice keeps 010's numeric and gains `sst_policy_id`, so "why was this taxed at 8%" finally has an answer that survives a later policy change. **The resolver RAISES when nothing resolves** rather than returning zero — a missing policy silently becoming a zero rate is an invoice filed with no SST and no reason — and T4 walks national default, tenant override, cross-tenant non-leakage, unknown category, pre-effective date and the known axis.
+
+**Quotations get SST at last.** 010 gave the invoice `sst_rate`/`sst_reason`/generated `sst_sen`; the QUOTATION — the document the customer actually accepts — had none, so a quotation quoted net and the invoice added 8%. The columns mirror 010's names exactly rather than inventing a parallel vocabulary, `sst_sen` and `gross_price_sen` are GENERATED on the summed net, and `quotations_exempt_needs_reason` makes the exemption cost something: claiming TRAINING_EXEMPT without writing down why is refused.
+
+**PDPA, with the numbers the research gives and without the ones it does not.** `contact_consents.purpose` and `notice_version` — consent is purpose-bound, and `UNSPECIFIED_PRE_017` marks legacy rows and is **forbidden for anything recorded after this migration**, so a pre-017 gap stays visible instead of becoming a silent opt-in. `core.data_retention_policies` rows are `QUEUED_FOR_APPROVAL` and delete nothing, which is why 015 leaves the four retention reapers unscheduled. `core.data_breach_register` carries the two statutory clocks as **GENERATED** columns — 72 hours to the Commissioner, 7 days from that to affected subjects — so they cannot be edited away, and a CHECK makes "subjects notified before the Commissioner" unrepresentable. ⚠ **`retained_until` is deliberately left unset**: the 2-year minimum some guidance suggests is flagged UNCONFIRMED in the research, and a number invented here would be indistinguishable from a researched one in six months.
+
+**Three HRD Corp deadlines, all PROPOSED.** 5 calendar days to respond to a query (**the application EXPIRES**, so a missed query is a lost grant rather than a late one — and it is a recommended ADDITION, absent from the proposal pack's Appendix B entirely), 90 days to commence, 6 months to claim. The claim window is marked unconfirmed in the research because the circular PDF was unreachable; it is seeded anyway and flagged, because an unseeded rule is invisible while a PROPOSED one is a question somebody can answer. **Nothing is inserted ACTIVE from a document alone**, per the research's explicit instruction and 009's own `cr_active_needs_verification`. T8 asserts each offset WITH its unit, because "5" with the wrong unit is five months to answer a query that expires in five days.
+
+**HRD-TDF gets an expiry date and a corrected citation.** 006's boolean says a trainer was accredited once; `hrd_tdf_valid_to` says whether they can take a claimable class next month. 3-year validity, 360 hours to renew, apply ≥3 months before expiry — and the mandate is **Circular 6/2024 effective 1 January 2025**, not the Circular 2/2026 the proposal pack cited. `core.v_trainer_accreditation` derives expired and expiring-soon rather than storing a flag that needs a job to keep it true.
+
+**And the finding the pack exists to carry: `hnsw.iterative_scan`.** ⚠ There was no retrieval RPC in 001–016 — 013 created `knowledge_chunks.embedding` and 001 the HNSW index, and nothing read either — so 017 creates `core.retrieve_knowledge`, because the finding is a property OF that function and has nowhere else to live. **The setting defaults to `off`, and under RLS that silently under-returns**: an HNSW scan returns ~`ef_search` candidates and the tenant predicate is applied ON TOP of them, so a tenant holding 2% of the table asks for k=10 and gets one row — not an error, not a warning, just a short answer that looks like "there wasn't much relevant", with every RAG answer built on it quietly under-grounded. `SET LOCAL … = relaxed_order`, local so a pooled connection cannot carry it into somebody else's query. **T10 measures it** with Beta holding 2,000 chunks and Alpha 40, and asserts both halves: k rows come back, and every one is the caller's own.
+
+**Four defects found by executing rather than reading**, and three of them by re-running the file: `timestamptz + interval` is STABLE not IMMUTABLE so the breach clocks needed a UTC pivot; `SET LOCAL` is refused inside a non-volatile function, raised at CALL time rather than CREATE time so it survived the migration and was caught by the pin; the check keys were seeded with `CROSS JOIN public.tenants`, which is correct SQL that seeds NOTHING on an empty database and nothing for every tenant created afterwards — they now go through 016's provisioning shape, making three seeds on `public.tenants` (011 policies, 016 ref formats, 017 check keys), which is the pattern working rather than three copies of it; and **`ADD CONSTRAINT` has no `IF NOT EXISTS` for the third time in this pack** (004 hit it, 006 hit it, 017 hit it), alongside two seeds that duplicated on re-run because neither had anything to conflict against.
+
+**Spine untouched.** No action type, no handler, no branch in the envelope.
+
+**Last updated:** 2026-09-13 — **016: tenant provisioning, and the hole in the middle of the database that every pin since 011 has been stepping around.**
+Two functions and one trigger. No table, no view, no type, no policy, no column. **Applied nowhere.**
+
+**The hole.** `core.next_ref()` raises `no ref_format for prefix % in this tenant` when a tenant has no `core.ref_formats` row for the prefix being allocated. Thirty-two `core` tables carry a `core.assign_ref` trigger, so for a tenant with no formats, thirty-two tables are unwritable. **No migration seeded them.** 013's catalog entry carries it as a standing condition and test_013's header says it outright — "016 provisions those, so this pin seeds its own AGT and RUN rows". Ten pins seed their own. Every one of those fixtures was standing in for a provisioning step that did not exist, which means **no pin in this pack had ever exercised the path a real customer takes.** T2 is that path: one `INSERT INTO public.tenants`, no fixture, and a real `ORG-0001` allocated through the trigger.
+
+**The rows are DERIVED from `pg_trigger`, and the reason is a measurement rather than a preference.** The obvious 016 is thirty-two `INSERT … VALUES` lines. Building that list by reading the migrations for `finalise_table(…,'PREFIX')` yields **twenty-seven**. The real number is **thirty-two**. The five a line-based read misses — `ATT`, `PIP`, `SIG`, `SVW`, `TPL` — are missed because their `finalise_table` calls wrap across lines and the regex stops at the newline. That list would have shipped, looked complete, and left attachments, pipelines, signatures, saved views and templates unwritable for every customer, discovered the first time somebody saved a view, in production, as a raw `foreign_key_violation` from inside a trigger. Every `assign_ref` trigger declares its prefix as `TG_ARGV[0]`, which is the same string `next_ref` is handed at run time, so the seed and its consumer are the same list **by construction** — 003's argument for generating sixty-nine enum types from the contract package, applied to provisioning. A thirty-third ref'd table added by 018 is provisioned on the day its trigger is created. T1 asserts all five of the missed prefixes individually.
+
+**Provisioning is a trigger, matching 011 rather than inventing a shape.** `trg_tenants_seed_ref_formats` fires `AFTER INSERT ON public.tenants`, exactly as 011's `trg_tenants_seed_action_policies` does. A provisioning SCRIPT is something a human remembers to run, and `public.tenants` is written by the onboarding path, by a seed, by a test fixture and by whatever lands next; the trigger is the only thing covering all four. `app.provision_tenant()` exists for the explicit case and **does not duplicate the seeding logic** — it inserts and lets the triggers work, then refuses to RETURN a tenant that has no ref_formats or no action_policies. T3 disables the trigger and proves the refusal fires: a tenant that looks provisioned and cannot write a ref'd row should fail there, not at the customer's first enquiry.
+
+**Idempotence, in the direction that matters.** Re-seeding LEAVES AN EXISTING ROW ALONE rather than overwriting it. `ref` is immutable after insert, so flipping `dated` under a tenant that has already allocated `ENQ-2026-0912` would leave every ref issued so far in the old shape and every future one in the new, with no way to correct either. T4 corrupts a format deliberately, re-seeds, and asserts it was **not** repaired — because the repair is the dangerous direction.
+
+**Ten pins were amended**, each fixture given `ON CONFLICT (tenant_id, prefix) DO UPDATE`, so the pin's own explicitly chosen shape still wins inside its own rolled-back transaction while the collision with real provisioning disappears. ⚠ Two of those edits were made by a script that split statements on the first `;` and landed inside a comment containing one; both were caught by the suite, reverted from git and redone by hand. Recorded because it is the kind of mechanical edit that looks safe across ten files and is not.
+
+**⚠ What 016 does NOT seed, with the reason for each.** `pipelines` / `pipeline_steps` — the second spine. Seeding them means writing fifteen stage names into a migration, which is precisely the defect both CLAUDE.md files name ("a hardcoded stage list anywhere in SQL is a defect"), and doing it in a file about ref formats. **Owner: 018 or a dedicated seed pack; until then a new tenant renders no pipeline.** The HRD Corp rule registry — national (`tenant_id NULL`), so not provisioning at all, and the research attaches an explicit condition: all rows load `status = 'PROPOSED'` until a named Finance verifier confirms each against the circular text. 017 owns those. Rate cards and templates — customer data, not schema.
+
+**Spine untouched**, and the pipeline spine deliberately untouched too, which is the stronger statement.
+
+**Last updated:** 2026-09-13 — **015: the scheduler, and the seven jobs it deliberately does not schedule.**
+001's header promised that "nine scheduled behaviours in the design… are scheduled with cron.schedule in 015". 015 schedules **two**, and the other seven are the content of the migration. One function, two cron jobs, no table, no view, no type, no trigger, no policy. **Applied nowhere.**
+
+**Ruling R-B is the reason and it is stated with its counter-evidence.** Background work is one Node worker (`apps/worker`, merged on main) polling `app.claim_jobs`; pg_cron is for `reap_jobs` and cron-history retention only; there are no pg_net nudges. ⚠ **This contradicts current Supabase documentation and the header says so outright**: `docs/research/2026-09-13-supabase-current-docs.md` §4 records that Supabase's own guide documents `cron.schedule` → `net.http_post` → Edge Function as supported and confirms requests do not start until the transaction commits. That research is right and is not overruled on technical grounds — it is overruled by **R-A, which says this product has no Edge Functions at all**, so the far end of the nudge does not exist. A supported pattern pointing at nothing is still pointing at nothing. Recorded in full because the next author will read the same Supabase page and wonder why this file ignores it. The payoff is that nothing in this database makes an outbound HTTP request, and pg_net's beta caveats — "signatures may change", ~200 req/s, a 2000 ms default timeout, an UNLOGGED queue with a 6-hour response TTL — become a list of things the product does not have to reason about.
+
+**`trainos_reap_jobs` runs every 30 seconds as ONE job.** Sub-minute schedules are native on 15.1.1.61+, so doc 05's tick is one job rather than the six-jobs-each-sleeping-a-different-offset trick that burns six connections and drifts. 30 rather than 10 seconds because the worker's poll loop is the latency path and the reaper is the recovery path. Recovery is what makes `C-08` real: a handler that OOMs mid-job leaves the row CLAIMED forever, and a worker that has died cannot recover itself.
+
+**The command is `app.reap_jobs_all_tenants(200)`, not `app.reap_jobs(NULL, 1000)`, and that is the one genuinely new object.** 012's `H-16` made the CLAIM fair per tenant with `row_number() OVER (PARTITION BY tenant_id)`; the REAPER's four statements each take a flat LIMIT across all tenants ordered by time. One tenant whose provider is down fills that limit every tick and every other tenant's expired leases are never recovered — the same starvation, arriving through the recovery path. The wrapper gives each tenant its own budget and is driven from the tenants that actually have reapable work rather than from `public.tenants`. **T3 measures it**: Alpha holds 50 expired leases, Beta holds 1, the budget is 10 per tenant, and Beta's job comes back in the same tick — plus a control proving a single-tenant reap really does leave the other tenant alone, so the wrapper is not decoration.
+
+**`trainos_reap_cron_history` runs daily at 03:17 UTC.** `cron.job_run_details` is never purged automatically **and is not cleared when a job is unscheduled** — the second half is the one that surprises people. At a 30-second tick the reaper alone writes ~1.05M history rows a year on a table nothing reads after a few days. ⚠ **The 7-day window is unsourced and the header says so**: no research doc and no design doc gives a number, and 7 days is already compiled into 012's `app.reap_cron_history`, inherited here rather than re-litigated, stated as judgement so nobody later cites this file as its authority. T4 proves the boundary by probing at 6 days and 8 days rather than reading it out of the function.
+
+**The seven unscheduled jobs each carry their reason.** The outbox drain and the webhook dispatcher are R-B. The four retention sweeps over business-visible rows (`reap_outbox`, `reap_dead_letters`, `reap_webhook_bodies`, `reap_webhook_deliveries`) exist as functions and are **not** scheduled because each needs a retention PERIOD agreed with the customer first — 017 creates `core.data_retention_policies` for exactly that, and scheduling them now would be deleting on a window nobody signed off. The levy staleness sweep and the embedding refresh have no function to schedule at all. **Scheduling a job whose function does not exist is worse than not scheduling it**: pg_cron records the failure in `job_run_details` and raises nothing, so it is a broken behaviour with a green-looking cron table — which is why both the verify block and T1 resolve every scheduled command's function through `to_regproc`, and T5 goes further and EXECUTES both commands as registered, because a cron command is a string nothing type-checks.
+
+**⚠ Nothing is done to Realtime, and that is not the same as forgetting it.** The research (§7) is unambiguous that RLS on `realtime.messages` is already enabled and the schema is locked — policies are the only lever, `realtime.send` runs as the admin role and bypasses an INSERT deny, and `{ config: { private: true } }` is client configuration. The two things a migration could add are a policy over `(select realtime.topic())` and a publication membership, and both are blocked on a fact this lane does not have: **which topics this product broadcasts.** Nothing publishes a realtime message today. Inventing the topic vocabulary inside a cron migration is the same defect as a hardcoded stage list. One security property is carried forward explicitly: **policies are cached for the life of the connection and recomputed only on connect or on a new `access_token`, so revoking a permission does not close a live socket** — the design will have to disconnect explicitly, and that now lives in the migration history rather than only in a research doc.
+
+**⚠ The harness's pg_cron is a STUB that runs nothing**, so T1 and T2 test what was REGISTERED and T3–T5 test the functions by calling them directly. What this pin does not prove is that the real background worker fires a '30 seconds' schedule — that is the extension's behaviour, not this migration's, and it is named rather than covered by a test that would pass on a stub either way.
+
+**Spine untouched.** No action type, no branch in the envelope; the reaper operates on `app.outbox`, which is the envelope's external-effect queue and not the envelope.
+
+**Last updated:** 2026-09-13 — **014 amended: the retrofit review's BLOCK is cleared, both CRITs and three of four HIGHs closed with pins that fail against the pre-fix SQL, and a third destroyed grant (001:232's `USAGE ON SCHEMA core`) found by executing the rollback.**
 014 lands 228 policies over 115 `core` relations, SELECT-only client grants on 114 tables and two views, the `public.*` grants that put 002's twelve `authenticated` policies into service for the first time, and the three `core` wrappers that make the 011 envelope reachable from a browser. One function, no table, no type, no trigger. **Applied nowhere.**
 
 **The shape of the pack is one function, not 114 blocks.** `app.apply_tenant_policies()` stamps two policies per table — a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy carrying the same predicate in USING *and* WITH CHECK — and the §2 loop is driven from `pg_class`, not from a list of names. This is 004's `finalise_table` argument applied to the policy layer, and it is stronger here: a policy typo does not fail to apply, it applies and admits the wrong rows. The pin follows 004's precedent too and exercises the FUNCTION on throwaway tables rather than the 114 it happened to be run over, because testing those 114 proves nothing about the 115th.
@@ -83,7 +144,7 @@ The others: a `jobs-health` idempotency key with no tenant in it, so two tenants
 ---
 
 **Last updated:** 2026-09-13 — **011: the write spine, and the six pins it correctly invalidated.**
-011 lands the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry. Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions, the 22 action types, the 22-per-tenant policy catalogue materialised by a trigger on tenant creation, and the transition registry. Authored by Codex `gpt-5.6-sol` at xhigh, reviewed and executed here. **Applied nowhere.**
+011 lands the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry. Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-eight functions, the 22 action types, the 22-per-tenant policy catalogue materialised by a trigger on tenant creation, and the transition registry. Authored by Codex `gpt-5.6-sol` at xhigh, reviewed and executed here. **Applied nowhere.**
 
 **Nine defects were found by RUNNING it, and not one of them would have been caught by reading it.** They are listed because the ratio is the point: a pack this size reads clean and does not run.
 
@@ -152,10 +213,15 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
-| 014 | `014_rls_policies_and_client_grants.sql` | **The database stops being deny-all: 228 RLS policies, the client grant layer, and the three `core` wrappers over the 011 envelope (2026-09-13).** One function, 115 policied relations, zero tables, zero types, zero triggers. **The pack is `app.apply_tenant_policies()` plus a catalogue-driven loop**, not 114 hand-written blocks — 004's `finalise_table` argument applied to the policy layer, where it is stronger, because a policy typo applies successfully and admits the wrong rows. Two policies per table: a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy with the predicate in USING *and* WITH CHECK, so tenant isolation cannot be widened by adding a policy beside it and is already correct on the day somebody grants a write. **`authenticated` gets SELECT and nothing else on `core`** — the spine rule enforced at the privilege layer, since a browser with UPDATE on `core.proposals` can move it with no action_request, no policy evaluation and no audit row; T9 proves the refusal is `42501` and not a policy matching zero rows, which would report success. **The global-row fallback is DERIVED from `attnotnull`, never listed**, so 009's national rules stay visible to every tenant and a NOT NULL table cannot accidentally get the permissive form. **Three defects found by granting rather than by reading:** `app.require_tenant_id` was not executable by `authenticated`, so every finished policy ERRORED instead of denying (a policy predicate runs as the querying role; 002 had granted the other four claim readers and missed this one because nothing used it yet); `core.rule_set_versions` has no tenant index because 009 hand-rolled it past `finalise_table`, caught by a check written as a regression test on 004 and fired on 1 relation in 114; and `core.budget_status`/`core.model_tier_status` are security-invoker views over `app.usage_rollup` and therefore **cannot be granted at all** — both are revoked with the reason, and the AI budget screens have no data path until 018. `core.v_approval_requests` stays ungranted per doc 09 §12 and T7 pins that it is readable through a definer and refused directly. Six earlier pins amended in place from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014; one draft change (revoking `anon`'s `app` USAGE) was caught by test_011 T13b as a regression against 011's M-04 and reverted. Spine untouched — and this is the migration that makes bypassing the spine impossible rather than discouraged. |
-| 013 | `013_ai_ops_agents_keys_runs_and_budgets.sql` | **AI operations: the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree and evals (2026-09-13).** Nineteen tables, two security-invoker views, twenty-nine functions, zero policies, zero new types. **`core.runs` settles the `run_id` divergence by reconciliation rather than by retyping**: the run has a `uuid` id AND a `ref`, so 012's text run ids resolve through `UNIQUE (tenant_id, ref)` and 007/009's uuid columns finally get the foreign keys their own comments said 013 would add. Neither side is altered and no row is rewritten. **Secrets are handled by mechanism, not by assertion**: no RPC takes a raw BYOK key at all, so it never reaches a request body, `log_min_duration_statement` or `pg_stat_activity`; the once-per-24-hours reveal ceiling is the PREDICATE of an UPDATE so two concurrent reveals cannot both pass; the audit row is written first and a trigger re-derives that it exists, so a reveal whose audit fails takes the transaction with it. The agent key is minted in the database from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach it through `select=*` or an embed, which is what `H-09` asked for and is stronger than omitting a column from a grant. Every security path is shaped to FAIL CLOSED under the carried FORCE-with-no-policy residue: a `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" where a definer function reads zero rows, and these degrade to "always refuse". Run I/O masking is honest about its limits — the pin asserts that a person's NAME survives it, so the day masking improves, the pin says the header is out of date. Spine untouched. |
-| 012 | `012_events_outbox_and_jobs.sql` | **Domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhooks and the retention reapers doc 05 promised and never wrote (2026-09-13).** Ten tables, one security-invoker view, thirty functions. `core.events` is the business record and is append-only by revoke, by a row trigger AND by a statement-level `BEFORE TRUNCATE` trigger — a row trigger does not fire for `TRUNCATE`, so before that the guarantee was defeated by one statement. `C-09` is answered by exactly one narrow exemption: `app.redact_event_actor` writes its own audit row and the append-only trigger re-derives from the row that the change was a redaction and nothing else, so PDPA erasure has a path and only that path. `C-08`, the poison pill, is closed on both lanes — `claim_jobs` will not hand out a job at `max_attempts` and `reap_jobs` dead-letters it instead of returning the lease — which is what stops a handler that OOMs the isolate re-pushing the same invoice to the accounting package forever. `H-12` and `M-14`: `fail_job` and `heartbeat_job` now check tenant, state AND owner, so worker A cannot dead-letter or extend a job worker B is running; the race is pinned end to end, not asserted. `H-16` gives the claim per-tenant fairness by `row_number() OVER (PARTITION BY tenant_id)`, proved by flooding fifty jobs from one tenant and watching the other's single interactive job still come back. `M-20`: a provider idempotency key is `<subject>#<attempt>` from a stored counter, never the job id, so replaying a dead-lettered push cannot submit the same invoice twice. **The seam with 011 is one enum and one raising function**: `app.effect_status` is reused by oid, the outbox's own state vocabulary is deliberately different, and `app.effect_status_for_job_state` raises on anything but SUCCEEDED and DEAD (R14). Spine untouched — 012 wires the envelope's external effects to a queue without changing the envelope. |
-| 011 | `011_action_envelope_and_policy_gate.sql` | **The write spine: the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry (2026-09-13).** Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions. Every primary button and every agent proposal in the product passes through `app.perform_action`, which is evaluated once, logged once, and dispatched to exactly one of EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED; the policy input is derived from stored rows and never trusted from the payload. New capability ships as a new action *type* plus a handler registered in data, never as a branch inside the envelope. **Second spine, and the one this migration makes real: `core.state_transitions`.** A status is no longer something a caller types into a column — 124 registry rows say which edges exist and which action authorises each, and `app.enforce_state_transition` is attached to every gated column that exists. That is what invalidated six committed pins, and repairing them is what found a defect in 008 and three missing edges in doc 01 §5.3. Seven critic findings are closed with an assertion each: `H-02` the agent cannot grant itself autonomy (the one RLS policy deliberately landing before 014, `AS RESTRICTIVE FOR ALL` in both clauses so INSERT and DELETE are covered); `H-03` self-approval, including the NULL requester, because `NULL IS DISTINCT FROM <uuid>` is TRUE and that is the fraud; `H-04` a NULL role raises before the authorisation disjunction instead of falling through it; `H-05` money-moving actions check `app.aal2_verified()`, grounded in an `auth.sessions` row GoTrue wrote rather than a claim the caller presents; `H-07` all three holes; `M-12` a NULL ceiling raises instead of permitting; `M-21` an idempotent replay returns the original body with 200. Nothing is granted to `anon` or `authenticated` — the `C-04` grant-sequencing residue is carried to 014, where policies and grants land together. Spine: this IS the spine, and it is pinned hardest. |
+| 019 | `019_pipeline_provisioning.sql` | **Per-tenant pipeline provisioning: the dedicated seed pack 016 asked for, split out of 018 (2026-09-13).** One table (`app.seeded_pipelines`), four `app` functions, one trigger on `public.tenants`, two rows in 016's `app.tenant_seed_checks`, and a backfill. No enum value; no existing function, view, policy or grant modified. **A tenant had no lifecycle**: `core.pipelines` and `core.pipeline_steps` exist from 004 and nothing in 001–018 put a row in either, so `core.navigation` and `core.get_pipeline_config` returned an empty stage list for every tenant. 016 named the owner — *"it belongs in a pack that can cite `docs/architecture/01` §5.3 per row. **Owner: 018 or a dedicated seed pack.**"* — 018 took it and should not have. **The trigger name is load-bearing**: per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER, and `core.pipelines` carries `trg_pipelines_ref` → `core.assign_ref('PIP')`, which raises without 016's ref format, so `trg_tenants_z_seed_pipelines` must sort after `trg_tenants_seed_ref_formats`; the `z` is not decoration and V1b asserts it. **The backfill RAISES naming every tenant it could not seed** rather than warning — it used to swallow a foreign-key violation and finish green, leaving a tenant whose shell opened on an empty stage list that read as configuration. **And the seed is REVERSIBLE**, which is the whole reason it is a pack of its own: `app.seeded_pipelines` records every row the seed actually inserted (a row that already existed under the same derived id was never inserted and is never recorded), `app.unseed_pipelines()` deletes exactly those and refuses with a count and the blocking constraint names when live data references any of them, and the rollback calls it before dropping the mechanism. Without that, rolling back left `pipelines_one_default_uq` rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. Registered in `app.tenant_seed_checks` so `app.provision_tenant` refuses a tenant whose lifecycle did not land. ⚠ **Forces a fixture amendment in every pin that inserted its own default `ENGAGEMENT` pipeline** — test_008 and test_009 are amended in this pack's commit; test_016 and test_017 on `cloud/migrations` are owed at rebase. |
+| 018 | `018_golden_path_rpcs.sql` | **The golden-path RPC pack: 30 `SECURITY DEFINER` read/write RPCs in `core`, three `security_invoker` views, fourteen internal `app._*` helpers, and the per-tenant pipeline seed (2026-09-13).** No table, no enum value, no policy; no existing function, view or grant modified. **The envelope is the contract**: every body returns through `app.ok`/`app.err` or refuses through a `TRNOS` raise, `data` stays the sole non-`success` key so the client's auto-unwrap does not flip to pass-through, and `list_approvals` puts `groups` BESIDE `data` one level down rather than beside the envelope. **Reads refuse with `app.err`, writes with `RAISE … TRNOS`** — six functions write, and a committed refusal after a write is the defect that rule exists to prevent. **One keyset engine, not five**: `app._keyset_scope` counts off the filter-only predicate and returns the keyset-extended one, `app._next_cursor` asks the table whether a row exists past the page, and the five list RPCs call both — which is what makes "count before keyset" and "null at the end" unavailable to a caller rather than repeated correctly in five places. **One saved-view resolver**: `app._view_filters` gates on `core.saved_view_object`, so the three lists whose object has no enum value REFUSE `p_view` with `UNSUPPORTED_VIEW_OBJECT` instead of dropping it. **`regenerate_proposal_section` enqueues through 012**: `app.emit_event` carries the run id into `app.outbox` via one global `app.event_subscriptions` row (routing is data, 012's own rule), and the RPC refuses `REGENERATE_NOT_ROUTED` rather than returning 200 with nothing queued. **The pipeline seed** is a ⚠ **The per-tenant pipeline seed is NOT in this pack** — it was, and the review was right that it did not belong. A trigger on `public.tenants` plus a cross-tenant backfill is a repo-wide semantic change, and shipping it as a subsection of a file whose stated subject is read and write RPCs put its irreversibility in a footnote instead of under review; the cost was measurable, four earlier packs' pins. It is now **019**. What remains here is the DEPENDENCY: `core.navigation` and `core.get_pipeline_config` render stages FROM `core.pipeline_steps` and inline no stage list, so without 019 both return an empty stage list and `test_018` is run against 001–019. **014 yields three wrappers to 018 and 018 yields them back**: `perform_action`, `decide_approval` and `bulk_decide_approvals` are 014's, asserted here and not redefined. Stage names and order render from `core.pipelines`/`core.pipeline_steps` in both `navigation` and `get_pipeline_config`; no stage list is inlined. ⚠ **Adds three `core` view grants.** They are asserted by `test_018` T38, and `test_014`'s exact count stays at **121** by excluding 018's three views by name — 014's pin must pass at 014, and a count a later pack bumps is a running total of the schema rather than 014's own pin. That condition is three migrations old rather than 018's invention: the same file's T1a already read "116 tables, 113 from 014 + 3 from 017" before this pack existed. 018 stops extending the pattern. |
+| 017 | `017_baseline_amendment.sql` | **The amendment pass: nine PUBLIC grants nobody intended, seven unconstrained jsonb columns, two wrong numeric precisions, and the regulatory shape the September research says the baseline is missing (2026-09-13).** Three tables, four functions, two views, nine REVOKEs, seven CHECKs, two type changes, eight columns. The most dangerous migration in the pack — every statement runs against a table that may hold rows and two change a column's TYPE. **The nine PUBLIC EXECUTE grants**: 001 measured that `ALTER DEFAULT PRIVILEGES … REVOKE … FROM PUBLIC` does not take and named per-object REVOKE as the real guard; nine 007/009 functions slipped through. Eight are triggers (harmless), **`core.apply_rule_offset` is not** — it is the date arithmetic behind every HRD Corp deadline and the only one PostgREST will call. **014 is what made it urgent**, by granting `USAGE ON SCHEMA core`. **R-JSONB on the last seven columns, TYPE HALF ONLY and said so**: none has a consumer declaring keys, and inventing them would freeze a shape nobody agreed; the type half still refuses `"hello"`, which survives every not-null guard and breaks the first `->>`. **`quotations.margin_rate` bare `numeric` → `numeric(6,4)`** to match the two neighbours it is compared against in the below-floor decision, with a guard that REFUSES rather than rounds, because a rounded margin can cross the floor that decided whether an approval was needed. **SST is `core.tax_policies`** — bitemporal like 009, tenant-scoped with a national fallback, rates in basis points (argued against root CLAUDE.md's numeric, which governs the rate on a DOCUMENT), Group G 8% taxable as the default and Education Act exempt selectable, both seeded PROPOSED, and `app.resolve_tax_policy` RAISES rather than returning a zero rate. Quotations finally get SST, GENERATED on the summed net, with the exemption unusable without a written reason. **PDPA**: consent `purpose` + `notice_version` with the legacy marker forbidden for new rows; retention policies that approve rather than delete (which is why 015 leaves four reapers unscheduled); a breach register whose 72-hour and 7-day clocks are GENERATED so they cannot be edited, ⚠ with `retained_until` left unset because the research flags the 2-year figure UNCONFIRMED. **Three HRD Corp deadlines, all PROPOSED** — 5-day query (the application EXPIRES; a recommended addition absent from Appendix B), 90-day commencement, 6-month claim (unconfirmed, seeded and flagged). **HRD-TDF gains an expiry date** and the corrected citation, Circular 6/2024 not 2/2026. **And `core.retrieve_knowledge` with `SET LOCAL hnsw.iterative_scan = relaxed_order`** — there was no retrieval RPC at all, the setting defaults to `off`, and under a tenant filter an HNSW scan then returns FEWER THAN k rows with no error; T10 measures k=10 for a tenant holding ~2% of the corpus. Four defects found by executing: `timestamptz + interval` is STABLE so the clocks needed a UTC pivot; `SET LOCAL` is refused in a non-volatile function at CALL time; the check keys needed 016's provisioning shape rather than a `CROSS JOIN public.tenants` that seeds nothing; and `ADD CONSTRAINT` has no `IF NOT EXISTS` for the third time in this pack. Spine untouched. |
+| 016 | `016_seed_and_tenant_provisioning.sql` | **Tenant provisioning: the `core.ref_formats` rows every pin since 011 has been faking, derived from the triggers that consume them (2026-09-13).** Two functions, one trigger, no table, no type, no policy. `core.next_ref()` raises when a tenant has no format for a prefix, 32 `core` tables carry an `assign_ref` trigger, and **no migration seeded any of it** — 013's catalog carries it as a standing condition and ten pins hand-seed around it, which means no pin had ever exercised the path a real customer takes. T2 is that path: one INSERT into `public.tenants`, no fixture, a real `ORG-0001` out of the trigger. **The seed is DERIVED from `pg_trigger`, not transcribed**, and the reason is measured: reading the migrations for `finalise_table(…,'PREFIX')` yields 27 prefixes, the truth is 32, and the five missed (`ATT`, `PIP`, `SIG`, `SVW`, `TPL`) are missed because their calls wrap across lines — a hand list would have shipped complete-looking and left attachments, pipelines, signatures, saved views and templates unwritable until somebody saved a view in production. Every trigger's `TG_ARGV[0]` is the same string `next_ref` receives, so seed and consumer are one list by construction; T1 asserts all five missed prefixes by name. **Provisioning is an AFTER INSERT trigger on `public.tenants`, matching 011's `trg_tenants_seed_action_policies`** rather than inventing a second shape — a script only covers the path somebody remembered to run it on. `app.provision_tenant()` adds no second implementation and REFUSES to return a tenant whose seeding did not fire; T3 proves it by disabling the trigger. **Idempotence leaves existing rows alone rather than overwriting**, because `ref` is immutable and flipping `dated` would split a customer's numbering in half; T4 corrupts a format, re-seeds, and asserts it was not "repaired". Ten pins amended to `ON CONFLICT … DO UPDATE` so each keeps its own fixture shape. ⚠ **Not seeded, deliberately:** `pipelines`/`pipeline_steps` (seeding them means hardcoding fifteen stage names, the exact defect both CLAUDE.md files forbid — **owner 018; a new tenant renders no pipeline until then**), the HRD Corp registry (national rows, and the research requires `status = 'PROPOSED'` pending a named Finance verifier — 017's), and rate cards/templates (customer data). Spine untouched, pipeline spine deliberately untouched. |
+| 015 | `015_realtime_and_cron_schedules.sql` | **The scheduler: two pg_cron jobs, and the seven the design listed that are deliberately not here (2026-09-13).** One function, two jobs, no table, no type, no trigger, no policy. Ruling R-B — background work is the Node worker at `apps/worker` polling `app.claim_jobs`; pg_cron covers `reap_jobs` and cron-history retention only; **no pg_net nudges**. ⚠ This contradicts current Supabase docs, which document `cron.schedule` → `net.http_post` → Edge Function as supported; the header records that in full and overrules it on R-A (this product has no Edge Functions, so the far end of the nudge does not exist) rather than on technical grounds. Net effect: nothing in this database makes an outbound HTTP request, and pg_net's beta caveats stop being the product's problem. **`trainos_reap_jobs` is ONE job at `'30 seconds'`** — sub-minute is native, so doc 05's tick is not six staggered jobs each sleeping an offset. Its command is the pack's only new object, `app.reap_jobs_all_tenants()`: 012's `H-16` made the CLAIM tenant-fair, but the REAPER takes a flat LIMIT across all tenants ordered by time, so one tenant with a dead provider starves every other tenant's expired leases — the same defect through the recovery path. T3 measures the fix with Alpha at 50 leases, Beta at 1 and a budget of 10 each, plus a control proving a single-tenant reap really is single-tenant. **`trainos_reap_cron_history` daily at 03:17** because `cron.job_run_details` is never purged automatically **and is not cleared when a job is unscheduled**; ⚠ the 7-day window is 012's unsourced judgement, stated as such, and T4 proves it at 6 and 8 days. The seven unscheduled jobs each carry a reason — four retention sweeps wait on 017's `data_retention_policies` because deleting on an unapproved window is worse than not deleting, and two have no function to schedule at all. Scheduling a missing function is worse than not scheduling it (pg_cron logs and never raises), so verify and T1 resolve every command through `to_regproc` and T5 EXECUTES both. ⚠ **Realtime is deliberately untouched**: RLS on `realtime.messages` is already on and the schema locked, and the only migration-shaped additions need the topic vocabulary, which nothing in the product has yet. Carried forward: Realtime caches policies for the life of a connection, so a revoked permission does not close a live socket. ⚠ The harness's pg_cron is a stub that runs nothing; registration is pinned, firing is not. Spine untouched. |
+| 014 | `014_rls_policies_and_client_grants.sql` | **The database stops being deny-all: 228 RLS policies, the client grant layer, and the three `core` wrappers over the 011 envelope (2026-09-13).** One function, 115 policied relations, zero tables, zero types, zero triggers. **The pack is `app.apply_tenant_policies()` plus a catalogue-driven loop**, not 114 hand-written blocks — 004's `finalise_table` argument applied to the policy layer, where it is stronger, because a policy typo applies successfully and admits the wrong rows. Two policies per table: a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy with the predicate in USING *and* WITH CHECK, so tenant isolation cannot be widened by adding a policy beside it and is already correct on the day somebody grants a write. **`authenticated` gets SELECT and nothing else on `core`** — the spine rule enforced at the privilege layer, since a browser with UPDATE on `core.proposals` can move it with no action_request, no policy evaluation and no audit row; T9 proves the refusal is `42501` and not a policy matching zero rows, which would report success. **The global-row fallback is DERIVED from `attnotnull`, never listed**, so 009's national rules stay visible to every tenant and a NOT NULL table cannot accidentally get the permissive form. **Three defects found by granting rather than by reading:** `app.require_tenant_id` was not executable by `authenticated`, so every finished policy ERRORED instead of denying (a policy predicate runs as the querying role; 002 had granted the other four claim readers and missed this one because nothing used it yet); `core.rule_set_versions` has no tenant index because 009 hand-rolled it past `finalise_table`, caught by a check written as a regression test on 004 and fired on 1 relation in 114; and `core.budget_status`/`core.model_tier_status` are security-invoker views over `app.usage_rollup` and therefore **cannot be granted at all** — both are revoked with the reason, and the AI budget screens have no data path until 018. `core.v_approval_requests` stays ungranted per doc 09 §12 and T7 pins that it is readable through a definer and refused directly. Six earlier pins amended in place from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014; one draft change (revoking `anon`'s `app` USAGE) was caught by test_011 T13b as a regression against 011's M-04 and reverted. Spine untouched — and this is the migration that makes bypassing the spine impossible rather than discouraged. **⚠ AMENDED 2026-09-13 after the retrofit review returned BLOCK** (`docs/reviews/2026-09-13-codex-retrofit-014-017.md`, 2 CRIT / 4 HIGH / 5 MED, every premise re-verified against the branch and none wrong). Both CRITs and three of the four HIGHs are closed, each with a pin that fails against the pre-fix SQL; the fourth HIGH is carried because its fix is in `apps/web` and `packages/contract`. Corrections that change what this row said: the DELETE on `public.memberships` is gone (002 withheld it and its escalation stop is FOR UPDATE only, so the grant was a role-escalation path); the restrictive policy's predicate is NO LONGER the same string in USING and WITH CHECK — the global-row fallback is a READ concession only, because sharing it with WITH CHECK would have let any caller write a row attributed to no tenant and therefore visible to every tenant; the counts are 228 policies over 115 relations and 2 views granted, not 235/115/4; three tables (`ai_provider_keys`, `run_node_io`, `public_share_tokens`) carry a permission term in their restrictive half because tenant membership is not authorization there, and the other 110 deliberately do not; every grant assertion now uses `has_table_privilege` rather than `information_schema.table_privileges`, which is blind to a privilege held through PUBLIC; and the rollback both restores 002's five `public.*` grant sets and stops revoking 001:232's `USAGE ON SCHEMA core`, a third destroyed grant found by executing the rollback rather than by either reviewer. Full findings table in the Migration Detail section. |
+| 013 | `013_ai_ops_agents_keys_runs_and_budgets.sql` | **AI operations: the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree and evals (2026-09-13).** Nineteen tables, two security-invoker views, twenty-nine functions, zero policies, zero new types. **`core.runs` settles the `run_id` divergence by reconciliation rather than by retyping**: the run has a `uuid` id AND a `ref`, so 012's text run ids resolve through `UNIQUE (tenant_id, ref)` and 007/009's uuid columns finally get the foreign keys their own comments said 013 would add. Neither side is altered and no row is rewritten. **Secrets are handled by mechanism, not by assertion**: no RPC takes a raw BYOK key at all, so it never reaches a request body, `log_min_duration_statement` or `pg_stat_activity`; the once-per-24-hours reveal ceiling is the PREDICATE of an UPDATE so two concurrent reveals cannot both pass; the audit row is written first and a trigger re-derives that it exists, so a reveal whose audit fails takes the transaction with it. The agent key is minted in the database from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach it through `select=*` or an embed, which is what `H-09` asked for and is stronger than omitting a column from a grant. Every security path is shaped to FAIL CLOSED under the carried FORCE-with-no-policy residue: a `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" where a definer function reads zero rows, and these degrade to "always refuse". Run I/O masking is honest about its limits — the pin asserts that a person's NAME survives it, so the day masking improves, the pin says the header is out of date. Spine untouched.  **⚠ AMENDED 13 Sep 2026** after the same review returned BLOCK. BYOK rotation had never worked: `app.require_reveal_audit` treated rotations clearing of `last_revealed_at` as an unaudited reveal, and `key_fingerprint` was in the frozen-column set so rotations own UPDATE was refused outright. Both fixed; the fingerprint is now paired to `key_ref` by a dedicated trigger instead of frozen. New pin T14 walks set → reveal → rotate. |
+| 012 | `012_events_outbox_and_jobs.sql` | **Domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhooks and the retention reapers doc 05 promised and never wrote (2026-09-13).** Ten tables, one security-invoker view, thirty functions. `core.events` is the business record and is append-only by revoke, by a row trigger AND by a statement-level `BEFORE TRUNCATE` trigger — a row trigger does not fire for `TRUNCATE`, so before that the guarantee was defeated by one statement. `C-09` is answered by exactly one narrow exemption: `app.redact_event_actor` writes its own audit row and the append-only trigger re-derives from the row that the change was a redaction and nothing else, so PDPA erasure has a path and only that path. `C-08`, the poison pill, is closed on both lanes — `claim_jobs` will not hand out a job at `max_attempts` and `reap_jobs` dead-letters it instead of returning the lease — which is what stops a handler that OOMs the isolate re-pushing the same invoice to the accounting package forever. `H-12` and `M-14`: `fail_job` and `heartbeat_job` now check tenant, state AND owner, so worker A cannot dead-letter or extend a job worker B is running; the race is pinned end to end, not asserted. `H-16` gives the claim per-tenant fairness by `row_number() OVER (PARTITION BY tenant_id)`, proved by flooding fifty jobs from one tenant and watching the other's single interactive job still come back. `M-20`: a provider idempotency key is `<subject>#<attempt>` from a stored counter, never the job id, so replaying a dead-lettered push cannot submit the same invoice twice. **The seam with 011 is one enum and one raising function**: `app.effect_status` is reused by oid, the outbox's own state vocabulary is deliberately different, and `app.effect_status_for_job_state` raises on anything but SUCCEEDED and DEAD (R14). Spine untouched — 012 wires the envelope's external effects to a queue without changing the envelope.  **⚠ AMENDED 13 Sep 2026** — no change to 012 itself; 011 now calls its `app.enqueue_effect_jobs`, which had no production caller. See the 011 row. |
+| 011 | `011_action_envelope_and_policy_gate.sql` | **The write spine: the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry (2026-09-13).** Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-eight functions. Every primary button and every agent proposal in the product passes through `app.perform_action`, which is evaluated once, logged once, and dispatched to exactly one of EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED; the policy input is derived from stored rows and never trusted from the payload. New capability ships as a new action *type* plus a handler registered in data, never as a branch inside the envelope. **Second spine, and the one this migration makes real: `core.state_transitions`.** A status is no longer something a caller types into a column — 124 registry rows say which edges exist and which action authorises each, and `app.enforce_state_transition` is attached to every gated column that exists. That is what invalidated six committed pins, and repairing them is what found a defect in 008 and three missing edges in doc 01 §5.3. Seven critic findings are closed with an assertion each: `H-02` the agent cannot grant itself autonomy (the one RLS policy deliberately landing before 014, `AS RESTRICTIVE FOR ALL` in both clauses so INSERT and DELETE are covered); `H-03` self-approval, including the NULL requester, because `NULL IS DISTINCT FROM <uuid>` is TRUE and that is the fraud; `H-04` a NULL role raises before the authorisation disjunction instead of falling through it; `H-05` money-moving actions check `app.aal2_verified()`, grounded in an `auth.sessions` row GoTrue wrote rather than a claim the caller presents; `H-07` all three holes; `M-12` a NULL ceiling raises instead of permitting; `M-21` an idempotent replay returns the original body with 200. Nothing is granted to `anon` or `authenticated` — the `C-04` grant-sequencing residue is carried to 014, where policies and grants land together. Spine: this IS the spine, and it is pinned hardest.  **⚠ AMENDED 13 Sep 2026** after docs/reviews/2026-09-13-codex-retrofit-011-013.md returned BLOCK. Three changes: `app.apply_effects` now CALLS `app.enqueue_effect_jobs`, which nothing outside a test pin had ever called — every external effect was written DISPATCHED and never sent; `app.perform_action` now requires the actor to hold `app.action_types.required_permission` before dispatch, closing a HUMAN path that had no permission check at all when no policy row matched; and `app.effect_applier` is cleared at the end of `apply_effects`. New pins T16 and T17. |
 | 010 | `010_finance_invoices_payments_collections.sql` | **Invoices, payments, credit notes, the e-invoice mirror, receivables aging and the collections ladder (2026-09-13).** Ten tables. Total-from-lines reuses 007's pattern rather than inventing a second one — the line amount is GENERATED, an AFTER trigger recomputes the header, a DEFERRABLE constraint trigger asserts at COMMIT — and extends it: `sst_sen` and `total_sen` are GENERATED too, so a wrong total is unrepresentable rather than merely rejected. **SST is computed on the summed net**, and the pin proves that is not pedantry: three lines at RM 333.33 at 8% give 8,001 sen per-line and 8,000 sen on the summed net. **Payments are append-only**, enforced by a trigger that refuses UPDATE and DELETE; a correction is a reversal row with a reason, because a signed amount column would let a correction be entered as an ordinary payment and vanish into the total. **Critic C-11 is answered**: the e-invoice mirror separates the document UUID from the submission UID, carries the QR long id, a status vocabulary that can express SUBMITTED_PENDING_VALIDATION and CANCELLED, structured per-field validation errors with a key-presence CHECK, per-line classification and UoM codes, self-billed and consolidated flags, a supplier tax profile and buyer identifiers — and enforces the **statutory 72-hour cancellation window**, proved at 71 and 73 hours. Credit notes are the legal exit from a mistake on a filed invoice and cannot exceed it. Aging buckets and the 7/30/45/60/75 ladder are DATA with a GiST exclusion and two CHECK constraints that make "reminder 3 is always human" and "a trading hold needs MD" unrepresentable. Spine untouched. |
 | 009 | `009_compliance_rules_checks_hrdc.sql` | **The bitemporal HRD Corp rule registry, rule-change review, checks with version drift, claim packets, knowledge corpus (2026-09-12).** Twelve tables. Rules carry two time ranges — in force, and known — so re-running a check on an old engagement resolves what the registry said THEN rather than silently re-deciding it against today. A GiST exclusion constraint over both axes makes "which rule applied on this date as known on that date" have exactly one answer. Rules are national by default (`tenant_id NULL`) with optional tenant overrides that win locally and nowhere else; there is deliberately no platform-admin role, so writing a national rule is a provisioning act. A rule cannot go ACTIVE without a named verifier, per DECISIONS §3. A packet cannot be marked SUBMITTED while incomplete — contract §9's 422 expressed where an application cannot route around it — and a required document marked PRESENT must have something behind it. A changed knowledge source is quarantined by constraint. Spine untouched. |
 | 008 | `008_delivery_engagements_sessions_attendance.sql` | **Delivery, and the one-way attendance lock (2026-09-12).** Engagements with a configuration-driven lifecycle, sessions, participants, attendance, certificates, evaluations, message rates and outbound messages. The attendance lock is enforced on the day AND its entries, because the rule is about the day and the writes happen to the entries. Locking forces all three capture modes false so the response cannot contradict the rule. Unlocking requires a reason, clears the approval, reopens capture and increments a counter the caller cannot set. `engagement_step_states` stores no step key and no position — both come from `pipeline_steps`. Participants' identity numbers are stored as a hash plus last four, never the number. A sent message cites the consent row it relied on by foreign key. Closes the two FKs 006 and 007 left open. Spine untouched: `ATTENDANCE_APPROVE` and `ATTENDANCE_UNLOCK` are action types 011 will dispatch; this is what makes the lock real when it does. |
@@ -346,12 +412,725 @@ re-applied, verify green each time.
 
 ---
 
-## Migration Detail — 014 (`014_rls_policies_and_client_grants.sql`)
+## Migration Detail — 019 (`019_pipeline_provisioning.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13 against a PostgreSQL 17.11 shim, NOT APPLIED to any
+hosted database.**
+**Split out of 018 after the thermonuclear review's M4.** Everything here was inside
+`018_golden_path_rpcs.sql`; nothing in it is new work, and the split is the fix.
+
+### Why it is its own pack
+
+A provisioning trigger plus a cross-tenant backfill is a repo-wide semantic change. Shipping it
+as a subsection of a file whose stated subject is read and write RPCs put its irreversibility in
+a footnote instead of under review, and the cost was measurable rather than theoretical: a
+default `ENGAGEMENT` pipeline per tenant collides with `pipelines_one_default_uq` in four earlier
+packs' fixtures. 016 had already named the owner and 018 took it anyway.
+
+### What it does
+
+- **§1** `app.seeded_pipelines` — the ledger. `row_kind`, `tenant_id`, `row_id`, keyed
+  `(row_kind, row_id)`. RLS enabled, **not forced**, no client grant: `app` is not exposed and
+  the guard is the grant layer, while FORCE would remove the owner's exemption and a definer
+  whose owner lacks `BYPASSRLS` would silently record nothing. 012 measured that same mechanism
+  on `app.job_type_map`.
+- **§1** `app.seed_pipelines(uuid)` — two pipelines, sixteen steps, every stage name carrying its
+  citation, ids derived as `md5(tenant || 'pipeline:' || object[ || ':' || step_key])`, and each
+  inserted row recorded in the ledger by a data-modifying CTE so `RETURNING` yields only what was
+  actually written.
+- **§1** `app.unseed_pipelines()` — the reversal. See below.
+- **§1** `app.seed_pipelines_all()` — the backfill loop, a FUNCTION rather than an inline `DO`
+  block precisely so the pin can call it.
+- **§1** `app.seed_pipelines_on_tenant()` + `trg_tenants_z_seed_pipelines` on `public.tenants`.
+- **§1** Two rows in `app.tenant_seed_checks`, guarded on that registry's existence.
+- **§2** `$verify$` — trigger present and correctly ordered, every tenant carrying a lifecycle,
+  ledger consistent, four definer functions unreachable from a client role, and the readers still
+  rendering from rows.
+
+### Reversibility, which is the subject of this pack
+
+The first version of this seed kept the rows on rollback. Afterwards the mechanism was gone, so
+there was **no supported way to undo the seed at all**, and `pipelines_one_default_uq` went on
+rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. A rollback that leaves a
+repo-wide constraint change in place is not a rollback.
+
+`app.unseed_pipelines()` deletes exactly the rows the seed recorded inserting, **steps before
+pipelines** (`pipeline_steps_pipeline_fk` is `ON DELETE CASCADE`, so the other order would take a
+tenant's own steps with it), and refuses with the **count and the blocking constraint names**
+when live data references any of them — deleting nothing when it refuses. It also refuses a
+seeded pipeline carrying a step 019 did not seed.
+
+Measured end to end:
+
+```
+tenant inserted   pipelines/steps 2/16, ledger 18 rows
+rollback          "019 rollback: 18 seeded pipeline/step row(s) removed"
+after             pipelines/steps 0/0, ledger and mechanism gone
+and               INSERT of a default ENGAGEMENT pipeline -> INSERT 0 1
+re-apply          backfill re-seeds the surviving tenant, verify green
+```
+
+⚠ **R1 replaces a check that watched the wrong object.** Its predecessor, R4 in 018's rollback,
+queried `pg_trigger` for **016's** `trg_tenants_seed_ref_formats` and never read a pipeline table
+at all, while two comments and a closing `RAISE NOTICE` both announced that it verified pipeline
+rows. R1 re-derives 019's ids and counts surviving rows in both tables — re-deriving rather than
+reading the ledger, because that asks the question from outside the bookkeeping meant to answer
+it.
+
+### Pin — `tests/test_019_pipeline_provisioning.sql`
+
+T1 a tenant insert provisions a lifecycle; T2 the backfill raises and names every tenant it could
+not seed; T3 the seed is reversible, exactly. Self-contained fixtures — its own tenant,
+organisation, programme and engagement — so it does not depend on another pack's fixture
+surviving a reordering. Ends in `ROLLBACK`.
+
+### ⚠ The fixture amendments this pack forces
+
+A default `ENGAGEMENT` pipeline per tenant is a repo-wide fact, so every pin that inserted its own
+default one now hits `pipelines_one_default_uq`. Two are amended in this pack's commit and two are
+owed:
+
+- **`test_008`** — `is_default` on its `'Standard delivery'` pipeline flipped `true` → `false`.
+  The pin does not assert `is_default` and only needs a pipeline to hang an engagement off.
+- **`test_009`** — the same flip, plus `AND pl.name = 'std'` on an `INSERT … SELECT` that was an
+  **unconstrained cross join** over `core.pipelines`. With three pipelines it wrote three
+  engagements and `RETURNING … INTO` kept an arbitrary one. That cross join is a pre-existing
+  defect 019 merely made reachable, and is worth its own ticket against 009.
+- ⚠ **`test_017` on `cloud/migrations`, OWED.** Same edit as 008: line 87,
+  `'ENGAGEMENT','Standard delivery', true,'ACTIVE'` → `false`. Its newer version is not on this
+  branch.
+- ⚠ **`test_016` on `cloud/migrations`, OWED, and it is not the same edit.** T7b computes its
+  delete set as ref_formats with **no `core.ref_sequences` row**. 019's seed inserts a pipeline,
+  `trg_pipelines_ref` calls `core.assign_ref('PIP')`, and that allocates a `PIP` sequence — so
+  `PIP` drops out of the set and 32 becomes 31. The mechanism is recorded here rather than a fix
+  guessed at: whether `v_matched` should drop the `NOT EXISTS (ref_sequences)` clause or
+  `v_seeded` should be computed the same way is 016's author's call.
+
+### Deliberately NOT built
+
+- **No enum value, no table in `core`.** `core.pipelines` and `core.pipeline_steps` are 004's.
+- **No stage list on the read side.** 019 writes the rows; `core.navigation` and
+  `core.get_pipeline_config` still render from them, and V5 asserts it here as well as in 018
+  because this is the pack that could tempt someone to hardcode the list to "match the seed".
+
+### ⚠ Carried risk
+
+- **Deploy order: after 016, always.** The trigger name carries the dependency and V1b asserts
+  it.
+- **018's behaviour depends on this pack**, so `test_018` is run against 001–019.
+- **A tenant that has edited its seeded stages loses those edits to a rollback**, because the
+  ledger records the row and the rollback deletes it. The refusal path only covers rows something
+  else *references*, not rows somebody *renamed*. Stated rather than discovered.
+
+## Migration Detail — 018 (`018_golden_path_rpcs.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13 against a PostgreSQL 17.11 shim with 001–018 applied,
+NOT APPLIED to any hosted database.**
+**⚠ Thermonuclear review 2026-09-13 returned BLOCK (`docs/reviews/2026-09-13-thermo-018.md`,
+5 blockers / 5 high / 8 medium / 6 low, against `fc9550c`). All five blockers are fixed and
+each carries a pin proven to fail against the pre-fix SQL; the HIGH/MEDIUM/LOW disposition is
+below and in PR #11's body.**
+
+### What it does
+
+- **§1** Fourteen internal `app._*` helpers: projection (`_money`, `_actor`, `_provenance`,
+  `_provenanced`), paging (`_cursor_encode`, `_cursor_decode`, `_page_size`), filtering
+  (`_predicate`), saved views (`_view_filters`), the keyset engine (`_keyset_scope`,
+  `_next_cursor`), introspection (`_body_sql`) and the two view bodies (`_budget_rows`,
+  `_model_tier_rows`). All `SECURITY INVOKER`, all `REVOKE ALL FROM PUBLIC, anon, authenticated`.
+- **§2** The three 011 gate wrappers are asserted, NOT redefined: 014 owns them.
+- **§3–§10** 30 RPCs in `core` — identity and shell (`me`, `navigation`, `badge_counts`),
+  sales (`list_enquiries`, `get_enquiry`, `patch_enquiry_extraction`, `list_follow_ups`,
+  `get_follow_up_draft`, `get_organisation`, `get_opportunity`, `get_contact`, `get_tna`,
+  `get_tna_recommendations`), money (`create_proposal`, `list_proposals`, `get_proposal`,
+  `add_proposal_section`, `put_proposal_section`, `regenerate_proposal_section`,
+  `list_quotations`, `get_quotation`, `put_quotation`, `get_rate_card`), approvals
+  (`list_approvals`, `get_approval`, `get_audit`) and configuration (`get_policy`,
+  `get_pipeline_config`, `get_programme`, `get_compliance_rule`).
+- **§9b** `core.v_organisation_relations`, `security_invoker = true`.
+- **§10c** `core.v_budgets` and `core.v_model_tiers` — 014's carried defect, taken with a
+  different shape than 014 prescribed and the reason measured rather than preferred: 014
+  proposed an RPC, but `RPC_NAMES` in `rpcClient.ts` contains no name for either on any
+  branch and the client reads both through `VIEW_READS`, so an RPC would have been a function
+  with zero call sites while the screen stayed broken. A view wearing the name the client
+  already asks for, whose body goes through a `SECURITY DEFINER` function, is 014's mechanism
+  with the caller's own spelling.
+- **§10d** One global `app.event_subscriptions` row routing
+  `PROPOSAL_SECTION_REGENERATE_REQUESTED` → `AI_DRAFT_PROPOSAL_SECTION`.
+- **§10e MOVED TO 019.** The ledger, the four seed functions, the trigger, the
+  backfill and the registry rows are all `019_pipeline_provisioning.sql` now.
+  018 creates no table.
+- **§10f** `regenerate_proposal_section` reaches the worker through **012's
+  event path, not 011's envelope**, and the choice is measured rather than
+  preferred. `app.perform_action` gates on `app.action_types` and plans effects
+  through `app.plan_effects`; there is no action type for regenerating a
+  proposal section, and 018 may not add one to 011's global catalogue or teach
+  011's planner a branch — so `perform_action` would refuse and
+  `enqueue_effect_jobs` would enqueue zero. `app.emit_event` writes the event,
+  its subject rows and one job per enabled subscription in the caller's
+  transaction and carries `p_run_id`, which is what `app.outbox.run_id` and
+  `outbox_run_idx` exist for. Routing is data (012's own words on
+  `app.event_subscriptions`), so §10d's single global row is an INSERT rather
+  than an edit to 012, and the RPC refuses `REGENERATE_NOT_ROUTED` rather than
+  returning 200 with nothing queued. Ruling R-B is satisfied: no model call and
+  no `pg_net` in the request.
+- **§11** Grants. `authenticated` gets EXECUTE on the 30 and SELECT on the three views.
+  Deliberately NOT granted: `app.perform_action`, `app.decide_approval`, `app.bulk_decide`,
+  `app.ok`, `app.err`, `app.require_tenant_id`, `app.current_actor`, and
+  `core.v_approval_requests` (011:1428 — it carries every approval's diff and evidence
+  regardless of approver role).
+- **§12** `$verify$` — existence, overload count, posture off `proconfig`, grants off
+  `has_function_privilege`, and the doc 09 pins as executed assertions.
+- **Spine untouched.** The envelope is reached only through `core.perform_action`, a
+  one-expression wrapper over `app.perform_action`. No branch is bolted into the gate.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope.** Success `{success,data}` from `app.ok`; failure `{success,error}` from
+   `app.err`, or a `TRNOS` detail bag `classifyTransportFailure()` parses. Zero hand-built
+   envelopes — `test_018` T20d asserts that off the stored bodies, not off the DDL text.
+2. **Unwrap.** `data` is the sole non-`success` key. `list_approvals`'s `groups` and
+   `summary` sit INSIDE `data`. One level up would flip every caller in the app from
+   auto-unwrap to pass-through at once — the 037 mechanism.
+3. **`RpcMap`.** 30 names and every `p_*` spelling match `RPC_NAMES`; ⚠ taken on the file's
+   word, see "could not verify".
+4. **Call sites.** Every RPC has at least one; `v_budgets`/`v_model_tiers` are read as views
+   because that is what the client actually does.
+5. **`as unknown as` casts.** None introduced by this pack.
+6. **Reload / restore paths.** The list envelopes are shape-stable across pages: `page.next`
+   is PRESENT AND NULL on the last page rather than absent, because an omitted key changes
+   the key set and the unwrap rule is sensitive to it.
+7. **Error-boundary coverage.** No new unbounded throw point on a public route.
+
+`npm run check:rpc` 0 BROKEN · `npm run check:grants` clean · `npm run lint:sql` clean.
+
+### Pin — `tests/test_018_golden_path_rpcs.sql`
+
+T0–T36. Executed against the shim, its output read, before commit; ends in `ROLLBACK` and
+writes nothing durable. Every envelope goes through `pg_temp.data(label, envelope)`, which
+raises if the RPC refused — `-> 'data'` on a refusal is NULL, and `IF NULL` takes the FALSE
+branch, so an unchecked extraction makes every assertion below it report pass. T31–T36 are
+the review-fix pins: the keyset engine, `p_view`, the regenerate enqueue, provenance tenancy,
+the backfill's refusal, and `get_proposal`/`get_quotation`, which the file had never invoked.
+
+⚠ **It does not prove behaviour under 014's RLS policies from a client role**, and T0
+measures that and says so out loud rather than leaving it implied.
+
+### Rollback — `rollbacks/018_golden_path_rpcs_rollback.sql`
+
+Inventory-complete: every object 018 creates is dropped, signature-qualified, in exact reverse
+dependency order, with no `CASCADE`. The views go before the helpers their bodies call. The one
+drop of a non-018 object — `core.decide_approval(uuid,text,text,text)` — is signature-qualified
+and cannot touch 014's five-argument function. 018's single routing row is deleted by its exact
+`(event_type, job_type)` pair, so a later pack's own handler for the same event survives.
+
+**018 writes durable rows and the rollback REVERSES them.** An earlier version dropped the
+mechanism and kept the rows, reasoning that a tenant's pipeline configuration is theirs by the
+time anyone rolls back and that `core.engagement_step_states` carries composite foreign keys
+onto them. Both halves were true; the outcome was not. After that rollback the mechanism was
+gone, so there was **no supported way to undo the seed at all**, and `pipelines_one_default_uq`
+went on rejecting a default `ENGAGEMENT` pipeline for every tenant permanently — a rollback that
+leaves a repo-wide constraint change in place is not a rollback.
+
+`app.unseed_pipelines()` now deletes exactly the rows `app.seed_pipelines` recorded having
+inserted. A row that already existed under the same derived id — the seeds lane's fixtures — was
+never recorded and is never touched, which is the case the keep-everything design was protecting,
+now protected by construction. When live data references a seeded row it **refuses with the count
+and the blocking constraint names and deletes nothing**, which aborts the whole file. It also
+refuses to delete a seeded pipeline that carries a step 018 did not seed, because
+`pipeline_steps_pipeline_fk` is `ON DELETE CASCADE` and that step would go with it.
+
+⚠ **R4 used to check the wrong object.** Its body queried `pg_trigger` for 016's
+`trg_tenants_seed_ref_formats` — a ref-format trigger with no relationship to the pipeline seed
+— while two comments and the closing `RAISE NOTICE` all announced a pipeline-row check that was
+never written. R4 now re-derives 018's ids and counts the surviving rows, asserts the ledger
+table is gone, and keeps the 016-trigger check as the separate assertion it always was.
+
+### Deliberately NOT built
+
+- **`core.me_profile()`**, which doc 09 names. Eleven `MeProfile` fields have no source in
+  001–017; a stub returning nulls is worse than an absent endpoint.
+- **A second money projection.** `put_quotation` writes lines and reads back 007's GENERATED
+  columns. No money is computed in the RPC layer.
+- **A model call.** Ruling R-A puts every LLM call behind the worker and R-B forbids `pg_net`;
+  `$verify$` V9c sweeps the whole pack for `net.http_%`.
+
+### ⚠ Carried risk and standing conditions
+
+- **Deploy order: 014 BEFORE 018.** 018's grants are idempotent and the later one wins with
+  the same result, but the merge has to check the ordering.
+- **test_014 is red between 014 and 018.** 018 adds three view grants and moves test_014's
+  exact count 121 → 124. Applying 001–014 alone and running `test_014` fails with
+  `expected 124 … Found 121`. Recorded here rather than softened to `>= 121`, because the
+  exactness is the property that catches an unintended grant; the window is real and named.
+- ⚠ **OWED TO THE §17 PACK: `core.provenance_subjects` has no `approval_requests` row.**
+  That table is a nine-row allowlist and `core.provenance.subject_table` is FK'd to it, so
+  `core.get_approval`'s §17 `modelAgreement` badge can match no row on any database as shipped —
+  the jury badge is unreachable, not merely unpinned. 018 fixed the query (tenant-correlated and
+  ordered) and `test_018` T34 adds the allowlist row as a fixture and raises a NOTICE if it ever
+  becomes real, so the day the seed lands this is visible rather than silently already-passing.
+  Seeding the row belongs to the pack that owns §17.
+- ⚠ **OWED: the pipeline seed belongs in a provisioning migration of its own** (M4). See the
+  Migration Order row for the measured cost — four earlier packs' pins — and the reason it
+  landed here.
+- ⚠ **OWED WHERE 016's REGISTRY IS ABSENT:** on a base without `app.tenant_seed_checks`, 018
+  raises a NOTICE and does not register its seed, so `app.provision_tenant` would return a
+  tenant with no lifecycle and call it provisioned. `test_018` T39 asserts the registration
+  where the registry exists and records the obligation where it does not.
+- **The `core` schema is not exposed on the hosted project** (doc 09 §0a), so none of these
+  RPCs is reachable from PostgREST until it is.
+- **False green under RLS.** Whether these definers return rows on a hosted project depends
+  on the definer owner carrying `BYPASSRLS`. T0b notices and reports it; both of its branches
+  pass, deliberately, because it is a measurement and not an assertion.
+
+## Migration Detail — 017 (`017_baseline_amendment.sql`)
 
 **Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.**
-**⚠ Codex (gpt-5.6-sol xhigh) review PENDING** — the standing ruling is that Claude drafts and
-Codex reviews; every assertion here has been executed and passes, none has been adversarially
-reviewed. Sources: `docs/architecture/09-golden-path-rpc-specs.md` §0, §1, §2 and §12 (the
+**⚠ Codex (gpt-5.6-sol xhigh) review PENDING — and this is the pack that most needs it.** 017
+changes columns 005–013 already created, including two type changes and eight added columns on
+live-shaped tables. Sources are cited per section in the file itself rather than listed here,
+because a regulatory number without a citation at the line that uses it is a number nobody can
+re-check; the six 2026-09-13 research documents are the origin of every one.
+
+### What it does
+
+- **§1** Nine `REVOKE ALL … FROM PUBLIC, anon, authenticated`, `core.apply_rule_offset` first.
+- **§2** Seven `jsonb_typeof` CHECKs, guarded and `NOT VALID` + `VALIDATE`.
+- **§3** `quotations.margin_rate` → `numeric(6,4)`, `evaluation_responses.overall_score` →
+  `numeric(4,3)` with its 0..1 bound. **§3b** the composite unique 014 deferred.
+- **§4** `core.tax_policies` + `app.resolve_tax_policy` + two seeded national policies +
+  `core.v_tax_policy_unverified`.
+- **§5** Quotation SST, mirroring 010's vocabulary; `invoices.sst_policy_id`.
+- **§6** `contact_consents.purpose` + `notice_version`.
+- **§7** `core.data_retention_policies`, `core.data_breach_register`.
+- **§8** Three HRD Corp rules, and the check keys through a provisioning trigger.
+- **§9** `trainers.hrd_tdf_valid_to` + `core.v_trainer_accreditation`.
+- **§10** `core.retrieve_knowledge` with `SET LOCAL hnsw.iterative_scan = relaxed_order`.
+- **§11** 014's policy posture applied to the three new tables by CALLING
+  `app.apply_tenant_policies`, not by hand.
+- **Spine untouched.**
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — `core.retrieve_knowledge` is the one client-callable function and it returns
+   a TABLE rather than an `app.ok` envelope. Stated rather than glossed: it is a retrieval
+   primitive consumed by the agent runtime, not one of doc 09's 24 RPCs, and doc 09 §0's
+   envelope rule governs those. If 018 exposes retrieval to the browser it wraps this, the way
+   014's three wrappers wrap 011.
+2. **Unwrap** — not applicable; no envelope.
+3. **RpcMap** — the contract has no retrieval entry. 017 adds no shape it carries.
+4. **Call sites** — `packages/agent-runtime`, when it is wired. `app.resolve_tax_policy` is
+   called by the money path and has no client grant.
+5. **Casts** — `p_embedding` is `extensions.vector`; the operator is spelled
+   `OPERATOR(extensions.<=>)` because `search_path` is empty and an unqualified operator would
+   not resolve.
+6. **Reload/restore** — `NOTIFY pgrst, 'reload schema'` closes the file.
+7. **Public routes** — none. `anon` receives nothing; the retrieval RPC is `authenticated` only.
+
+### Pin — `tests/test_017_baseline_amendment.sql`
+
+Ten checks, 39 assertions, all executed, all PASS against the full applied set 001–017. The ones
+that earn their place: **T1b**, which proves `apply_rule_offset` is refused by IMPERSONATION and
+not by reading `has_function_privilege`, because it is the only one of the nine a client could
+really call. **T3b**, which proves the precision change by STORING 0.867 and reading it back —
+a catalogue check passes against a column that was never converted. **T4g**, which sets the
+override's `registry_from` an hour ahead so the known axis can be exercised at all: `now()` is
+`transaction_timestamp()`, so every row the pin inserts shares one identical lower bound and the
+obvious version of this test passes vacuously — the same trap test_013 records. **T5c**, which
+reads the constraint DEFINITION rather than inserting a row, because a `core.quotations` insert
+fails on `rate_card_id` long before it reaches the SST rule and a probe refused for the wrong
+reason tests nothing. **T7b**, which proves the statutory clock cannot be edited. **T8b**, which
+asserts each offset WITH its unit. **T10**, described above.
+
+### Rollback — `rollbacks/017_baseline_amendment_rollback.sql`
+
+Round-tripped, plus a clean full-set reverse round trip (`before=0 after=0`). The hardest
+rollback in the pack, and it states two places where "restore the prior state" is genuinely
+lossy instead of rounding quietly. **The precisions**: backward is NARROWING, so the rollback
+REFUSES if any row would lose a decimal — a rollback that changes a stored eval score, or a
+margin that decides whether a quotation needed an approval, is data loss dressed as a restore.
+**The nine PUBLIC grants**: they are RESTORED, with a NOTICE saying exactly what has been
+re-opened, because a rollback that keeps the improvements it happens to agree with makes "we
+rolled back" false and gives the next applier a different result from the first. Deletes are by
+`policy_code` / `rule_code` / `check_key`, never by range, so a row added beside them survives;
+the check-key trigger comes down before the rows it would otherwise re-seed. Asserts that 010's
+own invoice SST columns and 014's policy count survive.
+
+### Deliberately NOT built
+
+Key-presence assertions on the seven jsonb columns (no consumer declares any). A retention
+window on `data_breach_register` (the research flags 2 years UNCONFIRMED). Any rule at `ACTIVE`
+(needs a named Finance verifier). The routing host allow-list, `zero_retention_enabled`,
+`dpa_on_file`, `pii_class` and `redaction_map_ref` — all four are 013-table changes the research
+routes to the AI-ops surface, and each needs the runtime's agreement on the vocabulary before a
+column freezes it; none is a compliance deadline and none blocks 018.
+
+### ⚠ Carried risk and standing conditions
+
+- **Every tax policy and every HRD Corp rule is `PROPOSED`.** `core.v_tax_policy_unverified` is
+  non-empty by design and is a standing action item on a live database: those rates will bill a
+  customer without anyone having signed them off. **Owner: a named Finance verifier.**
+- **The 6-month claim window is unconfirmed against primary text.** The circular PDF was
+  unreachable on 2026-09-13.
+- **`core.retrieve_knowledge` is VOLATILE**, which it does not deserve, because `SET LOCAL` is
+  refused in a non-volatile function. The planner will not fold repeated calls in one query.
+- **Four AI-ops columns the research routed here are not built** (see above).
+- **The pack is unreviewed**, and it is the one that changes existing columns.
+
+---
+
+## Migration Detail — 016 (`016_seed_and_tenant_provisioning.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.**
+**⚠ Codex (gpt-5.6-sol xhigh) review PENDING.** Sources: 004 (`app.finalise_table`,
+`core.ref_formats`, `core.next_ref`, `core.assign_ref`); 011
+(`app.seed_action_policies_on_tenant`, the trigger shape this mirrors); 013's catalog entry and
+test_013's header, both of which name 016 as the owner of this gap;
+`docs/research/2026-09-13-hrdcorp-compliance-refresh.md` §c (the registry rows 016 deliberately
+does not seed).
+
+### What it does
+
+- **`app.seed_ref_formats(tenant)`** — one row per `core.assign_ref` trigger, derived from
+  `pg_trigger`. Returns the number of rows added. Idempotent, leaving existing rows alone.
+- **`app.seed_ref_formats_on_tenant()` + `trg_tenants_seed_ref_formats`** — `AFTER INSERT ON
+  public.tenants`, the same shape as 011's policy seed.
+- **`app.provision_tenant(slug, name, timezone, id)`** — the explicit path, over the same
+  mechanism, with a post-condition that refuses a half-provisioned tenant.
+
+### ⚠ Amended 2026-09-13: `p_id`, at a consumer's request
+
+The seeds lane (PR #16) reported that it could not use this function at all. Its fixture world is
+keyed on fixed, memorable tenant ids — `supabase/seeds/README.md` requires them and the RPC tests
+and screenshots quote them literally — so roughly 5,000 seeded rows carry `tenant_id` as a
+constant, and a generated id cannot be retrofitted: `core.ref_formats`, `core.action_policies` and
+`core.check_keys` are already referencing the tenant by the time the function returns, and **none
+of those foreign keys is `ON UPDATE CASCADE`**. The lane's fallback was to insert the tenant row
+directly and re-implement half of provisioning inline, which would have rotted the day 018
+provisions a fourth table — the exact drift this migration exists to prevent.
+
+`p_id uuid DEFAULT NULL` with `COALESCE(p_id, gen_random_uuid())`. Every pre-amendment caller is
+byte-identical, and the parameter is independently right for a restore or a tenant migration,
+where the id is given rather than chosen. This follows the same rule that settled
+`bulk_decide_approvals` in 014: **the signature follows the consumer.**
+
+⚠ **The `DROP FUNCTION` in front of it is mandatory, and that was measured rather than assumed.**
+A bare `CREATE OR REPLACE` does not replace a function when the parameter LIST changes — it
+creates an OVERLOAD beside it. Both would then carry defaults covering a two- and three-argument
+call, and every existing caller, including this pack's own T3, would fail with
+`function app.provision_tenant(unknown, unknown) is not unique`. Reproduced on the shim before the
+line was written.
+
+T3 gained four assertions: the returned id AND the stored row carry the supplied value (a function
+that inserted one id and returned another would be worse than one that ignored the parameter);
+supplying an id does **not** bypass provisioning, which is the entire reason a seed calls this
+rather than inserting the row; explicit `NULL` still generates; and a duplicate id is refused by
+the primary key rather than silently attaching a new customer to another customer's rows.
+- **A backfill loop** for tenants that already exist, since a trigger only fires on rows
+  inserted after it.
+- **Spine untouched.**
+
+### The one thing it cannot derive, stated
+
+`dated` and `width`. A trigger declares its prefix and nothing else. `width` takes
+`core.ref_formats`' own default of 4 throughout. `dated` is an explicit eighteen-prefix list in
+§1 — `ENQ OPP PRO QUO ENG INV CRN PAY HPK ACT APV DRF RUN MSG COL FUP SES TBK` — because
+`ENQ-2026-0912` versus `ENQ-0912` is a visible difference on every screen and a silent one in
+the catalogue. T5 asserts both shapes against a real allocation rather than against the table.
+
+### The 7-point RPC contract check, worked
+
+**016 exposes no RPC**, and that is stated rather than skipped. All three functions are
+`REVOKE ALL … FROM PUBLIC, anon, authenticated`: provisioning is an operator act, not something
+a browser initiates. (1) No envelope — `seed_ref_formats` returns `integer` and
+`provision_tenant` returns `uuid`, both to an operator or a trigger. (2)–(5) No client surface,
+no contract entry, no call site in `apps/web`, no casts. (6) The trigger is catalogue state and
+survives a reload. (7) No public route.
+
+### Pin — `tests/test_016_seed_and_tenant_provisioning.sql`
+
+Six checks, 15 assertions, all executed, all PASS against the full applied set 001–016. The ones
+that earn their place: **T1b**, which asserts the five prefixes a hand-built list misses
+individually by name rather than asserting a count of 32 — a count passes just as happily with
+the wrong five. **T2**, which contains no `core.ref_formats` fixture at all, because the absence
+IS the assertion. **T3d**, which disables the seeding trigger and requires `provision_tenant` to
+raise, since the scenario being guarded against is a later migration dropping a trigger it did
+not know mattered. **T4b**, which asserts a deliberately corrupted format was **not** repaired by
+re-seeding — the only test in the pack that asserts something was left broken, and the reason is
+that the repair direction is the destructive one. **T6**, which re-proves 004's per-tenant
+numbering property through the real provisioning path: a seed that accidentally made counters
+global would let every customer read every other customer's record volume off a ref, and no
+access-control test would catch it because no row is exposed.
+
+### Rollback — `rollbacks/016_seed_and_tenant_provisioning_rollback.sql`
+
+Round-tripped twice, plus a clean full-set reverse round trip (`before=0 after=0`). **This is
+the only rollback in the pack that deletes business-shaped data**, and it argues the case rather
+than assuming it: a `ref_formats` row is a FORMAT, not an allocation; the allocations live in
+`core.ref_sequences`, which 016 never touches and the rollback never deletes, so re-applying 016
+hands every prefix back its existing counter and **no ref is ever reissued** — T4c is what makes
+that claim checkable. ⚠ **The exception is enforced**: a format the tenant has already allocated
+against is NOT deleted, because that would leave a live counter with no format describing it and
+the next `next_ref` would raise on a prefix the customer is visibly already using. Asserts that
+011's seed trigger survives.
+
+### Deliberately NOT built
+
+`pipelines` and `pipeline_steps` — fifteen stage names in a migration is the defect both
+CLAUDE.md files name, and this is a file about ref formats. **Owner: 018 or a dedicated seed
+pack.** The HRD Corp rule registry — national rows, not provisioning, and the research attaches
+a hard condition (`status = 'PROPOSED'` until a named Finance verifier confirms each against the
+circular text); 017 owns them. Rate cards and templates — a tenant's first rate card is an
+onboarding conversation.
+
+### ⚠ Carried risk and standing conditions
+
+- **A newly provisioned tenant renders no pipeline.** `pipeline_steps` is empty, and every
+  screen that renders stages from configuration has nothing to render. **Owner: 018.**
+- **`dated` and `width` are the only hand-maintained values in the pack**, and nothing derives
+  them. A new dated prefix added in 017 or 018 must be added to §1's array by hand or it
+  allocates undated refs silently.
+- **The backfill is one-shot.** It runs at apply time over the tenants that exist then. A tenant
+  inserted while 016 is only half-applied is not covered by either half.
+
+---
+
+## Migration Detail — 015 (`015_realtime_and_cron_schedules.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.**
+**⚠ Codex (gpt-5.6-sol xhigh) review PENDING.** Sources: rulings R-A and R-B
+(`ai/briefs/2026-09-13-api-phase-plan.md`); `docs/research/2026-09-13-supabase-current-docs.md`
+§4 (pg_cron sub-minute schedules, `job_run_details` growth, pg_net limits) and §7 (Realtime RLS
+and connection-lifetime policy caching); 001's header (ruling R-EXT, "scheduled with
+cron.schedule in 015"); 012's `app.reap_jobs`, `app.reap_cron_history` and finding `H-16`.
+
+### What it does
+
+- **`app.reap_jobs_all_tenants(p_limit_per_tenant)`** — the cron entry point, and the only new
+  object. Calls `app.reap_jobs` once per tenant that has `CLAIMED` or `FAILED` work.
+- **`trainos_reap_jobs`**, every 30 seconds, native sub-minute, one job.
+- **`trainos_reap_cron_history`**, daily at 03:17 UTC, calling 012's sweep at its 7-day window.
+- **Spine untouched.**
+
+### Why the fanout exists, in full
+
+`app.reap_jobs(p_tenant_id, p_limit)` already treats `NULL` as "every tenant", so
+`SELECT app.reap_jobs(NULL, 1000)` is the obvious schedule and is not the one used. 012's `H-16`
+gave the CLAIM per-tenant fairness through `row_number() OVER (PARTITION BY tenant_id)`, proved
+by flooding fifty jobs from one tenant and watching the other's single interactive job still
+come back. The REAPER never got the same treatment: its four statements each take a flat
+`LIMIT p_limit` ordered by `visible_after` or `run_after`. A tenant whose provider is down fills
+that limit on every tick, and every other tenant's expired leases are never recovered — `H-16`'s
+starvation, arriving through the recovery path rather than the claim path. The wrapper is a
+FUNCTION rather than SQL inlined into the cron command because a cron command is a string
+nothing type-checks: a typo is discovered in `job_run_details` days later, while a function is
+resolved at CREATE time.
+
+### The 7-point RPC contract check, worked
+
+Not applicable in the usual sense, and stated rather than skipped: **015 exposes no RPC.** It
+creates one function, `app.reap_jobs_all_tenants`, which is `REVOKE ALL … FROM PUBLIC, anon,
+authenticated` and is called by exactly one caller, the cron job. (1) No envelope, because it
+returns `integer` to pg_cron and not to a client. (2)–(5) No client surface, no contract entry,
+no call site in `apps/web`, no casts. (6) Schedules are rows in `cron.job` and survive a reload
+by construction. (7) No public route; `anon` receives nothing.
+
+### Pin — `tests/test_015_realtime_and_cron_schedules.sql`
+
+Five checks, 13 assertions, all executed, all PASS against the full applied set 001–015. The
+ones that earn their place: **T3**, which does not merely assert the wrapper runs but reproduces
+the starvation condition — 50 expired leases in one tenant, 1 in another, a budget of 10 per
+tenant — and then adds a control proving a single-tenant reap leaves the other tenant untouched,
+so a wrapper that had quietly become a flat reap would fail rather than pass. **T4**, which
+probes the retention boundary at 6 days and 8 days instead of reading the interval out of the
+function body. **T5**, which EXECUTES both scheduled commands exactly as they are registered in
+`cron.job`, because "scheduled" and "works" are different claims and only one of them is
+normally tested. **T2**, which pins ruling R-B as an assertion — no `cron.job` command may
+contain `net.http` — precisely because the pattern it forbids is the one Supabase's own
+documentation recommends, so the next author will have a good reason to add it back.
+
+### Rollback — `rollbacks/015_realtime_and_cron_schedules_rollback.sql`
+
+Round-tripped twice. Unschedules before dropping the function they call, or there is a window in
+which an active job points at a function that no longer exists. **`cron.job_run_details` rows
+are deliberately NOT deleted**: unscheduling a job does not clear its history, those rows are
+the evidence of what ran and when, and a rollback that swept them would destroy the audit trail
+of the jobs it is removing at the moment somebody most wants it. Asserts that 012's two reapers
+survive — 015 owns the schedules, never the functions.
+
+### Deliberately NOT built
+
+The outbox drain and webhook dispatcher (R-B). The four retention sweeps over business-visible
+rows — the functions exist and are callable by hand, but each needs a retention period agreed
+with the customer, which is what 017's `core.data_retention_policies` is for; **scheduling them
+first would be deleting on a window nobody signed off.** The levy staleness sweep and the
+embedding refresh, neither of which has a function to schedule. Any Realtime policy or
+publication membership, which would require inventing the topic vocabulary inside a cron
+migration.
+
+### ⚠ Carried risk and standing conditions
+
+- **The harness's pg_cron is a local stub that executes nothing.** Registration is pinned;
+  firing is not, and firing is the extension's behaviour rather than this migration's.
+- **The 7-day retention window has no source.** Inherited from 012. If a customer or a
+  regulator ever names a number for operational logs, this is one of the places it lands.
+- **Four retention sweeps are unscheduled and their tables grow unbounded until 017's policy
+  rows exist and are approved.** `app.outbox`, `app.dead_letters` and the two webhook tables.
+  **Owner: after 017.**
+- **Realtime has no database-side configuration at all.** When it lands, the connection-lifetime
+  policy cache means revoking access does not close an open socket.
+
+---
+
+## Migration Detail — 014 (`014_rls_policies_and_client_grants.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, REVIEWED, REVISED 2026-09-13, NOT APPLIED to any
+hosted database.**
+
+**⚠ REVIEW LANDED AND ITS BLOCK IS CLEARED.** `docs/reviews/2026-09-13-codex-retrofit-014-017.md`
+(Codex `gpt-5.6-sol` xhigh plus a structural/security pass, converging independently) returned
+**BLOCK** on 014 with 2 CRITICAL, 4 HIGH and 5 MEDIUM findings. Every premise was re-verified
+against the branch before being acted on; none was wrong. Current state, finding by finding:
+
+| # | Sev | What it was | State | Pin that exercises it |
+|---|-----|-------------|-------|-----------------------|
+| 1 | CRIT | `014:625` granted DELETE on `public.memberships`, which 002 withheld. `memberships_write_admin` is FOR ALL and `memberships_no_self_edit` is FOR UPDATE only, so an aal2 ADMIN could delete-and-reinsert their own row at a higher role. | **FIXED** — grant restored to 002's three privileges, an explicit REVOKE beside it, and a new RESTRICTIVE `memberships_no_client_delete` so the policy layer agrees with the grant layer. | `test_014` **T11**, incl. T11f which re-grants DELETE inside the pin and shows the policy still deletes zero rows |
+| 2 | CRIT | The rollback's blanket `REVOKE ALL … IN SCHEMA public` destroyed 002:696-701, and its post-condition asserted that broken state as correct. | **FIXED** — 002's six grant statements reproduced in full in the rollback, post-condition split by schema and re-derived with `has_table_privilege` in both directions. | `test_014_rollback_restores_002_grants.sql` **R1-R4**, run after the rollback and before re-applying |
+| 3 | HIGH | The header's baseline claim ("001-013 granted no privilege to anon or authenticated") was false and is why the DELETE read as a restatement. | **FIXED** — header states the measured 001-013 ACL baseline and the real diff line by line. | measurement recorded in the header; `test_002` continues to pin 002's side |
+| 4 | HIGH | One predicate string served USING and WITH CHECK, so `tenant_id IS NULL` was admitted on writes. | **FIXED** — read and write predicates separated; the fallback is in USING only. | `test_014` **T13**, which stages a real INSERT grant inside the pin |
+| 5 | HIGH | All 113 tenant tables got tenant-only SELECT, so a SALES principal could read `ai_provider_keys`, `run_node_io` and `public_share_tokens`. | **FIXED for those three** (see the posture note below) — a permission term is folded into each one's restrictive isolation policy. | `test_014` **T12**, four ways per table |
+| 6 | HIGH | `decideApproval` never sends `p_expected_diff_hash`, so 011's optimistic-concurrency check is unarmed on every call. | **CARRIED** — the fix is in `apps/web` and `packages/contract`, outside this change's mandate; the DB-side alternative breaks every approve immediately. | `test_014` **T15**, which pins the SQL half and fails the day the client half is fixed |
+| 7 | MED | Header and catalog counts (235 policies / 115 relations / 4 views) were wrong. | **FIXED** — read back off a clean apply: 228 policies over 115 relations, 2 views. | `test_014` **T1** |
+| 8 | MED | Grant checks filtered `information_schema.table_privileges` by grantee and were blind to PUBLIC. | **FIXED** — `has_table_privilege` throughout, migration and pin. | `test_014` **T14**, which creates the PUBLIC grant and measures both spellings |
+| — | MED | `test_014` T7 seeded no rows, so the definer read proved nothing. | **FIXED** — one approval per tenant seeded; T7a1 requires exactly one back. | `test_014` **T7** |
+| — | MED | The rollback selected policies to drop by naming convention, which would take a later migration's policies. | **FIXED** — 014 stamps every policy it creates with `migration:014` in the policy COMMENT, written by the caller and not inside the shared function, and the rollback drops by that stamp against a count derived from the catalogue. | the rollback's own manifest assertion; `test_014` **T12l** |
+| — | MED | `test_013`'s `run_node_io` isolation pin deletes its only row before asserting a read returns zero. | **STILL OPEN.** 001-013 came into scope later and `test_013` gained a new pin (T14, the rotation path), but this assertion was not rewritten: it would still pass under `USING (true)`. Narrower than it was — `run_node_io` is now role-gated as well as tenant-scoped, so a hole there is caught by test_014 T12 from the other side. **Owner: whoever next touches 013.** | `test_014` T12 covers the same table from the policy side |
+| — | MED | 018 may define a four-argument `core.decide_approval` against 014's five. | **OUT OF SCOPE** — not a defect in this PR. **Owner: 018.** | `014` verify (6) asserts one overload today |
+| — | LOW | `check:grants` T1 fired on `test_014`'s `pg_temp` definer helper. | **FIXED** — `scripts/check-grants.mjs` excepts `pg_temp` only, with the reasoning in the file. A `public.` definer in a test still fires, verified both ways. | the guard itself; `npm run check:grants` is 0 findings |
+
+**A SECOND ADVERSARIAL PASS RAN AGAINST THE FIXES THEMSELVES** — the thermonuclear methodology
+the first review recorded as OWED, now that `.claude/skills/thermo-nuclear-code-quality-review`
+exists in this environment. It returned BLOCK on the first revision and found five defects the
+first review could not have seen because they were introduced by the fix:
+
+- **Rolling 014 back while 017 is still applied was three separate failures.** `REVOKE ALL ON ALL
+  TABLES IN SCHEMA core` took 017:1187-1191's five grants with nothing to restore them, and the
+  post-condition certified zero client privilege in `core` as correct — CRIT-2 verbatim, one
+  schema over. 017's six tenant policies carry no `migration:014` stamp, so they survived the
+  manifest loop on tables whose policy function had just been dropped. And the derived manifest
+  count included 017's three tables while the stamped set did not, disagreeing by exactly six.
+  **Fixed by refusing:** the rollback now aborts if `core.tax_policies` exists, naming the order
+  its own header already states. 014's rollback does not learn 017's grant list — a rollback that
+  knows about later migrations needs editing every time one lands.
+- **The role gate was erasable by any later two-argument call.** `SELECT
+  app.apply_tenant_policies('core','run_node_io','014')` — one line, identical in shape to the three
+  017 already ships — would have silently replaced the gated isolation policy with an ungated one
+  and handed every principal of the tenant the raw agent prompt text back. **Fixed:** the
+  function refuses a two-argument call against a table that already carries a gate, naming the
+  predicate and telling the caller to pass the permission again or the literal `'UNGATE'` on
+  purpose. The gated set is now declared once, in §2's LEFT JOIN, so a gated table is created
+  gated on the first pass rather than re-created a moment later.
+- **A stale header paragraph claimed four `core` views are granted.** Two are; `budget_status`
+  and `model_tier_status` are revoked twelve lines further down in the same file. Deleted — it
+  was the one comment in the file that the pack's own argument should have caught.
+- **The `pg_temp` exception in `check:grants` tested the wrong function.** It asked whether some
+  preceding semicolon-free `CREATE FUNCTION` was in `pg_temp`, so a `pg_temp` helper whose body
+  `EXECUTE`s `CREATE FUNCTION core.x … SECURITY DEFINER` was excepted, while an ordinary
+  `CREATE FUNCTION pg_temp.f() … AS $$ SELECT 1; $$ … SECURITY DEFINER` was flagged. **Fixed:**
+  each `security definer` is paired positionally with the nearest preceding `CREATE FUNCTION
+  <schema>.`; six spellings tested, the two that should fire do and the four that should not
+  do not.
+- **T11f had no counterfactual.** "Deleted zero rows" is also what an unrelated predicate change
+  produces. The same DELETE now runs twice, once with the restrictive policy standing and once
+  with it dropped, and the second must delete exactly one row.
+
+**AND ONE DEFECT THE FIX FOR (2) INTRODUCED, found by probing the branch rather than reading it.**
+The `'UNGATE'` escape hatch — the documented way to remove a gate on purpose — was dead code. Its
+literal was excluded from the branch that sets the gate but not from the one that refuses, so every
+`UNGATE` call raised instead of ungating. A documented escape that does not work is worse than
+none: the next person removes the guard rather than the gate. Fixed, and **T16 now exercises all
+six branches of that control** — three-argument gates, two-argument against a gated table refuses,
+re-passing keeps, a different permission replaces, `UNGATE` removes, an unknown permission is
+refused — on a throwaway table per 004's precedent. An untested branch in a security control is the
+defect, not the feature.
+
+Plus: `information_schema.table_privileges` survived in two of the three sites the pack claimed
+to have rewritten (the rollback's post-condition and the rollback pin's R3a) — both now use
+`has_table_privilege`; five line citations were off by one to two lines; two references pointed
+at a `§7` that does not exist. All corrected.
+
+**THE HARNESS, AND A COLLISION WORTH NOT REPEATING.** Every result in this section was produced on
+a PostgreSQL 17.11 shim on port 5436 with its own data directory under
+`~/Repos/personal-work/trainos-wt/.shim-fix014` (real pgvector, stub `pg_cron`/`pg_net`). ⚠ A
+FOREIGN POSTMASTER HELD PORT 5436 at the start of that lane: `pg_ctl start` failed to bind while
+`psql` still connected, so one throwaway pass of "apply 001-017 and run the pins" went into another
+cluster entirely and was neither noticed nor attributable until afterwards. Every run since asserts
+`current_setting('data_directory')` matches the shim before it does anything, and that assertion is
+the reason the numbers here can be trusted. **Lanes should pin their port in `postgresql.conf`
+rather than on the command line**, and any harness script should check the data directory, not the
+port: a port is a promise about who answers, not about which database.
+
+**⚠ THE SECOND REVIEWER SLOT IS OWED, NOT FILLED.** The gate's D-012 rule is that BOTH reviewers
+land. Only one did against the fixes. Codex `gpt-5.6-sol` was dispatched at the same time as the
+thermonuclear pass and came back hard quota-blocked: *"usage limit … try again at Sep 14th, 2026
+12:29 AM."* No verdict was substituted for it. What is specifically unreviewed is the thing Codex
+is best at and the structural pass is worst at: the CONSUMER TRACE — every caller of everything the
+diff touches, across `apps/**` and `packages/**` as well as `supabase/**`. `npm run check:rpc`
+reports 4 pass / 0 broken and no file outside `supabase/` and `scripts/` is modified, which bounds
+the risk but does not discharge the trace. **Owner: re-run after the quota resets.**
+
+**FOUND BY EXECUTING THE ROLLBACK, not by either reviewer.** A third destroyed grant of the same
+class as CRIT-2: `001:232` grants `USAGE ON SCHEMA core` to `anon`, `authenticated` **and**
+`service_role`. 014's header claimed `anon` "never had USAGE on `core` to begin with" and the
+rollback revoked it from `authenticated` as though 014 had granted it. Measured `core` nspacl on a
+001-013 database: `postgres=UC/postgres anon=U/postgres authenticated=U/postgres
+service_role=U/postgres`. 014 now declares the `anon` revoke as the one privilege it takes away
+rather than restates, and the rollback restores it instead of revoking a 001 grant. Pinned by R3.
+
+**⚠ AND ONE CORRECTION OWED TO 017'S OWN CATALOG ENTRY**, recorded here rather than edited there:
+the §017 note above states that before 014 the nine PUBLIC-executable `core` functions "none of it
+was reachable, since `authenticated` had no `USAGE ON SCHEMA core`". By the same measurement, that
+is false — 001:232 granted it. 017's REVOKEs are correct and unaffected; only the reachability
+framing is wrong, and it understates when the exposure began. **Owner: whoever next amends 017.**
+
+**FINDING #5, RE-OPENED BY THE RE-REVIEW AND NOW CLOSED PROPERLY.** The first fix gated three
+tables and called the rest a deliberate posture on the grounds that "the review did not name them".
+The 014 re-review (`docs/reviews/2026-09-13-codex-retrofit-014-rereview.md`, N-1, HIGH) took that
+apart correctly: `run:read` governs **seven** `core` tables in 013, not one, and `run_state_cards`
+is worse than the table that got gated — 013's own header concedes it escapes the 30-day redaction
+sweep `run_node_io` gets, and it carries goal, plan and open questions as free text, while
+`run_snapshots.response` is every tool call's raw output for the tenant. Provenance is not a
+security argument. **All nine tables the three permissions govern are now gated**, the full extent
+of each permission rather than the subset a review happened to check:
+
+| Permission | Roles | Tables gated |
+|---|---|---|
+| `ai:provider:read` | ADMIN | `ai_provider_keys` |
+| `run:read` | MD, ADMIN | `runs`, `run_nodes`, `run_node_io`, `run_events`, `run_state_cards`, `run_checkpoints`, `run_snapshots` — all seven |
+| `portal:token:issue` | SALES, SALES_MANAGER, MD, ADMIN | `public_share_tokens` |
+
+`runs`, `run_nodes` and `run_events` are included rather than kept as a metadata-only exception:
+carving them out would mean deciding that agent id, model, token counts, cost and event detail are
+not part of "reading a run", which is a product decision nobody has made and which a grants
+migration is the wrong place to make silently.
+
+**⚠ AND THE REST IS A GAP, NOT A POSTURE.** Every other `core` table keeps the blanket tenant-scoped
+SELECT to `authenticated`. This catalog previously called that a deliberate posture. It is not one:
+it is the state 014 found, narrowed where 002 had already written a permission that says otherwise,
+and left alone everywhere else **because within-tenant read authorization has not been designed**.
+Doc 09 puts it at the RPC layer. Until that exists, any principal of a tenant can read any other row
+of it. **Owner: 018, with the run-trace and AI-ops RPCs.**
+
+**One further residue, named because the re-review was right that the header overclaimed.**
+`public_share_tokens`'s gate restores the ROLE half of 002's decision and not the SCOPE half: 002
+annotates SALES's and SALES_MANAGER's `portal:token:issue` as `-- scope-narrowed`, meaning it was
+meant to compose with `app.client_scope()` / `app.team_scope()`. A SALES principal therefore still
+reads every share-token row in the tenant rather than only their own clients'. Adding the scope term
+needs an owner column the table does not have — 007 gave it `created_by_id text`, not a user id — so
+it is a schema change rather than a predicate change. **Owner: whoever next touches 007's portal
+tables.** The pin concedes the same thing by probing this table with `OPS` rather than `SALES`.
+
+Sources: `docs/architecture/09-golden-path-rpc-specs.md` §0, §1, §2 and §12 (the
 wrapper posture, the envelope, and the approval-view prohibition); `docs/architecture/02` §4.1
 (the RLS baseline and the claim readers); `supabase/CLAUDE.md` security rules 1–7;
 `docs/research/2026-09-13-supabase-current-docs.md` §2 (RLS performance: InitPlan wrapping,
@@ -360,7 +1139,16 @@ residue carried by 010, 011, 012 and 013.
 
 ### What it does
 
-- **`app.apply_tenant_policies(schema, table)`** — one function, N attachments. Stamps a
+- **`app.apply_tenant_policies(schema, table, migration, permission DEFAULT NULL)`** — one function, N
+  attachments. ⚠ **`migration` is the THIRD argument and is required**: the three-digit pack that
+  owns the policy, `'014'` or `'017'`. It is validated against `^[0-9]{3}$` and NULL, `''` and a
+  permission string are all refused — because there is no three-argument overload to resolve to, so
+  the old spelling `apply_tenant_policies('core','x','run:read')` binds the PERMISSION into the
+  MIGRATION slot and produces an **ungated policy with a stamp no rollback can find**. Reproduced on
+  a live database before the check existed. Dropping the old signature does not help, because the
+  old signature is not what that call resolves to; only typing the slot does. Earlier signatures are
+  dropped explicitly all the same, for a database carrying one. Verify (13b) asserts exactly one
+  overload. Stamps a
   PERMISSIVE `<table>_tenant_select` (`FOR SELECT TO authenticated`) and a RESTRICTIVE
   `<table>_tenant_isolation` (`FOR ALL`, predicate in USING **and** WITH CHECK). Refuses a
   table with no `tenant_id` and a table that is not RLS-forced. Idempotent by DROP-then-CREATE,
@@ -474,10 +1262,19 @@ table, and `pg_attribute.attacl` is NULL for all fifteen), and 014 asserts the s
 - **`core.rule_set_versions` still has no composite `UNIQUE (tenant_id, id)`.** 014 added the
   missing tenant index because it created the policy that needed it; the unique is a shape
   change to a table that may hold rows. **Owner: 017.**
-- **The pack is unreviewed.** Codex has not run against it. Six earlier pins were amended by
-  this lane, which is exactly the kind of change an adversarial reviewer should look at hardest:
-  each amendment is a security assertion that was loosened in one direction and tightened in
-  another, and the tightening is the part that has not been independently checked.
+- **~~The pack is unreviewed.~~ SUPERSEDED 2026-09-13.** Both reviewers landed and the
+  BLOCK is cleared; see the findings table at the head of this section. What remains unreviewed
+  is the REVISION — the fixes above have been executed, pinned and round-tripped, and have not
+  themselves been through a second adversarial pass.
+- **`p_expected_diff_hash` is unarmed in the product.** `core.decide_approval` accepts it and
+  011 compares it, but `decideApproval` never sends it and the contract type has no field for
+  it, so the optimistic-concurrency check is a no-op on every real call. `test_014` T15 pins
+  exactly this and is written to FAIL when the client is fixed. **Owner: the web lane.**
+- **110 of 113 tenant-scoped `core` tables are readable by any principal of the tenant.**
+  Deliberate, stated above, deferred to the RPC layer. **Owner: 018.**
+- **`test_013`'s `run_node_io` isolation pin does not prove isolation** — it deletes its only
+  row before asserting the read returns zero, so it would pass under `USING (true)`. Outside
+  this change's mandate. **Owner: whoever next touches 013.**
 - **The shim's `postgres` role is SUPERUSER and BYPASSRLS.** Every policy here was therefore
   proved by IMPERSONATION (`SET LOCAL ROLE authenticated` / `anon`) rather than by running as
   the migration role, which is the only way these results mean anything on this harness. On
@@ -556,7 +1353,7 @@ into `core.runs` per historical distinct run id, `ref` set to that string, and n
 
 ### Pin — `tests/test_013_ai_ops_agents_keys_runs_and_budgets.sql`
 
-Thirteen checks, all executed, all PASS, against the FULL applied set 001–013. The ones that
+Thirteen checks, all executed, all PASS, against the FULL applied set **001–014, not 001–013**. ⚠ Corrected 13 Sep 2026: this pin's T11b2 requires 014's client grants to be present, so it cannot pass at 001–013 — confirmed by executing it there, where it fails, and again with 014 applied, where it passes. `test_012` has the same dependency and both pin headers now say so. The ones that
 earn their place: the reveal ceiling proved by moving `last_revealed_at` BACKWARDS rather than
 forwards, because `now()` is `transaction_timestamp()` and a forward bump inside the same
 transaction writes the same value and passes vacuously; the audit-first ordering proved by

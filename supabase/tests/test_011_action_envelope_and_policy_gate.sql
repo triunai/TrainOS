@@ -106,7 +106,15 @@ INSERT INTO public.user_profiles (tenant_id,user_id,display_name) VALUES
 INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width) VALUES
   ('00000011-1111-1111-1111-111111111111','ACT','action_requests',true,4),
   ('00000011-1111-1111-1111-111111111111','APV','approval_requests',true,4),
-  ('00000011-1111-1111-1111-111111111111','DRF','suggested_drafts',true,4);
+  ('00000011-1111-1111-1111-111111111111','DRF','suggested_drafts',true,4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 
 INSERT INTO core.organisations (id,tenant_id,ref,name,owner_id) VALUES
   ('00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-1111-1111-1111-111111111111',
@@ -139,6 +147,35 @@ VALUES
   ('00000011-eeee-eeee-eeee-eeeeeeeeeee5','00000011-1111-1111-1111-111111111111',
    'PRO-T011-5','00000011-cccc-cccc-cccc-ccccccccccc1',
    '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000);
+
+-- A rate card and a quotation, so T18 can edit a real record and watch the
+-- approval diff hash move. Without them T18's record-change half SKIPS, and a
+-- skipped assertion in a pin about a guard that could never fire is the same
+-- vacuous pass the guard itself was.
+-- A REAL aal2 session. `app.aal2_verified()` checks auth.sessions rather than
+-- trusting the claim, so a money-moving action needs a row here and not just
+-- "aal":"aal2" in the JWT — which is the point of that function and is why T19's
+-- QUOTATION_APPLY could not otherwise be staged at all.
+INSERT INTO auth.sessions (id,user_id,aal) VALUES
+  ('00000011-5e55-0000-0000-00000000000a','00000011-0000-0000-0000-0000000000a1','aal2'),
+  ('00000011-5e55-0000-0000-00000000000b','00000011-0000-0000-0000-0000000000a3','aal2');
+
+INSERT INTO core.rate_cards (id,tenant_id,version,status,effective_from) VALUES
+  ('00000011-0fff-0fff-0fff-0fffffffffe1','00000011-1111-1111-1111-111111111111',
+   'v1-t011','DRAFT','2026-01-01');
+
+INSERT INTO core.quotations
+  (id,tenant_id,proposal_id,rate_card_id,pax,sell_price_sen,direct_cost_sen,
+   programme_floor_price_sen,floor_margin_rate)
+VALUES
+  ('00000011-0977-0977-0977-097777777771','00000011-1111-1111-1111-111111111111',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee1','00000011-0fff-0fff-0fff-0fffffffffe1',
+   30,1850000,1091500,1390000,0.3500),
+  -- A second one, so T19 can approve an UNCHANGED record and a CHANGED one
+  -- without the first decision consuming the only fixture.
+  ('00000011-0977-0977-0977-097777777772','00000011-1111-1111-1111-111111111111',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee2','00000011-0fff-0fff-0fff-0fffffffffe1',
+   30,1850000,1091500,1390000,0.3500);
 
 INSERT INTO core.enquiries
   (id,tenant_id,ref,channel,status,received_at,subject)
@@ -202,6 +239,44 @@ BEGIN
     v_body := app.decide_approval(p_id,p_decision,p_note,NULL,NULL);
     RETURN pg_catalog.jsonb_build_object(
       'ok',true,'http',pg_catalog.current_setting('response.status',true),'body',v_body);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
+CREATE FUNCTION pg_temp.t011_decide_hash(p_id uuid,p_decision text,p_note text,p_hash text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_body jsonb; v_detail text;
+BEGIN
+  BEGIN
+    v_body := app.decide_approval(p_id,p_decision,p_note,p_hash,NULL);
+    RETURN pg_catalog.jsonb_build_object('ok',true,'body',v_body);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
+CREATE FUNCTION pg_temp.t011_bulk(p_items jsonb, p_decision text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_body jsonb; v_detail text;
+BEGIN
+  BEGIN
+    v_body := app.bulk_decide(p_items, p_decision, NULL, NULL);
+    RETURN pg_catalog.jsonb_build_object('ok',true,'body',v_body);
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
     RETURN pg_catalog.jsonb_build_object(
@@ -853,11 +928,11 @@ BEGIN
       -- one of them is the envelope's own bookkeeping.
       IF v_role = 'anon' THEN
         ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
-          pg_catalog.format('T14a FAIL: %s has SELECT on %s',v_role,v_relation);
+          pg_catalog.format('T16a FAIL: %s has SELECT on %s',v_role,v_relation);
       ELSIF v_relation = 'core.v_approval_requests'::regclass
          OR v_relation::text LIKE 'app.%' THEN
         ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
-          pg_catalog.format('T14a FAIL: %s has SELECT on %s, which 014 '
+          pg_catalog.format('T16a FAIL: %s has SELECT on %s, which 014 '
             'deliberately leaves ungranted',v_role,v_relation);
       END IF;
       ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'INSERT')
@@ -885,7 +960,7 @@ BEGIN
            'expire_suggested_drafts','enqueue_jury','enqueue_jury_samples'])
     LOOP
       ASSERT NOT pg_catalog.has_function_privilege(v_role,v_function,'EXECUTE'),
-        pg_catalog.format('T14b FAIL: %s has EXECUTE on %s',v_role,v_function);
+        pg_catalog.format('T16b FAIL: %s has EXECUTE on %s',v_role,v_function);
     END LOOP;
   END LOOP;
 
@@ -894,5 +969,638 @@ BEGIN
   RAISE NOTICE 'T14 PASS - zero client SELECT/EXECUTE grants on every 011 object.';
 END;
 $t1_t13_t14$;
+
+
+-- ─── T16 · CRIT · a dispatched external effect becomes a claimable job ─────
+-- The finding: `app.apply_effects` wrote every EXTERNAL effect `DISPATCHED` and
+-- stopped. `app.enqueue_effect_jobs` (012) is what turns a dispatched effect
+-- into an `app.outbox` row the Node worker can claim, and a repo-wide grep found
+-- its only caller anywhere — apps/, packages/, every migration and rollback —
+-- was `test_012` itself. So every PROPOSAL_SEND, INVOICE_PUSH, REMINDER_SEND and
+-- BROADCAST_SEND reported success, moved its action to EXECUTING, and waited
+-- forever for a job that was never created. Nothing alarms on it: `DISPATCHED`
+-- is a healthy-looking status and no timeout watches it.
+--
+-- This pin walks the whole seam rather than asserting the call exists: perform an
+-- action that plans an external effect, then CLAIM the job as the worker does.
+-- A pin that only checked `app.outbox` had a row would pass against a row the
+-- worker could never take.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.seam_action',
+  pg_temp.t011_perform('PROPOSAL_SEND','PRO-T011-5','{"channel":"EMAIL"}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+-- PROPOSAL_SEND is policy-gated, so the action queues rather than executing.
+-- APPROVING it is what reaches app.apply_effects at all — which is the point:
+-- the seam being tested is downstream of the approval, and an approved action
+-- that produces no job is the exact silent failure this pin exists for.
+SELECT pg_catalog.set_config('t011.seam_approval_id',(
+  SELECT approval.id::text FROM core.approval_requests AS approval
+   WHERE approval.target_ref = 'PRO-T011-5'
+   ORDER BY approval.created_at DESC LIMIT 1),true);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.seam_decide',
+  pg_temp.t011_decide(pg_catalog.current_setting('t011.seam_approval_id')::uuid,
+    'APPROVE',NULL)::text,true);
+RESET ROLE;
+
+DO $t16$
+DECLARE
+  v_res     jsonb := pg_catalog.current_setting('t011.seam_action')::jsonb;
+  v_req     uuid;
+  v_effects integer;
+  v_jobs    integer;
+  v_claimed_n integer;
+  v_status  text;
+BEGIN
+  ASSERT (v_res->>'ok')::boolean,
+    pg_catalog.format('T16 SETUP FAIL: the action did not succeed, so there is '
+      'no dispatched effect to follow: %s', v_res::text);
+  ASSERT (pg_catalog.current_setting('t011.seam_decide')::jsonb ->> 'ok')::boolean,
+    pg_catalog.format('T16 SETUP FAIL: the approval was not granted, so '
+      'apply_effects never ran: %s', pg_catalog.current_setting('t011.seam_decide'));
+
+  SELECT id, status INTO v_req, v_status
+    FROM core.action_requests
+   WHERE target_ref = 'PRO-T011-5'
+   ORDER BY created_at DESC LIMIT 1;
+  ASSERT v_req IS NOT NULL, 'T16 SETUP FAIL: no action_request was written.';
+
+  SELECT pg_catalog.count(*) INTO v_effects
+    FROM app.action_effects
+   WHERE action_request_id = v_req AND kind = 'EXTERNAL' AND status = 'DISPATCHED';
+  ASSERT v_effects > 0,
+    pg_catalog.format('T16 SETUP FAIL: PROPOSAL_SEND planned %s dispatched '
+      'external effects. If this action type stopped planning one, this pin is '
+      'measuring nothing and needs a different action type.', v_effects);
+
+  -- T14a · THE JOB EXISTS. Against the pre-fix SQL this is zero, and everything
+  -- above it still passes — which is exactly why the defect survived 13 green
+  -- pins.
+  SELECT pg_catalog.count(*) INTO v_jobs
+    FROM app.outbox
+   WHERE action_request_id = v_req;
+  ASSERT v_jobs = v_effects,
+    pg_catalog.format('T16a FAIL: %s external effect(s) were dispatched and %s '
+      'job(s) exist. app.apply_effects marks effects DISPATCHED; nothing sends '
+      'them unless app.enqueue_effect_jobs turns them into outbox rows. A '
+      'DISPATCHED effect with no job is an email the customer never gets, with no '
+      'error anywhere.', v_effects, v_jobs);
+
+  -- T14b · and the action is EXECUTING, not EXECUTED: work is outstanding.
+  ASSERT v_status = 'EXECUTING',
+    pg_catalog.format('T16b FAIL: the action is %s with an external effect '
+      'outstanding.', v_status);
+
+  -- T16c · THE WORKER CAN ACTUALLY TAKE IT. The half a row-count cannot prove:
+  -- a row in app.outbox the worker cannot claim is the same outage, one
+  -- indirection further down. claim_jobs returns SETOF app.outbox, so this counts
+  -- the rows it handed out that belong to this action.
+  SET LOCAL ROLE service_role;
+  SELECT pg_catalog.count(*) INTO v_claimed_n
+    FROM app.claim_jobs('t016-worker', NULL, NULL, 10, interval '60 seconds', 100) AS j
+   WHERE j.action_request_id = v_req;
+  RESET ROLE;
+
+  ASSERT v_claimed_n = v_effects,
+    pg_catalog.format('T16c FAIL: app.claim_jobs handed out %s of this action''s '
+      '%s job(s). A queued job the worker cannot claim never sends either.',
+      v_claimed_n, v_effects);
+
+  RAISE NOTICE
+    'T16 PASS - a HUMAN PROPOSAL_SEND plans % external effect(s), each becomes an '
+    'app.outbox row, the action sits at EXECUTING, and the worker''s own '
+    'app.claim_jobs takes the work.', v_effects;
+END;
+$t16$;
+
+
+
+-- ─── T17 · HIGH · a HUMAN with no permission cannot perform an action ──────
+-- The finding: `core.action_policies` decides whether an action needs APPROVAL,
+-- and it was ALSO, accidentally, the only thing between a caller and execution.
+-- Where no policy row matched — three of the 22 action types have none at all for
+-- a freshly provisioned tenant, and any type's conditions can exclude a case —
+-- dispatch fell through to a bare EXECUTING with no permission check anywhere in
+-- 011. `app.has_permission` was called exactly once in the whole file, inside
+-- decide_approval, and 014's wrapper re-validates nothing.
+--
+-- Four ways, because "gated" has four halves and checking one proves nothing
+-- about the others:
+--   (a) a role WITHOUT the permission is refused          — the finding
+--   (b) a role WITH it is admitted                        — not an outage
+--   (c) the refusal names the permission                  — actionable, not opaque
+--   (d) every active action type carries one              — no 23rd type slips in
+--
+-- ENQUIRY_ARCHIVE is one of the three with no policy row at all, so it exercises
+-- the pure fall-through. PAYMENT_RECORD is the review's own worked example and is
+-- money-moving, so it also proves the new check runs BEFORE the aal2 gate rather
+-- than hiding behind it.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_sales_enquiry_archive',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_sales_payment_record',
+  pg_temp.t011_perform('PAYMENT_RECORD','INV-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_md_enquiry_archive',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_md_payment_record',
+  pg_temp.t011_perform('PAYMENT_RECORD','INV-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+
+-- A CLIENT-kind actor with a CLIENT role: exactly what app.principal_claims
+-- (002) emits for a membership with role = CLIENT, actor_kind = CLIENT. The role
+-- must be CLIENT, not a staff role — a CLIENT fixture carrying app_role MD holds
+-- enquiry:archive through MD and cannot tell a gated CLIENT from an exempt one.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"CLIENT","actor_kind":"CLIENT","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_client_archive',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+-- The same CLIENT, now holding the one permission a money-moving type needs, at
+-- aal1. Seeded inside this transaction and removed straight after. It must be
+-- refused AAL2_REQUIRED: holding the permission is not a second factor.
+INSERT INTO app.role_permissions (role, permission)
+SELECT 'CLIENT', t.required_permission FROM app.action_types AS t
+ WHERE t.key = 'INVOICE_PUSH';
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_client_money_aal1',
+  pg_temp.t011_perform('INVOICE_PUSH','INV-NOT-REACHED','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+DELETE FROM app.role_permissions WHERE role = 'CLIENT';
+
+DO $t17$
+DECLARE
+  v_sales_arch jsonb := pg_catalog.current_setting('t011.perm_sales_enquiry_archive')::jsonb;
+  v_md_arch    jsonb := pg_catalog.current_setting('t011.perm_md_enquiry_archive')::jsonb;
+  v_sales_pay  jsonb := pg_catalog.current_setting('t011.perm_sales_payment_record')::jsonb;
+  v_bad        text;
+BEGIN
+  -- (d) first: if a type has no required_permission the rest proves nothing.
+  SELECT pg_catalog.string_agg(t.key, ', ' ORDER BY t.key) INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.active AND t.required_permission IS NULL;
+  ASSERT v_bad IS NULL,
+    pg_catalog.format('T17d FAIL: active action type(s) with no '
+      'required_permission: %s. On the HUMAN path that used to mean "anyone".', v_bad);
+
+  SELECT pg_catalog.string_agg(t.key, ', ' ORDER BY t.key) INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.active
+     AND NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp
+                      WHERE rp.permission = t.required_permission);
+  ASSERT v_bad IS NULL,
+    pg_catalog.format('T17d2 FAIL: action type(s) requiring a permission no role '
+      'holds: %s. That is an outage, not a gate.', v_bad);
+
+  -- (a) SALES does not hold enquiry:archive... it does, scope-narrowed, so the
+  -- probe that matters here is payment:record, which SALES genuinely lacks.
+  ASSERT NOT (v_sales_pay->>'ok')::boolean,
+    pg_catalog.format('T17a FAIL: a SALES principal performed PAYMENT_RECORD. '
+      '002 gives payment:record to FINANCE, MD and ADMIN and not to SALES, and '
+      'before this check the only thing that would have stopped them was a policy '
+      'row happening to match — which for an amount nothing conditions on, it does '
+      'not. The payment posts. Result: %s', v_sales_pay::text);
+
+  -- (c) and the refusal says what is missing.
+  ASSERT v_sales_pay->>'detailText' LIKE '%payment:record%',
+    pg_catalog.format('T17c FAIL: the refusal does not name the permission the '
+      'caller lacks, so the only way to find out is to read 011: %s',
+      COALESCE(v_sales_pay->>'detailText','<none>'));
+
+  -- T17c3 · AND IT DOES NOT LEAK THE PAYLOAD SCHEMA. The first version of the
+  -- check sat after payload validation, so an unauthorized SALES probe came back
+  -- with {"field":"amount","reason":"REQUIRED"} — the shape of an action they may
+  -- not perform, handed to them by the refusal itself.
+  ASSERT v_sales_pay->>'detailText' NOT LIKE '%VALIDATION_FAILED%',
+    pg_catalog.format('T17c3 FAIL: an unauthorized caller was told what the '
+      'payload requires before being told they may not call it: %s',
+      v_sales_pay->>'detailText');
+  ASSERT v_sales_pay->>'detailText' LIKE '%FORBIDDEN%',
+    pg_catalog.format('T17c2 FAIL: the refusal is not coded FORBIDDEN: %s',
+      COALESCE(v_sales_pay->>'detailText','<none>'));
+
+  -- (e) A CLIENT ACTOR IS GATED EXACTLY LIKE A HUMAN ONE, and fails closed.
+  --     An earlier 011 exempted CLIENT while app.role_permissions held no CLIENT
+  --     row; a CLIENT principal at aal1 then executed staff actions with no
+  --     permission check. CLIENT holds no permissions, so it is refused.
+  ASSERT NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp
+                      WHERE rp.role = 'CLIENT' AND rp.permission = 'enquiry:archive'),
+    'T17e0 FAIL: CLIENT holds enquiry:archive, so T17e below cannot show a '
+    'refusal. Pick an action type CLIENT does not hold.';
+
+  ASSERT NOT (pg_catalog.current_setting('t011.perm_client_archive')::jsonb ->> 'ok')::boolean
+     AND pg_catalog.current_setting('t011.perm_client_archive')::jsonb ->> 'detailText'
+         LIKE '%FORBIDDEN%enquiry:archive%',
+    pg_catalog.format('T17e FAIL: a CLIENT principal with no permissions was not '
+      'refused ENQUIRY_ARCHIVE as FORBIDDEN enquiry:archive. A CLIENT that skips '
+      'the permission check executes any action type whose policy does not match: %s',
+      pg_catalog.current_setting('t011.perm_client_archive'));
+
+  ASSERT NOT (pg_catalog.current_setting('t011.perm_client_money_aal1')::jsonb ->> 'ok')::boolean
+     AND (pg_catalog.current_setting('t011.perm_client_money_aal1')::jsonb ->> 'detailText')::jsonb
+         ->> 'reason' = 'AAL2_REQUIRED',
+    pg_catalog.format('T17e2 FAIL: a CLIENT holding the permission for a '
+      'money-moving action was not refused AAL2_REQUIRED at aal1. H-05 must cover '
+      'CLIENT as it covers HUMAN: %s',
+      pg_catalog.current_setting('t011.perm_client_money_aal1'));
+
+  -- (b) a role that DOES hold the permission still gets through. ENQUIRY_ARCHIVE
+  -- has no policy row at all, so this is the pure fall-through path: before the
+  -- fix it executed for everyone, and after it must still execute for the right
+  -- someone.
+  ASSERT (v_md_arch->>'ok')::boolean,
+    pg_catalog.format('T17b FAIL: an MD, who holds enquiry:archive, was refused '
+      'ENQUIRY_ARCHIVE. Default-deny must not become deny-all: the three action '
+      'types with no policy row would then be unperformable by anybody. %s',
+      v_md_arch::text);
+
+  RAISE NOTICE
+    'T17 PASS - every active action type names a permission some role holds, a '
+    'SALES principal is refused PAYMENT_RECORD with the missing permission named, '
+    'an MD still performs ENQUIRY_ARCHIVE through the no-policy path that used to '
+    'be open to everyone, and a CLIENT is refused both without the permission and, '
+    'holding it, at aal1 on a money-moving type.';
+END;
+$t17$;
+
+
+
+-- ─── T18 · HIGH · the diff-hash guard can actually fire ────────────────────
+-- The finding: `app.decide_approval`'s "the effects changed since the diff was
+-- rendered" guard hashed `app.plan_effects(...)` alone. That function is
+-- IMMUTABLE — `provolatile = 'i'`, measured — and reads NO ROW: it derives its
+-- output from the action type, the target ref and the payload, all of which are
+-- columns of the request itself and none of which can change after the request is
+-- written. The fresh hash was therefore IDENTICAL to the stored one BY
+-- CONSTRUCTION, and DIFF_CHANGED was mathematically unreachable. An approver could
+-- approve a quotation that had been edited to a different price after it was
+-- queued, with the diff on their screen still showing the old one and the guard
+-- that exists for exactly that raising nothing.
+--
+-- The hash now covers `{effects, value}`, and `app.action_value` is the part that
+-- reads the record. This pin edits the record and requires the guard to fire — a
+-- structural assertion about the hash expression would have passed against the
+-- broken version too, because the expression was never the problem.
+DO $t18$
+DECLARE
+  v_immutable char;
+  v_before    text;
+  v_after     text;
+  v_qid       uuid;
+BEGIN
+  -- T18a · the premise, measured rather than asserted from the finding. If
+  -- plan_effects ever stops being IMMUTABLE this pin's reasoning changes.
+  SELECT p.provolatile INTO v_immutable
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname='app' AND p.proname='plan_effects';
+  ASSERT v_immutable = 'i',
+    pg_catalog.format('T18a FAIL: app.plan_effects is volatility %s, not '
+      'IMMUTABLE. The whole argument for folding action_value into the hash was '
+      'that plan_effects cannot see a changed record; if that is no longer true, '
+      'reread the reasoning before trusting this test.', v_immutable);
+
+  -- T18b · the hash moves when the RECORD moves, with the request untouched.
+  SELECT id INTO v_qid FROM core.quotations
+   WHERE tenant_id = '00000011-1111-1111-1111-111111111111'
+   ORDER BY created_at LIMIT 1;
+
+  IF v_qid IS NULL THEN
+    RAISE NOTICE
+      'T18 SKIP - this pin needs a quotation in the 011 fixtures to edit. '
+      'QUOTATION_APPLY is the action whose value reads one; without a row the '
+      'record-change half cannot be staged here and is covered by T18c alone.';
+  ELSE
+    v_before := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object(
+        'effects', app.plan_effects('QUOTATION_APPLY', NULL, '{}'::jsonb),
+        'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                     v_qid, '{}'::jsonb))::text,'UTF8')),'hex');
+
+    UPDATE core.quotations SET sell_price_sen = sell_price_sen + 100000
+     WHERE id = v_qid;
+
+    v_after := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object(
+        'effects', app.plan_effects('QUOTATION_APPLY', NULL, '{}'::jsonb),
+        'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                     v_qid, '{}'::jsonb))::text,'UTF8')),'hex');
+
+    ASSERT v_before IS DISTINCT FROM v_after,
+      'T18b FAIL: editing the quotation''s sell price did not change the hashed '
+      'material. That is the defect: the hash is over the request, which cannot '
+      'change, so DIFF_CHANGED can never fire and an approver can approve a diff '
+      'they were never shown.';
+  END IF;
+
+  -- T18c · and the effects half still counts, so folding in the value did not
+  -- replace one blind spot with another.
+  ASSERT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+           pg_catalog.jsonb_build_object(
+             'effects', app.plan_effects('PROPOSAL_SEND', NULL, '{}'::jsonb),
+             'value',   '{}'::jsonb)::text,'UTF8')),'hex')
+     IS DISTINCT FROM
+         pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+           pg_catalog.jsonb_build_object(
+             'effects', app.plan_effects('PROPOSAL_SEND', 'PRO-T011-1', '{}'::jsonb),
+             'value',   '{}'::jsonb)::text,'UTF8')),'hex'),
+    'T18c FAIL: two different planned-effect sets hash the same, so the half of '
+    'the guard that always worked has stopped working.';
+
+  RAISE NOTICE
+    'T18 PASS - plan_effects is IMMUTABLE and reads no row, so the hash now also '
+    'covers app.action_value: editing the underlying record moves it, and two '
+    'different effect plans still hash differently.';
+END;
+$t18$;
+
+
+
+-- ─── T19 · HIGH · the diff the approver saw is the diff they approve ────────
+-- THE CANONICAL FORM, written down here because it is a contract between three
+-- places and was previously implied by none of them.
+--
+--   The approval's `diff_hash` is computed SERVER-SIDE, once, at queue time, over
+--   `{"effects": <app.plan_effects(...)>, "value": <app.action_value(...)>}`
+--   rendered as jsonb text and SHA-256'd. It is stored on the approval row and
+--   exposed on `core.v_approval_requests`. The client READS it with the approval
+--   and ECHOES it back as `p_expected_diff_hash`; it does not compute one.
+--   `apps/web/src/features/approvals/ApprovalDetail.tsx:170` passes
+--   `detail.diffHash` verbatim, and the only `hashDiff()` in the repository lives
+--   in `packages/fixtures`, which is the mock client and not this path.
+--
+-- That is deliberate and it is the cheaper half of a choice. A client-computed
+-- hash would have to agree, byte for byte, with a server-side canonical
+-- serialisation forever — two implementations of one format in two languages,
+-- which is the drift this repo's rules exist to prevent. An echoed server hash
+-- has one implementation and one place to change it.
+--
+-- WHAT THE ECHO IS FOR, since a value the client merely returns cannot detect a
+-- change the client made. It detects the gap between READ and DECIDE: the
+-- approver loaded a diff, something else moved the underlying record, and the
+-- hash they echo no longer matches the one the row carries now. That is the only
+-- failure this guard was ever able to catch, and until the hash covered
+-- `app.action_value` it could not catch even that — `app.plan_effects` is
+-- IMMUTABLE and reads no row, so the fresh hash equalled the stored one by
+-- construction (see T18).
+
+-- The quotation refs, read as the owner before any role swap.
+SELECT pg_catalog.set_config('t011.qref_a',
+  (SELECT ref FROM core.quotations WHERE id='00000011-0977-0977-0977-097777777771'), true);
+SELECT pg_catalog.set_config('t011.qref_b',
+  (SELECT ref FROM core.quotations WHERE id='00000011-0977-0977-0977-097777777772'), true);
+
+-- ⚠ THE APPROVALS ARE STAGED DIRECTLY, NOT THROUGH app.perform_action, and the
+-- reason is worth stating rather than hiding. QUOTATION_APPLY is the only action
+-- type whose `value_source` is QUOTATION — it is the one whose value READS the
+-- record this pin edits — and in this file's fixtures it dispatches straight to
+-- EXECUTING rather than queueing, because this tenant carries no matching
+-- `core.action_policies` row. Routing through perform_action would therefore make
+-- this a test of policy seeding, which T16 and T17 already cover, and would never
+-- reach the guard that is actually under test.
+--
+-- What is staged is exactly what perform_action writes: an action request, and an
+-- approval whose `diff_hash` is the canonical
+-- SHA-256 over {"effects": plan_effects(...), "value": action_value(...)}.
+-- If that expression ever diverges from 011's, T19a fails immediately — an
+-- approval whose stored hash does not match what decide_approval recomputes is
+-- refused on the FIRST, unchanged case.
+INSERT INTO core.action_requests
+  (id,tenant_id,ref,action_type,target_ref,requested_by_kind,requested_by_id,status)
+VALUES
+  ('00000011-ac19-0000-0000-00000000000a','00000011-1111-1111-1111-111111111111',
+   'ACT-T019-A','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_a'),
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL'),
+  ('00000011-ac19-0000-0000-00000000000b','00000011-1111-1111-1111-111111111111',
+   'ACT-T019-B','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_b'),
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL');
+
+INSERT INTO core.approval_requests
+  (id,tenant_id,action_request_id,policy_id,action_type,subject,target_ref,
+   requested_by_kind,requested_by_id,reason,diff,diff_hash,approver_role,
+   sla_due_at,expires_at,bulk_approvable)
+SELECT
+  q.approval_id, '00000011-1111-1111-1111-111111111111', q.request_id,
+  'pol_t019','QUOTATION_APPLY','quotation', q.ref,
+  'HUMAN','00000011-0000-0000-0000-0000000000a1','T019 diff-hash probe',
+  app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+  pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+    pg_catalog.jsonb_build_object(
+      'effects', app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+      'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                   q.quotation_id, '{}'::jsonb))::text,'UTF8')),'hex'),
+  'MD', pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', false
+FROM (VALUES
+  ('00000011-a919-0000-0000-00000000000a'::uuid,'00000011-ac19-0000-0000-00000000000a'::uuid,
+   '00000011-0977-0977-0977-097777777771'::uuid, pg_catalog.current_setting('t011.qref_a')),
+  ('00000011-a919-0000-0000-00000000000b'::uuid,'00000011-ac19-0000-0000-00000000000b'::uuid,
+   '00000011-0977-0977-0977-097777777772'::uuid, pg_catalog.current_setting('t011.qref_b'))
+) AS q(approval_id, request_id, quotation_id, ref);
+
+DO $t19$
+DECLARE
+  v_ap_a    uuid := '00000011-a919-0000-0000-00000000000a';
+  v_ap_b    uuid := '00000011-a919-0000-0000-00000000000b';
+  v_read_a  text;
+  v_read_b  text;
+  v_res     jsonb;
+BEGIN
+  -- Read the hash the way the product does: off the approval, through the view
+  -- the detail screen reads.
+  SELECT diff_hash INTO v_read_a FROM core.v_approval_requests WHERE id = v_ap_a;
+  SELECT diff_hash INTO v_read_b FROM core.v_approval_requests WHERE id = v_ap_b;
+
+  ASSERT v_read_a IS NOT NULL AND v_read_b IS NOT NULL,
+    'T19 SETUP FAIL: core.v_approval_requests does not expose diff_hash, so the '
+    'client has nothing to echo and the guard cannot work at all.';
+
+  -- (a) NOTHING CHANGED between read and decide: the echoed hash is accepted.
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-00000000000b"}',true);
+  v_res := pg_temp.t011_decide_hash(v_ap_a,'APPROVE',NULL,v_read_a);
+  ASSERT (v_res->>'ok')::boolean,
+    pg_catalog.format('T19a FAIL: an APPROVE echoing the hash it just read, with '
+      'nothing changed underneath, was refused. The guard must admit the '
+      'unchanged case or every approval in the product fails: %s', v_res::text);
+
+  -- (b) THE RECORD MOVES between read and decide: the echoed hash is refused.
+  -- This is the scenario the whole mechanism exists for — a quotation repriced
+  -- after the approver opened it — and before the hash covered app.action_value
+  -- it was undetectable, because plan_effects cannot see a quotation.
+  UPDATE core.quotations SET sell_price_sen = sell_price_sen + 250000
+   WHERE id = '00000011-0977-0977-0977-097777777772';
+
+  v_res := pg_temp.t011_decide_hash(v_ap_b,'APPROVE',NULL,v_read_b);
+  ASSERT NOT (v_res->>'ok')::boolean,
+    pg_catalog.format('T19b FAIL: the quotation was repriced after the approver '
+      'read the diff, and the APPROVE echoing the hash from that read was '
+      'ACCEPTED. The approver has just approved a number they were never shown: %s',
+      v_res::text);
+  ASSERT v_res->>'detailText' LIKE '%DIFF_CHANGED%',
+    pg_catalog.format('T19b2 FAIL: the stale APPROVE was refused, but not as '
+      'DIFF_CHANGED, so the client cannot tell the approver to reload rather than '
+      'to sign in again: %s', COALESCE(v_res->>'detailText','<none>'));
+
+  RAISE NOTICE
+    'T19 PASS - the approval hash is computed server-side over {effects, value}, '
+    'exposed on core.v_approval_requests and echoed by the client. An APPROVE is '
+    'admitted when nothing moved between read and decide, and refused as '
+    'DIFF_CHANGED when the underlying quotation was repriced in between.';
+END;
+$t19$;
+
+
+
+-- ─── T20 · HIGH · bulk APPROVE cannot bypass the diff guard ────────────────
+-- THE HOLE. `core.decide_approval` refuses an APPROVE that carries no diff hash,
+-- and the commit that added that refusal claimed a guard both sides enforce
+-- "cannot be re-disabled by one of them changing". `core.bulk_decide_approvals`
+-- falsified it on the same day: granted to `authenticated` exactly like its
+-- sibling, it took NO hash at all and `app.bulk_decide` forwarded every item as
+-- `app.decide_approval(id, decision, note, NULL, NULL)`. 011 compares the hash
+-- only when it is non-NULL, so the bulk path skipped the check entirely — and the
+-- bulk path is the one an approver uses to clear an inbox quickly, which is
+-- exactly when they are not re-reading diffs.
+--
+-- `p_items` is now an array of `{approvalId, expectedDiffHash}` because a hash
+-- per approval cannot travel in an array of ids.
+DO $t20$
+DECLARE
+  v_ap_c  uuid := '00000011-a919-0000-0000-00000000000c';
+  v_ap_d  uuid := '00000011-a919-0000-0000-00000000000d';
+  v_read_c text;
+  v_read_d text;
+  v_res   jsonb;
+BEGIN
+  -- Two more approvals, staged the same way T19 stages its own and for the same
+  -- reason. bulk_approvable is true: the monetary exclusion is a separate guard
+  -- and this pin must not be refused by it instead.
+  INSERT INTO core.action_requests
+    (id,tenant_id,ref,action_type,target_ref,requested_by_kind,requested_by_id,status)
+  VALUES
+    ('00000011-ac20-0000-0000-00000000000c','00000011-1111-1111-1111-111111111111',
+     'ACT-T020-C','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_a'),
+     'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL'),
+    ('00000011-ac20-0000-0000-00000000000d','00000011-1111-1111-1111-111111111111',
+     'ACT-T020-D','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_b'),
+     'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL');
+
+  INSERT INTO core.approval_requests
+    (id,tenant_id,action_request_id,policy_id,action_type,subject,target_ref,
+     requested_by_kind,requested_by_id,reason,diff,diff_hash,approver_role,
+     sla_due_at,expires_at,bulk_approvable)
+  SELECT q.approval_id,'00000011-1111-1111-1111-111111111111',q.request_id,
+    'pol_t020','QUOTATION_APPLY','quotation',q.ref,
+    'HUMAN','00000011-0000-0000-0000-0000000000a1','T020 bulk hash probe',
+    app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object(
+        'effects', app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+        'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                     q.quotation_id, '{}'::jsonb))::text,'UTF8')),'hex'),
+    'MD', pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', true
+  FROM (VALUES
+    ('00000011-a919-0000-0000-00000000000c'::uuid,'00000011-ac20-0000-0000-00000000000c'::uuid,
+     '00000011-0977-0977-0977-097777777771'::uuid, pg_catalog.current_setting('t011.qref_a')),
+    ('00000011-a919-0000-0000-00000000000d'::uuid,'00000011-ac20-0000-0000-00000000000d'::uuid,
+     '00000011-0977-0977-0977-097777777772'::uuid, pg_catalog.current_setting('t011.qref_b'))
+  ) AS q(approval_id, request_id, quotation_id, ref);
+
+  SELECT diff_hash INTO v_read_c FROM core.approval_requests WHERE id = v_ap_c;
+  SELECT diff_hash INTO v_read_d FROM core.approval_requests WHERE id = v_ap_d;
+
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-00000000000b"}',true);
+
+  -- T20a · AN APPROVE ITEM WITH NO HASH IS REFUSED, and the whole batch with it.
+  -- A partial bulk decide is worse than a refused one: the approver cannot tell
+  -- which half went through.
+  v_res := pg_temp.t011_bulk(
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('approvalId', v_ap_c),
+      pg_catalog.jsonb_build_object('approvalId', v_ap_d, 'expectedDiffHash', v_read_d)),
+    'APPROVE');
+  ASSERT NOT (v_res->>'ok')::boolean,
+    pg_catalog.format('T20a FAIL: a bulk APPROVE with one hashless item was '
+      'accepted. That is the bypass: core.decide_approval refuses a NULL hash and '
+      'this door forwarded it anyway. %s', v_res::text);
+  ASSERT v_res->>'detailText' LIKE '%expectedDiffHash%',
+    pg_catalog.format('T20a2 FAIL: refused, but not for the missing hash: %s',
+      COALESCE(v_res->>'detailText','<none>'));
+
+  -- T20b · A REPRICED APPROVAL IS REFUSED AS DIFF_CHANGED, through the bulk door.
+  UPDATE core.quotations SET sell_price_sen = sell_price_sen + 310000
+   WHERE id = '00000011-0977-0977-0977-097777777772';
+
+  v_res := pg_temp.t011_bulk(
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('approvalId', v_ap_d, 'expectedDiffHash', v_read_d)),
+    'APPROVE');
+  ASSERT NOT (v_res->>'ok')::boolean,
+    pg_catalog.format('T20b FAIL: a bulk APPROVE of an approval whose quotation '
+      'was repriced after the diff was read was ACCEPTED. %s', v_res::text);
+  ASSERT v_res->>'detailText' LIKE '%DIFF_CHANGED%',
+    pg_catalog.format('T20b2 FAIL: the stale bulk APPROVE was refused, but not as '
+      'DIFF_CHANGED: %s', COALESCE(v_res->>'detailText','<none>'));
+
+  -- T20c · and an unchanged one still goes through, with the CONTRACT SHAPE.
+  v_res := pg_temp.t011_bulk(
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('approvalId', v_ap_c, 'expectedDiffHash', v_read_c)),
+    'APPROVE');
+  ASSERT (v_res->>'ok')::boolean,
+    pg_catalog.format('T20c FAIL: an unchanged bulk APPROVE was refused. The '
+      'guard must admit the unchanged case or bulk decide is unusable: %s',
+      v_res::text);
+
+  ASSERT (v_res -> 'body') ? 'results',
+    pg_catalog.format('T20d FAIL: the bulk response has no `results` key. The '
+      'contract''s ApprovalBulkDecideResponse is {results:[...]}; this used to '
+      'return {data,count}, whose second top-level key also flipped the client''s '
+      'auto-unwrap to pass-through. Body: %s', (v_res -> 'body')::text);
+  ASSERT NOT ((v_res -> 'body') ? 'count'),
+    'T20d2 FAIL: `count` is back beside `results`. app.ok wraps this, and a '
+    'sibling key is what breaks the client''s auto-unwrap — 001''s comment on '
+    'app.ok says exactly this.';
+  ASSERT ((v_res -> 'body' -> 'results' -> 0) ? 'id')
+     AND ((v_res -> 'body' -> 'results' -> 0) ? 'ref'),
+    pg_catalog.format('T20e FAIL: a bulk result element carries no id/ref, so the '
+      'inbox cannot reconcile which of N approvals got which outcome. Element: %s',
+      (v_res -> 'body' -> 'results' -> 0)::text);
+
+  RAISE NOTICE
+    'T20 PASS - bulk APPROVE refuses a hashless item, refuses a repriced approval '
+    'as DIFF_CHANGED, admits an unchanged one, and returns {results:[{id,ref,...}]} '
+    'with no sibling key beside it.';
+END;
+$t20$;
+
 
 ROLLBACK;

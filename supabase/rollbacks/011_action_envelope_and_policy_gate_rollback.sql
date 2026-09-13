@@ -259,6 +259,10 @@ DROP VIEW IF EXISTS core.v_approval_requests;
 
 -- ─── Reverse function order ────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS app.report_effect_result(bigint,app.effect_status,jsonb,jsonb);
+-- Both signatures: 011 changed this from uuid[] to jsonb when bulk APPROVE had
+-- to start carrying a diff hash per approval, and a database rolled back from an
+-- earlier 011 could be carrying either.
+DROP FUNCTION IF EXISTS app.bulk_decide(jsonb,text,text,text);
 DROP FUNCTION IF EXISTS app.bulk_decide(uuid[],text,text,text);
 DROP FUNCTION IF EXISTS app.enqueue_jury_samples(integer);
 DROP FUNCTION IF EXISTS app.enqueue_jury(uuid,uuid,text,text);

@@ -98,7 +98,15 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
   ('00000007-1111-1111-1111-111111111111','PRG','programmes',false,4),
   ('00000007-1111-1111-1111-111111111111','PRO','proposals',true,4),
   ('00000007-1111-1111-1111-111111111111','QUO','quotations',true,4),
-  ('00000007-1111-1111-1111-111111111111','ACT','action_requests',false,4);
+  ('00000007-1111-1111-1111-111111111111','ACT','action_requests',false,4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 -- ACT is the action-envelope ref prefix. 011 gives core.action_requests a
 -- ref through app.finalise_table, so any fixture that crosses a GATED edge
 -- must be able to allocate one. In the product these rows come from 016's

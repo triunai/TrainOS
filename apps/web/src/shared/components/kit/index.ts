@@ -223,6 +223,7 @@ export {
   type ExternalMinimalShellProps,
   type LanguageToggleProps,
 } from "./ExternalMinimalShell";
+export { AuthShell, GoogleGlyph, type AuthShellProps } from "./AuthShell";
 
 /* ---- Data table (Kit §08) ------------------------------------------- */
 export {

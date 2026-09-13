@@ -73,6 +73,15 @@
 -- warns about, met here for two new prefixes.
 -- ============================================================================
 
+--
+-- ⚠ WHICH DATABASE THIS RUNS AGAINST: 001-014, NOT 001-013.
+-- Some assertions below require migration 014's client grants to be present —
+-- T11b2 asserts `authenticated` cannot read core.budget_status or core.model_tier_status, which only means something once 014 has granted the rest of `core` — so running this pin against a 001-013-only database fails for a reason
+-- that is about the harness, not about this pack. Confirmed by execution: run at
+-- 001-013 alone it fails there; apply 014 and it passes. The catalog says the
+-- same. This is a real ordering dependency of the PIN, not of the MIGRATION: 0013
+-- itself applies and verifies cleanly with nothing after it.
+
 BEGIN;
 
 SET LOCAL plpgsql.check_asserts = on;
@@ -157,7 +166,15 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
   ('00000013-1111-1111-1111-111111111111','AGT','agent',false,4),
   ('00000013-1111-1111-1111-111111111111','RUN','run',  true, 4),
   ('00000013-2222-2222-2222-222222222222','AGT','agent',false,4),
-  ('00000013-2222-2222-2222-222222222222','RUN','run',  true, 4);
+  ('00000013-2222-2222-2222-222222222222','RUN','run',  true, 4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 
 INSERT INTO core.tier_keys (tenant_id, tier_key, label, position) VALUES
   ('00000013-1111-1111-1111-111111111111','FAST','Fast',1),
@@ -766,6 +783,7 @@ DECLARE
   v_probe   uuid;
   v_state   text;
   v_refused boolean;
+  v_detail text;
 BEGIN
   SELECT pg_catalog.count(*)::integer INTO v_reveals
     FROM app.key_access_audit AS audit
@@ -812,8 +830,19 @@ BEGIN
        SET last_revealed_at = pg_catalog.now() - interval '48 hours'
      WHERE tenant_id = '00000013-1111-1111-1111-111111111111'
        AND provider_ref = 'prv_anthropic';
-  EXCEPTION WHEN insufficient_privilege THEN
+  -- ⚠ WHEN OTHERS plus a DETAIL check, not `WHEN insufficient_privilege`.
+  -- These two refusals moved from 42501 to 'TRNOS' when the re-review showed the
+  -- reveal path can reach them: 42501 is in the web client's
+  -- UNAUTHENTICATED_CODES set and would have rendered an audit failure as an
+  -- expired session. Catching the SQLSTATE meant this pin silently stopped
+  -- matching the moment the code changed; asserting the DETAIL code is both
+  -- stronger and stable across that.
+  EXCEPTION WHEN OTHERS THEN
     v_refused := true;
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    ASSERT v_detail LIKE '%REVEAL_AUDIT%',
+      pg_catalog.format('T6 FAIL: the last_revealed_at write was refused, but not '
+        'by the reveal-audit trigger: %s / %s', SQLSTATE, v_detail);
   END;
   ASSERT v_refused,
     'T6f FAIL (M-10): last_revealed_at was moved backwards with no audit row, '
@@ -832,8 +861,19 @@ BEGIN
        SET last_revealed_at = pg_catalog.now() - interval '48 hours'
      WHERE tenant_id = '00000013-1111-1111-1111-111111111111'
        AND provider_ref = 'prv_anthropic';
-  EXCEPTION WHEN insufficient_privilege THEN
+  -- ⚠ WHEN OTHERS plus a DETAIL check, not `WHEN insufficient_privilege`.
+  -- These two refusals moved from 42501 to 'TRNOS' when the re-review showed the
+  -- reveal path can reach them: 42501 is in the web client's
+  -- UNAUTHENTICATED_CODES set and would have rendered an audit failure as an
+  -- expired session. Catching the SQLSTATE meant this pin silently stopped
+  -- matching the moment the code changed; asserting the DETAIL code is both
+  -- stronger and stable across that.
+  EXCEPTION WHEN OTHERS THEN
     v_refused := true;
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    ASSERT v_detail LIKE '%REVEAL_AUDIT%',
+      pg_catalog.format('T6 FAIL: the last_revealed_at write was refused, but not '
+        'by the reveal-audit trigger: %s / %s', SQLSTATE, v_detail);
   END;
   PERFORM pg_catalog.set_config('app.key_reveal_audit', '', true);
   ASSERT v_refused,
@@ -1671,5 +1711,146 @@ BEGIN
     'routing matrix versions cannot both be in force.';
 END;
 $t13$;
+
+
+-- ─── T14 · CRIT · a key that was revealed can still be rotated ──────────────
+-- The finding, reproduced live before it was fixed: `ai_provider_key_set` ->
+-- `ai_provider_key_reveal` -> `ai_provider_key_rotate` on one provider_ref
+-- raised, permanently, for any key that had ever been revealed — which is
+-- precisely the key a security team needs to rotate. TWO independent triggers
+-- blocked it and the second was only visible once the first was fixed:
+--
+--   1. `app.require_reveal_audit` short-circuited only on
+--      `NEW.last_revealed_at IS NOT DISTINCT FROM OLD`. Rotation CLEARS that
+--      stamp (the 24-hour ceiling is per key material, and rotation issues new
+--      material), so the clear read as an unaudited write and raised
+--      42501 REVEAL_AUDIT_REQUIRED.
+--   2. `key_fingerprint` was in the table's frozen-column set, so rotation's own
+--      `key_fingerprint = p_fingerprint` raised IMMUTABLE_COLUMN — for EVERY key,
+--      revealed or not. Rotation had never worked at all.
+--
+-- No pin caught either, because T11c only exercises the `authenticated`-role
+-- refusal and this file never ran a successful rotate. That is the gap this test
+-- closes: the happy path of a security control nobody had executed.
+DO $t14$
+DECLARE
+  v_set    jsonb;
+  v_rev    jsonb;
+  v_rot    jsonb;
+  v_before bytea;
+  v_after  bytea;
+  v_ref    text;
+  v_stamp  timestamptz;
+  v_denied boolean := false;
+  -- ⚠ ONE VARIABLE PER PROBE. T14g and T14h each raise their own refusal and
+  -- each must be able to fail on its own. A single shared flag meant T14h's
+  -- `v_denied := false` reset ran BETWEEN T14g's probe and T14g's assertion,
+  -- so the T14g assertion was reading T14h's result: deleting the
+  -- fingerprint-alone raise from app.enforce_key_material_pairing left this
+  -- pin at 14/14 with T14 still claiming "EITHER ... alone is refused".
+  -- Live-reproduced on the fix-014 shim before this was corrected.
+  v_denied_fp boolean := false;
+BEGIN
+  PERFORM pg_temp.t013_claims(
+    '00000013-0000-0000-0000-0000000000a1',
+    '00000013-1111-1111-1111-111111111111', 'ADMIN', 'HUMAN',
+    '00000013-5e55-0000-0000-000000000001', 'aal2');
+
+  v_set := public.ai_provider_key_set(
+    'prv_t14','OPENAI','T14 key','sk-'||pg_catalog.repeat('*',12)||'AAAA',
+    pg_catalog.sha256('t14-first'::bytea),'vault:t14:1',ARRAY['MID'],
+    'ap-southeast-1','CLIENT_ACCOUNT',NULL,NULL);
+  ASSERT v_set IS NOT NULL, 'T14 SETUP FAIL: ai_provider_key_set returned nothing.';
+
+  SELECT key_fingerprint INTO v_before FROM core.ai_provider_keys
+   WHERE provider_ref = 'prv_t14';
+
+  -- REVEAL FIRST. That is the whole finding: an unrevealed key rotated fine in
+  -- theory (it did not — see 2 above — but the reveal is what made it permanent),
+  -- and this ordering is the one a rotation actually follows.
+  v_rev := public.ai_provider_key_reveal(
+    'prv_t14','scheduled rotation after a suspected exposure','t14-req-1');
+  ASSERT v_rev IS NOT NULL, 'T14a FAIL: the reveal itself failed.';
+
+  SELECT last_revealed_at INTO v_stamp FROM core.ai_provider_keys
+   WHERE provider_ref = 'prv_t14';
+  ASSERT v_stamp IS NOT NULL,
+    'T14b FAIL: the reveal did not stamp last_revealed_at, so the rotate below '
+    'would not be exercising the blocked path at all.';
+
+  -- THE ROTATION. Against the pre-fix SQL this raises
+  -- 42501 REVEAL_AUDIT_REQUIRED, and with only the first fix applied it raises
+  -- IMMUTABLE_COLUMN on key_fingerprint.
+  v_rot := public.ai_provider_key_rotate(
+    'prv_t14','sk-'||pg_catalog.repeat('*',12)||'BBBB',
+    pg_catalog.sha256('t14-second'::bytea),'vault:t14:2','t14-req-2');
+  ASSERT v_rot IS NOT NULL, 'T14c FAIL: ai_provider_key_rotate returned nothing.';
+
+  SELECT key_fingerprint, key_ref, last_revealed_at
+    INTO v_after, v_ref, v_stamp
+    FROM core.ai_provider_keys WHERE provider_ref = 'prv_t14';
+
+  ASSERT v_after IS DISTINCT FROM v_before,
+    'T14d FAIL: the rotation did not change key_fingerprint, so the row still '
+    'identifies the old material and "rotated" is a claim about nothing.';
+  ASSERT v_ref = 'vault:t14:2',
+    pg_catalog.format('T14e FAIL: key_ref is %s, not the new locator.', v_ref);
+  ASSERT v_stamp IS NULL,
+    'T14f FAIL: last_revealed_at survived the rotation. The 24-hour ceiling is '
+    'per key material; carrying the old stamp onto new material would block the '
+    'first legitimate reveal of the key that was just issued.';
+
+  -- T14g · AND THE GUARD THAT REPLACED THE FROZEN COLUMN STILL BITES. A
+  -- fingerprint may move only with its locator; moving it alone points the row at
+  -- a different secret while still naming the old vault entry.
+  BEGIN
+    UPDATE core.ai_provider_keys
+       SET key_fingerprint = pg_catalog.sha256('t14-third'::bytea)
+     WHERE provider_ref = 'prv_t14';
+  EXCEPTION WHEN OTHERS THEN
+    v_denied_fp := true;
+    ASSERT SQLERRM LIKE '%key_ref did not%',
+      pg_catalog.format('T14g1 FAIL: the unpaired fingerprint write was refused, '
+        'but not by the pairing guard: %s', SQLERRM);
+  END;
+  -- T14h · AND THE OTHER DIRECTION, which the first version of the pairing
+  -- trigger did not cover: it fired only on a FINGERPRINT change, so
+  -- `SET key_ref = 'vault:elsewhere'` passed untouched — and the reveal-audit
+  -- trigger beside it only watches `last_revealed_at`, so that write left NO
+  -- audit row at all. Repointing a key row at a different vault entry while
+  -- keeping the old fingerprint is the same substitution approached from the
+  -- other side: afterwards the fingerprint describes material the locator no
+  -- longer names, and the next reveal hands out whatever is at the new one.
+  v_denied := false;
+  BEGIN
+    UPDATE core.ai_provider_keys
+       SET key_ref = 'vault:t14:elsewhere'
+     WHERE provider_ref = 'prv_t14';
+  EXCEPTION WHEN OTHERS THEN
+    v_denied := true;
+    ASSERT SQLERRM LIKE '%key_fingerprint did not%',
+      pg_catalog.format('T14h1 FAIL: the lone key_ref write was refused, but not '
+        'by the pairing guard: %s', SQLERRM);
+  END;
+  ASSERT v_denied,
+    'T14h FAIL: key_ref was moved on its own, with key_fingerprint unchanged and '
+    'no audit row written anywhere. The pairing guard must be symmetric: the '
+    'locator and the material identify one secret, and either moving without the '
+    'other is a substitution.';
+
+  ASSERT v_denied_fp,
+    'T14g FAIL: key_fingerprint was changed on its own, with key_ref unchanged. '
+    'Unfreezing the column to make rotation possible must not make it freely '
+    'writable — a fingerprint that moves without its locator is either half a '
+    'rotation or somebody swapping material outside ai_provider_key_rotate.';
+
+  RAISE NOTICE
+    'T14 PASS - set, reveal, then rotate on the same provider_ref: the rotation '
+    'succeeds, changes the fingerprint and the locator together, clears the '
+    'reveal stamp, and an unpaired write of EITHER the fingerprint or the locator '
+    'alone is refused.';
+END;
+$t14$;
+
 
 ROLLBACK;

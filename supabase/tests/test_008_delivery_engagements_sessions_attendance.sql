@@ -86,7 +86,15 @@ SELECT '00000008-1111-1111-1111-111111111111', p, e, false, 4
 FROM (VALUES ('ORG','organisations'),('PRG','programmes'),('PIP','pipelines'),
              ('ENG','engagements'),('SES','sessions'),('PAR','participants'),
              ('TRN','trainers'),('CRT','certificates'),('MSG','outbound_messages'),
-             ('ACT','action_requests')) AS x(p,e);
+             ('ACT','action_requests')) AS x(p,e)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 -- ACT is the action-envelope ref prefix. 011 gives core.action_requests a
 -- ref through app.finalise_table, so any fixture that crosses a GATED edge
 -- must be able to allocate one. In the product these rows come from 016's
@@ -99,9 +107,15 @@ INSERT INTO core.programmes (id, tenant_id, name, category, days, list_price_sen
                              list_price_pax, floor_price_sen, floor_margin_rate, status)
 VALUES ('00000008-0ddd-0ddd-0ddd-0ddddddddde1','00000008-1111-1111-1111-111111111111',
         'Leading Through Change','LEADERSHIP',2,1850000,30,1390000,0.3500,'ACTIVE');
+-- `is_default` is false because **019** seeds every tenant a DEFAULT
+-- ENGAGEMENT pipeline from `trg_tenants_z_seed_pipelines`, and
+-- `pipelines_one_default_uq` is a partial unique index on
+-- `(tenant_id, object) WHERE is_default`. This pin does not assert
+-- `is_default` and only needs a pipeline to hang an engagement off, so it
+-- keeps its own non-default one beside the seeded default. Changed by 019, the pack that made a default engagement pipeline a repo-wide fact; nothing about this migration changed.
 INSERT INTO core.pipelines (id, tenant_id, object, name, is_default, status)
 VALUES ('00000008-0eee-0eee-0eee-0eeeeeeeeee1','00000008-1111-1111-1111-111111111111',
-        'ENGAGEMENT','Standard delivery', true,'ACTIVE');
+        'ENGAGEMENT','Standard delivery', false,'ACTIVE');
 INSERT INTO core.trainers (id, tenant_id, name, ttt_certified, ttt_ref)
 VALUES ('00000008-7a11-7a11-7a11-7a1100000001','00000008-1111-1111-1111-111111111111',
         'Farah Aziz', true,'TTT-2019-4471');

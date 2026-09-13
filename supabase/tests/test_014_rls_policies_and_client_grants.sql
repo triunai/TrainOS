@@ -11,7 +11,7 @@
 -- has run against this file. Every assertion below has been EXECUTED and passes;
 -- none of them has been adversarially reviewed.
 --
--- T1  Inventory, re-derived from the catalogue: 113 tenant tables x 2 policies,
+-- T1  Inventory, re-derived from the catalogue against a 001-017 database:
 --     the one no-tenant exception, 114 SELECT grants, zero write grants, zero
 --     anon grants, the three wrappers with the EXACT stored search_path string.
 -- T2  The whole point of the pack: an AUTHENTICATED caller — really the
@@ -63,6 +63,15 @@
 -- GOV-07. T9's write probes deliberately target `core.organisations`, which
 -- carries NO state-transition trigger, so a refusal is unambiguously the
 -- privilege layer and not 011's gate answering first.
+--
+-- ⚠ WHICH DATABASE THIS RUNS AGAINST: 001-017, NOT 001-014.
+-- T1's inventory numbers (116 policy pairs, 121 `core` SELECT grants) are the
+-- post-017 figures — 017 adds three tenant-scoped tables and two granted views —
+-- and T12's gate set includes tables 013 created. Against a 001-014-only database
+-- T1 fails on the counts, correctly, because it is being asked about a database
+-- it does not describe. The migration header's own object counts are the 001-014
+-- figures and say so; the two sets are not a contradiction, they describe
+-- different moments, and each says which.
 -- ============================================================================
 
 BEGIN;
@@ -85,6 +94,8 @@ $setup$;
 INSERT INTO auth.users (id,email) VALUES
   ('00000014-0000-0000-0000-0000000000a1','t014-alpha-sales@example.invalid'),
   ('00000014-0000-0000-0000-0000000000a2','t014-alpha-manager@example.invalid'),
+  ('00000014-0000-0000-0000-0000000000a3','t014-alpha-admin@example.invalid'),
+  ('00000014-0000-0000-0000-0000000000a4','t014-alpha-ops@example.invalid'),
   ('00000014-0000-0000-0000-0000000000b1','t014-beta-sales@example.invalid');
 
 INSERT INTO public.tenants (id,name,slug,timezone) VALUES
@@ -98,12 +109,21 @@ VALUES
    'SALES','HUMAN',NULL,'ACTIVE',true),
   ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a2',
    'SALES_MANAGER','HUMAN',NULL,'ACTIVE',true),
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a3',
+   'ADMIN','HUMAN',NULL,'ACTIVE',true),
+  -- OPS, not TRAINER: a TRAINER membership needs a trainer_id
+  -- (002:171 memberships_trainer_id_present) and this pin's subject is a role
+  -- that legitimately lacks portal:token:issue, not the trainer record model.
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a4',
+   'OPS','HUMAN',NULL,'ACTIVE',true),
   ('00000014-2222-2222-2222-222222222222','00000014-0000-0000-0000-0000000000b1',
    'SALES','HUMAN',NULL,'ACTIVE',true);
 
 INSERT INTO public.user_profiles (tenant_id,user_id,display_name) VALUES
   ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a1','T014 Alpha Sales'),
   ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a2','T014 Alpha Manager'),
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a3','T014 Alpha Admin'),
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a4','T014 Alpha Ops'),
   ('00000014-2222-2222-2222-222222222222','00000014-0000-0000-0000-0000000000b1','T014 Beta Sales');
 
 INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width) VALUES
@@ -112,7 +132,15 @@ INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width) VALUES
   ('00000014-1111-1111-1111-111111111111','DRF','suggested_drafts',true,4),
   ('00000014-2222-2222-2222-222222222222','ACT','action_requests',true,4),
   ('00000014-2222-2222-2222-222222222222','APV','approval_requests',true,4),
-  ('00000014-2222-2222-2222-222222222222','DRF','suggested_drafts',true,4);
+  ('00000014-2222-2222-2222-222222222222','DRF','suggested_drafts',true,4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 
 INSERT INTO core.organisations (id,tenant_id,ref,name,owner_id) VALUES
   ('00000014-bbbb-bbbb-bbbb-bbbbbbbbbba1','00000014-1111-1111-1111-111111111111',
@@ -150,7 +178,16 @@ INSERT INTO t014_claims VALUES
   ('alpha_manager',
    '{"sub":"00000014-0000-0000-0000-0000000000a2","role":"authenticated","tenant_id":"00000014-1111-1111-1111-111111111111","app_role":"SALES_MANAGER","actor_kind":"HUMAN","aal":"aal1"}'),
   ('beta_sales',
-   '{"sub":"00000014-0000-0000-0000-0000000000b1","role":"authenticated","tenant_id":"00000014-2222-2222-2222-222222222222","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}');
+   '{"sub":"00000014-0000-0000-0000-0000000000b1","role":"authenticated","tenant_id":"00000014-2222-2222-2222-222222222222","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}'),
+  -- aal2, because 002's memberships_write_admin WITH CHECK demands it and an
+  -- aal1 ADMIN would be refused for the wrong reason: the pin has to fail on the
+  -- privilege it is testing, not on a second factor it forgot to satisfy.
+  ('alpha_admin',
+   '{"sub":"00000014-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000014-1111-1111-1111-111111111111","app_role":"ADMIN","actor_kind":"HUMAN","aal":"aal2"}'),
+  ('alpha_ops',
+   '{"sub":"00000014-0000-0000-0000-0000000000a4","role":"authenticated","tenant_id":"00000014-1111-1111-1111-111111111111","app_role":"OPS","actor_kind":"HUMAN","aal":"aal1"}'),
+  ('beta_admin',
+   '{"sub":"00000014-0000-0000-0000-0000000000b1","role":"authenticated","tenant_id":"00000014-2222-2222-2222-222222222222","app_role":"ADMIN","actor_kind":"HUMAN","aal":"aal2"}');
 
 -- One probe helper. Runs a statement and returns a jsonb verdict instead of
 -- letting the exception escape, so a refusal is DATA the assertions can compare
@@ -197,11 +234,15 @@ BEGIN
      AND (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
            WHERE p.polrelid=c.oid
              AND p.polname IN (c.relname||'_tenant_select', c.relname||'_tenant_isolation'))=2;
-  ASSERT v_pairs = 113,
-    pg_catalog.format('T1a FAIL: expected 113 core tables with a complete tenant '
-      'policy pair, found %s. A table finalised by 004 and missed by 014 is '
-      'deny-all with a live grant, which reads as an empty screen rather than as '
-      'a defect.', v_pairs);
+  -- 113 at 014, plus the three tenant-scoped tables 017 adds (core.tax_policies,
+  -- core.data_retention_policies, core.data_breach_register), which 017 policies
+  -- by CALLING app.apply_tenant_policies rather than hand-writing a policy beside
+  -- 113 generated ones. That is the number this asserts: a later pack that adds a
+  -- table and forgets the call leaves it deny-all with a live grant, which reads
+  -- as an empty screen rather than as a defect.
+  ASSERT v_pairs = 116,
+    pg_catalog.format('T1a FAIL: expected 116 core tables with a complete tenant '
+      'policy pair (113 from 014 + 3 from 017), found %s.', v_pairs);
 
   ASSERT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p
                   JOIN pg_catalog.pg_class c ON c.oid=p.polrelid
@@ -211,28 +252,67 @@ BEGIN
     'with no tenant_id and it was granted by name on purpose; no policy means the '
     'provenance subject list is invisible and every provenance screen is empty.';
 
+  -- ⚠ has_table_privilege throughout T1c-T1e, not information_schema.
+  -- table_privileges. That view reports a privilege under the grantee it was
+  -- granted TO, and says nothing about one granted to PUBLIC that anon and
+  -- authenticated both inherit. Today's revokes make the two spellings agree;
+  -- this pin exists for the day a `GRANT ... TO PUBLIC` makes them disagree, and
+  -- has_table_privilege is the one that would still be right.
+  -- ⚠ SCOPED TO 014-TIME OBJECTS, so a later pack adding a granted relation does
+  -- not fail a pin that is not about it. 018 adds three views
+  -- (v_organisation_relations, v_budgets, v_model_tiers) and would take this from
+  -- 121 to 124; that delta is 018's own T38 to assert, not this file's.
+  --
+  -- TABLES are scoped by the policy stamp — the manifest 014 writes and its
+  -- rollback drops by — so a table belongs to this count only if the pack that
+  -- created its policies is 017 or earlier. VIEWS carry no policy and therefore
+  -- no stamp, so the four that are granted are named, which they already were in
+  -- this assertion's own message. A fifth granted view is then a deliberate edit
+  -- here rather than a silent drift, which is the property worth keeping.
   SELECT pg_catalog.count(*) INTO v_grants
-    FROM information_schema.table_privileges
-   WHERE table_schema='core' AND grantee='authenticated' AND privilege_type='SELECT';
-  ASSERT v_grants = 116,
-    pg_catalog.format('T1c FAIL: expected 116 SELECT grants in core to '
-      'authenticated — 114 tables plus core.audit_entries and '
-      'core.v_contact_consent_current. Three views are deliberately excluded: '
-      'v_approval_requests (doc 09 §12) and budget_status / model_tier_status '
-      '(security_invoker over app.usage_rollup, so a grant cannot work). '
-      'Found %s.', v_grants);
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname='core'
+     AND has_table_privilege('authenticated', c.oid, 'SELECT')
+     AND (
+       -- a table this pack or an earlier one policied
+       (c.relkind = 'r' AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_policy p
+            JOIN pg_catalog.pg_description d
+              ON d.objoid = p.oid
+             AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+           WHERE p.polrelid = c.oid
+             AND pg_catalog.substring(d.description, 'migration:([0-9]{3})') <= '017'))
+       -- or one of the four views 014 and 017 grant, by name
+       OR c.relname IN ('audit_entries','v_contact_consent_current',
+                        'v_tax_policy_unverified','v_trainer_accreditation'));
+  ASSERT v_grants = 121,
+    pg_catalog.format('T1c FAIL: expected 121 SELECT grants in core to '
+      'authenticated ON 014-TIME OBJECTS — 117 tables (114 from 014 + 3 from 017, '
+      'identified by the migration stamp on their policies) plus four views: '
+      'core.audit_entries, core.v_contact_consent_current, and 017''s '
+      'v_tax_policy_unverified and v_trainer_accreditation. Three views are '
+      'deliberately excluded: v_approval_requests (doc 09 §12) and budget_status '
+      '/ model_tier_status (security_invoker over app.usage_rollup, so a grant '
+      'cannot work). Found %s.', v_grants);
 
   SELECT pg_catalog.count(*) INTO v_writes
-    FROM information_schema.table_privileges
-   WHERE table_schema='core' AND grantee IN ('authenticated','anon')
-     AND privilege_type <> 'SELECT';
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN pg_catalog.unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS w(priv)
+   WHERE n.nspname='core' AND c.relkind IN ('r','v','m','p','f')
+     AND (has_table_privilege('authenticated', c.oid, w.priv)
+       OR has_table_privilege('anon', c.oid, w.priv));
   ASSERT v_writes = 0,
     pg_catalog.format('T1d FAIL: %s non-SELECT privilege(s) in core reach a client '
       'role. Every one of them is a path around the action envelope.', v_writes);
 
   SELECT pg_catalog.count(*) INTO v_anon
-    FROM information_schema.table_privileges
-   WHERE table_schema IN ('core','app','public') AND grantee='anon';
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN pg_catalog.unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS w(priv)
+   WHERE n.nspname IN ('core','app','public') AND c.relkind IN ('r','v','m','p','f')
+     AND has_table_privilege('anon', c.oid, w.priv);
   ASSERT v_anon = 0,
     pg_catalog.format('T1e FAIL: anon holds %s table privilege(s). 014 creates no '
       'public-token allowlist entry, so the correct number is zero.', v_anon);
@@ -240,7 +320,7 @@ BEGIN
   FOREACH v_fn IN ARRAY ARRAY[
     'core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)',
     'core.decide_approval(uuid,text,text,text,text)',
-    'core.bulk_decide_approvals(uuid[],text,text,text)']
+    'core.bulk_decide_approvals(jsonb,text,text,text)']
   LOOP
     ASSERT pg_catalog.to_regprocedure(v_fn) IS NOT NULL,
       pg_catalog.format('T1f FAIL: wrapper %s does not exist', v_fn);
@@ -254,10 +334,15 @@ BEGIN
         v_fn, COALESCE(v_conf::text,'NULL'));
   END LOOP;
 
+  -- ⚠ INTERPOLATED, NOT WRITTEN OUT. This line said "118 SELECT grants" while the
+  -- assertion twenty lines above required 121 — a success message describing a
+  -- database two packs old, which is the exact drift every count in this file is
+  -- re-derived to avoid. A number in a NOTICE is still a claim.
   RAISE NOTICE
-    'T1 PASS - 113 tenant policy pairs, the one no-tenant exception granted by '
-    'name, 118 SELECT grants, zero writes to a client role, zero anon privileges, '
-    'and three wrappers carrying the exact stored search_path="".';
+    'T1 PASS - % tenant policy pairs, the one no-tenant exception granted by '
+    'name, % SELECT grants, zero writes to a client role, zero anon privileges, '
+    'and three wrappers carrying the exact stored search_path="".',
+    v_pairs, v_grants;
 END;
 $t1$;
 
@@ -516,6 +601,33 @@ LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $fn$
    WHERE tenant_id = (SELECT app.require_tenant_id());
 $fn$;
 
+-- ⚠ FIXTURE ROWS, BECAUSE AN EMPTY VIEW PROVES NOTHING. An earlier version of T7
+-- asserted only that the definer read did not RAISE, with no rows seeded at all.
+-- It would have passed against a view returning zero rows for every caller — and
+-- the catalog nonetheless claimed T7 proved "that tenant's rows and no other's".
+-- One approval per tenant makes "sees its own" and "sees the other's" two
+-- different numbers instead of both being zero.
+INSERT INTO core.action_requests
+  (id,tenant_id,action_type,requested_by_kind,requested_by_id,status)
+VALUES
+  ('00000014-ac00-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   'PROPOSAL_SEND','HUMAN','00000014-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL'),
+  ('00000014-ac00-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   'PROPOSAL_SEND','HUMAN','00000014-0000-0000-0000-0000000000b1','QUEUED_FOR_APPROVAL');
+
+INSERT INTO core.approval_requests
+  (id,tenant_id,action_request_id,policy_id,action_type,subject,requested_by_kind,
+   reason,diff,diff_hash,approver_role,sla_due_at,expires_at,bulk_approvable)
+VALUES
+  ('00000014-a99a-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-ac00-0000-0000-000000000001','pol_t014','PROPOSAL_SEND','proposal',
+   'HUMAN','T014 alpha approval','[]'::jsonb,pg_catalog.repeat('a',64),'MD',
+   pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', false),
+  ('00000014-a99a-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-ac00-0000-0000-000000000002','pol_t014','PROPOSAL_SEND','proposal',
+   'HUMAN','T014 beta approval','[]'::jsonb,pg_catalog.repeat('b',64),'MD',
+   pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', false);
+
 SELECT pg_catalog.set_config('request.jwt.claims',
   (SELECT claims FROM t014_claims WHERE who='alpha_manager'), true);
 SET LOCAL ROLE authenticated;
@@ -535,16 +647,31 @@ BEGIN
       'definer path, so core.list_approvals cannot be built over it in 018: %s',
       v_def::text);
 
+  -- The row count, not just the absence of an exception. Two approvals exist, one
+  -- per tenant; the definer read is scoped to the caller's tenant, so exactly one
+  -- is the only answer that distinguishes "correctly scoped" from "returns
+  -- nothing" and from "returns everything".
+  ASSERT (v_def->'value')::text = '1',
+    pg_catalog.format('T7a1 FAIL: the definer read returned %s approval(s) for '
+      'tenant Alpha, expected exactly 1. Two rows were seeded, one per tenant: 0 '
+      'means the definer path returns nothing and the assertion above was passing '
+      'on an empty view, 2 means it returns the other tenant''s as well.',
+      COALESCE((v_def->'value')::text,'NULL'));
+
+  ASSERT (SELECT pg_catalog.count(*) FROM core.v_approval_requests) = 2,
+    'T7a2 FAIL: the two seeded approvals are not both visible to the owner, so '
+    'the "exactly one" above could be arithmetic rather than tenant scoping.';
+
   ASSERT NOT (v_dir->>'ok')::boolean,
     pg_catalog.format('T7b FAIL: `authenticated` can SELECT core.v_approval_requests '
       'directly. Doc 09 §12 forbids the grant: the view is security_invoker, so '
       'granting it runs 011''s join path AS the browser. Result: %s', v_dir::text);
 
-  ASSERT NOT EXISTS (
-    SELECT 1 FROM information_schema.table_privileges
-     WHERE table_schema='core' AND table_name='v_approval_requests'
-       AND grantee IN ('authenticated','anon')),
-    'T7c FAIL: a grant on core.v_approval_requests reached a client role.';
+  ASSERT NOT has_table_privilege('authenticated','core.v_approval_requests','SELECT')
+     AND NOT has_table_privilege('anon','core.v_approval_requests','SELECT'),
+    'T7c FAIL: a grant on core.v_approval_requests reached a client role, by some '
+    'route — including through PUBLIC, which information_schema.table_privileges '
+    'would not have shown under either role name.';
 
   RAISE NOTICE
     'T7 PASS - the approval view is readable through a definer for the caller''s '
@@ -591,8 +718,8 @@ DECLARE
   v_q       text;
   v_refused boolean;
 BEGIN
-  PERFORM app.apply_tenant_policies('core','t014_scratch');
-  PERFORM app.apply_tenant_policies('core','t014_scratch_nullable');
+  PERFORM app.apply_tenant_policies('core','t014_scratch','014');
+  PERFORM app.apply_tenant_policies('core','t014_scratch_nullable','014');
 
   -- (a) The 115th table gets both policies.
   ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
@@ -641,7 +768,7 @@ BEGIN
   -- (f) The no-tenant refusal fires. finalise_table''s contract, kept.
   v_refused := false;
   BEGIN
-    PERFORM app.apply_tenant_policies('core','t014_scratch_no_tenant');
+    PERFORM app.apply_tenant_policies('core','t014_scratch_no_tenant','014');
   EXCEPTION WHEN OTHERS THEN v_refused := true;
   END;
   ASSERT v_refused,
@@ -653,7 +780,7 @@ BEGIN
   --     a definer function owned by the table owner reads every tenant.
   v_refused := false;
   BEGIN
-    PERFORM app.apply_tenant_policies('core','t014_scratch_unforced');
+    PERFORM app.apply_tenant_policies('core','t014_scratch_unforced','014');
   EXCEPTION WHEN OTHERS THEN v_refused := true;
   END;
   ASSERT v_refused,
@@ -666,7 +793,7 @@ BEGIN
   EXECUTE $sql$DROP POLICY t014_scratch_tenant_select ON core.t014_scratch$sql$;
   EXECUTE $sql$CREATE POLICY t014_scratch_tenant_select ON core.t014_scratch
             AS PERMISSIVE FOR SELECT TO authenticated USING (true)$sql$;
-  PERFORM app.apply_tenant_policies('core','t014_scratch');
+  PERFORM app.apply_tenant_policies('core','t014_scratch','014');
   SELECT pg_catalog.pg_get_expr(p.polqual,p.polrelid) INTO v_q
     FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid
    WHERE c.relname='t014_scratch' AND p.polname='t014_scratch_tenant_select';
@@ -767,7 +894,7 @@ BEGIN
     'optimistic-concurrency check is disabled with no visible symptom.';
 
   v_def := pg_catalog.regexp_replace(
-    pg_catalog.pg_get_functiondef('core.bulk_decide_approvals(uuid[],text,text,text)'::regprocedure),
+    pg_catalog.pg_get_functiondef('core.bulk_decide_approvals(jsonb,text,text,text)'::regprocedure),
     '\s+','','g');
   ASSERT pg_catalog.strpos(v_def,'app.ok(app.bulk_decide(') > 0,
     'T10e FAIL: core.bulk_decide_approvals does not wrap app.bulk_decide in app.ok.';
@@ -777,7 +904,7 @@ BEGIN
   FOREACH v_fn IN ARRAY ARRAY[
     'app.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)',
     'app.decide_approval(uuid,text,text,text,text)',
-    'app.bulk_decide(uuid[],text,text,text)']
+    'app.bulk_decide(jsonb,text,text,text)']
   LOOP
     ASSERT NOT has_function_privilege('authenticated', pg_catalog.to_regprocedure(v_fn), 'EXECUTE'),
       pg_catalog.format('T10f FAIL: %s is reachable by authenticated. The wrapper '
@@ -800,5 +927,1164 @@ BEGIN
     'hash, and the three app functions plus app.ok remain unreachable by a client.';
 END;
 $t10$;
+
+
+-- ─── T11 · CRIT-1 · an ADMIN cannot delete their way to a higher role ────────
+-- The finding this pin exists for: 014 granted DELETE on public.memberships,
+-- which 002 withheld. 002's escalation stop, `memberships_no_self_edit`, is
+-- `FOR UPDATE` only, and `memberships_write_admin` is `FOR ALL` — so a DELETE
+-- privilege plus those two policies is a complete delete-then-reinsert path to
+-- any role, run by an aal2 ADMIN against their own row, with the audit trail
+-- 002:768 requires removed in the same statement.
+--
+-- Both layers are pinned, separately, because either one alone is one edit from
+-- being the only one:
+--   T11a/b  the privilege is absent and the attempt is refused by it.
+--   T11c/d  the row survives and the role is unchanged.
+--   T11e    with the privilege DELIBERATELY RE-GRANTED inside this transaction,
+--           the restrictive policy still refuses. This is the half that would
+--           have caught the original defect, because the original defect WAS a
+--           grant, and a pin that only checks for the grant's absence tells you
+--           nothing about what happens the day somebody adds it back.
+
+-- ⚠ THE SHIPPED GRANT STATE, CAPTURED BEFORE THIS PIN TOUCHES IT.
+-- T11a used to assert `NOT has_table_privilege(... 'DELETE')` inside the DO block
+-- at the end — AFTER this pin had itself granted DELETE for the T11f probe and
+-- revoked it again. The assertion therefore measured the pin's own revoke, not
+-- the migration's grant, and passed against the original broken database. It was
+-- a tautology in the one place the whole finding lives. The privilege is now read
+-- into a GUC here, before any GRANT or REVOKE in this file runs, and asserted
+-- from that.
+SELECT pg_catalog.set_config('t014.shipped_delete_on_memberships',
+  has_table_privilege('authenticated','public.memberships','DELETE')::text, true);
+SELECT pg_catalog.set_config('t014.shipped_priv_set',
+  (SELECT pg_catalog.string_agg(w.priv, ',' ORDER BY w.priv)
+     FROM pg_catalog.unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS w(priv)
+    WHERE has_table_privilege('authenticated','public.memberships', w.priv)), true);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.admin_self_delete',
+  pg_temp.t014_try($$DELETE FROM public.memberships
+                      WHERE user_id = '00000014-0000-0000-0000-0000000000a3'::uuid$$)::text, true);
+SELECT pg_catalog.set_config('t014.admin_other_delete',
+  pg_temp.t014_try($$DELETE FROM public.memberships
+                      WHERE user_id = '00000014-0000-0000-0000-0000000000a1'::uuid$$)::text, true);
+-- The soft-delete path 002 says removal actually is, so the pin proves the
+-- product still works rather than only that the attack fails.
+SELECT pg_catalog.set_config('t014.admin_soft_remove',
+  pg_temp.t014_try($$UPDATE public.memberships SET status = 'REMOVED'
+                      WHERE user_id = '00000014-0000-0000-0000-0000000000a1'::uuid$$)::text, true);
+RESET ROLE;
+
+-- Now re-grant the privilege this migration withholds, and try again. Inside the
+-- pin's transaction, so it is gone at ROLLBACK like every other fixture.
+--
+-- ⚠ AND THE COUNTERFACTUAL, which T13 and T14 both carry and an earlier version
+-- of this probe did not. "Deleted zero rows" is also what you get if
+-- `memberships_write_admin`'s USING stops matching the target row for an
+-- unrelated reason — somebody adds an aal2 term to its USING, where today there
+-- is only one in its WITH CHECK (002:751-756), or the fixture's role or tenant
+-- drifts. So the same DELETE is run twice: once with the restrictive policy
+-- standing, where it must delete nothing, and once with the policy dropped,
+-- where it MUST delete exactly one row. Only the pair proves the policy is what
+-- is refusing.
+GRANT DELETE ON public.memberships TO authenticated;
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.admin_delete_with_grant',
+  pg_temp.t014_try_value($$WITH d AS (
+      DELETE FROM public.memberships
+       WHERE user_id = '00000014-0000-0000-0000-0000000000a3'::uuid
+       RETURNING 1)
+    SELECT to_jsonb(pg_catalog.count(*)) FROM d$$)::text, true);
+RESET ROLE;
+
+-- The counterfactual: same grant, same caller, same statement, policy removed.
+DROP POLICY memberships_no_client_delete ON public.memberships;
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.admin_delete_without_policy',
+  pg_temp.t014_try_value($$WITH d AS (
+      DELETE FROM public.memberships
+       WHERE user_id = '00000014-0000-0000-0000-0000000000a3'::uuid
+       RETURNING 1)
+    SELECT to_jsonb(pg_catalog.count(*)) FROM d$$)::text, true);
+RESET ROLE;
+
+-- Put both back. The membership row the counterfactual just deleted has to come
+-- back too, or every assertion after this one is measuring a database the pin
+-- broke rather than the one 014 built.
+CREATE POLICY memberships_no_client_delete ON public.memberships
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (false);
+INSERT INTO public.memberships
+  (tenant_id,user_id,role,actor_kind,agent_id,status,is_default)
+VALUES ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a3',
+        'ADMIN','HUMAN',NULL,'ACTIVE',true)
+ON CONFLICT (tenant_id,user_id) DO NOTHING;
+REVOKE DELETE ON public.memberships FROM authenticated;
+
+DO $t11$
+DECLARE
+  v_self    jsonb := pg_catalog.current_setting('t014.admin_self_delete')::jsonb;
+  v_other   jsonb := pg_catalog.current_setting('t014.admin_other_delete')::jsonb;
+  v_soft    jsonb := pg_catalog.current_setting('t014.admin_soft_remove')::jsonb;
+  v_granted jsonb := pg_catalog.current_setting('t014.admin_delete_with_grant')::jsonb;
+  v_without jsonb := pg_catalog.current_setting('t014.admin_delete_without_policy')::jsonb;
+  v_role    text;
+BEGIN
+  -- T11a · THE SHIPPED PRIVILEGE, read before this pin granted anything. Not
+  -- `has_table_privilege(...)` evaluated here, which by now reflects this pin's
+  -- own REVOKE and would pass against the broken database the finding was filed
+  -- against.
+  ASSERT pg_catalog.current_setting('t014.shipped_delete_on_memberships') = 'false',
+    'T11a FAIL: as shipped, authenticated holds DELETE on public.memberships. '
+    '002:699 grants SELECT, INSERT and UPDATE and withholds DELETE on purpose: '
+    'removal is status = ''REMOVED'' so the audit trail of who had access when '
+    'survives, and a DELETE walks straight past memberships_no_self_edit, which '
+    'is FOR UPDATE only.';
+
+  -- And the whole set, not only the absence of the dangerous one — so narrowing
+  -- past 002 fails here too, in the same reading.
+  ASSERT pg_catalog.current_setting('t014.shipped_priv_set') = 'INSERT,SELECT,UPDATE',
+    pg_catalog.format('T11b0 FAIL: as shipped, authenticated holds {%s} on '
+      'public.memberships. 002:696-701 grants exactly SELECT, INSERT and UPDATE; '
+      'the fix for the DELETE was to restore that set, not to narrow past it.',
+      pg_catalog.current_setting('t014.shipped_priv_set'));
+
+  -- T11b · the attack, run.
+  ASSERT NOT (v_self->>'ok')::boolean,
+    pg_catalog.format('T11b FAIL: an aal2 ADMIN deleted their own membership row. '
+      'That is the first half of delete-and-reinsert-at-a-higher-role, and 002''s '
+      'UPDATE-only escalation stop never sees it. Result: %s', v_self::text);
+  ASSERT v_self->>'sqlstate' = '42501',
+    pg_catalog.format('T11b1 FAIL: the self-delete was refused, but not by the '
+      'privilege layer (sqlstate %s). Expected 42501 insufficient_privilege — a '
+      'refusal from somewhere else means the grant is still there and something '
+      'accidental is standing in the way.', v_self->>'sqlstate');
+
+  ASSERT NOT (v_other->>'ok')::boolean,
+    pg_catalog.format('T11c FAIL: an ADMIN hard-deleted another member''s row. '
+      'Same missing audit trail, one indirection further away: %s', v_other::text);
+
+  -- T11d · and the product path still works.
+  ASSERT (v_soft->>'ok')::boolean,
+    pg_catalog.format('T11d FAIL: an aal2 ADMIN cannot soft-remove a member with '
+      'status = ''REMOVED''. Withholding DELETE is only correct while the path 002 '
+      'says to use instead is open: %s', v_soft::text);
+
+  ASSERT EXISTS (
+    SELECT 1 FROM public.memberships
+     WHERE user_id = '00000014-0000-0000-0000-0000000000a3'
+       AND tenant_id = '00000014-1111-1111-1111-111111111111'
+       AND role = 'ADMIN'),
+    'T11e FAIL: the ADMIN''s own membership row is gone or changed after the '
+    'attempts above. The escalation succeeded.';
+
+  -- T11f · the second layer, with the privilege handed back.
+  ASSERT (v_granted->>'ok')::boolean
+     AND (v_granted->'value')::text = '0',
+    pg_catalog.format('T11f FAIL: with DELETE re-granted, an aal2 ADMIN deleted '
+      '%s membership row(s). The restrictive policy memberships_no_client_delete '
+      'is the layer that has to hold when a future migration re-adds the grant, '
+      'and it did not. Result: %s',
+      COALESCE((v_granted->'value')::text,'?'), v_granted::text);
+
+  -- T11f1 · the counterfactual. Without the policy the SAME statement deletes the
+  -- row, so T11f's zero is the policy refusing and not the statement missing.
+  ASSERT (v_without->>'ok')::boolean
+     AND (v_without->'value')::text = '1',
+    pg_catalog.format('T11f1 FAIL: with memberships_no_client_delete DROPPED and '
+      'DELETE granted, the aal2 ADMIN still deleted %s row(s) instead of 1. That '
+      'means T11f''s zero above was not the policy refusing — the DELETE was not '
+      'matching the row for some other reason, and this whole probe proves '
+      'nothing. Result: %s', COALESCE((v_without->'value')::text,'ERROR'), v_without::text);
+
+  SELECT m.role::text INTO v_role FROM public.memberships m
+   WHERE m.user_id = '00000014-0000-0000-0000-0000000000a3';
+  ASSERT v_role = 'ADMIN',
+    pg_catalog.format('T11g FAIL: the ADMIN''s stored role is now %s.', v_role);
+
+  RAISE NOTICE
+    'T11 PASS - DELETE on public.memberships is not granted, an aal2 ADMIN is '
+    'refused at 42501 for their own row and for another member''s, the soft-remove '
+    'UPDATE 002 prescribes still works, with the privilege deliberately re-granted '
+    'the restrictive policy still deletes nothing, and with that policy dropped '
+    'the same statement deletes exactly one row — so the zero was the policy.';
+END;
+$t11$;
+
+
+
+-- ─── T12 · HIGH-1 · role-gated reads on the three sensitive tables ──────────
+-- The finding: §2 gives all 113 tenant-scoped core tables the same tenant-only
+-- predicate and §4 grants SELECT on all of them, so any principal of a tenant
+-- could read every row of every table in it. For three tables 002 had already
+-- decided otherwise and wrote the decision as a permission.
+--
+-- FOUR WAYS PER TABLE, because "gated" has four separate halves and a pin that
+-- checks one of them proves nothing about the other three:
+--   (a) signed out          — `anon`, which must hold nothing at all
+--   (b) same tenant, low role — the principal the gate exists to stop
+--   (c) same tenant, ADMIN  — the principal the gate must NOT stop, or the gate
+--                             is a broken screen rather than an authorization
+--   (d) wrong tenant, ADMIN — an ADMIN of the OTHER tenant, who holds the
+--                             permission and must still see nothing, which is
+--                             the half that proves the role gate composes WITH
+--                             tenant isolation instead of replacing it
+--
+-- Each probe is ONE STATEMENT. A batched probe matrix lets the planner fold
+-- repeated identical calls of a STABLE function, and `set_config`'s role-swap
+-- side effects are invisible to it, so a batch returns a silently-wrong
+-- all-denied result — which reads as a pass.
+
+-- Fixture rows: one per tenant per table, so "sees nothing" and "sees only its
+-- own" are distinguishable from "the table is empty".
+INSERT INTO core.ai_provider_keys
+  (tenant_id,provider_ref,provider,label,masked_key,key_fingerprint,key_ref,region,added_by)
+VALUES
+  ('00000014-1111-1111-1111-111111111111','prv_t014_alpha','OPENAI','Alpha key',
+   'sk-'||pg_catalog.repeat('*',12)||'AAAA', pg_catalog.sha256('alpha'::bytea),
+   'vault:alpha','ap-southeast-1','{"kind":"HUMAN","id":"00000014-0000-0000-0000-0000000000a3","name":null}'::jsonb),
+  ('00000014-2222-2222-2222-222222222222','prv_t014_beta','OPENAI','Beta key',
+   'sk-'||pg_catalog.repeat('*',12)||'BBBB', pg_catalog.sha256('beta'::bytea),
+   'vault:beta','ap-southeast-1','{"kind":"HUMAN","id":"00000014-0000-0000-0000-0000000000b1","name":null}'::jsonb);
+
+-- A share token must point at exactly one real target (007's
+-- pst_exactly_one_target / pst_kind_matches_target). TNA is the shallower of the
+-- two chains — opportunity then TNA — so it is the one the fixture builds.
+INSERT INTO core.opportunities (id,tenant_id,organisation_id,owner_id,value_sen) VALUES
+  ('00000014-0bbb-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-bbbb-bbbb-bbbb-bbbbbbbbbba1','00000014-0000-0000-0000-0000000000a1',100000),
+  ('00000014-0bbb-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000014-0000-0000-0000-0000000000b1',100000);
+
+INSERT INTO core.tnas (id,tenant_id,opportunity_id) VALUES
+  ('00000014-0ddd-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-0bbb-0000-0000-000000000001'),
+  ('00000014-0ddd-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-0bbb-0000-0000-000000000002');
+
+INSERT INTO core.public_share_tokens
+  (tenant_id,target_kind,tna_id,token_hash,created_by_kind,created_by_id)
+VALUES
+  ('00000014-1111-1111-1111-111111111111','TNA','00000014-0ddd-0000-0000-000000000001',
+   extensions.digest('t014-alpha-token','sha256'),'HUMAN','00000014-0000-0000-0000-0000000000a1'),
+  ('00000014-2222-2222-2222-222222222222','TNA','00000014-0ddd-0000-0000-000000000002',
+   extensions.digest('t014-beta-token','sha256'),'HUMAN','00000014-0000-0000-0000-0000000000b1');
+
+-- run_node_io hangs off runs -> run_nodes, and a run needs a registered agent
+-- (013's runs_agent_fk), so the fixture is four rows deep per tenant.
+INSERT INTO core.tier_keys (tenant_id,tier_key,label) VALUES
+  ('00000014-1111-1111-1111-111111111111','MID','Mid'),
+  ('00000014-2222-2222-2222-222222222222','MID','Mid');
+
+INSERT INTO core.agents
+  (id,tenant_id,agent_id,name,status,principal_user_id,default_tier)
+VALUES
+  ('00000014-a9e7-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   'agent_proposal','Proposal Agent','ACTIVE','00000014-0000-0000-0000-0000000000a1','MID'),
+  ('00000014-a9e7-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   'agent_proposal','Proposal Agent','ACTIVE','00000014-0000-0000-0000-0000000000b1','MID');
+
+INSERT INTO core.runs
+  (id,tenant_id,agent_id,trigger,status,tiers_used,correlation_id,tokens_in,tokens_out,cost_sen)
+VALUES
+  ('00000014-7777-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   'agent_proposal','{"type":"TNA_SIGNED_OFF"}'::jsonb,'SUCCEEDED',ARRAY['MID'],
+   '00000014-c077-0000-0000-000000000001',10,10,10),
+  ('00000014-7777-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   'agent_proposal','{"type":"TNA_SIGNED_OFF"}'::jsonb,'SUCCEEDED',ARRAY['MID'],
+   '00000014-c077-0000-0000-000000000002',10,10,10);
+
+INSERT INTO core.run_nodes (id,tenant_id,run_id,node_key,seq,kind,name)
+VALUES
+  ('00000014-8888-0000-0000-000000000001','00000014-1111-1111-1111-111111111111',
+   '00000014-7777-0000-0000-000000000001','extract',0,'TOOL','Extract'),
+  ('00000014-8888-0000-0000-000000000002','00000014-2222-2222-2222-222222222222',
+   '00000014-7777-0000-0000-000000000002','extract',0,'TOOL','Extract');
+
+INSERT INTO core.run_node_io (tenant_id,run_node_id,prompt,completion) VALUES
+  ('00000014-1111-1111-1111-111111111111','00000014-8888-0000-0000-000000000001',
+   'ALPHA PROMPT','ALPHA COMPLETION'),
+  ('00000014-2222-2222-2222-222222222222','00000014-8888-0000-0000-000000000002',
+   'BETA PROMPT','BETA COMPLETION');
+
+-- run_state_cards and run_snapshots: the two `run:read` tables the re-review
+-- named as worse than the one that was gated. The card escapes the 30-day
+-- redaction sweep run_node_io gets and carries goal and plan as free text; the
+-- snapshot's `response` is every tool call's raw output for the tenant.
+INSERT INTO core.run_state_cards (tenant_id,run_id,version,goal,budgets) VALUES
+  ('00000014-1111-1111-1111-111111111111','00000014-7777-0000-0000-000000000001',1,
+   'ALPHA GOAL, verbatim client text', '{"tokens":{"used":0,"limit":1000},"cost":{"used":0,"limit":100}}'::jsonb),
+  ('00000014-2222-2222-2222-222222222222','00000014-7777-0000-0000-000000000002',1,
+   'BETA GOAL', '{"tokens":{"used":0,"limit":1000},"cost":{"used":0,"limit":100}}'::jsonb);
+
+INSERT INTO core.run_snapshots (tenant_id,run_id,tool_name,args_hash,args,response) VALUES
+  ('00000014-1111-1111-1111-111111111111','00000014-7777-0000-0000-000000000001',
+   'lookup_org', pg_catalog.repeat('a',64), '{"q":"alpha"}'::jsonb, '{"raw":"ALPHA TOOL OUTPUT"}'::jsonb),
+  ('00000014-2222-2222-2222-222222222222','00000014-7777-0000-0000-000000000002',
+   'lookup_org', pg_catalog.repeat('b',64), '{"q":"beta"}'::jsonb, '{"raw":"BETA TOOL OUTPUT"}'::jsonb);
+
+-- (a) signed out, all three tables, one statement each.
+SELECT pg_catalog.set_config('request.jwt.claims','{}',true);
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('t014.g_anon_keys',
+  pg_temp.t014_try($$SELECT 1 FROM core.ai_provider_keys LIMIT 1$$)::text, true);
+SELECT pg_catalog.set_config('t014.g_anon_tok',
+  pg_temp.t014_try($$SELECT 1 FROM core.public_share_tokens LIMIT 1$$)::text, true);
+SELECT pg_catalog.set_config('t014.g_anon_io',
+  pg_temp.t014_try($$SELECT 1 FROM core.run_node_io LIMIT 1$$)::text, true);
+SELECT pg_catalog.set_config('t014.g_anon_card',
+  pg_temp.t014_try($$SELECT 1 FROM core.run_state_cards LIMIT 1$$)::text, true);
+SELECT pg_catalog.set_config('t014.g_anon_snap',
+  pg_temp.t014_try($$SELECT 1 FROM core.run_snapshots LIMIT 1$$)::text, true);
+RESET ROLE;
+
+-- (b) same tenant, the role the gate exists to stop. SALES for the two ADMIN/MD
+-- tables; OPS for the share tokens, because SALES legitimately holds
+-- portal:token:issue (002:861) and picking it there would pin the wrong claim.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_keys',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.ai_provider_keys$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_io',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_node_io$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_card',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_state_cards$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_snap',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_snapshots$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_card',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_state_cards$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_snap',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_snapshots$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_card',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_state_cards
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_snap',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_snapshots
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_ops'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_low_tok',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.public_share_tokens$$)::text, true);
+RESET ROLE;
+
+-- (c) same tenant, ADMIN — holds all three permissions.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_keys',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.ai_provider_keys$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_io',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_node_io$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_adm_tok',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.public_share_tokens$$)::text, true);
+RESET ROLE;
+
+-- (d) wrong tenant, ADMIN — permission held, tenant wrong.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_keys',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.ai_provider_keys
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_io',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.run_node_io
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='beta_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.g_xt_tok',
+  pg_temp.t014_try_value($$SELECT to_jsonb(pg_catalog.count(*)) FROM core.public_share_tokens
+      WHERE tenant_id = '00000014-1111-1111-1111-111111111111'$$)::text, true);
+RESET ROLE;
+
+DO $t12$
+DECLARE
+  r        pg_catalog.record;
+  v_anon   jsonb;
+  v_low    jsonb;
+  v_adm    jsonb;
+  v_xt     jsonb;
+BEGIN
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('core.ai_provider_keys',   'ai:provider:read',    'SALES', 'keys'),
+      ('core.run_node_io',        'run:read',            'SALES', 'io'),
+      ('core.run_state_cards',    'run:read',            'SALES', 'card'),
+      ('core.run_snapshots',      'run:read',            'SALES', 'snap'),
+      ('core.public_share_tokens','portal:token:issue',  'OPS',   'tok')
+    ) AS t(relname, perm, lowrole, tag)
+  LOOP
+    v_anon := pg_catalog.current_setting('t014.g_anon_' || r.tag)::jsonb;
+    v_low  := pg_catalog.current_setting('t014.g_low_'  || r.tag)::jsonb;
+    v_adm  := pg_catalog.current_setting('t014.g_adm_'  || r.tag)::jsonb;
+    v_xt   := pg_catalog.current_setting('t014.g_xt_'   || r.tag)::jsonb;
+
+    -- (a) signed out
+    ASSERT NOT (v_anon->>'ok')::boolean,
+      pg_catalog.format('T12a FAIL (%s): anon read it. anon holds no grant in '
+        'core and never has; if this succeeded the grant layer moved. %s',
+        r.relname, v_anon::text);
+
+    -- (b) same tenant, low role — zero rows, NOT an error. A permission-denied
+    -- here would mean the grant was revoked rather than the policy gating, and a
+    -- revoked grant is a different posture with different consequences for the
+    -- 018 RPC layer that will read these tables as a definer.
+    ASSERT (v_low->>'ok')::boolean,
+      pg_catalog.format('T12b FAIL (%s): a %s principal got an ERROR rather than '
+        'zero rows. The gate is a RESTRICTIVE policy, so the correct refusal is an '
+        'empty result; an error means the SELECT grant is gone and 018''s definer '
+        'reads will break too. %s', r.relname, r.lowrole, v_low::text);
+    ASSERT (v_low->'value')::text = '0',
+      pg_catalog.format('T12c FAIL (%s): a %s principal of the tenant read %s '
+        'row(s). 002 gives %s to other roles and not to this one; tenant '
+        'membership is not authorization here.',
+        r.relname, r.lowrole, (v_low->'value')::text, r.perm);
+
+    -- (c) same tenant, ADMIN — must see its own tenant's row
+    ASSERT (v_adm->>'ok')::boolean AND (v_adm->'value')::text = '1',
+      pg_catalog.format('T12d FAIL (%s): an aal2 ADMIN of the tenant read %s '
+        'row(s), expected 1. A gate that also stops the role it is meant to admit '
+        'is a broken screen, not an authorization. %s',
+        r.relname, COALESCE((v_adm->'value')::text,'ERROR'), v_adm::text);
+
+    -- (d) wrong tenant, same permission
+    ASSERT (v_xt->>'ok')::boolean AND (v_xt->'value')::text = '0',
+      pg_catalog.format('T12e FAIL (%s): an ADMIN of the OTHER tenant read %s of '
+        'this tenant''s rows. The role gate must AND with tenant isolation, not '
+        'replace it. %s', r.relname, COALESCE((v_xt->'value')::text,'ERROR'), v_xt::text);
+  END LOOP;
+
+  -- The gate lives inside the RESTRICTIVE isolation policy, on BOTH halves, so a
+  -- later permissive policy cannot OR it away and a future write grant does not
+  -- arrive ungated. Asserted off pg_policy rather than off the migration's text.
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('ai_provider_keys',   'ai:provider:read'),
+      ('run_node_io',        'run:read'),
+      ('public_share_tokens','portal:token:issue')
+    ) AS t(relname, perm)
+  LOOP
+    DECLARE
+      v_qual  text;
+      v_check text;
+      v_perm  boolean;
+      v_cmd   char;
+    BEGIN
+      SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid),
+             pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid),
+             p.polpermissive, p.polcmd
+        INTO v_qual, v_check, v_perm, v_cmd
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='core' AND c.relname = r.relname
+         AND p.polname = r.relname || '_tenant_isolation';
+
+      ASSERT v_qual IS NOT NULL,
+        pg_catalog.format('T12f FAIL: core.%s has no isolation policy at all.', r.relname);
+      ASSERT NOT v_perm,
+        pg_catalog.format('T12g FAIL: core.%s''s isolation policy is PERMISSIVE. A '
+          'permissive gate ORs with the tenant SELECT policy and gates nothing.',
+          r.relname);
+      ASSERT v_cmd = '*',
+        pg_catalog.format('T12h FAIL: core.%s''s isolation policy is not FOR ALL, '
+          'so it decides nothing on the day a write grant lands.', r.relname);
+      ASSERT pg_catalog.strpos(v_qual, r.perm) > 0,
+        pg_catalog.format('T12i FAIL: core.%s''s isolation policy does not consult '
+          '%s on the read side. Predicate: %s', r.relname, r.perm, v_qual);
+      ASSERT pg_catalog.strpos(COALESCE(v_check,''), r.perm) > 0,
+        pg_catalog.format('T12j FAIL: core.%s gates reads on %s but not writes. '
+          'WITH CHECK: %s', r.relname, r.perm, COALESCE(v_check,'NULL'));
+    END;
+  END LOOP;
+
+  -- Exactly three gated tables. If a table joins the gated set this pin needs a
+  -- fourth probe column, not a bigger number — an ungated sensitive table with a
+  -- blanket SELECT grant is the finding this test exists for.
+  -- ⚠ ALL SEVEN TABLES `run:read` GOVERNS, plus the two others, checked by name.
+  -- An earlier version gated `run_node_io` alone and called the rest a deliberate
+  -- posture. `run_state_cards` is worse than the one that was gated — 013's own
+  -- header concedes it escapes the 30-day redaction sweep — and
+  -- `run_snapshots.response` is every tool call's raw output for the tenant.
+  FOR r IN
+    SELECT x FROM pg_catalog.unnest(ARRAY[
+      'ai_provider_keys','runs','run_nodes','run_node_io','run_events',
+      'run_state_cards','run_checkpoints','run_snapshots','public_share_tokens'
+    ]) AS t(x)
+  LOOP
+    ASSERT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='core' AND c.relname = r.x
+         AND p.polname = r.x || '_tenant_isolation'
+         AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%'
+         AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%has_permission%'),
+      pg_catalog.format('T12k FAIL: core.%s carries no permission term on BOTH '
+        'halves of its isolation policy. Every table run:read governs must be '
+        'gated, or the pack restores 002''s decision for a fraction of the surface '
+        'it covers and argues provenance for the rest.', r.x);
+  END LOOP;
+
+  ASSERT (SELECT pg_catalog.count(*)
+            FROM pg_catalog.pg_policy p
+            JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname='core'
+             AND p.polname = c.relname || '_tenant_isolation'
+             AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%') = 9,
+    'T12l FAIL: the number of core tables whose isolation policy carries a '
+    'permission term is not nine. If a table joined the gated set this pin needs '
+    'a probe column for it, not a bigger number.';
+
+  -- And nothing grew a third policy shape: 004 T1c and 013 T1d both inventory
+  -- core by exactly the two names, and folding the gate into the isolation policy
+  -- rather than adding a `_role_gate` policy is what keeps those pins true.
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy p
+      JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname='core'
+       AND p.polname NOT IN (c.relname || '_tenant_select', c.relname || '_tenant_isolation')
+       AND p.polname NOT IN ('provenance_subjects_read','autonomy_grants_agents_cannot_write')),
+    'T12m FAIL: a policy in core is neither one of 014''s two shapes nor one of '
+    'the two named exceptions. test_004 T1c and test_013 T1d inventory core by '
+    'those names and would fail next.';
+
+  RAISE NOTICE
+    'T12 PASS - ai_provider_keys, run_node_io, run_state_cards, run_snapshots and '
+    'public_share_tokens each refuse anon, return zero rows to a same-tenant '
+    'principal without the permission, return the tenant''s own row to an ADMIN '
+    'that has it, and return zero to an ADMIN of another tenant who also has it. '
+    'Nine core tables carry a permission term on both halves of their isolation '
+    'policy: all seven run:read governs, plus the provider keys and the share '
+    'tokens.';
+END;
+$t12$;
+
+
+
+-- ─── T13 · HIGH-2 · the global-row fallback is a READ concession only ───────
+-- The finding: `app.apply_tenant_policies` built ONE predicate string and used
+-- it for both USING and WITH CHECK, so on a tenant-NULLABLE table
+-- `tenant_id IS NULL` was admitted on writes as well as reads. Inert while no
+-- client role holds a write privilege on core — and the migration header sells
+-- the restrictive policy as being correct "on the day somebody grants a write",
+-- which is precisely the day it would have let any authenticated caller write a
+-- row attributed to no tenant and therefore visible to every tenant.
+--
+-- Pinned twice: structurally, off pg_policy, over every nullable table rather
+-- than the two known ones; and behaviourally, by staging that exact day inside
+-- this transaction — a permissive INSERT policy and an INSERT grant, both gone
+-- at ROLLBACK — because a predicate assertion proves the string and the probe
+-- proves what the string does.
+
+SELECT pg_catalog.set_config('t014.null_write_probe','{}',true);
+
+-- Stage "the day somebody grants a write" on one nullable table. Without a
+-- PERMISSIVE insert policy every INSERT is refused anyway and the probe could
+-- not tell the restrictive WITH CHECK from the absence of a permission — which
+-- is how this defect stayed invisible in the first place.
+CREATE POLICY t014_tmp_insert ON core.compliance_rules
+  AS PERMISSIVE FOR INSERT TO authenticated WITH CHECK (true);
+GRANT INSERT ON core.compliance_rules TO authenticated;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_sales'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.w_null_tenant', pg_temp.t014_try($$
+  INSERT INTO core.compliance_rules
+    (tenant_id,rule_code,family_key,check_key,side,subject,subject_field,op,
+     reference_kind,reference,effective_from,status)
+  VALUES (NULL,'T014-SMUGGLED-NATIONAL','LEAD_TIME_INHOUSE','CHK_LEAD_TIME','GRANT',
+          'engagement','starts_on','LTE','FIELD','approval_date','2026-01-01','PROPOSED')
+$$)::text, true);
+SELECT pg_catalog.set_config('t014.w_own_tenant', pg_temp.t014_try($$
+  INSERT INTO core.compliance_rules
+    (tenant_id,rule_code,family_key,check_key,side,subject,subject_field,op,
+     reference_kind,reference,effective_from,status)
+  VALUES ('00000014-1111-1111-1111-111111111111','T014-OWN-TENANT','LEAD_TIME_INHOUSE',
+          'CHK_LEAD_TIME','GRANT','engagement','starts_on','LTE','FIELD',
+          'approval_date','2026-01-01','PROPOSED')
+$$)::text, true);
+SELECT pg_catalog.set_config('t014.w_other_tenant', pg_temp.t014_try($$
+  INSERT INTO core.compliance_rules
+    (tenant_id,rule_code,family_key,check_key,side,subject,subject_field,op,
+     reference_kind,reference,effective_from,status)
+  VALUES ('00000014-2222-2222-2222-222222222222','T014-OTHER-TENANT','LEAD_TIME_INHOUSE',
+          'CHK_LEAD_TIME','GRANT','engagement','starts_on','LTE','FIELD',
+          'approval_date','2026-01-01','PROPOSED')
+$$)::text, true);
+RESET ROLE;
+
+REVOKE INSERT ON core.compliance_rules FROM authenticated;
+DROP POLICY t014_tmp_insert ON core.compliance_rules;
+
+DO $t13$
+DECLARE
+  v_null  jsonb := pg_catalog.current_setting('t014.w_null_tenant')::jsonb;
+  v_own   jsonb := pg_catalog.current_setting('t014.w_own_tenant')::jsonb;
+  v_other jsonb := pg_catalog.current_setting('t014.w_other_tenant')::jsonb;
+  v_bad   text;
+  v_n     integer;
+BEGIN
+  -- T13a · structural, over every tenant-NULLABLE core table.
+  SELECT pg_catalog.string_agg(c.relname, ', ' ORDER BY c.relname) INTO v_bad
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_policy p
+      ON p.polrelid = c.oid AND p.polname = c.relname || '_tenant_isolation'
+   WHERE n.nspname = 'core' AND c.relkind = 'r'
+     AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                  WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                    AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull)
+     AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%IS NULL%';
+  ASSERT v_bad IS NULL,
+    pg_catalog.format('T13a FAIL: tenant_id IS NULL is admitted by the WITH CHECK '
+      'of the isolation policy on: %s. A row written with no tenant is visible to '
+      'every tenant.', v_bad);
+
+  -- T13b · and the read half still has it, or 009's national rules vanish.
+  SELECT pg_catalog.count(*) INTO v_n
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_policy p
+      ON p.polrelid = c.oid AND p.polname = c.relname || '_tenant_select'
+   WHERE n.nspname = 'core' AND c.relkind = 'r'
+     AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                  WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                    AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull)
+     AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%IS NULL%';
+  ASSERT v_n >= 2,
+    pg_catalog.format('T13b FAIL: only %s tenant-NULLABLE core table(s) carry the '
+      'global-row fallback in their SELECT predicate. 009''s national compliance '
+      'rules and rule set versions both need it.', v_n);
+
+  -- T13c · the day somebody grants a write, staged and run.
+  ASSERT NOT (v_null->>'ok')::boolean,
+    pg_catalog.format('T13c FAIL: with a write grant in place, an authenticated '
+      'SALES principal inserted a compliance rule with tenant_id NULL. That row is '
+      'a national rule as far as every other tenant''s read predicate is '
+      'concerned. Result: %s', v_null::text);
+  ASSERT v_null->>'sqlstate' = '42501',
+    pg_catalog.format('T13c1 FAIL: the NULL-tenant write was refused with %s, not '
+      '42501. A refusal from a CHECK constraint or a trigger would be luck, not '
+      'the policy under test.', v_null->>'sqlstate');
+
+  ASSERT NOT (v_other->>'ok')::boolean,
+    pg_catalog.format('T13d FAIL: a write attributed to the OTHER tenant was '
+      'accepted: %s', v_other::text);
+
+  ASSERT (v_own->>'ok')::boolean,
+    pg_catalog.format('T13e FAIL: a write attributed to the caller''s OWN tenant '
+      'was refused. The strict WITH CHECK must refuse the NULL and the stranger '
+      'and admit this one, or it is not authorization, it is an outage: %s',
+      v_own::text);
+
+  -- The staged grant and policy are gone again, inside this transaction.
+  ASSERT NOT has_table_privilege('authenticated','core.compliance_rules','INSERT'),
+    'T13f FAIL: the probe''s INSERT grant survived the probe.';
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy p
+      JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+     WHERE c.relname='compliance_rules' AND p.polname='t014_tmp_insert'),
+    'T13g FAIL: the probe''s permissive INSERT policy survived the probe.';
+
+  RAISE NOTICE
+    'T13 PASS - the tenant_id IS NULL fallback appears in the SELECT predicate of '
+    'every nullable table and in the WITH CHECK of none. Staged against a real '
+    'write grant: NULL refused at 42501, other tenant refused, own tenant accepted.';
+END;
+$t13$;
+
+
+
+-- ─── T14 · MED · the grant checks see a privilege held through PUBLIC ───────
+-- The finding: every "anon holds nothing" / "no client write privilege" check in
+-- this pack filtered `information_schema.table_privileges` on
+-- `grantee IN ('anon','authenticated')`. That view lists a privilege under the
+-- grantee it was granted TO. A privilege granted to PUBLIC is inherited by every
+-- role and appears under NEITHER name, so the whole guard was blind to
+-- `GRANT ... TO PUBLIC` — the one spelling a person reaches for when they want
+-- "everyone" and the one that would be hardest to see in review.
+--
+-- Today's revokes make both spellings agree, so an assertion about the current
+-- database proves nothing about the guard. This pin therefore CREATES the
+-- disagreement, inside its own transaction, and measures which spelling notices.
+DO $t14$
+DECLARE
+  v_is_schema integer;
+  v_has       boolean;
+BEGIN
+  CREATE TABLE core.t014_public_grant_probe (
+    id        uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+    tenant_id uuid NOT NULL,
+    note      text);
+
+  -- The spelling the guard was blind to.
+  GRANT SELECT ON core.t014_public_grant_probe TO PUBLIC;
+
+  SELECT pg_catalog.count(*) INTO v_is_schema
+    FROM information_schema.table_privileges
+   WHERE table_schema = 'core' AND table_name = 't014_public_grant_probe'
+     AND grantee IN ('anon','authenticated');
+
+  v_has := has_table_privilege('anon','core.t014_public_grant_probe','SELECT');
+
+  -- Half one: the old spelling really is blind. If this ever stops being true,
+  -- the rest of this pin and the comments in the migration are overstating a
+  -- problem that no longer exists, and should be cut rather than left standing.
+  ASSERT v_is_schema = 0,
+    pg_catalog.format('T14a FAIL: information_schema.table_privileges DID report '
+      'the PUBLIC grant under a named client role (%s row(s)). If Postgres now '
+      'resolves PUBLIC in that view, the has_table_privilege rewrite in this pack '
+      'is no longer load-bearing and its comments are wrong.', v_is_schema);
+
+  -- Half two: the spelling this pack now uses is not blind.
+  ASSERT v_has,
+    'T14b FAIL: has_table_privilege did NOT see a privilege anon holds through '
+    'PUBLIC. That is the whole reason every grant check in 014 and in this pin was '
+    'rewritten to use it, and it would mean the rewrite bought nothing.';
+
+  REVOKE SELECT ON core.t014_public_grant_probe FROM PUBLIC;
+  ASSERT NOT has_table_privilege('anon','core.t014_public_grant_probe','SELECT'),
+    'T14c FAIL: the probe grant survived its own revoke.';
+
+  DROP TABLE core.t014_public_grant_probe;
+
+  RAISE NOTICE
+    'T14 PASS - a SELECT granted to PUBLIC is invisible to '
+    'information_schema.table_privileges filtered by grantee and visible to '
+    'has_table_privilege. 014''s verify block and this pin now use the second.';
+END;
+$t14$;
+
+
+
+-- ─── T15 · HIGH-4 · the diff-hash guard fires, and the client never arms it ──
+-- ⚠ THE FINDING IS NOW CLOSED ON BOTH SIDES, AND THIS PIN FLIPPED WITH IT.
+-- It used to assert the DEFECTIVE behaviour on purpose — an APPROVE with no hash
+-- being accepted — with instructions in its own message to delete that assertion
+-- the day the client was fixed. The client was fixed (PR #17, e20e1ba on main:
+-- `decideApproval` sends `p_expected_diff_hash`, and `ApprovalDecideRequest.diffHash`
+-- is typed `string`, required), so 014's wrapper now REFUSES an APPROVE that
+-- carries no hash and T15c asserts that refusal instead. Those instructions were
+-- followed rather than left as a comment about a future that had arrived.
+--
+-- THE FINDING (#6 in the 2026-09-13 retrofit review): `core.decide_approval`
+-- takes `p_expected_diff_hash` and 011:2781-2787 compares it — but ONLY when it
+-- is non-NULL. `decideApproval`'s single call site,
+-- apps/web/src/shared/api/rpcClient.ts:523-529, sends four arguments and not that
+-- one, and `ApprovalDecideRequest` in packages/contract/src/domain/approvals.ts
+-- has no hash field at all. Both verified in this worktree at those lines.
+--
+-- WHAT THE ARGUMENT ACTUALLY BUYS, which is narrower than "optimistic
+-- concurrency" makes it sound and is why this needs a worked fixture rather than
+-- an assertion. 011 ALREADY recomputes the effects on every APPROVE and refuses
+-- if they no longer hash to the approval's stored `diff_hash` — that guard needs
+-- no client participation and does fire. `p_expected_diff_hash` covers the OTHER
+-- staleness: the approval row was RE-RENDERED between the moment the human read
+-- the diff on screen and the moment they pressed Approve. The stored hash and the
+-- fresh hash then agree with each other and disagree with what the human saw, and
+-- the only party who knows what the human saw is the browser. Which never says.
+--
+-- So the fixture re-renders an approval under the caller — target_ref moves, the
+-- effects move, the stored hash is updated to match — and then decides it three
+-- ways:
+--   T15a  the hash the human's screen would have carried  → REFUSED, "stale"
+--   T15b  the hash as it is NOW                           → ACCEPTED
+--   T15c  no hash at all                                  → REFUSED at the door,
+--         before 011 is reached, because an APPROVE whose hash is absent is an
+--         approval of a diff nobody can prove the approver saw.
+--
+-- WHY THE DATABASE CAN REQUIRE IT NOW AND COULD NOT BEFORE. Refusing a NULL hash
+-- would have broken every approve in the product while no caller sent one. With
+-- the contract typing it as required and the only call site sending it, the
+-- refusal costs nothing and closes the hole from the other end: a guard both
+-- sides enforce cannot be re-disabled by one of them changing. Only APPROVE is
+-- refused — REJECT and REQUEST_CHANGES do not apply the diff and 011 does not
+-- compare the hash for them either.
+
+CREATE TEMP TABLE t014_hashes (which text PRIMARY KEY, h text);
+
+INSERT INTO core.action_requests
+  (id,tenant_id,action_type,target_ref,requested_by_kind,requested_by_id,status)
+SELECT ('00000014-ac00-0000-0000-00000000000' || g)::uuid,
+       '00000014-1111-1111-1111-111111111111','PROPOSAL_SEND',NULL,'HUMAN',
+       '00000014-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL'
+FROM pg_catalog.generate_series(3,5) AS g;
+
+-- The hash of the diff as first rendered — what the human's screen carries.
+-- ⚠ THE HASH IS OVER {effects, value}, NOT OVER THE EFFECTS ALONE, and this
+-- fixture has to spell it the same way 011 does or the fresh-vs-stored check
+-- fires first and this pin measures that instead. `app.plan_effects` is
+-- IMMUTABLE and reads no row, so a hash over it alone could never change — which
+-- is the defect 011 now fixes by folding `app.action_value` in.
+INSERT INTO t014_hashes
+SELECT 'before', pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+  pg_catalog.jsonb_build_object(
+    'effects', app.plan_effects('PROPOSAL_SEND',NULL,'{}'::jsonb),
+    'value',   app.action_value('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111',
+                 app.resolve_action_target_id('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111',NULL,'{}'::jsonb),
+                 '{}'::jsonb))::text,'UTF8')),'hex');
+
+INSERT INTO core.approval_requests
+  (id,tenant_id,action_request_id,policy_id,action_type,subject,requested_by_kind,
+   requested_by_id,reason,diff,diff_hash,approver_role,sla_due_at,expires_at,
+   bulk_approvable)
+SELECT
+  ('00000014-a99a-0000-0000-00000000000' || g)::uuid,
+  '00000014-1111-1111-1111-111111111111',
+  ('00000014-ac00-0000-0000-00000000000' || g)::uuid,
+  'pol_t014','PROPOSAL_SEND','proposal','HUMAN',
+  '00000014-0000-0000-0000-0000000000a1',
+  'T15 hash probe ' || g,
+  app.plan_effects('PROPOSAL_SEND',NULL,'{}'::jsonb),
+  (SELECT h FROM t014_hashes WHERE which='before'),
+  -- SALES_MANAGER, not ADMIN: 002 gives `approval:decide` to SALES_MANAGER,
+  -- FINANCE and MD and NOT to ADMIN (002:886,988,1047), and 011 additionally
+  -- requires the caller's role to equal approver_role unless the caller is MD.
+  -- An ADMIN decider here would be refused at the permission gate and every
+  -- assertion below would pass for the wrong reason — which a first draft did.
+  'SALES_MANAGER',
+  pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', false
+FROM pg_catalog.generate_series(3,5) AS g;
+
+-- ── THE RE-RENDER. The action's target is resolved, so the effects change and
+-- the approval is re-rendered against them. 011's own fresh-vs-stored check is
+-- satisfied afterwards; only the human's copy is stale.
+UPDATE core.action_requests SET target_ref = 'PRO-T014-0001'
+ WHERE id IN ('00000014-ac00-0000-0000-000000000003',
+              '00000014-ac00-0000-0000-000000000004',
+              '00000014-ac00-0000-0000-000000000005');
+
+INSERT INTO t014_hashes
+SELECT 'after', pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+  pg_catalog.jsonb_build_object(
+    'effects', app.plan_effects('PROPOSAL_SEND','PRO-T014-0001','{}'::jsonb),
+    'value',   app.action_value('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111',
+                 app.resolve_action_target_id('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111','PRO-T014-0001','{}'::jsonb),
+                 '{}'::jsonb))::text,'UTF8')),'hex');
+
+UPDATE core.approval_requests
+   SET diff      = app.plan_effects('PROPOSAL_SEND','PRO-T014-0001','{}'::jsonb),
+       diff_hash = (SELECT h FROM t014_hashes WHERE which='after')
+ WHERE id IN ('00000014-a99a-0000-0000-000000000003',
+              '00000014-a99a-0000-0000-000000000004',
+              '00000014-a99a-0000-0000-000000000005');
+
+-- The two hashes move into transaction-local GUCs before any role swap: a temp
+-- table belongs to `postgres`, and `authenticated` reading one gets "permission
+-- denied" rather than the value — the same role-discipline trap the notes at the
+-- top of this file describe for table assertions.
+SELECT pg_catalog.set_config('t014.h_before', (SELECT h FROM t014_hashes WHERE which='before'), true);
+SELECT pg_catalog.set_config('t014.h_after',  (SELECT h FROM t014_hashes WHERE which='after'),  true);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_manager'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.hash_stale', pg_temp.t014_try_value(
+  pg_catalog.format($$SELECT core.decide_approval(%L::uuid,'APPROVE',NULL,%L,NULL)$$,
+    '00000014-a99a-0000-0000-000000000003',
+    pg_catalog.current_setting('t014.h_before')))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_manager'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.hash_fresh', pg_temp.t014_try_value(
+  pg_catalog.format($$SELECT core.decide_approval(%L::uuid,'APPROVE',NULL,%L,NULL)$$,
+    '00000014-a99a-0000-0000-000000000004',
+    pg_catalog.current_setting('t014.h_after')))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_manager'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.hash_null', pg_temp.t014_try_value(
+  $$SELECT core.decide_approval('00000014-a99a-0000-0000-000000000005'::uuid,
+      'APPROVE', NULL, NULL, NULL)$$)::text, true);
+-- The same approval, REJECTED with no hash: must still work, or the refusal has
+-- widened from "you may not approve a diff you cannot prove you saw" into "you
+-- may not decide at all", which is a different and unasked-for rule.
+SELECT pg_catalog.set_config('t014.hash_null_reject', pg_temp.t014_try_value(
+  $$SELECT core.decide_approval('00000014-a99a-0000-0000-000000000005'::uuid,
+      'REJECT', 'not now', NULL, NULL)$$)::text, true);
+RESET ROLE;
+
+DO $t15$
+DECLARE
+  v_stale jsonb := pg_catalog.current_setting('t014.hash_stale')::jsonb;
+  v_fresh jsonb := pg_catalog.current_setting('t014.hash_fresh')::jsonb;
+  v_null  jsonb := pg_catalog.current_setting('t014.hash_null')::jsonb;
+BEGIN
+  ASSERT (SELECT h FROM t014_hashes WHERE which='before')
+      <> (SELECT h FROM t014_hashes WHERE which='after'),
+    'T15 SETUP FAIL: the re-render did not change the diff hash, so all three '
+    'probes below are the same probe and none of them tests anything.';
+
+  ASSERT NOT (v_stale->>'ok')::boolean,
+    pg_catalog.format('T15a FAIL: an APPROVE carrying the hash the human''s screen '
+      'showed was accepted after the approval was re-rendered underneath them. '
+      'That is the whole job of p_expected_diff_hash: %s', v_stale::text);
+  -- The MESSAGE, not just the SQLSTATE. Every refusal in 011 raises TRNOS,
+  -- including "this principal may not decide approvals", so a SQLSTATE-only
+  -- assertion passes when the probe is merely unauthorized — which is how a first
+  -- draft of this pin passed while testing nothing at all.
+  ASSERT v_stale->>'message' LIKE '%stale%',
+    pg_catalog.format('T15a1 FAIL: the stale-hash APPROVE was refused, but not by '
+      'the diff-hash guard: %s', v_stale::text);
+
+  ASSERT (v_fresh->>'ok')::boolean,
+    pg_catalog.format('T15b FAIL: an APPROVE carrying the CURRENT hash was '
+      'refused. A guard that refuses the matching case is an outage, not a '
+      'guard: %s', v_fresh::text);
+
+  ASSERT NOT (v_null->>'ok')::boolean,
+    pg_catalog.format('T15c FAIL: an APPROVE that sent NO diff hash was accepted. '
+      '011 compares the hash only when it is non-NULL, so an omitted hash skips '
+      'the optimistic-concurrency check entirely — which is what happened on every '
+      'real call until PR #17 added the argument to rpcClient. The contract now '
+      'types diffHash as required, so the wrapper refuses it and both sides '
+      'enforce the same rule. Result: %s', v_null::text);
+  ASSERT v_null->>'message' LIKE '%diff hash%',
+    pg_catalog.format('T15c2 FAIL: the no-hash APPROVE was refused, but not by '
+      'the wrapper''s own requirement: %s', v_null::text);
+
+  -- And the refusal is scoped to APPROVE. A REJECT does not apply the diff and
+  -- 011 does not compare the hash for it, so refusing one for a missing hash
+  -- would be a new rule wearing this one's clothes.
+  ASSERT (pg_catalog.current_setting('t014.hash_null_reject')::jsonb ->> 'ok')::boolean,
+    pg_catalog.format('T15d FAIL: a REJECT with no diff hash was refused. Only '
+      'APPROVE applies the diff: %s', pg_catalog.current_setting('t014.hash_null_reject'));
+
+  RAISE NOTICE
+    'T15 PASS - after a re-render the diff-hash guard refuses the hash the human '
+    'saw and admits the current one, an APPROVE carrying no hash is refused at '
+    'the wrapper, and a REJECT without one still works. Finding #6 is closed on '
+    'both sides: the client sends it (PR #17) and the database requires it.';
+END;
+$t15$;
+
+
+-- ─── T16 · the role gate cannot be stripped by accident ─────────────────────
+-- The control this pins is not a predicate, it is a REFUSAL. §4b's gates are
+-- created by `app.apply_tenant_policies`, which is DROP-then-CREATE, shared, and
+-- called with two arguments in three places in 017. So the obvious spelling —
+-- `SELECT app.apply_tenant_policies('core','run_node_io','014')`, one line, identical
+-- in shape to what 017 already ships — would replace a gated isolation policy
+-- with an ungated one and hand every principal of the tenant the raw agent
+-- prompt and completion text back. Nothing would fail: the policy would exist,
+-- §6's check would not run again until somebody re-applied 014, and T12 would
+-- only notice if somebody re-ran this file.
+--
+-- So the function refuses instead, reading the gate out of the policy it is about
+-- to drop. All three branches are exercised here, on a throwaway table, per 004's
+-- precedent — INCLUDING the `UNGATE` escape, which existed as documented dead
+-- code until this pin was written and raised on every call instead of removing
+-- the gate. An untested branch in a security control is the defect, not the
+-- feature.
+
+CREATE TABLE core.t014_gate_probe (
+  id        uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+  tenant_id uuid NOT NULL);
+ALTER TABLE core.t014_gate_probe ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.t014_gate_probe FORCE  ROW LEVEL SECURITY;
+CREATE INDEX t014_gate_probe_tenant_idx ON core.t014_gate_probe (tenant_id);
+
+DO $t16$
+DECLARE
+  v_gated     boolean;
+  v_refused   boolean;
+  v_bad_stamp text;
+BEGIN
+  -- (a) gated on creation
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','014','run:read');
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT v_gated, 'T16a FAIL: a three-argument call produced no gate.';
+
+  -- (b) the two-argument call REFUSES rather than silently stripping it
+  v_refused := false;
+  BEGIN
+    PERFORM app.apply_tenant_policies('core','t014_gate_probe','014');
+  EXCEPTION WHEN OTHERS THEN
+    v_refused := true;
+    ASSERT SQLERRM LIKE '%already carries a role gate%',
+      pg_catalog.format('T16b1 FAIL: the two-argument call was refused, but not by '
+        'the gate guard: %s', SQLERRM);
+  END;
+  ASSERT v_refused,
+    'T16b FAIL: app.apply_tenant_policies accepted a two-argument call against a '
+    'table that already carries a role gate. That call is one line, is the same '
+    'shape as the three 017 already ships, and would have silently removed the '
+    'gate on core.run_node_io.';
+
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT v_gated, 'T16b2 FAIL: the refused call still removed the gate.';
+
+  -- (c) re-passing the same permission is accepted and keeps it
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','014','run:read');
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT v_gated, 'T16c FAIL: re-passing the same permission removed the gate.';
+
+  -- (d) a DIFFERENT permission is accepted and replaces it
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','014','ai:provider:read');
+  ASSERT (SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%ai:provider:read%'
+            FROM pg_catalog.pg_policy p
+           WHERE p.polname = 't014_gate_probe_tenant_isolation'),
+    'T16d FAIL: passing a different permission did not replace the gate.';
+
+  -- (e) the deliberate escape works, and is the ONLY thing that removes a gate
+  PERFORM app.ungate_tenant_policy('core','t014_gate_probe','014');
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT NOT v_gated,
+    'T16e FAIL: app.ungate_tenant_policy did not remove the gate. It is the '
+    'documented way to remove one on purpose, and a documented escape that does '
+    'not work is worse than none: the next person removes the guard instead. '
+    'This control has now shipped two dead escapes — the UNGATE magic string, and '
+    'a first version of this function that called back into the very refusal it '
+    'exists to bypass — which is why every branch of it is pinned.';
+
+  -- (f0) ⚠ THE THREE-ARGUMENT SPELLING IS REFUSED, and this is the one that was
+  --      silently wrong rather than loudly. There is no three-argument overload
+  --      to resolve to, so `apply_tenant_policies('core','x','run:read')` — the
+  --      spelling the catalog taught before the signature changed — binds to the
+  --      four-argument function with p_migration='run:read' and p_permission=NULL.
+  --      Reproduced before the fix: it produced an UNGATED policy stamped
+  --      `migration:run:read`, a security gate quietly downgraded AND a policy no
+  --      rollback can find, from a call that reads exactly like the documented
+  --      one. Dropping the old signature does nothing about it, because the old
+  --      signature is not what the call resolves to — only typing the slot does.
+  v_refused := false;
+  BEGIN
+    PERFORM app.apply_tenant_policies('core','t014_gate_probe','run:read');
+  EXCEPTION WHEN OTHERS THEN
+    v_refused := true;
+    ASSERT SQLERRM LIKE '%three-digit pack%',
+      pg_catalog.format('T16f0a FAIL: the three-argument spelling was refused, '
+        'but not by the p_migration check: %s', SQLERRM);
+  END;
+  ASSERT v_refused,
+    'T16f0 FAIL: app.apply_tenant_policies accepted a permission string in the '
+    'p_migration slot. That call produces an ungated policy with an unfindable '
+    'stamp and looks exactly like a correct one.';
+
+  -- NULL and empty are refused for the same reason: a policy with no owner stamp
+  -- is a policy the rollback''s manifest loop will never drop.
+  FOREACH v_bad_stamp IN ARRAY ARRAY[NULL, '', '  ', '14', '0014', 'migration:014'] LOOP
+    v_refused := false;
+    BEGIN
+      PERFORM app.apply_tenant_policies('core','t014_gate_probe', v_bad_stamp, 'run:read');
+    EXCEPTION WHEN OTHERS THEN v_refused := true;
+    END;
+    ASSERT v_refused,
+      pg_catalog.format('T16f1 FAIL: p_migration %s was accepted. Anything but a '
+        'three-digit pack number leaves a stamp the rollback cannot match.',
+        COALESCE('''' || v_bad_stamp || '''','NULL'));
+  END LOOP;
+
+  -- And ungate demands one too, because removing a gate is the act most worth
+  -- being able to attribute.
+  v_refused := false;
+  BEGIN
+    PERFORM app.ungate_tenant_policy('core','t014_gate_probe', NULL);
+  EXCEPTION WHEN OTHERS THEN v_refused := true;
+  END;
+  ASSERT v_refused,
+    'T16f2 FAIL: ungate_tenant_policy accepted a NULL p_migration.';
+
+  -- (f) and a permission nobody holds is refused, because a gate no role can
+  --     satisfy is a broken screen rather than security
+  v_refused := false;
+  BEGIN
+    PERFORM app.apply_tenant_policies('core','t014_gate_probe','014','not:a:real:permission');
+  EXCEPTION WHEN OTHERS THEN
+    v_refused := true;
+  END;
+  ASSERT v_refused,
+    'T16f FAIL: a permission that names no row in app.role_permissions was '
+    'accepted as a gate. Every role would be refused, including ADMIN.';
+
+  RAISE NOTICE
+    'T16 PASS - a permission argument gates, a call without one against a gated '
+    'table REFUSES, re-passing keeps it, a different permission replaces it, '
+    'app.ungate_tenant_policy removes it, an unknown permission is refused, and '
+    'the three-argument spelling that used to bind a permission into the '
+    'migration slot is refused along with every non-pack stamp.';
+END;
+$t16$;
+
+DROP TABLE core.t014_gate_probe;
+
 
 ROLLBACK;
