@@ -80,7 +80,7 @@ describe("Relationships › Cross-sell", () => {
     });
 
     expect(await screen.findByText(/6 organisations/)).toBeInTheDocument();
-    expect(screen.getByText(/1 suggestions on record/)).toBeInTheDocument();
+    expect(screen.getByText(/1 suggestion on record/)).toBeInTheDocument();
 
     const table = await screen.findByRole("table");
     expect(within(table).getByText("Aurora Manufacturing Sdn Bhd")).toBeInTheDocument();

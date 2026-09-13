@@ -16,6 +16,7 @@ import {
   MoneyText,
   ORGANISATION_TONE,
   PillTabGroup,
+  plural,
   RecordHeader,
   SecondaryButton,
   StatusChip,
@@ -150,8 +151,8 @@ export function CrossSellPage() {
           withoutCondensed
           title="Cross-sell"
           meta={[
-            `${organisations.length} organisations`,
-            `${suggestions.all.length} suggestions on record`,
+            plural(organisations.length, "organisation"),
+            `${plural(suggestions.all.length, "suggestion")} on record`,
           ]}
           actions={
             <SecondaryButton onClick={() => navigate("/relationships/renewals")}>

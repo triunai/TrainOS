@@ -20,11 +20,13 @@ import {
   MoneyText,
   ORGANISATION_TONE,
   PillTabGroup,
+  plural,
   PrimaryButton,
   RecordHeader,
   SecondaryButton,
   SPLIT_HEADER_HEIGHT,
   StatusChip,
+  channelLabel,
   humanise,
   type Column,
 } from "@/shared/components/kit";
@@ -137,7 +139,7 @@ export function ContactsDirectoryPage() {
           withoutCondensed
           title="Contacts"
           meta={[
-            contacts.data ? `${contacts.data.page.total} on record` : null,
+            contacts.data ? `${plural(contacts.data.page.total, "contact")} on record` : null,
             rows.some(consentMissing)
               ? `${rows.filter(consentMissing).length} cannot be contacted`
               : null,
@@ -349,7 +351,7 @@ function ReachSection({
         <ul className="flex flex-col gap-1.5">
           {consent.map((row) => (
             <li key={row.channel} className="flex flex-wrap items-baseline gap-2 text-[13px]">
-              <span className="w-24 shrink-0 text-ink-secondary">{humanise(row.channel)}</span>
+              <span className="w-24 shrink-0 text-ink-secondary">{channelLabel(row.channel)}</span>
               {row.granted ? (
                 <span className="text-ink">
                   Consent recorded <DateText value={row.recordedAt} className="text-ink-muted" />

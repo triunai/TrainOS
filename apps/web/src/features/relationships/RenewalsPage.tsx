@@ -14,6 +14,7 @@ import {
   LoadingState,
   MoneyText,
   PillTabGroup,
+  plural,
   RecordHeader,
   SecondaryButton,
   StatusChip,
@@ -178,9 +179,11 @@ export function RenewalsPage() {
           withoutCondensed
           title="Renewals"
           meta={[
-            engagements.data ? `${engagements.data.page.total} engagements` : null,
+            engagements.data ? plural(engagements.data.page.total, "engagement") : null,
             engagements.data ? `${dueCount} delivered and renewable` : null,
-            suggestions.all.length > 0 ? `${suggestions.all.length} suggested next steps` : null,
+            suggestions.all.length > 0
+              ? plural(suggestions.all.length, "suggested next step")
+              : null,
           ]}
           actions={
             <SecondaryButton onClick={() => navigate("/relationships/cross-sell")}>

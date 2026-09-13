@@ -38,7 +38,9 @@ describe("Sales › Contacts", () => {
 
     /* The count line waits on the query: asserting before the list resolves
        would be asserting on a header that has not been told anything yet. */
-    expect(await screen.findByText(/6 on record · 1 cannot be contacted/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/6 contacts on record · 1 cannot be contacted/),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: /^Consent missing/ }));
 

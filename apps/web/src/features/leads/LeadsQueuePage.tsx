@@ -10,6 +10,7 @@ import {
   LoadingState,
   MoneyText,
   OPPORTUNITY_TONE,
+  plural,
   PillTabGroup,
   PrimaryButton,
   RecordHeader,
@@ -146,7 +147,7 @@ export function LeadsQueuePage() {
           withoutCondensed
           title="Leads"
           meta={[
-            leads.data ? `${leads.data.page.total} open` : null,
+            leads.data ? `${plural(leads.data.page.total, "open lead")}` : null,
             openValue ? `${formatMoney(openValue, true)} in play` : null,
           ]}
           actions={

@@ -8,6 +8,7 @@ import {
   formatMoney,
   LoadingState,
   MoneyText,
+  plural,
   RecordHeader,
   SecondaryButton,
 } from "@/shared/components/kit";
@@ -89,9 +90,9 @@ export function PipelineBoardPage() {
           withoutCondensed
           title="Pipeline"
           meta={[
-            opportunities.data ? `${opportunities.data.page.total} open` : null,
+            opportunities.data ? `${plural(opportunities.data.page.total, "open deal")}` : null,
             boardTotal ? `${formatMoney(boardTotal, true)} in play` : null,
-            stages.data ? `${stages.data.stages.length} configured stages` : null,
+            stages.data ? `${plural(stages.data.stages.length, "configured stage")}` : null,
           ]}
           actions={
             <SecondaryButton onClick={() => navigate("/sales/leads")}>
@@ -136,7 +137,7 @@ export function PipelineBoardPage() {
             />
           ) : (
             <>
-              <ol aria-label="Pipeline stages" className="flex min-w-full items-start gap-4 pb-2">
+              <ol aria-label="Pipeline stages" className="flex min-w-full items-start gap-3 pb-2">
                 {columns.map(({ stage, rows: cards }) => (
                   <StageColumn
                     key={stage.key}
@@ -185,7 +186,7 @@ function StageColumn({
   const total = sum(cards);
 
   return (
-    <li className="flex w-[264px] shrink-0 flex-col gap-3">
+    <li className="flex w-[240px] shrink-0 flex-col gap-3">
       <div className="flex flex-col gap-1 border-b border-border pb-2">
         <div className="flex items-baseline gap-2">
           <h2 className="text-[13px] font-semibold text-ink">{stage.label}</h2>

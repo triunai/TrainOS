@@ -10,9 +10,11 @@ import {
   LoadingState,
   MoneyText,
   PillTabGroup,
+  plural,
   RecordHeader,
   SecondaryButton,
   StatusChip,
+  channelLabel,
   humanise,
   type Column,
 } from "@/shared/components/kit";
@@ -133,9 +135,12 @@ export function MarketingPage() {
       key: "channel",
       label: "Channel",
       width: "120px",
-      accessor: (row) => (
-        <span className="text-[13px] text-ink">{humanise(TEMPLATE_CHANNEL[row.type] ?? "")}</span>
-      ),
+      accessor: (row) => {
+        const channel = TEMPLATE_CHANNEL[row.type];
+        return (
+          <span className="text-[13px] text-ink">{channel ? channelLabel(channel) : "—"}</span>
+        );
+      },
     },
     {
       key: "category",
@@ -194,7 +199,7 @@ export function MarketingPage() {
           withoutCondensed
           title="Marketing"
           meta={[
-            templates.data ? `${messageTemplates.length} message templates` : null,
+            templates.data ? plural(messageTemplates.length, "message template") : null,
             contacts.data ? `${reachOn("EMAIL")} reachable by email` : null,
             contacts.data ? `${reachOn("WHATSAPP")} by WhatsApp` : null,
           ]}
@@ -215,7 +220,7 @@ export function MarketingPage() {
               { id: ALL_TAB, label: "All", count: messageTemplates.length },
               ...channels.map((channel) => ({
                 id: channel as string,
-                label: humanise(channel as string),
+                label: channelLabel(channel as "EMAIL" | "WHATSAPP"),
                 count: messageTemplates.filter((row) => TEMPLATE_CHANNEL[row.type] === channel)
                   .length,
               })),
