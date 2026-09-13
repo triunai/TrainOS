@@ -51,11 +51,8 @@ import {
  */
 
 export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) {
-  useBreadcrumb([
-    { label: "Compliance" },
-    { label: "HRD Corp", href: HRDC_PACKET_PATH },
-    { label: `${engagementRef} packet` },
-  ]);
+  /* Ends at the LIST — the header already carries the engagement reference. */
+  useBreadcrumb([{ label: "Compliance" }, { label: "HRD Corp", href: HRDC_PACKET_PATH }]);
 
   const packet = useClaimPacket(engagementRef);
   const checks = useComplianceChecks(engagementRef);

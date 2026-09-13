@@ -31,6 +31,7 @@ import {
   useEngagementAction,
 } from "./api";
 import { absentees, markLabel } from "./attendanceModel";
+import { PARTICIPANTS_LIST_PATH } from "./paths";
 
 /**
  * M10-S06 · attendance capture, one AM/PM sheet per delivery day.
@@ -78,11 +79,13 @@ export function AttendanceCapturePage() {
   /* The top bar renders the path; this screen only declares it. Attendance
      hangs off Participants, not Engagements — that is the nav entry a reader
      walked to get here. */
+  /* Ends at the LIST, the same migration the engagement detail already had.
+     Attendance still hangs off Participants rather than Engagements — that is
+     the nav entry a reader walked to get here. */
   useBreadcrumb([
     { label: "Home", href: "/" },
-    { label: "Training", href: "/training/participants" },
-    { label: "Participants", href: "/training/participants" },
-    { label: `${engagement.data?.ref ?? id} attendance` },
+    { label: "Training", href: PARTICIPANTS_LIST_PATH },
+    { label: "Participants", href: PARTICIPANTS_LIST_PATH },
   ]);
 
   if (engagement.isPending || sheets.some((query) => query.isPending)) {

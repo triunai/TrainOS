@@ -45,6 +45,7 @@ import {
   useOrganisationRelations,
   useOrganisationSuggestions,
 } from "./api";
+import { ORGANISATIONS_LIST_PATH } from "./paths";
 
 /**
  * M04-S02 · Organisation 360 (Kit.dc.html `proof-m04s02`).
@@ -106,11 +107,10 @@ export function Organisation360Page() {
   const navigate = useNavigate();
   const [tab, setTab] = useState(TAB_OVERVIEW);
 
-  useBreadcrumb([
-    { label: "Sales" },
-    { label: "Organisations" },
-    { label: organisationId ?? "Organisation" },
-  ]);
+  /* Ends at the LIST. `RecordHeader` carries `recordRef`, so an id here is the
+     record identifying itself a second time — CLAUDE.md gives the identity to
+     the header and the path to the breadcrumb. */
+  useBreadcrumb([{ label: "Sales" }, { label: "Organisations", href: ORGANISATIONS_LIST_PATH }]);
 
   const organisation = useOrganisation(organisationId);
   const relations = useOrganisationRelations(organisationId);

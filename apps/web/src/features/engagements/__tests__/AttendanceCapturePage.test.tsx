@@ -32,10 +32,13 @@ describe("AttendanceCapturePage · M10-S06", () => {
     expect(await screen.findByRole("heading", { name: /^Attendance · / })).toBeInTheDocument();
 
     /* Attendance hangs off Participants, not Engagements — that is the nav
-       entry a reader walked to get here. */
+       entry a reader walked to get here. It ends at the LIST for the same
+       reason the engagement detail's does: RecordHeader carries the reference,
+       so repeating it in the trail is the record identifying itself twice. */
     expect(await screen.findByTestId("breadcrumb-trail")).toHaveTextContent(
-      "Home › Training › Participants › ENG-0231 attendance",
+      "Home › Training › Participants",
     );
+    expect(screen.getByTestId("breadcrumb-trail")).not.toHaveTextContent("ENG-0231 attendance");
 
     /* The second documented exception to the one-primary rule. */
     expect(currentPrimaries()).toHaveLength(0);

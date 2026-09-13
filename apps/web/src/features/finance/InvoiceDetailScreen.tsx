@@ -56,11 +56,8 @@ function sumLines(invoice: Invoice): Money {
 }
 
 export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
-  useBreadcrumb([
-    { label: "Finance" },
-    { label: "Invoices", href: INVOICES_PATH },
-    { label: invoiceRef },
-  ]);
+  /* Ends at the LIST — the header already carries the reference. */
+  useBreadcrumb([{ label: "Finance" }, { label: "Invoices", href: INVOICES_PATH }]);
 
   const navigate = useNavigate();
   const invoice = useInvoice(invoiceRef);
