@@ -22,6 +22,7 @@ import type {
   GapPriority,
   HRDCScheme,
   ProposalStatus,
+  QuotationStatus,
   Role,
   Severity,
   TNAStatus,
@@ -323,6 +324,13 @@ export interface QuotationLine {
  */
 export interface Quotation extends EntityEnvelope {
   proposalRef: Ref;
+  /**
+   * Ruling R8: the record's own state, which §6 never declared. The costing
+   * worksheet drew a `Draft` chip on every quotation because there was nothing
+   * else it could draw — see `QUOTATION_STATUSES` for where each value comes
+   * from.
+   */
+  status: QuotationStatus;
   /** §6 original field. */
   rateCardYear?: number;
   /** §18 supersede: every quotation stores the rate card version it was priced against. */

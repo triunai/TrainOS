@@ -25,3 +25,14 @@ Migrations 001–009 authored, EXECUTED on a local PG 17.11 shim (no Supabase CL
 
 ## Update 13 Sep 11:20 — stopped by user after 010
 Resumed 13 Sep morning: amendment pass A applied open rulings to 001–005 (see 06-critic-review.md Part 3 applied marks, 01d9da0); 010 finance committed (cfef7c1, marks a549e8c). Not started: 011 action envelope, 012 events/outbox, 013 ai-ops, 014 RLS, 015 realtime+cron, 016 seed. Resume with the same brief from 011.
+
+## Contract changes pending migration
+
+Appended by the contract lane, 13 Sep 2026. Every entry below is a change to
+`packages/contract/src/enums.ts`, which generates the 69 DB enum types in
+`003_enum_types.sql`. Each needs a `CREATE TYPE core.<name>` in the 003
+amendment pass plus the column change in the pack named on the row.
+
+| Enum | Values | Carried by |
+|---|---|---|
+| `core.quotation_status` | `DRAFT · PENDING_DISCOUNT_APPROVAL · APPLIED · SUPERSEDED` | 003 (type) + 007 money/proposals/quotations — new `status` column on the quotation table, `Quotation.status` is required in the contract |

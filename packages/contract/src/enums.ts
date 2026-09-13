@@ -103,6 +103,36 @@ export const PROPOSAL_STATUSES = [
 ] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
+/**
+ * §6 `Quotation.status`.
+ *
+ * Ruling R8: `Quotation` declared no status at all, so `CostingWorksheetPage`
+ * hard-coded a `Draft` chip that could never be anything else (W-63). The §12
+ * catalogue has no entry; the vocabulary is derived the same way
+ * `FOLLOW_UP_STATUSES` was, from what the artboard and §6 actually show:
+ *
+ * - `DRAFT` — the chip drawn on M07-S03 (`M07 Proposals.dc.html:230`).
+ * - `APPLIED` — "Applied to PRO-2026-0184" on the same artboard, the resting
+ *   state after `POST /v1/actions` `type: QUOTATION_APPLY`.
+ * - `PENDING_DISCOUNT_APPROVAL` — §6: a sell price below the floor can only be
+ *   applied through `DISCOUNT_APPROVE`, which APV-02 gates. Between the request
+ *   and the decision the quotation is neither a draft nor applied, and without
+ *   a member for it the screen has to infer the state from the error again.
+ * - `SUPERSEDED` — a quotation stores the `rateCardVersion` it was priced
+ *   against (§18), so a re-price against a new card cannot mutate it in place
+ *   without destroying that record.
+ *
+ * TODO(contract §16): catalogue the quotation status vocabulary. The four
+ * above are derived, not read off a §12 table.
+ */
+export const QUOTATION_STATUSES = [
+  'DRAFT',
+  'PENDING_DISCOUNT_APPROVAL',
+  'APPLIED',
+  'SUPERSEDED',
+] as const;
+export type QuotationStatus = (typeof QUOTATION_STATUSES)[number];
+
 /** §12 `ApprovalDecision`. `note` required for the latter two (§7). */
 export const APPROVAL_DECISIONS = ['APPROVE', 'REQUEST_CHANGES', 'REJECT'] as const;
 export type ApprovalDecision = (typeof APPROVAL_DECISIONS)[number];

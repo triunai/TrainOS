@@ -391,6 +391,7 @@ export const quotations: Quotation[] = [
   {
     ...entity(QUOTATION_AURORA, "2026-09-11T09:14:20+08:00", "2026-09-11T09:30:00+08:00", actorFor(USER_AMIRAH)),
     proposalRef: PROPOSAL_AURORA,
+    status: "DRAFT",
     rateCardYear: 2026,
     rateCardVersion: RATE_CARD_PLACEHOLDER_VERSION,
     lines: [
@@ -425,6 +426,7 @@ export const quotations: Quotation[] = [
   {
     ...entity(QUOTATION_SUTERA, "2026-05-20T10:10:00+08:00", "2026-06-02T09:00:00+08:00", actorFor(USER_AMIRAH)),
     proposalRef: PROPOSAL_SUTERA,
+    status: "APPLIED",
     rateCardYear: 2026,
     rateCardVersion: RATE_CARD_PLACEHOLDER_VERSION,
     lines: [
@@ -456,6 +458,7 @@ export const quotations: Quotation[] = [
   {
     ...entity(QUOTATION_MERIDIAN, "2026-10-21T10:05:00+08:00", "2026-10-21T10:05:00+08:00", actorFor(USER_AMIRAH)),
     proposalRef: PROPOSAL_MERIDIAN,
+    status: "APPLIED",
     rateCardYear: 2026,
     rateCardVersion: RATE_CARD_PLACEHOLDER_VERSION,
     lines: [

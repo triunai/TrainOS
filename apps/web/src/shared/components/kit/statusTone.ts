@@ -15,6 +15,7 @@ import type {
   PacketStatus,
   ProposalStatus,
   ProviderKeyStatus,
+  QuotationStatus,
   RuleChangeOp,
   RuleStatus,
   RunStatus,
@@ -247,6 +248,21 @@ export const TNA_TONE: Record<TNAStatus, StatusTone> = {
   SENT: "neutral",
   COMPLETE: "success",
   REOPENED: "neutral",
+};
+
+/**
+ * §6 a quotation's own state (ruling R8).
+ *
+ * `PENDING_DISCOUNT_APPROVAL` is the only one a pricer has to act on: the
+ * price is below the floor and APV-02 is holding it. `APPLIED` stays neutral
+ * rather than green — it is the resting state of every quotation that did its
+ * job, and a worksheet that is green whenever nothing is wrong says nothing.
+ */
+export const QUOTATION_TONE: Record<QuotationStatus, StatusTone> = {
+  DRAFT: "neutral",
+  PENDING_DISCOUNT_APPROVAL: "warning",
+  APPLIED: "neutral",
+  SUPERSEDED: "neutral",
 };
 
 /**

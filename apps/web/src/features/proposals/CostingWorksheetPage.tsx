@@ -22,12 +22,14 @@ import {
   MoneyInput,
   MoneyText,
   PrimaryButton,
+  QUOTATION_TONE,
   RecordHeader,
   RefusalBanner,
   SecondaryButton,
   StatusChip,
   type Column,
   type MetricCellProps,
+  PartialDataBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { isDomainError, toApiError } from "@/shared/api";
@@ -143,7 +145,9 @@ export function CostingWorksheetPage() {
         ]}
         chips={
           <>
-            <StatusChip tone="neutral">Draft</StatusChip>
+            <StatusChip tone={QUOTATION_TONE[quotation.status]}>
+              {humanise(quotation.status)}
+            </StatusChip>
             <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
               {quotation.bindingFloorBasis === "MARGIN" ? "Margin floor binds" : "Tier floor binds"}
             </StatusChip>
@@ -167,6 +171,22 @@ export function CostingWorksheetPage() {
           </PrimaryButton>
         }
         metrics={metricsFor(quotation, candidate, candidateMargin)}
+      />
+
+      {/* DECISIONS §5 makes the rate card's version load-bearing: every screen
+          priced against the placeholder card must SAY it is a placeholder. A
+          failed read dropped the meta entry entirely, so a worksheet priced
+          against an unknown card looked exactly like one priced against a real
+          one. */}
+      <PartialDataBanner
+        className="mx-5 mb-4"
+        reads={[
+          {
+            label: "The rate card this costing is priced against",
+            error: rateCardQuery.isError ? toApiError(rateCardQuery.error) : null,
+            retry: () => void rateCardQuery.refetch(),
+          },
+        ]}
       />
 
       <ApplyOutcome response={applied} proposalRef={quotation.proposalRef} />
