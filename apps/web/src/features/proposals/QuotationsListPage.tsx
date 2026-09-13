@@ -40,7 +40,9 @@ import { COSTING_WORKSHEET_PATH } from "./paths";
  * someone open every record to find out. That is the one place a second tone
  * is spent on this row, and it is spent on an exception.
  *
- * The rate card version is a machine value and stays mono, per §1. Money is a
+ * The rate card version is a machine value and stays mono, per §1, on the
+ * identity subline beside the proposal reference it qualifies — a column of its
+ * own made seven, and the seventh clipped off the right at 1440px. Money is a
  * right-aligned tabular column. Nothing here is a badge.
  *
  * The whole screen refuses for OPS: `quotation:read` is not granted to that
@@ -100,10 +102,15 @@ export function QuotationsListPage() {
       accessor: (quotation) => (
         <div className="min-w-0">
           <p className="truncate font-mono text-[13px] font-medium text-ink">{quotation.ref}</p>
+          {/* The rate card version rides the identity subline rather than a
+              column of its own: seven columns clipped the last one off the
+              right at 1440px, and a version belongs beside the reference it
+              qualifies anyway. Mono, because both are machine values (§1). */}
           <p className="truncate text-[12px] text-ink-muted">
             {"for "}
             <span className="font-mono">{quotation.proposalRef}</span>
-            {` · ${quotation.lines.length} ${quotation.lines.length === 1 ? "line" : "lines"}`}
+            {` · ${quotation.lines.length} ${quotation.lines.length === 1 ? "line" : "lines"} · `}
+            <span className="font-mono">{quotation.rateCardVersion}</span>
           </p>
         </div>
       ),
@@ -163,16 +170,6 @@ export function QuotationsListPage() {
             {`on ${humanise(quotation.commissionPayableOn).toLowerCase()}`}
           </p>
         </div>
-      ),
-    },
-    {
-      key: "rateCardVersion",
-      label: "Rate card",
-      width: "112px",
-      accessor: (quotation) => (
-        <span className="whitespace-nowrap font-mono text-[12px] text-ink-secondary">
-          {quotation.rateCardVersion}
-        </span>
       ),
     },
   ];
