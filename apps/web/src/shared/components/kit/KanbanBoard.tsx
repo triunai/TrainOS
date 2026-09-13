@@ -150,15 +150,18 @@ export function KanbanBoard<T>({
                   )}
                 >
                   <span
-                    /* Rotated so the label reads bottom-to-top, which is the
-                       direction a vertical rail is read in every board that
-                       has one. `writing-mode` rather than a transform: a
+                    /* `writing-mode` rather than a transform: a rotated
                        transform would leave the button's hit box the wrong
-                       shape. */
+                       shape, so the rail would be clickable where the text is
+                       not and vice versa. */
                     className="whitespace-nowrap text-[13px] font-medium text-ink-secondary [writing-mode:vertical-rl] [text-orientation:mixed]"
                   >
                     {lane.label}
-                    <span className="pl-2 tabular-nums text-ink-muted">{lane.items.length}</span>
+                    {/* `ps-`, not `pl-`. In a vertical writing mode the inline
+                        axis runs down the rail, so a physical `padding-left`
+                        pads the side of the text instead of the gap before the
+                        count — which is how this shipped as "Won1". */}
+                    <span className="ps-2 tabular-nums text-ink-muted">{lane.items.length}</span>
                   </span>
                 </button>
               </li>
