@@ -114,7 +114,15 @@ SELECT t.id, p.prefix, p.entity, false, 4
 -- product these rows come from 016's tenant provisioning; no migration seeds them.
 FROM (VALUES ('PRG','programmes'),('TRN','trainers'),('TBK','trainer_bookings'),
              ('ACT','action_requests')) AS p(prefix,entity)
-CROSS JOIN public.tenants t WHERE t.slug IN ('t006-alpha','t006-beta');
+CROSS JOIN public.tenants t WHERE t.slug IN ('t006-alpha','t006-beta')
+-- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger on
+-- public.tenants, so this fixture collides with the real thing. The pin's own
+-- shape wins: it is a fixture inside a transaction that rolls back, and the
+-- assertions below were written against these exact values.
+ON CONFLICT (tenant_id, prefix)
+  DO UPDATE SET entity = EXCLUDED.entity,
+                dated  = EXCLUDED.dated,
+                width  = EXCLUDED.width;
 
 INSERT INTO core.programmes (id, tenant_id, name, category, days, list_price_sen,
                              list_price_pax, floor_price_sen, floor_margin_rate,

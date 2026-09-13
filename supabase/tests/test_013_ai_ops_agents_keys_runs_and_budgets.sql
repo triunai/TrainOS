@@ -157,7 +157,15 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
   ('00000013-1111-1111-1111-111111111111','AGT','agent',false,4),
   ('00000013-1111-1111-1111-111111111111','RUN','run',  true, 4),
   ('00000013-2222-2222-2222-222222222222','AGT','agent',false,4),
-  ('00000013-2222-2222-2222-222222222222','RUN','run',  true, 4);
+  ('00000013-2222-2222-2222-222222222222','RUN','run',  true, 4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 
 INSERT INTO core.tier_keys (tenant_id, tier_key, label, position) VALUES
   ('00000013-1111-1111-1111-111111111111','FAST','Fast',1),

@@ -121,7 +121,15 @@ INSERT INTO public.tenants (id, slug, name) VALUES
 -- activation and that runs long before T7's fixture block. In the product these
 -- rows come from 016's tenant provisioning; no migration seeds them.
 INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
-  ('00000009-1111-1111-1111-111111111111','ACT','action_requests',false,4);
+  ('00000009-1111-1111-1111-111111111111','ACT','action_requests',false,4)
+  -- ⚠ 016 now provisions every tenant's ref_formats from an AFTER INSERT trigger
+  -- on public.tenants, so this fixture collides with the real thing. The pin's
+  -- own shape wins: it is a fixture inside a transaction that rolls back, and
+  -- the assertions below were written against these exact values.
+  ON CONFLICT (tenant_id, prefix)
+    DO UPDATE SET entity = EXCLUDED.entity,
+                  dated  = EXCLUDED.dated,
+                  width  = EXCLUDED.width;
 
 INSERT INTO core.rule_set_versions (id, tenant_id, version_key, registry_asof) VALUES
   ('00000009-0aaa-0aaa-0aaa-0aaaaaaaaaa1', NULL,'rs_2026_06_15','2026-06-15T00:00:00+08:00'),

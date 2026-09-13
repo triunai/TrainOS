@@ -3,9 +3,9 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 15 · **Applied:** 0 · **Authored, not applied:** 15
+**Migrations:** 16 · **Applied:** 0 · **Authored, not applied:** 16
 **Last snapshot of `tables/`:** never
-**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place)
+**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking)
 
 ---
 
@@ -13,6 +13,23 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-13 — **016: tenant provisioning, and the hole in the middle of the database that every pin since 011 has been stepping around.**
+Two functions and one trigger. No table, no view, no type, no policy, no column. **Applied nowhere.**
+
+**The hole.** `core.next_ref()` raises `no ref_format for prefix % in this tenant` when a tenant has no `core.ref_formats` row for the prefix being allocated. Thirty-two `core` tables carry a `core.assign_ref` trigger, so for a tenant with no formats, thirty-two tables are unwritable. **No migration seeded them.** 013's catalog entry carries it as a standing condition and test_013's header says it outright — "016 provisions those, so this pin seeds its own AGT and RUN rows". Ten pins seed their own. Every one of those fixtures was standing in for a provisioning step that did not exist, which means **no pin in this pack had ever exercised the path a real customer takes.** T2 is that path: one `INSERT INTO public.tenants`, no fixture, and a real `ORG-0001` allocated through the trigger.
+
+**The rows are DERIVED from `pg_trigger`, and the reason is a measurement rather than a preference.** The obvious 016 is thirty-two `INSERT … VALUES` lines. Building that list by reading the migrations for `finalise_table(…,'PREFIX')` yields **twenty-seven**. The real number is **thirty-two**. The five a line-based read misses — `ATT`, `PIP`, `SIG`, `SVW`, `TPL` — are missed because their `finalise_table` calls wrap across lines and the regex stops at the newline. That list would have shipped, looked complete, and left attachments, pipelines, signatures, saved views and templates unwritable for every customer, discovered the first time somebody saved a view, in production, as a raw `foreign_key_violation` from inside a trigger. Every `assign_ref` trigger declares its prefix as `TG_ARGV[0]`, which is the same string `next_ref` is handed at run time, so the seed and its consumer are the same list **by construction** — 003's argument for generating sixty-nine enum types from the contract package, applied to provisioning. A thirty-third ref'd table added by 018 is provisioned on the day its trigger is created. T1 asserts all five of the missed prefixes individually.
+
+**Provisioning is a trigger, matching 011 rather than inventing a shape.** `trg_tenants_seed_ref_formats` fires `AFTER INSERT ON public.tenants`, exactly as 011's `trg_tenants_seed_action_policies` does. A provisioning SCRIPT is something a human remembers to run, and `public.tenants` is written by the onboarding path, by a seed, by a test fixture and by whatever lands next; the trigger is the only thing covering all four. `app.provision_tenant()` exists for the explicit case and **does not duplicate the seeding logic** — it inserts and lets the triggers work, then refuses to RETURN a tenant that has no ref_formats or no action_policies. T3 disables the trigger and proves the refusal fires: a tenant that looks provisioned and cannot write a ref'd row should fail there, not at the customer's first enquiry.
+
+**Idempotence, in the direction that matters.** Re-seeding LEAVES AN EXISTING ROW ALONE rather than overwriting it. `ref` is immutable after insert, so flipping `dated` under a tenant that has already allocated `ENQ-2026-0912` would leave every ref issued so far in the old shape and every future one in the new, with no way to correct either. T4 corrupts a format deliberately, re-seeds, and asserts it was **not** repaired — because the repair is the dangerous direction.
+
+**Ten pins were amended**, each fixture given `ON CONFLICT (tenant_id, prefix) DO UPDATE`, so the pin's own explicitly chosen shape still wins inside its own rolled-back transaction while the collision with real provisioning disappears. ⚠ Two of those edits were made by a script that split statements on the first `;` and landed inside a comment containing one; both were caught by the suite, reverted from git and redone by hand. Recorded because it is the kind of mechanical edit that looks safe across ten files and is not.
+
+**⚠ What 016 does NOT seed, with the reason for each.** `pipelines` / `pipeline_steps` — the second spine. Seeding them means writing fifteen stage names into a migration, which is precisely the defect both CLAUDE.md files name ("a hardcoded stage list anywhere in SQL is a defect"), and doing it in a file about ref formats. **Owner: 018 or a dedicated seed pack; until then a new tenant renders no pipeline.** The HRD Corp rule registry — national (`tenant_id NULL`), so not provisioning at all, and the research attaches an explicit condition: all rows load `status = 'PROPOSED'` until a named Finance verifier confirms each against the circular text. 017 owns those. Rate cards and templates — customer data, not schema.
+
+**Spine untouched**, and the pipeline spine deliberately untouched too, which is the stronger statement.
 
 **Last updated:** 2026-09-13 — **015: the scheduler, and the seven jobs it deliberately does not schedule.**
 001's header promised that "nine scheduled behaviours in the design… are scheduled with cron.schedule in 015". 015 schedules **two**, and the other seven are the content of the migration. One function, two cron jobs, no table, no view, no type, no trigger, no policy. **Applied nowhere.**
@@ -171,6 +188,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 016 | `016_seed_and_tenant_provisioning.sql` | **Tenant provisioning: the `core.ref_formats` rows every pin since 011 has been faking, derived from the triggers that consume them (2026-09-13).** Two functions, one trigger, no table, no type, no policy. `core.next_ref()` raises when a tenant has no format for a prefix, 32 `core` tables carry an `assign_ref` trigger, and **no migration seeded any of it** — 013's catalog carries it as a standing condition and ten pins hand-seed around it, which means no pin had ever exercised the path a real customer takes. T2 is that path: one INSERT into `public.tenants`, no fixture, a real `ORG-0001` out of the trigger. **The seed is DERIVED from `pg_trigger`, not transcribed**, and the reason is measured: reading the migrations for `finalise_table(…,'PREFIX')` yields 27 prefixes, the truth is 32, and the five missed (`ATT`, `PIP`, `SIG`, `SVW`, `TPL`) are missed because their calls wrap across lines — a hand list would have shipped complete-looking and left attachments, pipelines, signatures, saved views and templates unwritable until somebody saved a view in production. Every trigger's `TG_ARGV[0]` is the same string `next_ref` receives, so seed and consumer are one list by construction; T1 asserts all five missed prefixes by name. **Provisioning is an AFTER INSERT trigger on `public.tenants`, matching 011's `trg_tenants_seed_action_policies`** rather than inventing a second shape — a script only covers the path somebody remembered to run it on. `app.provision_tenant()` adds no second implementation and REFUSES to return a tenant whose seeding did not fire; T3 proves it by disabling the trigger. **Idempotence leaves existing rows alone rather than overwriting**, because `ref` is immutable and flipping `dated` would split a customer's numbering in half; T4 corrupts a format, re-seeds, and asserts it was not "repaired". Ten pins amended to `ON CONFLICT … DO UPDATE` so each keeps its own fixture shape. ⚠ **Not seeded, deliberately:** `pipelines`/`pipeline_steps` (seeding them means hardcoding fifteen stage names, the exact defect both CLAUDE.md files forbid — **owner 018; a new tenant renders no pipeline until then**), the HRD Corp registry (national rows, and the research requires `status = 'PROPOSED'` pending a named Finance verifier — 017's), and rate cards/templates (customer data). Spine untouched, pipeline spine deliberately untouched. |
 | 015 | `015_realtime_and_cron_schedules.sql` | **The scheduler: two pg_cron jobs, and the seven the design listed that are deliberately not here (2026-09-13).** One function, two jobs, no table, no type, no trigger, no policy. Ruling R-B — background work is the Node worker at `apps/worker` polling `app.claim_jobs`; pg_cron covers `reap_jobs` and cron-history retention only; **no pg_net nudges**. ⚠ This contradicts current Supabase docs, which document `cron.schedule` → `net.http_post` → Edge Function as supported; the header records that in full and overrules it on R-A (this product has no Edge Functions, so the far end of the nudge does not exist) rather than on technical grounds. Net effect: nothing in this database makes an outbound HTTP request, and pg_net's beta caveats stop being the product's problem. **`trainos_reap_jobs` is ONE job at `'30 seconds'`** — sub-minute is native, so doc 05's tick is not six staggered jobs each sleeping an offset. Its command is the pack's only new object, `app.reap_jobs_all_tenants()`: 012's `H-16` made the CLAIM tenant-fair, but the REAPER takes a flat LIMIT across all tenants ordered by time, so one tenant with a dead provider starves every other tenant's expired leases — the same defect through the recovery path. T3 measures the fix with Alpha at 50 leases, Beta at 1 and a budget of 10 each, plus a control proving a single-tenant reap really is single-tenant. **`trainos_reap_cron_history` daily at 03:17** because `cron.job_run_details` is never purged automatically **and is not cleared when a job is unscheduled**; ⚠ the 7-day window is 012's unsourced judgement, stated as such, and T4 proves it at 6 and 8 days. The seven unscheduled jobs each carry a reason — four retention sweeps wait on 017's `data_retention_policies` because deleting on an unapproved window is worse than not deleting, and two have no function to schedule at all. Scheduling a missing function is worse than not scheduling it (pg_cron logs and never raises), so verify and T1 resolve every command through `to_regproc` and T5 EXECUTES both. ⚠ **Realtime is deliberately untouched**: RLS on `realtime.messages` is already on and the schema locked, and the only migration-shaped additions need the topic vocabulary, which nothing in the product has yet. Carried forward: Realtime caches policies for the life of a connection, so a revoked permission does not close a live socket. ⚠ The harness's pg_cron is a stub that runs nothing; registration is pinned, firing is not. Spine untouched. |
 | 014 | `014_rls_policies_and_client_grants.sql` | **The database stops being deny-all: 228 RLS policies, the client grant layer, and the three `core` wrappers over the 011 envelope (2026-09-13).** One function, 115 policied relations, zero tables, zero types, zero triggers. **The pack is `app.apply_tenant_policies()` plus a catalogue-driven loop**, not 114 hand-written blocks — 004's `finalise_table` argument applied to the policy layer, where it is stronger, because a policy typo applies successfully and admits the wrong rows. Two policies per table: a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy with the predicate in USING *and* WITH CHECK, so tenant isolation cannot be widened by adding a policy beside it and is already correct on the day somebody grants a write. **`authenticated` gets SELECT and nothing else on `core`** — the spine rule enforced at the privilege layer, since a browser with UPDATE on `core.proposals` can move it with no action_request, no policy evaluation and no audit row; T9 proves the refusal is `42501` and not a policy matching zero rows, which would report success. **The global-row fallback is DERIVED from `attnotnull`, never listed**, so 009's national rules stay visible to every tenant and a NOT NULL table cannot accidentally get the permissive form. **Three defects found by granting rather than by reading:** `app.require_tenant_id` was not executable by `authenticated`, so every finished policy ERRORED instead of denying (a policy predicate runs as the querying role; 002 had granted the other four claim readers and missed this one because nothing used it yet); `core.rule_set_versions` has no tenant index because 009 hand-rolled it past `finalise_table`, caught by a check written as a regression test on 004 and fired on 1 relation in 114; and `core.budget_status`/`core.model_tier_status` are security-invoker views over `app.usage_rollup` and therefore **cannot be granted at all** — both are revoked with the reason, and the AI budget screens have no data path until 018. `core.v_approval_requests` stays ungranted per doc 09 §12 and T7 pins that it is readable through a definer and refused directly. Six earlier pins amended in place from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014; one draft change (revoking `anon`'s `app` USAGE) was caught by test_011 T13b as a regression against 011's M-04 and reverted. Spine untouched — and this is the migration that makes bypassing the spine impossible rather than discouraged. |
 | 013 | `013_ai_ops_agents_keys_runs_and_budgets.sql` | **AI operations: the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree and evals (2026-09-13).** Nineteen tables, two security-invoker views, twenty-nine functions, zero policies, zero new types. **`core.runs` settles the `run_id` divergence by reconciliation rather than by retyping**: the run has a `uuid` id AND a `ref`, so 012's text run ids resolve through `UNIQUE (tenant_id, ref)` and 007/009's uuid columns finally get the foreign keys their own comments said 013 would add. Neither side is altered and no row is rewritten. **Secrets are handled by mechanism, not by assertion**: no RPC takes a raw BYOK key at all, so it never reaches a request body, `log_min_duration_statement` or `pg_stat_activity`; the once-per-24-hours reveal ceiling is the PREDICATE of an UPDATE so two concurrent reveals cannot both pass; the audit row is written first and a trigger re-derives that it exists, so a reveal whose audit fails takes the transaction with it. The agent key is minted in the database from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach it through `select=*` or an embed, which is what `H-09` asked for and is stronger than omitting a column from a grant. Every security path is shaped to FAIL CLOSED under the carried FORCE-with-no-policy residue: a `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" where a definer function reads zero rows, and these degrade to "always refuse". Run I/O masking is honest about its limits — the pin asserts that a person's NAME survives it, so the day masking improves, the pin says the header is out of date. Spine untouched. |
@@ -363,6 +381,93 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 016 (`016_seed_and_tenant_provisioning.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.**
+**⚠ Codex (gpt-5.6-sol xhigh) review PENDING.** Sources: 004 (`app.finalise_table`,
+`core.ref_formats`, `core.next_ref`, `core.assign_ref`); 011
+(`app.seed_action_policies_on_tenant`, the trigger shape this mirrors); 013's catalog entry and
+test_013's header, both of which name 016 as the owner of this gap;
+`docs/research/2026-09-13-hrdcorp-compliance-refresh.md` §c (the registry rows 016 deliberately
+does not seed).
+
+### What it does
+
+- **`app.seed_ref_formats(tenant)`** — one row per `core.assign_ref` trigger, derived from
+  `pg_trigger`. Returns the number of rows added. Idempotent, leaving existing rows alone.
+- **`app.seed_ref_formats_on_tenant()` + `trg_tenants_seed_ref_formats`** — `AFTER INSERT ON
+  public.tenants`, the same shape as 011's policy seed.
+- **`app.provision_tenant(slug, name, timezone)`** — the explicit path, over the same mechanism,
+  with a post-condition that refuses a half-provisioned tenant.
+- **A backfill loop** for tenants that already exist, since a trigger only fires on rows
+  inserted after it.
+- **Spine untouched.**
+
+### The one thing it cannot derive, stated
+
+`dated` and `width`. A trigger declares its prefix and nothing else. `width` takes
+`core.ref_formats`' own default of 4 throughout. `dated` is an explicit eighteen-prefix list in
+§1 — `ENQ OPP PRO QUO ENG INV CRN PAY HPK ACT APV DRF RUN MSG COL FUP SES TBK` — because
+`ENQ-2026-0912` versus `ENQ-0912` is a visible difference on every screen and a silent one in
+the catalogue. T5 asserts both shapes against a real allocation rather than against the table.
+
+### The 7-point RPC contract check, worked
+
+**016 exposes no RPC**, and that is stated rather than skipped. All three functions are
+`REVOKE ALL … FROM PUBLIC, anon, authenticated`: provisioning is an operator act, not something
+a browser initiates. (1) No envelope — `seed_ref_formats` returns `integer` and
+`provision_tenant` returns `uuid`, both to an operator or a trigger. (2)–(5) No client surface,
+no contract entry, no call site in `apps/web`, no casts. (6) The trigger is catalogue state and
+survives a reload. (7) No public route.
+
+### Pin — `tests/test_016_seed_and_tenant_provisioning.sql`
+
+Six checks, 15 assertions, all executed, all PASS against the full applied set 001–016. The ones
+that earn their place: **T1b**, which asserts the five prefixes a hand-built list misses
+individually by name rather than asserting a count of 32 — a count passes just as happily with
+the wrong five. **T2**, which contains no `core.ref_formats` fixture at all, because the absence
+IS the assertion. **T3d**, which disables the seeding trigger and requires `provision_tenant` to
+raise, since the scenario being guarded against is a later migration dropping a trigger it did
+not know mattered. **T4b**, which asserts a deliberately corrupted format was **not** repaired by
+re-seeding — the only test in the pack that asserts something was left broken, and the reason is
+that the repair direction is the destructive one. **T6**, which re-proves 004's per-tenant
+numbering property through the real provisioning path: a seed that accidentally made counters
+global would let every customer read every other customer's record volume off a ref, and no
+access-control test would catch it because no row is exposed.
+
+### Rollback — `rollbacks/016_seed_and_tenant_provisioning_rollback.sql`
+
+Round-tripped twice, plus a clean full-set reverse round trip (`before=0 after=0`). **This is
+the only rollback in the pack that deletes business-shaped data**, and it argues the case rather
+than assuming it: a `ref_formats` row is a FORMAT, not an allocation; the allocations live in
+`core.ref_sequences`, which 016 never touches and the rollback never deletes, so re-applying 016
+hands every prefix back its existing counter and **no ref is ever reissued** — T4c is what makes
+that claim checkable. ⚠ **The exception is enforced**: a format the tenant has already allocated
+against is NOT deleted, because that would leave a live counter with no format describing it and
+the next `next_ref` would raise on a prefix the customer is visibly already using. Asserts that
+011's seed trigger survives.
+
+### Deliberately NOT built
+
+`pipelines` and `pipeline_steps` — fifteen stage names in a migration is the defect both
+CLAUDE.md files name, and this is a file about ref formats. **Owner: 018 or a dedicated seed
+pack.** The HRD Corp rule registry — national rows, not provisioning, and the research attaches
+a hard condition (`status = 'PROPOSED'` until a named Finance verifier confirms each against the
+circular text); 017 owns them. Rate cards and templates — a tenant's first rate card is an
+onboarding conversation.
+
+### ⚠ Carried risk and standing conditions
+
+- **A newly provisioned tenant renders no pipeline.** `pipeline_steps` is empty, and every
+  screen that renders stages from configuration has nothing to render. **Owner: 018.**
+- **`dated` and `width` are the only hand-maintained values in the pack**, and nothing derives
+  them. A new dated prefix added in 017 or 018 must be added to §1's array by hand or it
+  allocates undated refs silently.
+- **The backfill is one-shot.** It runs at apply time over the tenants that exist then. A tenant
+  inserted while 016 is only half-applied is not covered by either half.
 
 ---
 
