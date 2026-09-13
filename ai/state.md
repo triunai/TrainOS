@@ -276,6 +276,19 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 22:0x — PR #18 merged (second D-012 pass formal); finding #19; "nineteen" pin-edit figure confirmed wrong
+
+- PR #18 confirmed merged, one file, cut from main per the new
+  review-branch rule (held this time). Verdicts unchanged: 015
+  MERGE-WITH-FIXES, 016 BLOCK, 017 BLOCK. 564dd64 confirmed sound. New
+  finding #19: 017's third provisioning trigger is unchecked by
+  provision_tenant's completeness guard, routed to fix-014 with a request
+  for one registry-driven check (018 makes it a fourth trigger). The
+  "nineteen" pin-edit figure is confirmed wrong after three recounts:
+  always 14 hunks over 10 files. Corrected in place in workstreams.md.
+  codex-review-014-017 stays alive for the re-review. Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 21:5x — GitHub Actions down on billing (confirmed); PR #16 final with SST landed; PR #11 pipeline seed shipped
 
 - GitHub Actions confirmed unavailable on every branch since ~20:36

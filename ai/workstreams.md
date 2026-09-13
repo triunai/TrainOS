@@ -17,13 +17,14 @@
 
 ---
 
-## ⛔ SUPABASE SCHEMA — all four of 014–017 now BLOCK on the second D-012 pass; 018 on PR #11 (2026-09-13)
+## ⛔ SUPABASE SCHEMA — all four of 014–017 BLOCK per PR #18 (merged); 018 on PR #11 (2026-09-13)
 
-⛔ **Second D-012 pass landed on branch `review/codex-014-017`, confirmed
-directly via `git show` — but NOT YET on main, no PR open for it as of
-this check.** Read the diff at commit `5a5655c` for anything below marked
-"confirmed"; do not treat it as merged or reviewable-in-a-PR until one
-opens. Verdict, confirmed exactly against the actual diff:
+✅ **The second D-012 pass is now confirmed formally landed as PR #18**
+(merged `4162a4d`, one file, cut from `main` per the new review-branch
+rule — see below). What follows was first confirmed directly against the
+branch-only commit `5a5655c` before the PR existed; the verdict is
+unchanged now that it's merged. Verdict, confirmed exactly against the
+actual diff:
 **014 BLOCK (unchanged)**, **015 MERGE-WITH-FIXES**, **016 BLOCK**, **017
 BLOCK**. "None of the four packs may merge as currently written. 015 is
 the closest to ready," quoted directly from the review.
@@ -78,6 +79,47 @@ the closest to ready," quoted directly from the review.
   lock-safety one) doesn't exist regardless of what any pin could show.
 - **Everything routed to `fix-014`, which now covers all of 014–017, not
   just 014.** Hosted apply stays gated on the eventual clean verdict.
+
+✅ **This second pass is now confirmed formally landed: PR #18 merged at
+`4162a4d`** (`gh pr view 18`: mergedAt 2026-09-13T12:53:11Z, base `main`,
+merge parent `62097b1` — this session's own earlier push), adding
+**exactly one file**, `docs/reviews/2026-09-13-codex-retrofit-015-017.md`
+— confirmed the new review-branch rule held this time: cut from `main`,
+one doc file, no PR-branch dependency to go stale. Verdicts confirmed
+unchanged from the branch-only version this thread already recorded: 015
+MERGE-WITH-FIXES, 016 BLOCK, 017 BLOCK. **`564dd64` (the `provision_tenant`
+`p_id` amendment) confirmed reviewed separately and sound** — the report
+states directly: "the forward migration and the `564dd64` amendment are
+both sound and independently verified," with 016's BLOCK resting entirely
+on its rollback, unaffected by the amendment.
+
+⚠ **New finding #19, from a genuine thermonuclear pass (the skill became
+available mid-session) — confirmed exactly against the review doc.** 017
+adds a third tenant-provisioning trigger, `app.seed_compliance_check_keys`,
+mirroring 016's `seed_ref_formats` pattern almost line-for-line — but
+`app.provision_tenant`'s completeness guard is never updated to also
+verify check-keys were seeded. The exact failure mode that guard exists
+to catch (a tenant that looks provisioned but is missing something a
+later table needs) is now unguarded for check_keys, found by comparing
+the two files' structure rather than by running anything. Routed to
+`fix-014` with a request for a registerable per-pack check, since 018
+adds a fourth such trigger (the pipeline-stage one confirmed in the
+SUPABASE SCHEMA thread above) and three independently-copied seed-trigger
+patterns (011, 016, 017) is already one too many. Also from the same
+pass, confirmed present: **017's 1,340-line single transaction is
+flagged as a maintainability/decomposition problem independent of its
+already-found defects** — deferred, with a catalog note requested rather
+than fixed inline.
+
+✅ **The "nineteen" pin-edit figure is confirmed wrong — recounted three
+times against three different bases, same result each time: 14 hunks
+over 10 files, all legitimate.** The report states the likely
+explanation directly: `main` already carries 014's content by the time
+of this recount, so there is nothing further to find there beyond what
+crossing from 014's own tip already identified. `codex-review-014-017`
+(the original lane/worktree, still alive per its own worktree)
+stays alive for the re-review once `fix-014` pushes its fix for all four
+packs.
 
 ⚠ **Negative result for the log, and a real pattern, not a coincidence:
 two packs in one PR (014 and 016) shipped rollbacks that destroy state
@@ -206,8 +248,9 @@ asserts `data_directory` before every run rather than trusting the port
 alone. `codex-review-014-017`'s continuation (worktree
 `~/Repos/personal-work/trainos-wt/codex-pass2`, detached HEAD at `52caf6b`
 — 017's own tip, confirming this checkout DID fetch correctly this time)
-reviews 015–017 plus the nineteen pin edits from the first pass, into a
-separate report. New: `fix-approval-hash` (Sonnet, worktree
+reviews 015–017 plus the pin edits from the first pass — reported at the
+time as "nineteen," since corrected by three independent recounts to 14
+hunks over 10 files, all legitimate; see below. New: `fix-approval-hash` (Sonnet, worktree
 `~/Repos/personal-work/trainos-wt/fix-approval-hash`, branch
 `fix/approval-diff-hash`, not yet pushed to origin) is doing the client
 half of the 014 review's HIGH finding #6 — `decideApproval` now sends
@@ -318,8 +361,9 @@ results for the log, partially spot-checked):
 - Deferred: the pipeline seed moves to 018; tax/HRD rows are PROPOSED
   pending a Finance verifier; four retention reapers await approved policy
   rows; four AI-ops columns await a runtime vocabulary that doesn't exist
-  yet. Codex second pass requested on 015–017 and on nineteen edits made to
-  earlier (001–013) pins.
+  yet. Codex second pass requested on 015–017 and on the earlier
+  (001–013) pin edits — reported at the time as "nineteen," corrected
+  below.
 
 ⚠ **PR #11 was rebased and grew substantially — confirmed via `gh pr
 view 11 --json baseRefName`: base is now `cloud/migrations`, not `main`.**
@@ -458,9 +502,12 @@ migration 014's actual SQL files are now sitting in the repo tree on
 being unmerged and BLOCKED.** `git show 02240e6 --stat` (PR #12's merge
 commit) confirms it added `supabase/migrations/014_....sql` (949 lines),
 `supabase/rollbacks/014_..._rollback.sql` (208 lines), and edited SIX
-earlier test files (004, 009, 010, 011, 012, 013) — these are almost
-certainly the "nineteen edits to earlier pins" mentioned two updates ago.
-This is reasonable as review evidence — the review needed the actual file
+earlier test files (004, 009, 010, 011, 012, 013) — these were guessed at
+the time to be the "nineteen edits to earlier pins" then reported; the
+edit count itself has since been recounted three times to 14 hunks over
+10 files (see the second D-012 pass below), so "nineteen" never was the
+right number regardless of which six files these are. This is reasonable
+as review evidence — the review needed the actual file
 to run G6 against — but it means **014's file now exists on `main` even
 though it is BLOCKED and PR #6 has not merged.** Nobody should read the
 file's presence in `supabase/migrations/` as approval to apply it; the

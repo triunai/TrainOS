@@ -15,6 +15,74 @@
 
 ---
 
+## 2026-09-13 22:0x — PR #18 merged (second D-012 pass now formal), finding #19, "nineteen" pin edits confirmed wrong
+
+**PR #18 confirmed MERGED at `4162a4d`**, adding exactly one file
+(`docs/reviews/2026-09-13-codex-retrofit-015-017.md`), base `main`, merge
+parent `62097b1` — this session's own earlier push. **The new
+review-branch rule held**: cut from `main`, one doc file, nothing to go
+stale this time. The second D-012 pass this log already recorded from a
+branch-only commit two updates ago is now formally landed, not merely
+confirmed-but-unmerged. Verdicts unchanged: 015 MERGE-WITH-FIXES, 016
+BLOCK, 017 BLOCK.
+
+**`564dd64` (the `provision_tenant` `p_id` amendment) confirmed reviewed
+separately and sound**, quoted directly from the report: "the forward
+migration and the `564dd64` amendment are both sound and independently
+verified." 016's BLOCK rests entirely on its rollback defect, already
+recorded, and is unaffected by the amendment.
+
+**New finding #19, from a genuine thermonuclear pass — the skill became
+available mid-session — confirmed exactly against the review doc, not
+just quoted from the summary.** 017 adds a third tenant-provisioning
+trigger, `app.seed_compliance_check_keys`, mirroring 016's
+`seed_ref_formats` pattern almost line-for-line. `app.provision_tenant`'s
+completeness guard is never updated to also verify check-keys were
+seeded — the exact failure mode that guard exists to catch (a tenant that
+looks provisioned but is missing something a later table needs) is now
+unguarded for this table too. Found by comparing the two files' structure
+directly, not by running any code. Routed to `fix-014` with a request for
+a registerable per-pack check rather than a fourth one-off fix, since 018
+adds a fourth such trigger (the pipeline-stage one this log already
+tracks) and three independently-copied seed-trigger patterns (011, 016, 017) was already one too many before 018 made it four.
+
+**Also confirmed from the same thermonuclear pass:** 017's 1,340-line
+single transaction is flagged as a maintainability/decomposition problem
+independent of its already-found defects — deferred, with a catalog note
+requested rather than fixed inline.
+
+⚠ **The "nineteen" pin-edit figure, repeated in this log across several
+earlier blocks as a live fact, is confirmed wrong.** Recounted three
+times against three different bases — most recently against `origin/main`
+as instructed — same result every time: 14 hunks over 10 files, all
+legitimate, none a weakened assertion, two recomputed counts
+independently re-verified correct by execution. The report's own likely
+explanation, worth keeping: `main` already carries 014's content by this
+point, so there is nothing further to find there beyond what crossing
+from 014's own tip already identified — the "nineteen" figure was simply
+the lane's own count from when it made the edits, never independently
+verified until now. Corrected in place in `ai/workstreams.md` everywhere
+this spine had repeated "nineteen" as a current figure; the historical
+mentions in this append-only log are left as an accurate record of what
+was reported at the time, with this block serving as the correction going
+forward.
+
+`codex-review-014-017` (the original lane and worktree) stays alive for
+the re-review once `fix-014` pushes a fix covering all four packs
+(014–017), not just 014.
+
+**One thing worth telling future-me:** a number repeated across several
+consecutive log entries without being independently re-derived can
+calcify into a fact nobody re-checks, purely because it kept showing up.
+"Nineteen" survived three separate mentions in this spine before anyone
+actually recounted it against the files. The fix isn't re-verifying every
+repeated number forever — it's noticing when a figure has never once been
+independently recounted, only re-quoted, and treating that as reason
+enough to check it the next time it comes up in a safety-relevant
+context.
+
+---
+
 ## 2026-09-13 21:5x — GitHub Actions down on billing (confirmed), PR #16 final with SST landed, PR #11 pipeline seed shipped (only DEAL_CHAIN blocked)
 
 ⛔ **GitHub Actions has been unavailable on every branch, `main` included,

@@ -283,9 +283,25 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > engagement) and `test_014`'s grant count moving 121→124. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 21:5x — GitHub Actions down on billing
-> since ~20:36 (confirmed); PR #16 final with SST landed; PR #11 pipeline
-> seed shipped, not blocked.
+> **BLAST 13 Sep 22:0x +08** — PR #18 confirmed MERGED (`4162a4d`), one
+> file, cut from `main` per the new review-branch rule — the second D-012
+> pass is now formally landed, not just branch-confirmed. Verdicts
+> unchanged: 015 MERGE-WITH-FIXES, 016 BLOCK, 017 BLOCK. `564dd64`
+> (`provision_tenant` `p_id`) confirmed reviewed separately and sound.
+> New finding #19, confirmed exactly: 017's `app.seed_compliance_check_keys`
+> trigger is never checked by `provision_tenant`'s completeness guard, the
+> same failure class the guard exists to catch, now unguarded for
+> check_keys — routed to `fix-014` with a request for one registry-driven
+> check since 018 adds a fourth such trigger. Also confirmed: 017's
+> 1,340-line single transaction flagged as a decomposition problem,
+> deferred. **The "nineteen" pin-edit figure is confirmed wrong** —
+> recounted three times against three bases, always 14 hunks over 10
+> files; corrected in place everywhere this spine had repeated "nineteen."
+> `codex-review-014-017` stays alive for the re-review after `fix-014`
+> pushes. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 22:0x — PR #18 merged (second pass formally
+> landed); finding #19 confirmed; "nineteen" pin-edit figure was wrong.
 
 ### Focus
 
