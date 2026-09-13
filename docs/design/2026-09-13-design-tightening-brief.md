@@ -84,3 +84,6 @@ Use the kit's own saved-view switcher form (Kit.dc.html "My open leads 48 · Una
 
 ### 11a. Inline lifecycle steppers in tables (11:46, reference M04-S02 engagements table)
 Rows the artboards draw with the dot-progress stepper (done ●, current ◯ blue ring, blocked ● amber, lost ● red with red segment) render the kit `LifecycleStepper` inline variant from server steps; never text. Enumerate by grepping the artboards, not by memory. Cells: name + mono `ref · status` subline, dates, money right-aligned tabular. (Assigned to applier-2 as an immediate item; the fidelity pass re-checks.)
+
+## 17. Localisation (11:47)
+The pack's topbar has an EN | BM switch; the app has no i18n. Now (shell-fix): the switch, an I18nProvider (locale from /me, persisted, `<html lang>`), and shell strings in EN + BM. Next pass: a real catalogue (react-i18next or a typed dictionary), every screen's UI strings keyed, BM translations reviewed by a native speaker, date/number formatting via Intl for `ms-MY`, and the portal page localised (client-facing). Contract already carries `locale` on /me.

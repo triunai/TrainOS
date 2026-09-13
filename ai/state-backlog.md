@@ -205,3 +205,4 @@ wrap the element, not the path.
 - [ ] **Design tightening pass** (13 Sep, user-endorsed critique): see docs/design/2026-09-13-design-tightening-brief.md — kit typography/radius/surface tokens, flatten containers, sidebar two-mechanism hierarchy, table typography; Collections page is the reference. Owner: next session, first UI item after verifier.
 - [ ] Fixtures: default MD persona → Alex Selvarajah (brief §13); demo index narrated to him.
 - [ ] Screens: zebra rows + inline workflow strips per artboard (brief §11).
+- [ ] i18n pass: full EN/BM catalogue for all 27 screens + portal (brief §17); native BM review.
