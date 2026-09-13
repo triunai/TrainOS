@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { currentPrimaries } from "@/shared/components/kit";
@@ -130,5 +130,31 @@ describe("M10 · participant directory", () => {
     await userEvent.type(screen.getByLabelText("Search"), "Nurul");
     const counter = await screen.findByText(/\d+ of \d+ shown/);
     expect(counter.closest("[data-list-toolbar]")).toBe(row);
+  });
+
+  describe("§10a toolbar reconciliation reminder (dev-only)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("shows the design-debt reminder in DEV", async () => {
+      vi.stubEnv("DEV", true);
+      renderList();
+
+      await screen.findByText("Ahmad Firdaus");
+      expect(
+        screen.getByText(/Design debt: the status track and the filter row/),
+      ).toBeInTheDocument();
+    });
+
+    it("renders nothing when import.meta.env.DEV is false", async () => {
+      vi.stubEnv("DEV", false);
+      renderList();
+
+      await screen.findByText("Ahmad Firdaus");
+      expect(
+        screen.queryByText(/Design debt: the status track and the filter row/),
+      ).not.toBeInTheDocument();
+    });
   });
 });

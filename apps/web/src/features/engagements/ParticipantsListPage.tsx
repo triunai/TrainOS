@@ -8,6 +8,7 @@ import {
   EmptyState,
   ENGAGEMENT_TONE,
   ErrorState,
+  ExceptionBanner,
   FilterBar,
   FilterSearch,
   FilterSelect,
@@ -55,6 +56,59 @@ function rangeOf(dates: readonly string[]): string | null {
   const first = dates[0];
   const last = dates[dates.length - 1];
   return first === last ? first : `${first}/${last}`;
+}
+
+/**
+ * DEV-only. Brief §10a: this screen's eight-segment cohort-status track is
+ * 806px wide at 1440, which is what forces `ListToolbar`'s filter row onto a
+ * second line here — the one screen in the kit where that wrap fires. That is
+ * a pill-tab-group-vs-filter-bar reconciliation the kit does not have an
+ * answer for yet, so it is flagged rather than shipped quietly.
+ *
+ * `import.meta.env.DEV` keeps this out of the production bundle entirely —
+ * Vite dead-code-eliminates the branch, so there is no runtime cost and no
+ * shipped copy to forget about. One `ExceptionBanner` (kit §05, warning tone,
+ * no retry — there is nothing to retry, only a decision to make) plus a
+ * pulsing accent bar on its left edge only, so it reads as "still open" on a
+ * screen an engineer might otherwise pass without registering the wrapped row
+ * above it.
+ */
+function ToolbarReconciliationReminder() {
+  if (!import.meta.env.DEV) return null;
+
+  return (
+    <div className="px-5 pb-3">
+      {/* Scoped to this component: the pulse is a dev-only nicety for a
+          temporary flag, not a pattern the kit should carry. Only the accent
+          bar's opacity moves — never the banner's fill or border — and
+          `prefers-reduced-motion` turns it into a steady bar. */}
+      <style>{`
+        @keyframes participants-toolbar-debt-pulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        .participants-toolbar-debt-pulse {
+          animation: participants-toolbar-debt-pulse 2.4s ease-in-out infinite;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .participants-toolbar-debt-pulse {
+            animation: none;
+            opacity: 1;
+          }
+        }
+      `}</style>
+      <div className="relative overflow-hidden rounded-control">
+        <span
+          aria-hidden="true"
+          className="participants-toolbar-debt-pulse absolute inset-y-0 left-0 w-1 bg-warning-accent"
+        />
+        <ExceptionBanner
+          severity="WARN"
+          title="Design debt: the status track and the filter row do not fit on one row here. Decide how to reconcile the pill tab group with the filters before shipping. See brief §10a."
+        />
+      </div>
+    </div>
+  );
 }
 
 export function ParticipantsListPage() {
@@ -256,6 +310,8 @@ export function ParticipantsListPage() {
           </FilterBar>
         }
       />
+
+      <ToolbarReconciliationReminder />
 
       <div className="pt-3">
         {pending ? <LoadingState rows={8} label="Loading the participant directory" /> : null}
