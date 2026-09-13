@@ -199,23 +199,30 @@ export function ProfileModal({
 
           {/* Employment record. */}
           <div className="flex min-w-0 flex-1 flex-col p-[18px]">
-            {/* The pack's own gradient, angle and stops included:
-                `linear-gradient(120deg, #123AC9 0%, #1F5BFF 52%, #4E82FF 100%)`.
-                Written against the variables rather than through `bg-gradient-to-*`
-                because those utilities only offer the eight compass directions
-                and evenly spread stops, and 120deg at 52% is neither. */}
-            <div className="flex min-h-[112px] items-start gap-3.5 rounded-card bg-[linear-gradient(120deg,rgb(var(--primary-deep))_0%,rgb(var(--primary))_52%,rgb(var(--primary-lift))_100%)] px-[22px] py-5">
+            {/* `--surface-accent-gradient`, the one accent band in the system,
+                NOT a hand-rolled copy of the artboard's stops. The artboard's
+                own ramp ends at #4E82FF, where white reads 3.52:1 and white at
+                60% reads 2.22:1 — both below AA, and every label on this band
+                is white. The token is the same three colours at the same angle
+                with the lift stop pushed past the visible end, and it is pinned
+                to literals so a theme swap cannot move it: a tenant banner is a
+                brand artefact, not a surface that takes its lightness from what
+                is behind it. */}
+            <div className="flex min-h-[112px] items-start gap-3.5 rounded-card bg-[image:var(--surface-accent-gradient)] px-[22px] py-5">
               <span
                 aria-hidden="true"
-                className="flex h-11 w-11 items-center justify-center rounded-card bg-on-primary/[0.14] text-[16px] text-on-primary"
+                className="flex h-11 w-11 items-center justify-center rounded-card bg-[rgb(var(--on-accent)/0.14)] text-[16px] text-[rgb(var(--on-accent))]"
               >
                 ⬡
               </span>
               <div className="min-w-0">
-                <p className="truncate text-[19px] font-bold tracking-[-0.01em] text-on-primary">
+                <p className="truncate text-[19px] font-bold tracking-[-0.01em] text-[rgb(var(--on-accent))]">
                   {orgName}
                 </p>
-                <p className="font-mono text-[11px] tracking-[0.14em] text-on-primary/60">
+                {/* Full white, not 70%: over this band a translucent white
+                    reads 3.35:1 at the 11px this uses. The step down is carried
+                    by size, weight and tracking instead. */}
+                <p className="font-mono text-[11px] tracking-[0.14em] text-[rgb(var(--on-accent))]">
                   {orgCode}
                 </p>
               </div>
