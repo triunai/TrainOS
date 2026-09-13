@@ -308,10 +308,11 @@ const pipelinesSql = (): string =>
     frozen: ["ref", "created_at"],
     note: [
       "Stage names and order are configuration, never hardcoded: this is the row the",
-      "-- UI renders from. This seed owns these rows: no provisioning pack writes",
-      "-- them yet. The id is md5(tenant_id::text || 'pipeline:' || object)::uuid all",
-      "-- the same, so a provisioning seed computing the same expression later lands",
-      "-- on these rows instead of a second set. See lib/ids.ts.",
+      "-- UI renders from. Migration 018's trg_tenants_z_seed_pipelines writes the",
+      "-- same row via ON CONFLICT (id) DO NOTHING, using the identical",
+      "-- md5(tenant_id::text || 'pipeline:' || object)::uuid id, so this seed's DO",
+      "-- UPDATE is what actually names the row, whichever writer runs first. See",
+      "-- lib/ids.ts.",
     ].join("\n"),
     rows: storablePipelines().map((pipeline, index) => ({
       id: pipelineUuid(pipelineName(pipeline.object)),
@@ -334,8 +335,9 @@ const pipelineStepsSql = (): string =>
     frozen: ["created_at"],
     note: [
       "Ids are md5(tenant_id::text || 'pipeline:' || object || ':' || step_key)::uuid,",
-      "-- so a later provisioning seed converges on these rows by arithmetic rather",
-      "-- than by migration. The object is in the name because WON is a stage of BOTH",
+      "-- the same expression migration 018's trg_tenants_z_seed_pipelines uses for",
+      "-- its own DO NOTHING insert, so the two writers converge on these rows by",
+      "-- arithmetic. The object is in the name because WON is a stage of BOTH",
       "-- pipelines, and",
       "-- core.pipeline_steps is unique on (tenant_id, pipeline_id, step_key) rather",
       "-- than on step_key alone, so the two rows are legitimate and a shared id would",
