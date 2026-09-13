@@ -67,6 +67,14 @@ describe("SplitWorkspace", () => {
     expect(grid).toHaveClass("min-h-0");
     expect(grid?.className).not.toContain("overflow");
     expect(grid).toHaveClass("grid-cols-[minmax(360px,40%)_1fr]");
+
+    /* The row track is stated, not inherited. Without it the single implicit
+       row is `auto` — sized by content, and only reaching the bottom of the
+       workspace because `align-content: normal` stretches it, which needs the
+       grid to have taken a definite height from a `flex-1` two levels up. The
+       leads/contacts lane saw the pane rule stop at the last list item on a
+       short list. `minmax(0, 1fr)` says the same thing outright. */
+    expect(grid).toHaveClass("grid-rows-[minmax(0,1fr)]");
   });
 
   it("draws no hairline under a detail pane with nothing selected", () => {

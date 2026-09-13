@@ -34,6 +34,17 @@ import { cn } from "@/shared/lib/utils";
  * so without them the panes grow the page instead of scrolling, and a long
  * unbroken subject line in the detail pushes the list pane off its track.
  *
+ * `grid-rows-[minmax(0,1fr)]` states the row's height rather than inheriting
+ * it. Reported by the leads/contacts lane: with only the implicit `auto` row,
+ * a list shorter than the workspace left the pane rule stopping at the last
+ * item instead of reaching the bottom. It does not reproduce here — the grid
+ * takes a definite height from `flex-1`, so `align-content: normal` stretches
+ * the implicit row and the rule runs full height either way. The track stays
+ * because that is the part which varies: `auto` is sized by content and rescued
+ * by a stretch that a `flex-1` two levels up happens to make possible, while
+ * `minmax(0, 1fr)` is the same answer stated outright and shrinkable, and
+ * cannot be undone by a caller passing its own `className`.
+ *
  * The one hairline this component draws is the seam between the panes, plus one
  * under the sticky header. CLAUDE.md keeps a border only where removing it
  * makes a relationship ambiguous, and content sliding under a sticky header
@@ -69,7 +80,10 @@ export function SplitWorkspace({
   return (
     <div
       data-split-workspace=""
-      className={cn("grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_1fr]", className)}
+      className={cn(
+        "grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_1fr] grid-rows-[minmax(0,1fr)]",
+        className,
+      )}
     >
       <section
         aria-label={listLabel}
