@@ -76,6 +76,9 @@ Sales excellence                                        RM 67,200
 ### 10a. Tab group — revised reference (11:45)
 Use the kit's own saved-view switcher form (Kit.dc.html "My open leads 48 · Unassigned 12 · Overdue follow-up 7 · +": a contained track with the selected segment as a filled surface inside it) but with the rounding pulled back hard: track radius ≈ `--radius-panel` (10px), selected segment ≈ `--radius-control` (6–8px) — **not** fully round. Keep counts inline, "+" to add a view, corporate sentence case. (User said "20–40px of rounding" — interpret as a fraction of the current full-round, i.e. modest radius; confirm on the first render.)
 
+### 10b. Tab row and filter row are ONE row (12:05, user ruling from screenshots)
+On every list screen the filter row — search, selects and the "N of M shown" counter — must NOT sit on its own row beneath the segmented tab group. It sits on the SAME row, right-aligned, with the table directly beneath; reference composition `features/finance/CollectionsQueueScreen.tsx`. Stacked, the two bands put two horizontal rules between the heading and the first row of data while each band leaves half its width empty — the tabs say which subset and the filters say which slice of it, so they are one control surface. The kit component is `ListToolbar` (tabs left, filters and count right, actions after the filters, wrapping to two rows only below 1100px); it strips `FilterBar`'s own row padding, so a screen passes `FilterBar` unmodified and puts the page gutter on the toolbar. An action that opens a record rather than narrowing the list belongs in the page header, not in this row.
+
 ### 12b. Sidebar amendments (11:45)
 - No « collapse chevron; keep the hairline above the footer. No rail-collapse for now.
 - Profile row (avatar · name · role) moves to the TOP of the sidebar under the wordmark, with a light/dark **toggle switch** beside it (theme is one click; not in a menu).
