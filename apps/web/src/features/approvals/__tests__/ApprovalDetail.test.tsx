@@ -94,10 +94,17 @@ describe("M02-S02 approval detail", () => {
     const approve = await screen.findByRole("button", { name: "Approve" });
 
     /* One solid primary. Reject is a danger button and Request changes is
-       secondary, so neither may carry the solid primary fill. */
+       secondary, so neither may carry the fill. On the blue record card the
+       fill is WHITE rather than blue — solid still means "a human triggered
+       this", the surface underneath just changed — so the assertion looks for
+       either treatment and still insists there is exactly one. */
     const solid = screen
       .getAllByRole("button")
-      .filter((button) => button.className.includes("bg-primary"));
+      .filter(
+        (button) =>
+          button.className.includes("bg-primary") ||
+          button.className.includes("bg-[rgb(var(--on-accent))]"),
+      );
     expect(solid).toHaveLength(1);
 
     await user.click(approve);
@@ -144,46 +151,51 @@ describe("M02-S02 approval detail", () => {
     expect(within(aside).getByText(/Discount below floor/)).toBeInTheDocument();
   });
 
-  /* Tightening brief §15a, prototyped on this screen only. */
-  it("hangs the whole case off the metric band, inside the header", async () => {
+  /* Tightening brief §15a, prototyped on this screen first. */
+  it("puts the whole header on one blue card, with one chevron", async () => {
     const user = userEvent.setup();
     renderDetail();
 
-    const why = await screen.findByText("Why this needs you");
+    await screen.findByText("Why this needs you");
 
-    /* The narrative is INSIDE the RecordHeader now, as the detail of the
-       accent card — not a column sitting beside it. `Block` renders a
-       `<section>` of its own, so the card is found from the band outwards
-       rather than from the prose inwards. */
-    const band = document.querySelector("[class*='surface-accent-gradient']") as HTMLElement;
-    expect(band).not.toBeNull();
-    const card = band.closest("section") as HTMLElement;
-    expect(card.closest("header")).not.toBeNull();
-    expect(card.contains(why)).toBe(true);
+    const header = document.querySelector("header") as HTMLElement;
+    expect(header.className).toContain("bg-[image:var(--surface-accent-gradient)]");
+    expect(header.className).toContain("rounded-[var(--radius-panel)]");
 
-    /* The five facts are the band's always-visible summary row, spread evenly
-       rather than clustered left. */
-    const summary = band.querySelector(".grid") as HTMLElement;
+    /* Title, chip, meta line and the metric strip are all ON the card. */
+    expect(header.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);
+    expect(header.contains(screen.getByText(/APV-2026-0771 · PRO-2026-0184/))).toBe(true);
+    /* By its template, not by `.grid` — `Collapse` is a grid too, and it wraps
+       this one. */
+    const summary = header.querySelector('[style*="grid-template-columns"]') as HTMLElement;
     expect(summary.style.gridTemplateColumns).toBe("repeat(5, minmax(0, 1fr))");
     expect(within(summary).getByText("Value")).toBeInTheDocument();
     expect(within(summary).getByText("Risk")).toBeInTheDocument();
 
-    /* §15a: the title row is NOT collapsible. The only chevron on the screen
-       is the card's, and the only solid button is still Approve. */
+    /* Exactly one chevron on the screen, and it belongs to the card. */
     const chevrons = screen
       .getAllByRole("button")
       .filter((button) => /^(Show|Hide) /.test(button.textContent ?? ""));
     expect(chevrons).toHaveLength(1);
+    expect(header.contains(chevrons[0])).toBe(true);
 
-    /* Closing the card keeps the five facts and takes the case away, with the
-       decision still on the unchanged title row. */
-    await user.click(screen.getByRole("button", { name: "Hide the full case" }));
-    expect(card.querySelector("[data-open]")?.getAttribute("data-open")).toBe("false");
-    expect(within(summary).getByText("Confidence")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    /* On the card the three actions escalate by weight, not hue: no status
+       colour survives onto the blue. */
+    const reject = screen.getByRole("button", { name: "Reject" });
+    expect(reject.className).not.toContain("text-danger");
+    expect(reject.className).toContain("text-[rgb(var(--on-accent))]");
+
+    /* The case is NOT in the card — it stays in the decision column. */
+    expect(header.contains(screen.getByText("Why this needs you"))).toBe(false);
+
+    /* Collapsing keeps the title row and the meta line and drops the strip. */
+    await user.click(chevrons[0]);
+    expect(header.querySelector("[data-open]")?.getAttribute("data-open")).toBe("false");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "Send proposal · Aurora Manufacturing Sdn Bhd",
     );
+    expect(screen.getByText(/APV-2026-0771 · PRO-2026-0184/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
   it("explains a missing approval instead of rendering an empty record", async () => {

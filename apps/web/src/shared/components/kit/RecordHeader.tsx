@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Collapse, DisclosureButton } from "./Collapse";
 import type { Ref } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MetricStrip, type MetricCellProps } from "./MetricStrip";
+import { OnAccentProvider } from "./onAccent";
+import { useRememberedFlag } from "./useRememberedFlag";
 import { CondensedPrimaryEcho } from "./useSinglePrimary";
 
 /**
@@ -70,7 +73,55 @@ export interface RecordHeaderProps {
   stepper?: ReactNode;
   /** Turn off the condensed bar where the page does not scroll. */
   withoutCondensed?: boolean;
+  /**
+   * The RECORD variant (tightening brief §15a): the whole header becomes one
+   * blue gradient card — title row, meta line, hairline, metric strip, stepper.
+   * Kit.dc.html §11-13, "same component, three entity configs", and M04-S02
+   * captions it "the record-page pattern every entity in the chain inherits".
+   *
+   * Off by default, and that is not timidity: `RecordHeader` also serves every
+   * LIST page (no `recordRef`, `withoutCondensed`, count line via `meta`), and
+   * a list has no record to announce. Record pages opt in; lists never do.
+   *
+   * Everything inside is re-inked for the blue automatically — buttons, chips
+   * and the strip read `useOnAccent` rather than taking a prop — so a screen's
+   * header markup is identical either way.
+   */
+  accent?: boolean;
+  /**
+   * Adds the round chevron left of the action cluster. It collapses the
+   * hairline, the metric strip and the stepper; the title row and the meta line
+   * never collapse. §15a: "the card shrinks to the title row plus meta line".
+   */
+  collapsible?: boolean;
+  /**
+   * The record TYPE — `"approval"`, `"organisation"` — not the record. The
+   * collapsed choice is remembered against it, so the preference survives
+   * moving to the next item in a queue. Only read when `collapsible`.
+   */
+  recordType?: string;
+  /**
+   * Drop back to the plain page surface when collapsed, instead of keeping the
+   * shorter blue card. The user's own reference for the collapsed state shows
+   * the plain treatment; the artboard's "one component, three configs" argues
+   * for keeping the blue. Both are built because the two sources disagree.
+   */
+  plainWhenCollapsed?: boolean;
   className?: string;
+}
+
+/**
+ * Which gradient candidate the card should paint. A dev affordance with a
+ * deliberate shelf life: §15a asks for two candidates rendered on the real
+ * screen so the user can choose, and a URL flag is the cheapest way to show
+ * both without a second route, a second component or a stored preference.
+ *
+ * A plain function, not a hook: it reads the URL on every render and holds no
+ * state, so there is nothing to subscribe to and nothing to clean up.
+ */
+function isAltGradient(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("gradient") === "alt";
 }
 
 export function RecordHeader({
@@ -85,10 +136,22 @@ export function RecordHeader({
   metricsCard,
   stepper,
   withoutCondensed,
+  accent,
+  collapsible,
+  recordType,
+  plainWhenCollapsed,
   className,
 }: RecordHeaderProps) {
   const sentinel = useRef<HTMLDivElement>(null);
   const [condensed, setCondensed] = useState(false);
+
+  const bodyId = useId();
+  /* Default expanded: a record a user has never met should show its facts. The
+     preference only exists once they have said otherwise. */
+  const [expanded, setExpanded] = useRememberedFlag(
+    collapsible && recordType ? `record-header:${recordType}` : undefined,
+    true,
+  );
 
   useEffect(() => {
     if (withoutCondensed) return;
@@ -107,39 +170,125 @@ export function RecordHeader({
 
   const metaLine = [recordRef, ...(meta ?? [])].filter(Boolean).join(" · ");
 
-  /* Rows 2 and 3. */
-  const details = (
-    <>
+  /* The part that collapses. The title row and the meta line never do. */
+  const body =
+    metricsCard || (metrics && metrics.length > 0) || stepper ? (
+      <div className={cn("flex flex-col", accent ? "gap-3.5 pt-3.5" : "gap-3.5")}>
+        {/* One hairline, then the strip. On the card it is white at 15%: a
+            `--divider` grey over saturated blue reads as a seam between two
+            surfaces rather than a division within one. */}
+        {accent ? (
+          <div aria-hidden="true" className="h-px bg-[rgb(var(--on-accent)/0.18)]" />
+        ) : null}
+
+        {metricsCard ??
+          (metrics && metrics.length > 0 ? (
+            <MetricStrip cells={metrics} variant={accent ? "accent" : "default"} bare={accent} />
+          ) : null)}
+
+        {stepper ? (
+          <div
+            className={cn(
+              "pt-3.5",
+              accent ? "border-t border-[rgb(var(--on-accent)/0.18)]" : "border-t border-divider",
+            )}
+          >
+            {stepper}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
+  /* Collapsed, the card keeps the title row and the meta line and loses its
+     bottom padding, so it shrinks rather than leaving a blue band of nothing. */
+  const showCard = accent && (expanded || !plainWhenCollapsed);
+
+  const header = (
+    <header
+      className={cn(
+        "flex flex-col gap-3.5",
+        showCard
+          ? "rounded-[var(--radius-panel)] bg-[image:var(--surface-accent-gradient)] px-6 pb-5 pt-5"
+          : "px-5 pb-4 pt-5",
+        /* Candidate B, for the on-screen comparison §15a asks for. `?gradient=alt`
+           swaps the token at the element; nothing else in the card changes, so
+           the two are compared under identical type, spacing and ink. Reads the
+           URL, not state — a refresh is the toggle and there is nothing to
+           leak. Delete this line and `--surface-accent-gradient-alt` once the
+           user has picked. */
+        showCard && isAltGradient() && "bg-[image:var(--surface-accent-gradient-alt)]",
+        showCard && !expanded && "pb-4",
+        /* The card is a card: it needs air on all four sides, and the content
+           below it must not butt against its bottom edge. */
+        accent && "mx-5 mb-5 mt-4",
+        className,
+      )}
+    >
+      <div className="flex min-h-9 flex-wrap items-center gap-2.5">
+        <h1
+          className={cn(
+            "whitespace-nowrap text-[22px] font-semibold tracking-[-0.015em]",
+            showCard && "text-[rgb(var(--on-accent))]",
+          )}
+        >
+          {title}
+        </h1>
+        {chips}
+        {actions || primaryAction || collapsible ? (
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+            {/* The round chevron sits BEFORE the cluster, as the artboard draws
+                it — chrome ahead of the actions, never competing with them. */}
+            {collapsible ? (
+              <DisclosureButton
+                open={expanded}
+                onToggle={() => setExpanded(!expanded)}
+                controls={bodyId}
+                label="the record detail"
+                tone={showCard ? "onAccent" : "ink"}
+                className={cn(
+                  "rounded-pill border",
+                  showCard
+                    ? "border-[rgb(var(--on-accent)/0.45)]"
+                    : "border-border text-ink-secondary",
+                )}
+              />
+            ) : null}
+            {actions}
+            {primaryAction}
+          </div>
+        ) : null}
+      </div>
+
       {metaLine ? (
-        /* The artboard draws this at #7B828C, which is lighter than the
-           #69717C floor CLAUDE.md sets for text a user must read. The rule
-           wins: ink-muted. Noted as a deliberate deviation. */
-        <p className="-mt-1.5 font-mono text-[11px] tracking-[0.01em] text-ink-muted">{metaLine}</p>
+        /* On a white card the artboard draws this at #7B828C, lighter than the
+           #69717C floor CLAUDE.md sets for text a user must read; the rule wins
+           and it is ink-muted. On the blue card it is full white for the same
+           reason the captions are — a translucent white fails AA at 11px. */
+        <p
+          className={cn(
+            "-mt-1.5 font-mono text-[11px] tracking-[0.01em]",
+            showCard ? "text-[rgb(var(--on-accent))]" : "text-ink-muted",
+          )}
+        >
+          {metaLine}
+        </p>
       ) : null}
 
-      {metricsCard ?? (metrics && metrics.length > 0 ? <MetricStrip cells={metrics} /> : null)}
-      {stepper ? <div className="border-t border-divider pt-3.5">{stepper}</div> : null}
-    </>
+      {body ? (
+        collapsible ? (
+          <Collapse open={expanded} id={bodyId}>
+            {body}
+          </Collapse>
+        ) : (
+          body
+        )
+      ) : null}
+    </header>
   );
 
   return (
     <>
-      <header className={cn("flex flex-col gap-3.5 px-5 pb-4 pt-5", className)}>
-        <div className="flex min-h-9 flex-wrap items-center gap-2.5">
-          <h1 className="whitespace-nowrap text-[22px] font-semibold tracking-[-0.015em]">
-            {title}
-          </h1>
-          {chips}
-          {actions || primaryAction ? (
-            <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
-              {actions}
-              {primaryAction}
-            </div>
-          ) : null}
-        </div>
-
-        {details}
-      </header>
+      {accent ? <OnAccentProvider value={showCard}>{header}</OnAccentProvider> : header}
 
       <div ref={sentinel} aria-hidden="true" className="h-px" />
 

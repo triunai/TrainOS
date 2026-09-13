@@ -1,12 +1,10 @@
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { MetricDelta, Money, ReceivablesAging, Severity } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MiniBar, type BarState } from "./Bar";
-import { Collapse, DisclosureButton } from "./Collapse";
 import { formatPeriod } from "./format";
 import { MoneyText } from "./Money";
 import { FOCUS_RING, MONO_LABEL } from "./tokens";
-import { useRememberedFlag } from "./useRememberedFlag";
 
 /**
  * The MetricStrip. Kit.dc.html §09, items 4–10.
@@ -246,51 +244,20 @@ export interface MetricStripProps {
    * `"default"` is the hairline-separated row this component has always been:
    * cells packed from the left, a rule above, nothing around it.
    *
-   * `"accentCard"` is the band from the tightening brief §15 — its own card
-   * spanning the header width, on the one gradient in the system, cells spread
-   * EVENLY across that width rather than clustered left. Use it only inside a
-   * `RecordHeader`'s `metricsCard` slot; a page that scatters accent cards has
-   * spent the blue budget on decoration.
+   * `"accent"` is the same strip re-inked for the blue record card (§15a):
+   * full white, white hairlines, cells spread EVENLY across the card width
+   * rather than clustered left, and no background of its own. It is not a card
+   * and owns no chevron — `RecordHeader accent` is the card, and §15a allows
+   * exactly one chevron, which belongs to the card. Passing this variant
+   * outside an accented header gets you white text on whatever is behind it.
    */
-  variant?: "default" | "accentCard";
-  /**
-   * `accentCard` only. Turns the band into a disclosure: the metric row stays
-   * the always-visible summary and `children` become the detail beneath it,
-   * inside the same card. The metrics ARE the summary row of the detail, which
-   * is why this is one component and not a card with a strip glued on top.
-   */
-  expandable?: boolean;
-  /** What the disclosure opens, as a noun phrase: "the full case". */
-  expandLabel?: string;
-  /** Record-TYPE key the open/closed choice is remembered against. */
-  storageKey?: string;
-  /** The detail. Only rendered by `accentCard` + `expandable`. */
-  children?: ReactNode;
+  variant?: "default" | "accent";
   className?: string;
 }
 
-export function MetricStrip({
-  cells,
-  bare,
-  variant = "default",
-  expandable,
-  expandLabel = "the detail",
-  storageKey,
-  children,
-  className,
-}: MetricStripProps) {
-  if (variant === "accentCard") {
-    return (
-      <AccentMetricCard
-        cells={cells}
-        expandable={expandable}
-        expandLabel={expandLabel}
-        storageKey={storageKey}
-        className={className}
-      >
-        {children}
-      </AccentMetricCard>
-    );
+export function MetricStrip({ cells, bare, variant = "default", className }: MetricStripProps) {
+  if (variant === "accent") {
+    return <AccentMetricRow cells={cells} className={className} />;
   }
 
   return (
@@ -314,110 +281,57 @@ export function MetricStrip({
 }
 
 /**
- * The accent band. `MetricStrip variant="accentCard"` renders this; it is not
- * exported, because a screen that reaches for it directly is building a second
- * metric vocabulary and the whole point of §15a is that there is one.
+ * The metric row as it renders INSIDE the blue record card (§15a).
  *
- * THE COLOUR. `--surface-accent-gradient` is the pack's tenant-banner gradient:
- * opaque, vivid, identical in both themes. It paints the SUMMARY ROW only. The
- * disclosed detail below it sits on `bg-card` with ordinary ink, which is the
- * one place this departs from a literal reading of §15a ("expands the card into
- * the detail sections") and it is not a style choice: the detail is several
- * hundred words of 13px prose, and prose on a vivid banner is unreadable at any
- * opacity. So the band stays a band — a lid on the card — and the card below it
- * stays a card. Flagged rather than assumed.
+ * Not a card. It owns no background, no radius and no chevron — the card is the
+ * `RecordHeader` around it and the one chevron belongs to the card, because
+ * §15a is explicit that there is exactly one. This is the strip, re-inked.
  *
- * No border anywhere: the gradient IS the boundary, and CLAUDE.md's hierarchy
- * rule says a border that changes nothing comes out. Status colour does not
- * enter — a chip inside a cell still carries its own, but the band never does.
+ * WHAT CHANGES from the default strip is only ink and rules: full white
+ * throughout (a translucent muted step fails AA on this blue — 70% white over
+ * #1F5BFF is 3.35:1 at the 11px the captions use), and a single white-at-15%
+ * vertical hairline between cells instead of the `--border` rule, because a
+ * neutral grey line over a saturated blue reads as a seam between two surfaces
+ * rather than a division within one.
+ *
+ * WHAT DOES NOT CHANGE is the cell: same component, same caption/value/subline
+ * anatomy, same mini bar, same drill rules. §15a's "no per-cell slabs" is honoured
+ * by giving the cells no background at all, so the gradient runs unbroken
+ * beneath all five rather than restarting in each.
  *
  * THE SPREAD. `repeat(n, minmax(0, 1fr))` is an inline style because `n` is
  * data: a class name assembled from a runtime number is a class Tailwind never
- * saw and never generated. `minmax(0, …)` rather than bare `1fr` so a long
- * agent name truncates inside its column instead of widening it.
+ * saw and never generated. `minmax(0, …)` rather than bare `1fr` so a long agent
+ * name truncates inside its column instead of widening it.
+ *
+ * Note this is the one place the build departs from the artboard on purpose.
+ * Kit.dc.html §11-13 and §M04-S02 both pack the cells to the left and leave the
+ * right half of the band empty; §15's "spread the metrics out: equal-width grid
+ * across the full band, not clustered left" is a correction OF those artboards
+ * and has never been withdrawn, so the grid wins.
  */
-function AccentMetricCard({
-  cells,
-  expandable,
-  expandLabel,
-  storageKey,
-  children,
-  className,
-}: {
-  cells: MetricCellProps[];
-  expandable?: boolean;
-  expandLabel: string;
-  storageKey?: string;
-  children?: ReactNode;
-  className?: string;
-}) {
-  const detailId = useId();
-  /* Default open. The case is the reason the screen exists; a reader who wants
-     the summary alone closes it once and it stays closed. */
-  const [open, setOpen] = useRememberedFlag(
-    storageKey ? `metric-card:${storageKey}` : undefined,
-    true,
-  );
-
-  const disclosable = Boolean(expandable && children);
-
+function AccentMetricRow({ cells, className }: { cells: MetricCellProps[]; className?: string }) {
   return (
-    <section className={cn("overflow-hidden rounded-[var(--radius-panel)] bg-card", className)}>
-      {/* ---- The band: the summary row, on the gradient ------------------ */}
-      <div className="flex items-stretch bg-[image:var(--surface-accent-gradient)]">
+    <div
+      className={cn("grid min-w-0", className)}
+      style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}
+    >
+      {cells.map((cell, index) => (
         <div
-          className="grid min-w-0 flex-1"
-          style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}
+          key={cell.label}
+          className={cn(
+            /* Top-aligned, not centred. A cell whose value is a chip is taller
+               than one whose value is text, and centring cells of two different
+               heights puts their captions on different baselines — the exact
+               raggedness the strip exists to avoid. */
+            "flex min-w-0 flex-col justify-start py-0.5 pl-4 pr-3 first:pl-0",
+            index > 0 && "border-l border-[rgb(var(--on-accent)/0.15)]",
+          )}
         >
-          {cells.map((cell, index) => (
-            <div
-              key={cell.label}
-              className={cn(
-                /* Transparent. §15a: no per-cell slabs — the cells are windows
-                   onto one gradient, so the ramp runs unbroken across all five
-                   instead of restarting in each. */
-                /* Top-aligned, not centred. A cell whose value is a chip is
-                   taller than one whose value is text, and centring five cells
-                   of two different heights puts their captions on five
-                   different baselines — the exact raggedness the strip exists
-                   to avoid. */
-                "flex min-w-0 flex-col justify-start py-4 pl-4 pr-3",
-                /* One hairline, white at 20%, per §15a. Not --border and not
-                   --primary: a neutral or a darker blue rule over the band
-                   reads as a seam between two surfaces rather than as a
-                   division within one. */
-                index > 0 && "border-l border-[rgb(var(--on-accent)/0.2)]",
-              )}
-            >
-              <MetricCell {...cell} onAccent />
-            </div>
-          ))}
+          <MetricCell {...cell} onAccent />
         </div>
-
-        {disclosable ? (
-          /* The card's right EDGE, per §15a — one chevron for the whole card,
-             not one per section. */
-          <div className="flex shrink-0 items-center border-l border-[rgb(var(--on-accent)/0.2)] px-3">
-            <DisclosureButton
-              open={open}
-              onToggle={() => setOpen(!open)}
-              controls={detailId}
-              label={expandLabel}
-              tone="onAccent"
-            />
-          </div>
-        ) : null}
-      </div>
-
-      {/* ---- The detail, on the card ------------------------------------- */}
-      {disclosable ? (
-        <Collapse open={open} id={detailId}>
-          {/* Spacing inside the clipped row; a padded wrapper would leave a
-              residual band when the card closes. */}
-          <div className="px-4 pb-5 pt-5">{children}</div>
-        </Collapse>
-      ) : null}
-    </section>
+      ))}
+    </div>
   );
 }
 

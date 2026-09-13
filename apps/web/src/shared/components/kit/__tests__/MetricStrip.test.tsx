@@ -65,142 +65,71 @@ describe("MetricStrip", () => {
 });
 
 /**
- * The `accentCard` variant (tightening brief §15) — the gradient band that
- * spans a RecordHeader and is itself a dropdown.
+ * The `accent` variant (tightening brief §15a) — the strip re-inked for the
+ * blue record card. Not a card, and it owns no chevron: §15a allows exactly one
+ * and it belongs to `RecordHeader`.
  */
-describe("MetricStrip accentCard", () => {
+describe("MetricStrip accent", () => {
   const cells = [
     { label: "Value", value: "RM 48,000" },
     { label: "Agent", value: "Proposal Agent" },
     { label: "Confidence", value: "82%" },
     { label: "Margin", value: "41%" },
-    { label: "Risk", value: "Medium" },
+    { label: "Risk", value: "Medium", sub: "single trainer" },
   ];
-
-  beforeEach(() => {
-    window.localStorage.clear();
-  });
 
   it("leaves the default variant exactly as it was", () => {
     const { container } = render(<MetricStrip cells={cells} />);
 
-    /* No card, no gradient, no chevron — and the top rule the strip has always
-       drawn under a RecordHeader is still there. */
-    expect(container.querySelector("section")).toBeNull();
     expect(container.firstElementChild?.className).toContain("border-t");
-    expect(container.firstElementChild?.className).not.toContain("surface-accent-gradient");
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(container.firstElementChild?.className).not.toContain("grid");
+    expect(screen.getByText("Value").className).toContain("text-ink-muted");
   });
 
-  it("spreads the cells evenly across the full width on the gradient token", () => {
-    const { container } = render(<MetricStrip variant="accentCard" cells={cells} />);
+  it("spreads the cells evenly rather than clustering them left", () => {
+    const { container } = render(<MetricStrip variant="accent" cells={cells} />);
 
-    const card = container.querySelector("section") as HTMLElement;
-    expect(card.className).toContain("rounded-[var(--radius-panel)]");
-    /* No border: the gradient is the boundary. */
-    expect(card.className).not.toMatch(/(^|\s)border(\s|$)/);
-
-    /* The gradient paints the SUMMARY ROW, not the whole card — the disclosed
-       prose below it has to stay on an ordinary card surface to be readable. */
-    const band = card.querySelector("[class*='surface-accent-gradient']") as HTMLElement;
-    expect(band).not.toBeNull();
-
-    const grid = band.querySelector(".grid") as HTMLElement;
-    /* Five equal columns, not a left-clustered flex row. `n` is data, so the
-       template is an inline style rather than a class Tailwind never saw. */
+    const grid = container.querySelector(".grid") as HTMLElement;
+    /* `n` is data, so the template is an inline style rather than a class
+       Tailwind never saw and never generated. */
     expect(grid.style.gridTemplateColumns).toBe("repeat(5, minmax(0, 1fr))");
   });
 
-  it("writes the band in white, with one 20% white hairline between cells", () => {
-    const { container } = render(<MetricStrip variant="accentCard" cells={cells} />);
-    const band = container.querySelector("[class*='surface-accent-gradient']") as HTMLElement;
+  it("paints no card, no chevron and no per-cell slab", () => {
+    const { container } = render(<MetricStrip variant="accent" cells={cells} />);
 
-    /* §15a: no per-cell slabs. The cells are windows onto one gradient, so
-       none of them paints a background of its own. */
-    const cellBoxes = [...(band.querySelector(".grid")?.children ?? [])] as HTMLElement[];
-    expect(cellBoxes).toHaveLength(5);
-    for (const box of cellBoxes) {
+    /* Not a card: no section, no radius, no gradient of its own. The card is
+       the header around it. */
+    expect(container.querySelector("section")).toBeNull();
+    expect(container.innerHTML).not.toContain("surface-accent-gradient");
+    expect(container.innerHTML).not.toContain("radius-panel");
+    /* No chevron — §15a allows exactly one and RecordHeader owns it. */
+    expect(screen.queryByRole("button")).toBeNull();
+
+    /* §15a "no per-cell slabs": the cells are windows onto one gradient, so
+       none of them paints a background. */
+    const boxes = [...(container.querySelector(".grid")?.children ?? [])] as HTMLElement[];
+    expect(boxes).toHaveLength(5);
+    for (const box of boxes) {
       expect(box.className).not.toMatch(/\bbg-/);
     }
 
-    /* Four hairlines for five cells — the first cell has none. */
-    const ruled = cellBoxes.filter((box) =>
-      box.className.includes("border-[rgb(var(--on-accent)/0.2)]"),
+    /* Four hairlines for five cells — the first has none. */
+    const ruled = boxes.filter((box) =>
+      box.className.includes("border-[rgb(var(--on-accent)/0.15)]"),
     );
     expect(ruled).toHaveLength(4);
-    expect(cellBoxes[0].className).not.toContain("border-l");
+  });
 
-    /* Every ink on the band is the accent's white, not an ink-ramp step. */
-    expect(band.querySelector(".text-ink-muted")).toBeNull();
+  it("writes every level in full white, never a translucent muted step", () => {
+    const { container } = render(<MetricStrip variant="accent" cells={cells} />);
+
+    /* 70% white over #1F5BFF is 3.35:1 and fails AA at the 11px the captions
+       use, so there is no muted step on this surface at all. */
+    expect(container.querySelector(".text-ink-muted")).toBeNull();
     expect(screen.getByText("Value").className).toContain("text-[rgb(var(--on-accent))]");
-  });
-
-  it("is a dropdown: the metrics stay visible, the children collapse", () => {
-    const { container } = render(
-      <MetricStrip variant="accentCard" cells={cells} expandable expandLabel="the full case">
-        <p>Why this needs you</p>
-      </MetricStrip>,
-    );
-
-    /* Default expanded. */
-    const chevron = screen.getByRole("button", { name: "Hide the full case" });
-    expect(chevron).toHaveAttribute("aria-expanded", "true");
-
-    const region = container.querySelector("[data-open]") as HTMLElement;
-    expect(region.dataset.open).toBe("true");
-
-    /* The disclosed detail is NOT on the gradient: prose on a vivid banner is
-       unreadable at any opacity, so the band is a lid and the card below it
-       stays a card. */
-    expect(region.closest("[class*='surface-accent-gradient']")).toBeNull();
-
-    fireEvent.click(chevron);
-
-    expect(region.dataset.open).toBe("false");
-    /* The summary row survives the close — that is the whole point. */
-    expect(screen.getByText("Value")).toBeInTheDocument();
-    expect(screen.getByText("82%")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show the full case" })).toBeInTheDocument();
-  });
-
-  it("draws no chevron when it has nothing to disclose", () => {
-    render(<MetricStrip variant="accentCard" cells={cells} expandable />);
-    expect(screen.queryByRole("button")).toBeNull();
-  });
-
-  it("remembers the open choice under its storage key", () => {
-    const first = render(
-      <MetricStrip variant="accentCard" cells={cells} expandable storageKey="approval">
-        <p>case</p>
-      </MetricStrip>,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Hide/ }));
-    first.unmount();
-
-    render(
-      <MetricStrip variant="accentCard" cells={cells} expandable storageKey="approval">
-        <p>case</p>
-      </MetricStrip>,
-    );
-    expect(screen.getByRole("button", { name: /Show/ })).toBeInTheDocument();
-  });
-
-  it("leaves no listener or timer behind on unmount", () => {
-    const addSpy = vi.spyOn(window, "addEventListener");
-    const timeoutSpy = vi.spyOn(window, "setTimeout");
-
-    const { unmount } = render(
-      <MetricStrip variant="accentCard" cells={cells} expandable>
-        <p>case</p>
-      </MetricStrip>,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Hide/ }));
-    unmount();
-
-    expect(ownListeners(addSpy)).toEqual([]);
-    expect(timeoutSpy).not.toHaveBeenCalled();
-
-    addSpy.mockRestore();
-    timeoutSpy.mockRestore();
+    expect(screen.getByText("RM 48,000").className).toContain("text-[rgb(var(--on-accent))]");
+    /* The sub-caption the artboard draws under RISK keeps the same white. */
+    expect(screen.getByText("single trainer").className).toContain("text-[rgb(var(--on-accent))]");
   });
 });

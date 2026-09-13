@@ -1,5 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
+import { useOnAccent } from "./onAccent";
 import { useSinglePrimary } from "./useSinglePrimary";
 
 /**
@@ -29,6 +30,34 @@ const KIND = {
     "border-border bg-card px-3.5 py-2 font-medium text-danger hover:bg-danger-fill hover:border-danger-border disabled:text-ink-disabled disabled:hover:bg-card",
 } as const;
 
+/**
+ * The same four kinds, on the blue record card (§15a).
+ *
+ * One geometry with `KIND`, so a button does not move by a pixel when a header
+ * gains or loses its accent. Only the ink changes.
+ *
+ * The three actions escalate by WEIGHT here, not by hue: ghost, then
+ * white-outlined, then solid white. `danger` deliberately resolves to the same
+ * treatment as `ghost` — the artboard draws Reject in pale red, but no red
+ * reaches 4.5:1 on this blue (#FFDEDB, already almost white, peaks at 3.63:1),
+ * so the label would be decoration a reader cannot rely on. Position and
+ * wording carry the destructiveness; the red is earned in the confirm step,
+ * which is what this file's own contract has always said.
+ *
+ * The solid button's label is `--accent-ink` rather than `--primary`, because
+ * `--primary` theme-swaps and its dark value reads 3.53:1 on white.
+ */
+const ACCENT_KIND = {
+  primary:
+    "border-transparent bg-[rgb(var(--on-accent))] px-4 py-2 font-semibold text-[rgb(var(--accent-ink))] hover:bg-[rgb(var(--on-accent)/0.88)] disabled:bg-[rgb(var(--on-accent)/0.35)] disabled:text-[rgb(var(--on-accent)/0.7)]",
+  secondary:
+    "border-[rgb(var(--on-accent)/0.45)] bg-transparent px-3.5 py-2 font-medium text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--on-accent)/0.14)] disabled:border-[rgb(var(--on-accent)/0.2)] disabled:text-[rgb(var(--on-accent)/0.45)]",
+  ghost:
+    "border-transparent bg-transparent px-3.5 py-2 font-medium text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--on-accent)/0.14)] disabled:text-[rgb(var(--on-accent)/0.45)]",
+  danger:
+    "border-transparent bg-transparent px-3.5 py-2 font-medium text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--on-accent)/0.14)] disabled:text-[rgb(var(--on-accent)/0.45)]",
+} as const;
+
 export type ButtonKind = keyof typeof KIND;
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -51,8 +80,17 @@ export const KitButton = forwardRef<HTMLButtonElement, KindedButtonProps>(functi
   { kind, leading, trailing, className, children, type, ...rest },
   ref,
 ) {
+  /* Read, never passed. A screen's header markup is the same whether or not the
+     header is accented; the card decides what its controls are sitting on. */
+  const onAccent = useOnAccent();
+
   return (
-    <button ref={ref} type={type ?? "button"} className={cn(BASE, KIND[kind], className)} {...rest}>
+    <button
+      ref={ref}
+      type={type ?? "button"}
+      className={cn(BASE, (onAccent ? ACCENT_KIND : KIND)[kind], className)}
+      {...rest}
+    >
       {leading ? <span aria-hidden="true">{leading}</span> : null}
       {children}
       {trailing ? <span aria-hidden="true">{trailing}</span> : null}

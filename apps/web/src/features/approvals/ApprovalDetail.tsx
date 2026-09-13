@@ -13,19 +13,23 @@
  * it answers the approver's real question. Everything above it is held together
  * by spacing and type, per CLAUDE.md's hierarchy rule.
  *
- * PROTOTYPE (tightening brief §15a). This screen is the first and, for now, the
- * ONLY opt-in to the upgraded RecordHeader — through one prop, the `metricsCard`
- * slot, carrying a `MetricStrip variant="accentCard"`.
+ * PROTOTYPE (tightening brief §15a). This screen is the first opt-in to the
+ * RECORD variant of `RecordHeader`: the whole header is one blue gradient card
+ * — title row, meta line, hairline, metric strip — with a single round chevron
+ * that collapses it to the title row and the meta line. Kit.dc.html §11-13
+ * draws it; M04-S02 captions the same card "the record-page pattern every
+ * entity in the chain inherits", so this is a first proof, not an approval-only
+ * treatment.
  *
- * The title row is deliberately UNCHANGED and carries no chevron: §15a withdrew
- * the collapsible header after the user saw it. The metric group is the only
- * card on the screen, and its chevron is the only one.
+ * Nothing inside the header knows it is on blue. The buttons and the chip read
+ * `useOnAccent` from the card, so the markup here is what it would be on a
+ * white header, which is what keeps 26 other screens one prop away.
  *
- * The narrative below has not been rewritten — it has been re-parented. It now
- * renders as the detail of that card, so the five facts (Value · Agent ·
- * Confidence · Margin · Risk) are literally the summary row of the case that
- * rests on them rather than a strip sitting above an unrelated column. Every
- * other record screen still gets the header's default rendering.
+ * The narrative stays in the decision column, where it always was. An earlier
+ * pass moved it inside the card; the final ruling put it back, and the column
+ * between the queue rail and the preview pane is the better home for it anyway
+ * — it is a readable measure, and it leaves no dead space when the card
+ * collapses.
  */
 
 import { useEffect, useState } from "react";
@@ -45,7 +49,6 @@ import {
   JuryChip,
   KeyboardShortcut,
   LoadingState,
-  MetricStrip,
   MoneyText,
   PrimaryButton,
   RecordHeader,
@@ -256,12 +259,11 @@ export function ApprovalDetail() {
      now hangs off the metric band as that band's detail, which is what puts the
      five facts and the case that rests on them in one object instead of two. */
   const caseSections = (
-    /* Capped at a readable measure. The band spans the whole header, which is
-       right for five numbers and wrong for prose: at 1440 the card is ~1114px
-       and an unconstrained evidence row throws its source chip a thousand
-       pixels from the sentence it belongs to. The numbers keep the full width;
-       the narrative underneath does not. */
-    <div className="flex max-w-[900px] flex-col gap-5">
+    /* Back in the decision column, between the queue rail and the preview pane,
+       which is where the final §15a ruling leaves it: the blue card carries the
+       record's facts, not its case. The column is already a readable measure,
+       so the cap this needed while it lived inside the full-width card is off. */
+    <div className="flex flex-col gap-5">
       <Block title="Why this needs you">
         <p className="text-[13px] leading-[1.6] text-ink-secondary">{detail.reason}</p>
       </Block>
@@ -358,20 +360,13 @@ export function ApprovalDetail() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="approval"
         title={detail.subject}
         recordRef={detail.ref}
         meta={metaLine}
-        metricsCard={
-          <MetricStrip
-            variant="accentCard"
-            cells={metrics}
-            expandable
-            expandLabel="the full case"
-            storageKey="approval"
-          >
-            {caseSections}
-          </MetricStrip>
-        }
+        metrics={metrics}
         chips={
           <StatusChip tone={APPROVAL_TONE[status]}>
             {status === "PENDING" ? "Awaiting your approval" : humanise(status)}
@@ -443,17 +438,22 @@ export function ApprovalDetail() {
                     <span className={`text-[13px] ${current ? "font-semibold" : "font-medium"}`}>
                       {row.subject}
                     </span>
-                    <span
-                      className={`font-mono text-[11px] ${
-                        row.slaBreached ? "text-danger" : "text-ink-muted"
-                      }`}
-                    >
+                    {/* W-08. A breach is a STATUS, so it wears a chip —
+                        CLAUDE.md puts status colour on chips only, and red mono
+                        text in a rail is the same claim made in the one place
+                        the design system says not to make it. Same fix
+                        applier-2 applied to the six other sites in 17535f3. */}
+                    <span className="flex flex-wrap items-center gap-1.5 font-mono text-[11px] text-ink-muted">
                       {row.value ? (
                         <MoneyText value={row.value} compact />
                       ) : (
                         humanise(row.actionType)
                       )}
-                      {row.slaBreached ? " · SLA breached" : ""}
+                      {row.slaBreached ? (
+                        <StatusChip tone="danger" shape="square">
+                          SLA breached
+                        </StatusChip>
+                      ) : null}
                     </span>
                   </button>
                 </li>
@@ -484,9 +484,11 @@ export function ApprovalDetail() {
             <ExceptionBanner
               severity="WARN"
               title="This approval moved while you were reading it"
-              subtitle="The consequences in the case above have been recomputed. Read them again before deciding."
+              subtitle="The consequences below have been recomputed. Read them again before deciding."
             />
           ) : null}
+
+          {caseSections}
 
           {decided ? (
             <DiffBlock

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
+import { useOnAccent } from "./onAccent";
 
 /**
  * The status chip. The only status chip in TrainOS — every workflow status,
@@ -51,6 +52,24 @@ const TONE: Record<StatusTone, string> = {
   danger: "bg-danger-fill text-danger border-danger-border",
 };
 
+/**
+ * The same five tones, on the blue record card (§15a).
+ *
+ * Every tone collapses to ONE treatment — white outline, white label, white at
+ * 14% behind it — and that is the point rather than a shortcut. A status fill
+ * is built to sit on a near-white card; on saturated blue the warning fill
+ * #FFF7E8 is a bright slab and the warning text #966119 on it is unreadable
+ * against its surroundings. Worse, five tinted chips on a blue band would each
+ * introduce a hue the pack does not have.
+ *
+ * `data-tone` still carries the tone, so the chip remains the one honest place
+ * to ask what state a record is in — a test or a reviewer reads the attribute,
+ * not the colour. What is lost is only the at-a-glance hue, and the card is
+ * already the loudest thing on the page.
+ */
+const ACCENT_TONE =
+  "border-[rgb(var(--on-accent)/0.45)] bg-[rgb(var(--on-accent)/0.14)] text-[rgb(var(--on-accent))]";
+
 const SHAPE = {
   /** Workflow status and stage. */
   pill: "rounded-pill",
@@ -83,6 +102,8 @@ export function StatusChip({
   live,
   className,
 }: StatusChipProps) {
+  const onAccent = useOnAccent();
+
   return (
     <span
       role={live ? "status" : undefined}
@@ -94,7 +115,7 @@ export function StatusChip({
       data-tone={tone}
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border px-2.5 py-[3px] text-[12px] font-medium",
-        TONE[tone],
+        onAccent ? ACCENT_TONE : TONE[tone],
         SHAPE[shape],
         className,
       )}
