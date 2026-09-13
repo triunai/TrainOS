@@ -67,7 +67,19 @@ interface BlindSpot {
   consequence: string;
 }
 
-const SEVERITY_TONE: Record<BlindSpot["severity"], StatusTone> = {
+/**
+ * A blind spot's tone.
+ *
+ * Named for what it maps, not for the word "severity". It used to be
+ * `SEVERITY_TONE`, which now shadows the kit's export of that name — a reader
+ * who sees `SEVERITY_TONE` in a screen that imports from the kit reasonably
+ * assumes it IS the kit's, and it is not: the kit's is keyed on the contract's
+ * `Severity` (INFO / WARN / DANGER / ALERT) and this is keyed on a local
+ * two-value union that is already a `StatusTone`. Two different vocabularies
+ * under one name is the divergence CLAUDE.md calls a defect, and the cheap
+ * half of the fix is to stop sharing the name.
+ */
+const BLIND_SPOT_TONE: Record<BlindSpot["severity"], StatusTone> = {
   danger: "danger",
   warning: "warning",
 };
@@ -245,7 +257,7 @@ export function KnowledgeBaseScreen() {
       key: "state",
       label: "State",
       width: "180px",
-      accessor: (row) => <StatusChip tone={SEVERITY_TONE[row.severity]}>{row.state}</StatusChip>,
+      accessor: (row) => <StatusChip tone={BLIND_SPOT_TONE[row.severity]}>{row.state}</StatusChip>,
     },
     {
       key: "why",
