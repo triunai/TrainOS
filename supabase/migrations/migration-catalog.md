@@ -3,9 +3,9 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 18 · **Applied:** 0 · **Authored, not applied:** 18
+**Migrations:** 19 · **Applied:** 0 · **Authored, not applied:** 19
 **Last snapshot of `tables/`:** never
-**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **test_014's exact SELECT-grant count STAYS 121**: 018's three `core` views are excluded from it by name and asserted in `test_018` T38 instead, so 014's pin still passes at 014. test_008 and test_009 were amended because 018 seeds a default `ENGAGEMENT` pipeline per tenant and their fixtures inserted a second one against `pipelines_one_default_uq`)
+**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
 ---
 
@@ -213,7 +213,8 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
-| 018 | `018_golden_path_rpcs.sql` | **The golden-path RPC pack: 30 `SECURITY DEFINER` read/write RPCs in `core`, three `security_invoker` views, fourteen internal `app._*` helpers, and the per-tenant pipeline seed (2026-09-13).** No table, no enum value, no policy; no existing function, view or grant modified. **The envelope is the contract**: every body returns through `app.ok`/`app.err` or refuses through a `TRNOS` raise, `data` stays the sole non-`success` key so the client's auto-unwrap does not flip to pass-through, and `list_approvals` puts `groups` BESIDE `data` one level down rather than beside the envelope. **Reads refuse with `app.err`, writes with `RAISE … TRNOS`** — six functions write, and a committed refusal after a write is the defect that rule exists to prevent. **One keyset engine, not five**: `app._keyset_scope` counts off the filter-only predicate and returns the keyset-extended one, `app._next_cursor` asks the table whether a row exists past the page, and the five list RPCs call both — which is what makes "count before keyset" and "null at the end" unavailable to a caller rather than repeated correctly in five places. **One saved-view resolver**: `app._view_filters` gates on `core.saved_view_object`, so the three lists whose object has no enum value REFUSE `p_view` with `UNSUPPORTED_VIEW_OBJECT` instead of dropping it. **`regenerate_proposal_section` enqueues through 012**: `app.emit_event` carries the run id into `app.outbox` via one global `app.event_subscriptions` row (routing is data, 012's own rule), and the RPC refuses `REGENERATE_NOT_ROUTED` rather than returning 200 with nothing queued. **The pipeline seed** is a fourth provisioning trigger on `public.tenants` beside 011's, 016's and 017's — ⚠ **and it does not belong in an RPC pack.** A trigger plus a cross-tenant backfill is a repo-wide semantic change shipped as a subsection of a file whose stated subject is reads and writes, and the cost is measurable: against `cloud/migrations`, applying 018 turns `test_008`, `test_009`, `test_016` and `test_017` from green to red, three on `pipelines_one_default_uq` and one on 016's own rollback delete set. It belongs in a provisioning migration of its own, beside 016's ref formats and 017's check keys, where its irreversibility is the subject of review rather than a footnote. **It landed here because `core.navigation` and `core.get_pipeline_config` — both 018's — render stages from `core.pipeline_steps` and nothing in 001–017 seeds a row**, so the two endpoints this pack exists to deliver returned an empty stage list for every tenant without it. That is a reason, not a justification; the split is owed. Named `trg_tenants_z_seed_pipelines` because per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER and this one must follow 016's ref formats; the backfill RAISEs naming every tenant it could not seed rather than warning, and **the seed is reversible**: `app.seeded_pipelines` records every row the seed actually inserted (a row that already existed under the same derived id was never inserted and is never recorded), `app.unseed_pipelines()` deletes exactly those and refuses with a count and the blocking constraint names when live data references any of them, and the rollback calls it before dropping the mechanism. Without that, rolling 018 back left `pipelines_one_default_uq` rejecting a default `ENGAGEMENT` pipeline for every tenant permanently, with no supported way to undo the seed. The seed is also registered in `app.tenant_seed_checks` (016's completeness guard) wherever that registry exists, since this is the fourth provisioning trigger and an unregistered one is exactly the silent failure that guard was built to catch. **014 yields three wrappers to 018 and 018 yields them back**: `perform_action`, `decide_approval` and `bulk_decide_approvals` are 014's, asserted here and not redefined. Stage names and order render from `core.pipelines`/`core.pipeline_steps` in both `navigation` and `get_pipeline_config`; no stage list is inlined. ⚠ **Adds three `core` view grants.** They are asserted by `test_018` T38, and `test_014`'s exact count stays at **121** by excluding 018's three views by name — 014's pin must pass at 014, and a count a later pack bumps is a running total of the schema rather than 014's own pin. That condition is three migrations old rather than 018's invention: the same file's T1a already read "116 tables, 113 from 014 + 3 from 017" before this pack existed. 018 stops extending the pattern. |
+| 019 | `019_pipeline_provisioning.sql` | **Per-tenant pipeline provisioning: the dedicated seed pack 016 asked for, split out of 018 (2026-09-13).** One table (`app.seeded_pipelines`), four `app` functions, one trigger on `public.tenants`, two rows in 016's `app.tenant_seed_checks`, and a backfill. No enum value; no existing function, view, policy or grant modified. **A tenant had no lifecycle**: `core.pipelines` and `core.pipeline_steps` exist from 004 and nothing in 001–018 put a row in either, so `core.navigation` and `core.get_pipeline_config` returned an empty stage list for every tenant. 016 named the owner — *"it belongs in a pack that can cite `docs/architecture/01` §5.3 per row. **Owner: 018 or a dedicated seed pack.**"* — 018 took it and should not have. **The trigger name is load-bearing**: per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER, and `core.pipelines` carries `trg_pipelines_ref` → `core.assign_ref('PIP')`, which raises without 016's ref format, so `trg_tenants_z_seed_pipelines` must sort after `trg_tenants_seed_ref_formats`; the `z` is not decoration and V1b asserts it. **The backfill RAISES naming every tenant it could not seed** rather than warning — it used to swallow a foreign-key violation and finish green, leaving a tenant whose shell opened on an empty stage list that read as configuration. **And the seed is REVERSIBLE**, which is the whole reason it is a pack of its own: `app.seeded_pipelines` records every row the seed actually inserted (a row that already existed under the same derived id was never inserted and is never recorded), `app.unseed_pipelines()` deletes exactly those and refuses with a count and the blocking constraint names when live data references any of them, and the rollback calls it before dropping the mechanism. Without that, rolling back left `pipelines_one_default_uq` rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. Registered in `app.tenant_seed_checks` so `app.provision_tenant` refuses a tenant whose lifecycle did not land. ⚠ **Forces a fixture amendment in every pin that inserted its own default `ENGAGEMENT` pipeline** — test_008 and test_009 are amended in this pack's commit; test_016 and test_017 on `cloud/migrations` are owed at rebase. |
+| 018 | `018_golden_path_rpcs.sql` | **The golden-path RPC pack: 30 `SECURITY DEFINER` read/write RPCs in `core`, three `security_invoker` views, fourteen internal `app._*` helpers, and the per-tenant pipeline seed (2026-09-13).** No table, no enum value, no policy; no existing function, view or grant modified. **The envelope is the contract**: every body returns through `app.ok`/`app.err` or refuses through a `TRNOS` raise, `data` stays the sole non-`success` key so the client's auto-unwrap does not flip to pass-through, and `list_approvals` puts `groups` BESIDE `data` one level down rather than beside the envelope. **Reads refuse with `app.err`, writes with `RAISE … TRNOS`** — six functions write, and a committed refusal after a write is the defect that rule exists to prevent. **One keyset engine, not five**: `app._keyset_scope` counts off the filter-only predicate and returns the keyset-extended one, `app._next_cursor` asks the table whether a row exists past the page, and the five list RPCs call both — which is what makes "count before keyset" and "null at the end" unavailable to a caller rather than repeated correctly in five places. **One saved-view resolver**: `app._view_filters` gates on `core.saved_view_object`, so the three lists whose object has no enum value REFUSE `p_view` with `UNSUPPORTED_VIEW_OBJECT` instead of dropping it. **`regenerate_proposal_section` enqueues through 012**: `app.emit_event` carries the run id into `app.outbox` via one global `app.event_subscriptions` row (routing is data, 012's own rule), and the RPC refuses `REGENERATE_NOT_ROUTED` rather than returning 200 with nothing queued. **The pipeline seed** is a ⚠ **The per-tenant pipeline seed is NOT in this pack** — it was, and the review was right that it did not belong. A trigger on `public.tenants` plus a cross-tenant backfill is a repo-wide semantic change, and shipping it as a subsection of a file whose stated subject is read and write RPCs put its irreversibility in a footnote instead of under review; the cost was measurable, four earlier packs' pins. It is now **019**. What remains here is the DEPENDENCY: `core.navigation` and `core.get_pipeline_config` render stages FROM `core.pipeline_steps` and inline no stage list, so without 019 both return an empty stage list and `test_018` is run against 001–019. **014 yields three wrappers to 018 and 018 yields them back**: `perform_action`, `decide_approval` and `bulk_decide_approvals` are 014's, asserted here and not redefined. Stage names and order render from `core.pipelines`/`core.pipeline_steps` in both `navigation` and `get_pipeline_config`; no stage list is inlined. ⚠ **Adds three `core` view grants.** They are asserted by `test_018` T38, and `test_014`'s exact count stays at **121** by excluding 018's three views by name — 014's pin must pass at 014, and a count a later pack bumps is a running total of the schema rather than 014's own pin. That condition is three migrations old rather than 018's invention: the same file's T1a already read "116 tables, 113 from 014 + 3 from 017" before this pack existed. 018 stops extending the pattern. |
 | 017 | `017_baseline_amendment.sql` | **The amendment pass: nine PUBLIC grants nobody intended, seven unconstrained jsonb columns, two wrong numeric precisions, and the regulatory shape the September research says the baseline is missing (2026-09-13).** Three tables, four functions, two views, nine REVOKEs, seven CHECKs, two type changes, eight columns. The most dangerous migration in the pack — every statement runs against a table that may hold rows and two change a column's TYPE. **The nine PUBLIC EXECUTE grants**: 001 measured that `ALTER DEFAULT PRIVILEGES … REVOKE … FROM PUBLIC` does not take and named per-object REVOKE as the real guard; nine 007/009 functions slipped through. Eight are triggers (harmless), **`core.apply_rule_offset` is not** — it is the date arithmetic behind every HRD Corp deadline and the only one PostgREST will call. **014 is what made it urgent**, by granting `USAGE ON SCHEMA core`. **R-JSONB on the last seven columns, TYPE HALF ONLY and said so**: none has a consumer declaring keys, and inventing them would freeze a shape nobody agreed; the type half still refuses `"hello"`, which survives every not-null guard and breaks the first `->>`. **`quotations.margin_rate` bare `numeric` → `numeric(6,4)`** to match the two neighbours it is compared against in the below-floor decision, with a guard that REFUSES rather than rounds, because a rounded margin can cross the floor that decided whether an approval was needed. **SST is `core.tax_policies`** — bitemporal like 009, tenant-scoped with a national fallback, rates in basis points (argued against root CLAUDE.md's numeric, which governs the rate on a DOCUMENT), Group G 8% taxable as the default and Education Act exempt selectable, both seeded PROPOSED, and `app.resolve_tax_policy` RAISES rather than returning a zero rate. Quotations finally get SST, GENERATED on the summed net, with the exemption unusable without a written reason. **PDPA**: consent `purpose` + `notice_version` with the legacy marker forbidden for new rows; retention policies that approve rather than delete (which is why 015 leaves four reapers unscheduled); a breach register whose 72-hour and 7-day clocks are GENERATED so they cannot be edited, ⚠ with `retained_until` left unset because the research flags the 2-year figure UNCONFIRMED. **Three HRD Corp deadlines, all PROPOSED** — 5-day query (the application EXPIRES; a recommended addition absent from Appendix B), 90-day commencement, 6-month claim (unconfirmed, seeded and flagged). **HRD-TDF gains an expiry date** and the corrected citation, Circular 6/2024 not 2/2026. **And `core.retrieve_knowledge` with `SET LOCAL hnsw.iterative_scan = relaxed_order`** — there was no retrieval RPC at all, the setting defaults to `off`, and under a tenant filter an HNSW scan then returns FEWER THAN k rows with no error; T10 measures k=10 for a tenant holding ~2% of the corpus. Four defects found by executing: `timestamptz + interval` is STABLE so the clocks needed a UTC pivot; `SET LOCAL` is refused in a non-volatile function at CALL time; the check keys needed 016's provisioning shape rather than a `CROSS JOIN public.tenants` that seeds nothing; and `ADD CONSTRAINT` has no `IF NOT EXISTS` for the third time in this pack. Spine untouched. |
 | 016 | `016_seed_and_tenant_provisioning.sql` | **Tenant provisioning: the `core.ref_formats` rows every pin since 011 has been faking, derived from the triggers that consume them (2026-09-13).** Two functions, one trigger, no table, no type, no policy. `core.next_ref()` raises when a tenant has no format for a prefix, 32 `core` tables carry an `assign_ref` trigger, and **no migration seeded any of it** — 013's catalog carries it as a standing condition and ten pins hand-seed around it, which means no pin had ever exercised the path a real customer takes. T2 is that path: one INSERT into `public.tenants`, no fixture, a real `ORG-0001` out of the trigger. **The seed is DERIVED from `pg_trigger`, not transcribed**, and the reason is measured: reading the migrations for `finalise_table(…,'PREFIX')` yields 27 prefixes, the truth is 32, and the five missed (`ATT`, `PIP`, `SIG`, `SVW`, `TPL`) are missed because their calls wrap across lines — a hand list would have shipped complete-looking and left attachments, pipelines, signatures, saved views and templates unwritable until somebody saved a view in production. Every trigger's `TG_ARGV[0]` is the same string `next_ref` receives, so seed and consumer are one list by construction; T1 asserts all five missed prefixes by name. **Provisioning is an AFTER INSERT trigger on `public.tenants`, matching 011's `trg_tenants_seed_action_policies`** rather than inventing a second shape — a script only covers the path somebody remembered to run it on. `app.provision_tenant()` adds no second implementation and REFUSES to return a tenant whose seeding did not fire; T3 proves it by disabling the trigger. **Idempotence leaves existing rows alone rather than overwriting**, because `ref` is immutable and flipping `dated` would split a customer's numbering in half; T4 corrupts a format, re-seeds, and asserts it was not "repaired". Ten pins amended to `ON CONFLICT … DO UPDATE` so each keeps its own fixture shape. ⚠ **Not seeded, deliberately:** `pipelines`/`pipeline_steps` (seeding them means hardcoding fifteen stage names, the exact defect both CLAUDE.md files forbid — **owner 018; a new tenant renders no pipeline until then**), the HRD Corp registry (national rows, and the research requires `status = 'PROPOSED'` pending a named Finance verifier — 017's), and rate cards/templates (customer data). Spine untouched, pipeline spine deliberately untouched. |
 | 015 | `015_realtime_and_cron_schedules.sql` | **The scheduler: two pg_cron jobs, and the seven the design listed that are deliberately not here (2026-09-13).** One function, two jobs, no table, no type, no trigger, no policy. Ruling R-B — background work is the Node worker at `apps/worker` polling `app.claim_jobs`; pg_cron covers `reap_jobs` and cron-history retention only; **no pg_net nudges**. ⚠ This contradicts current Supabase docs, which document `cron.schedule` → `net.http_post` → Edge Function as supported; the header records that in full and overrules it on R-A (this product has no Edge Functions, so the far end of the nudge does not exist) rather than on technical grounds. Net effect: nothing in this database makes an outbound HTTP request, and pg_net's beta caveats stop being the product's problem. **`trainos_reap_jobs` is ONE job at `'30 seconds'`** — sub-minute is native, so doc 05's tick is not six staggered jobs each sleeping an offset. Its command is the pack's only new object, `app.reap_jobs_all_tenants()`: 012's `H-16` made the CLAIM tenant-fair, but the REAPER takes a flat LIMIT across all tenants ordered by time, so one tenant with a dead provider starves every other tenant's expired leases — the same defect through the recovery path. T3 measures the fix with Alpha at 50 leases, Beta at 1 and a budget of 10 each, plus a control proving a single-tenant reap really is single-tenant. **`trainos_reap_cron_history` daily at 03:17** because `cron.job_run_details` is never purged automatically **and is not cleared when a job is unscheduled**; ⚠ the 7-day window is 012's unsourced judgement, stated as such, and T4 proves it at 6 and 8 days. The seven unscheduled jobs each carry a reason — four retention sweeps wait on 017's `data_retention_policies` because deleting on an unapproved window is worse than not deleting, and two have no function to schedule at all. Scheduling a missing function is worse than not scheduling it (pg_cron logs and never raises), so verify and T1 resolve every command through `to_regproc` and T5 EXECUTES both. ⚠ **Realtime is deliberately untouched**: RLS on `realtime.messages` is already on and the schema locked, and the only migration-shaped additions need the topic vocabulary, which nothing in the product has yet. Carried forward: Realtime caches policies for the life of a connection, so a revoked permission does not close a live socket. ⚠ The harness's pg_cron is a stub that runs nothing; registration is pinned, firing is not. Spine untouched. |
@@ -411,6 +412,116 @@ re-applied, verify green each time.
 
 ---
 
+## Migration Detail — 019 (`019_pipeline_provisioning.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13 against a PostgreSQL 17.11 shim, NOT APPLIED to any
+hosted database.**
+**Split out of 018 after the thermonuclear review's M4.** Everything here was inside
+`018_golden_path_rpcs.sql`; nothing in it is new work, and the split is the fix.
+
+### Why it is its own pack
+
+A provisioning trigger plus a cross-tenant backfill is a repo-wide semantic change. Shipping it
+as a subsection of a file whose stated subject is read and write RPCs put its irreversibility in
+a footnote instead of under review, and the cost was measurable rather than theoretical: a
+default `ENGAGEMENT` pipeline per tenant collides with `pipelines_one_default_uq` in four earlier
+packs' fixtures. 016 had already named the owner and 018 took it anyway.
+
+### What it does
+
+- **§1** `app.seeded_pipelines` — the ledger. `row_kind`, `tenant_id`, `row_id`, keyed
+  `(row_kind, row_id)`. RLS enabled, **not forced**, no client grant: `app` is not exposed and
+  the guard is the grant layer, while FORCE would remove the owner's exemption and a definer
+  whose owner lacks `BYPASSRLS` would silently record nothing. 012 measured that same mechanism
+  on `app.job_type_map`.
+- **§1** `app.seed_pipelines(uuid)` — two pipelines, sixteen steps, every stage name carrying its
+  citation, ids derived as `md5(tenant || 'pipeline:' || object[ || ':' || step_key])`, and each
+  inserted row recorded in the ledger by a data-modifying CTE so `RETURNING` yields only what was
+  actually written.
+- **§1** `app.unseed_pipelines()` — the reversal. See below.
+- **§1** `app.seed_pipelines_all()` — the backfill loop, a FUNCTION rather than an inline `DO`
+  block precisely so the pin can call it.
+- **§1** `app.seed_pipelines_on_tenant()` + `trg_tenants_z_seed_pipelines` on `public.tenants`.
+- **§1** Two rows in `app.tenant_seed_checks`, guarded on that registry's existence.
+- **§2** `$verify$` — trigger present and correctly ordered, every tenant carrying a lifecycle,
+  ledger consistent, four definer functions unreachable from a client role, and the readers still
+  rendering from rows.
+
+### Reversibility, which is the subject of this pack
+
+The first version of this seed kept the rows on rollback. Afterwards the mechanism was gone, so
+there was **no supported way to undo the seed at all**, and `pipelines_one_default_uq` went on
+rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. A rollback that leaves a
+repo-wide constraint change in place is not a rollback.
+
+`app.unseed_pipelines()` deletes exactly the rows the seed recorded inserting, **steps before
+pipelines** (`pipeline_steps_pipeline_fk` is `ON DELETE CASCADE`, so the other order would take a
+tenant's own steps with it), and refuses with the **count and the blocking constraint names**
+when live data references any of them — deleting nothing when it refuses. It also refuses a
+seeded pipeline carrying a step 019 did not seed.
+
+Measured end to end:
+
+```
+tenant inserted   pipelines/steps 2/16, ledger 18 rows
+rollback          "019 rollback: 18 seeded pipeline/step row(s) removed"
+after             pipelines/steps 0/0, ledger and mechanism gone
+and               INSERT of a default ENGAGEMENT pipeline -> INSERT 0 1
+re-apply          backfill re-seeds the surviving tenant, verify green
+```
+
+⚠ **R1 replaces a check that watched the wrong object.** Its predecessor, R4 in 018's rollback,
+queried `pg_trigger` for **016's** `trg_tenants_seed_ref_formats` and never read a pipeline table
+at all, while two comments and a closing `RAISE NOTICE` both announced that it verified pipeline
+rows. R1 re-derives 019's ids and counts surviving rows in both tables — re-deriving rather than
+reading the ledger, because that asks the question from outside the bookkeeping meant to answer
+it.
+
+### Pin — `tests/test_019_pipeline_provisioning.sql`
+
+T1 a tenant insert provisions a lifecycle; T2 the backfill raises and names every tenant it could
+not seed; T3 the seed is reversible, exactly. Self-contained fixtures — its own tenant,
+organisation, programme and engagement — so it does not depend on another pack's fixture
+surviving a reordering. Ends in `ROLLBACK`.
+
+### ⚠ The fixture amendments this pack forces
+
+A default `ENGAGEMENT` pipeline per tenant is a repo-wide fact, so every pin that inserted its own
+default one now hits `pipelines_one_default_uq`. Two are amended in this pack's commit and two are
+owed:
+
+- **`test_008`** — `is_default` on its `'Standard delivery'` pipeline flipped `true` → `false`.
+  The pin does not assert `is_default` and only needs a pipeline to hang an engagement off.
+- **`test_009`** — the same flip, plus `AND pl.name = 'std'` on an `INSERT … SELECT` that was an
+  **unconstrained cross join** over `core.pipelines`. With three pipelines it wrote three
+  engagements and `RETURNING … INTO` kept an arbitrary one. That cross join is a pre-existing
+  defect 019 merely made reachable, and is worth its own ticket against 009.
+- ⚠ **`test_017` on `cloud/migrations`, OWED.** Same edit as 008: line 87,
+  `'ENGAGEMENT','Standard delivery', true,'ACTIVE'` → `false`. Its newer version is not on this
+  branch.
+- ⚠ **`test_016` on `cloud/migrations`, OWED, and it is not the same edit.** T7b computes its
+  delete set as ref_formats with **no `core.ref_sequences` row**. 019's seed inserts a pipeline,
+  `trg_pipelines_ref` calls `core.assign_ref('PIP')`, and that allocates a `PIP` sequence — so
+  `PIP` drops out of the set and 32 becomes 31. The mechanism is recorded here rather than a fix
+  guessed at: whether `v_matched` should drop the `NOT EXISTS (ref_sequences)` clause or
+  `v_seeded` should be computed the same way is 016's author's call.
+
+### Deliberately NOT built
+
+- **No enum value, no table in `core`.** `core.pipelines` and `core.pipeline_steps` are 004's.
+- **No stage list on the read side.** 019 writes the rows; `core.navigation` and
+  `core.get_pipeline_config` still render from them, and V5 asserts it here as well as in 018
+  because this is the pack that could tempt someone to hardcode the list to "match the seed".
+
+### ⚠ Carried risk
+
+- **Deploy order: after 016, always.** The trigger name carries the dependency and V1b asserts
+  it.
+- **018's behaviour depends on this pack**, so `test_018` is run against 001–019.
+- **A tenant that has edited its seeded stages loses those edits to a rollback**, because the
+  ledger records the row and the rollback deletes it. The refusal path only covers rows something
+  else *references*, not rows somebody *renamed*. Stated rather than discovered.
+
 ## Migration Detail — 018 (`018_golden_path_rpcs.sql`)
 
 **Status: AUTHORED + EXECUTED 2026-09-13 against a PostgreSQL 17.11 shim with 001–018 applied,
@@ -446,11 +557,9 @@ below and in PR #11's body.**
   with the caller's own spelling.
 - **§10d** One global `app.event_subscriptions` row routing
   `PROPOSAL_SECTION_REGENERATE_REQUESTED` → `AI_DRAFT_PROPOSAL_SECTION`.
-- **§10e** `app.seeded_pipelines` (the one table 018 creates), `app.seed_pipelines`,
-  `app.seed_pipelines_all`, `app.unseed_pipelines`, `app.seed_pipelines_on_tenant`
-  and `trg_tenants_z_seed_pipelines`, plus the backfill across existing tenants
-  and the registration of both seeded relations in `app.tenant_seed_checks`
-  where 016's registry exists.
+- **§10e MOVED TO 019.** The ledger, the four seed functions, the trigger, the
+  backfill and the registry rows are all `019_pipeline_provisioning.sql` now.
+  018 creates no table.
 - **§10f** `regenerate_proposal_section` reaches the worker through **012's
   event path, not 011's envelope**, and the choice is measured rather than
   preferred. `app.perform_action` gates on `app.action_types` and plans effects
