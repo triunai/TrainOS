@@ -133,6 +133,25 @@ export interface OpportunityConvertPayload {
 }
 
 /**
+ * Ruled R18 · `POST /v1/actions` `type: OPPORTUNITY_STAGE_CHANGE`.
+ *
+ * `fromStage` is not redundant with the server's own record. Two people
+ * dragging the same card, or one person on a stale board, would otherwise both
+ * succeed and the later write would silently win — §7 already treats a diff
+ * computed against a world that has moved as a `409`, and this is the same
+ * hazard on a screen where the gesture is a drag and nobody reads a
+ * confirmation. The server compares it and refuses a move from a stage the
+ * deal has already left.
+ */
+export interface OpportunityStageChangePayload {
+  stage: OpportunityStage;
+  /** The stage the client believed the deal was in when the move was made. */
+  fromStage: OpportunityStage;
+  /** Required when moving to a terminal stage — `WON` and `LOST` end a deal. */
+  reason?: string;
+}
+
+/**
  * §4 the `EXECUTED` result of a convert.
  *
  * Not policy-gated — no money moves and nothing leaves the system.

@@ -83,6 +83,7 @@ import type {
   Money,
   NavigationTree,
   Opportunity,
+  OpportunityStageChangePayload,
   OpportunityPatch,
   Organisation,
   OrganisationRelations,
@@ -2672,6 +2673,54 @@ export class FixtureClient {
         }
         break;
       }
+      /**
+       * Ruled R18 · move a deal that already exists between stages.
+       *
+       * Refuses a move whose `fromStage` is not where the deal actually is.
+       * Two people dragging the same card would otherwise both succeed and the
+       * later write would silently win, on a screen whose gesture is a drag
+       * and where nobody reads a confirmation.
+       */
+      case "OPPORTUNITY_STAGE_CHANGE": {
+        const opportunity = byIdOrRef(this.#store.opportunities, request.targetRef);
+        if (!opportunity) throw notFound("Opportunity", request.targetRef);
+        const payload = (request.payload ?? {}) as Partial<OpportunityStageChangePayload>;
+        if (!payload.stage) {
+          throw validationFailed("A target stage is required.", {
+            fields: [{ field: "stage", reason: "REQUIRED" }],
+          });
+        }
+        /*
+         * §1 has no 409 CONFLICT code, so a stale move is reported as a
+         * validation failure with its own reason rather than borrowing
+         * IDEMPOTENT_REPLAY, which means something else. Reported as a gap: the
+         * §16 Q2 diff-staleness question is the same shape one screen over.
+         */
+        if (payload.fromStage && payload.fromStage !== opportunity.stage) {
+          throw validationFailed(
+            `${opportunity.ref} has already moved to ${opportunity.stage}.`,
+            { reason: "STAGE_MOVED", currentStage: opportunity.stage },
+          );
+        }
+        const fromStage = opportunity.stage;
+        if (payload.stage !== fromStage) {
+          opportunity.stage = payload.stage;
+          opportunity.updatedAt = NOW;
+          this.events.emit(
+            "OpportunityStageChanged",
+            { opportunityRef: opportunity.ref, fromStage, toStage: payload.stage },
+            this.#actor(),
+            NOW,
+          );
+        }
+        result.opportunity = {
+          id: opportunity.id,
+          ref: opportunity.ref,
+          stage: opportunity.stage,
+          value: opportunity.value,
+        };
+        break;
+      }
       case "OPPORTUNITY_CONVERT": {
         const enquiry = byIdOrRef(this.#store.enquiries, request.targetRef);
         if (enquiry) {
@@ -2842,6 +2891,17 @@ export class FixtureClient {
             description: "status → ARCHIVED",
           },
         ];
+      case "OPPORTUNITY_STAGE_CHANGE": {
+        const payload = (request.payload ?? {}) as { stage?: string; fromStage?: string };
+        return [
+          {
+            op: "UPDATE",
+            entity: "Opportunity",
+            ref: request.targetRef,
+            description: `stage ${payload.fromStage ?? "?"} → ${payload.stage ?? "?"}`,
+          },
+        ];
+      }
       case "OPPORTUNITY_CONVERT":
         return [
           { op: "ADD", entity: "Opportunity", description: "Created from the enquiry" },

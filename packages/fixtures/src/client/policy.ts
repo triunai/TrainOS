@@ -35,6 +35,10 @@ import { evaluateFloors } from "./pricing";
 export const MINIMUM_CONFIDENCE: Partial<Record<GovernedActionType, number>> = {
   ENQUIRY_ARCHIVE: 0.9,
   OPPORTUNITY_CONVERT: 0.75,
+  /* Ruled R18. Higher than a convert, because moving a deal to WON or LOST
+     ends it and an agent that mis-reads a client's email should not close a
+     pipeline on its own read. */
+  OPPORTUNITY_STAGE_CHANGE: 0.85,
   PROPOSAL_DRAFT: 0.6,
   PROPOSAL_SEND: 0.8,
   QUOTATION_APPLY: 0.85,

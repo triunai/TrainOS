@@ -66,11 +66,27 @@ export type AiOpsActionType = (typeof AI_OPS_ACTION_TYPES)[number];
  * `CollectionStage`, but the §3 list has no action type that applies one — so
  * the step that needs the MD's approval cannot be expressed through the one
  * endpoint that gates approvals. This closes that gap.
+ *
+ * Ruling R18: `OPPORTUNITY_STAGE_CHANGE`. §12 catalogues `OpportunityStage`
+ * with seven members and §5 serves the OPPORTUNITY pipeline's stages, so the
+ * contract describes a board a deal moves across — and then names only
+ * `OPPORTUNITY_CONVERT`, which CREATES an opportunity from an enquiry. There
+ * is no type for moving one that already exists.
+ *
+ * That gap has teeth, because R1 sends every write through `POST /v1/actions`:
+ * without a type, a pipeline board's drag either cannot be governed at all or
+ * has to borrow a type that means something else. `WON` and `LOST` are the
+ * terminal stages (ruling R16), so this is a write that ends deals — exactly
+ * the shape §3 exists to put a policy in front of.
+ *
+ * Both of these are RULED rather than added to `ACTION_TYPES`, which stays the
+ * §3 nineteen verbatim. A reader comparing this file to the contract should
+ * find the §3 list unchanged and the additions marked.
  */
-export const RULED_ACTION_TYPES = ['ACCOUNT_TRADING_HOLD'] as const;
+export const RULED_ACTION_TYPES = ['ACCOUNT_TRADING_HOLD', 'OPPORTUNITY_STAGE_CHANGE'] as const;
 export type RuledActionType = (typeof RULED_ACTION_TYPES)[number];
 
-/** §3 + §17 + ruling R3 — every type `POST /v1/actions` accepts. */
+/** §3 + §17 + rulings R3 and R18 — every type `POST /v1/actions` accepts. */
 export const ALL_ACTION_TYPES = [
   ...ACTION_TYPES,
   ...AI_OPS_ACTION_TYPES,

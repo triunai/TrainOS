@@ -59,3 +59,13 @@ for 013 ai-ops (not started):
 | `core.message_channel` | `EMAIL · WHATSAPP` | 003 (type) + 005 enquiries / 010 collections — the channels a TEMPLATED message goes out on. Every column of this type sits beside a template id |
 | `core.contact_channel` | `EMAIL · WHATSAPP · PHONE` | 003 (type) + 010 finance/collections — the collections ladder's rungs, including the day-60 human call, which carries no template. Deliberately a separate type from `message_channel` |
 | `core.stage_outcome` | `WON · LOST` | 003 (type) + 004 shell config, on the pipeline stage table. Nullable: a terminal stage may end a pipeline without winning or losing it, which is what `PAID` and `DELIVERY` do |
+
+**Final entry, contract lane signing off.** One more action type, which is a
+value in `core.action_type` (or its CHECK) rather than a new enum:
+`OPPORTUNITY_STAGE_CHANGE`, ruled R18. It belongs to the same list as
+`ACCOUNT_TRADING_HOLD` (ruling R3) — both are RULED additions, so
+`ACTION_TYPES` still matches the contract's §3 nineteen verbatim and the
+migration's list is §3 plus §17's two plus these two. The GOV-07 transition
+registry in 011 is the table that cares: this type is what moves an opportunity
+between the seven `OPPORTUNITY_STAGES`, and `WON` and `LOST` are terminal, so
+its edges are the ones that end a deal.
