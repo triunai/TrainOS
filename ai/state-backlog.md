@@ -129,6 +129,22 @@ original entry read:
 taken — not one at a time as each screen trips over them.
 **Refs:** `packages/fixtures/README.md`, `1c73e18`, `705c54c`.
 
+**OPEN (2026-09-13, contract) — `AlternativeCategoryRate` CANNOT CARRY THE RATE
+IT DOCUMENTS.** The type holds `ratePerMessage: Money` and nothing else, while
+the doc comment five lines above it in the same file already promises the
+opposite: "expressed in minor units rounded to the sen at estimate time, with
+the exact rate returned as a string for display." There is no such string. So
+`WhatsAppCostStrip` renders RM 0.35 where the pack draws RM 0.3467, and it is
+right to: under the two-decimal money rule a `Money` of 35 sen has no fourth
+decimal to show. This is a contract gap, NOT a screen defect — do not send it
+back to the web lane as a rounding bug. Closing it means adding the
+exact-decimal string beside the `Money`, as the comment already says it does,
+and having the fixture emit it.
+**Owner:** the contract lane. **Trigger:** with the batch above, not on its own
+— it is the same shape as the named gaps there.
+**Refs:** `packages/contract/src/domain/enquiries.ts:176-186`,
+`apps/web/src/shared/components/kit/WhatsAppCostStrip.tsx:40`.
+
 **OPEN (2026-09-12, supabase) — `knowledge_chunks.embedding` DOES NOT EXIST.**
 pgvector was unavailable in the authoring environment, so the column and its
 HNSW index are created conditionally with a loud NOTICE on skip. It is the one
