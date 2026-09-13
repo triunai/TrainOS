@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import type {
   ActionRequest,
   ActionResponse,
@@ -40,14 +40,39 @@ export async function call<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Who the action envelope records as the requester. */
-export function useActor(): Actor | undefined {
+/**
+ * Who the action envelope records as the requester.
+ *
+ * Returns the QUERY, not the actor. It used to destructure `{ data }` and
+ * return `data ? {...} : undefined`, which threw the error away inside the
+ * hook: a `getMe()` that 403s or times out was indistinguishable from one still
+ * in flight, at every call site, forever. The two writes below then reported it
+ * as `new Error("The principal is not loaded yet.")` — a sentence about
+ * loading, printed over a refusal.
+ *
+ * Everything else in this file returns the query result for the same reason, so
+ * this is the shape the screens already know how to render.
+ */
+export function useActor(): UseQueryResult<Actor, Error> {
   const api = useApi();
-  const { data } = useQuery({
+  return useQuery({
     queryKey: queryKeys.me,
     queryFn: () => call(() => api.getMe()),
+    select: (me): Actor => ({ kind: "HUMAN", id: me.id, name: me.name }),
   });
-  return data ? { kind: "HUMAN", id: data.id, name: data.name } : undefined;
+}
+
+/**
+ * The principal a governed write needs, or the reason there isn't one.
+ *
+ * Both writes below need the actor inside `mutationFn`, where there is no
+ * render to branch on. Rethrowing the identity failure is what puts the real
+ * refusal on `mutation.error` instead of a generic sentence about loading.
+ */
+function requireActor(actor: UseQueryResult<Actor, Error>): Actor {
+  if (actor.error) throw actor.error;
+  if (!actor.data) throw new Error("The principal is not loaded yet.");
+  return actor.data;
 }
 
 /* ---- M12-S02 · claim packet ----------------------------------------- */
@@ -82,12 +107,12 @@ export function useMarkPacketSubmitted(engagementRef: string) {
 
   return useMutation<ActionResponse, unknown, { reference: string; submittedAt: string }>({
     mutationFn: (payload) => {
-      if (!actor) throw new Error("The principal is not loaded yet.");
+      const requestedBy = requireActor(actor);
       const request: ActionRequest = {
         type: "HRDC_PACKET_MARK_SUBMITTED",
         targetRef: engagementRef,
         payload,
-        requestedBy: actor,
+        requestedBy,
       };
       return call(() =>
         api.performAction(request, { idempotencyKey: `hrdc-submit-${engagementRef}` }),
@@ -173,12 +198,12 @@ export function useApproveRuleChanges(documentId: string) {
 
   return useMutation<ActionResponse, unknown, { changeIds: string[] }>({
     mutationFn: ({ changeIds }) => {
-      if (!actor) throw new Error("The principal is not loaded yet.");
+      const requestedBy = requireActor(actor);
       const request: ActionRequest = {
         type: "RULE_CHANGE_APPROVE",
         targetRef: documentId,
         payload: { documentId, changeIds },
-        requestedBy: actor,
+        requestedBy,
       };
       return call(() =>
         api.performAction(request, {

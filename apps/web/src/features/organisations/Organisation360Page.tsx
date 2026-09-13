@@ -26,6 +26,7 @@ import {
   LoadingState,
   MoneyText,
   ORGANISATION_TONE,
+  PartialDataBanner,
   PillTabGroup,
   PrimaryButton,
   RecordHeader,
@@ -205,6 +206,22 @@ export function Organisation360Page() {
         onNewOpportunity={() => navigate("/sales/pipeline")}
       />
 
+      {/* DEAL_CHAIN is what names and orders the chain stepper's stages. A
+          failed read left `stages.data?.stages` undefined, which the stepper
+          and the engagement subline both treat as "no configuration" and fall
+          back from — so a dropped request rendered as a pipeline with no
+          labels rather than as a failure. */}
+      <PartialDataBanner
+        className="mx-5 mb-2.5"
+        reads={[
+          {
+            label: "The deal chain's stage names",
+            error: stages.isError ? toApiError(stages.error) : null,
+            retry: () => void stages.refetch(),
+          },
+        ]}
+      />
+
       <div className="px-5 pb-2.5">
         <PillTabGroup tabs={tabs} activeId={tab} onSelect={setTab} label="Organisation sections" />
       </div>
@@ -334,6 +351,19 @@ export function Organisation360Page() {
             <h2 className="text-[13px] font-semibold">Assistant</h2>
             <span className="text-[12px] text-ink-muted">context: {org.ref}</span>
           </div>
+
+          {/* `?? []` made an errored read pixel-identical to an organisation
+              with nothing to suggest. The rail is a region of its own, so it
+              carries its own three branches rather than folding into the
+              page-level banner. */}
+          {suggestions.isError ? (
+            <ErrorState
+              className="px-0 py-8"
+              title="Suggestions did not load"
+              error={toApiError(suggestions.error)}
+              onRetry={() => void suggestions.refetch()}
+            />
+          ) : null}
 
           {(suggestions.data?.data ?? []).map((suggestion) => (
             <article

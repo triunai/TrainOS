@@ -30,6 +30,7 @@ import {
   ENQUIRY_TONE,
   humanise,
   type ActionError,
+  PartialDataBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { readableMessage, toApiError, useActor } from "@/shared/api";
@@ -194,6 +195,22 @@ export function EnquiryDetailPage() {
             label: "Levy available",
             value: levy ? (levy.value as Money) : <span className="text-ink-muted">—</span>,
             sub: levy?.secondary,
+          },
+        ]}
+      />
+
+      {/* The levy is the number that decides whether an enquiry is worth
+          working, and it comes from a second read of the matched organisation.
+          A failed read printed the same em dash as an organisation that simply
+          has no levy — one is "we could not ask", the other is "the answer is
+          nothing". */}
+      <PartialDataBanner
+        className="mx-5 mb-3"
+        reads={[
+          {
+            label: "The matched organisation's HRD Corp levy",
+            error: organisation.isError ? toApiError(organisation.error) : null,
+            retry: () => void organisation.refetch(),
           },
         ]}
       />

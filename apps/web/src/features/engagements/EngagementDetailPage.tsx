@@ -24,6 +24,7 @@ import {
   humanise,
   toast,
   type Column,
+  PartialDataBanner,
 } from "@/shared/components/kit";
 import { toApiError, useActor } from "@/shared/api";
 import { useBreadcrumb } from "@/shared/components/layout";
@@ -211,6 +212,27 @@ export function EngagementDetailPage() {
             variant="header"
           />
         }
+      />
+
+      {/* The two reads this screen can survive without, and which used to fail
+          in silence: a failed `useOrganisation` blanked the client's name out
+          of the identity line, and a failed `usePipelineConfig` left the
+          stepper printing raw stage keys. Both read as "this record has no
+          client" / "this pipeline has no labels" rather than as a failure. */}
+      <PartialDataBanner
+        className="mx-5 mb-3"
+        reads={[
+          {
+            label: "The client's name",
+            error: organisation.isError ? toApiError(organisation.error) : null,
+            retry: () => void organisation.refetch(),
+          },
+          {
+            label: "The pipeline's stage names",
+            error: pipeline.isError ? toApiError(pipeline.error) : null,
+            retry: () => void pipeline.refetch(),
+          },
+        ]}
       />
 
       <div className="border-b border-divider px-5 pb-3">

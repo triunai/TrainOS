@@ -13,6 +13,7 @@ import {
   PillTabGroup,
   PrimaryButton,
   RULE_TONE,
+  RefusalBanner,
   SecondaryButton,
   StatusChip,
   TextArea,
@@ -245,45 +246,53 @@ export function RulesRegistryScreen() {
         title="Add rule"
         subtitle="Loads as Proposed · compliance verifies it against the circular before it applies"
         footer={
-          <PrimaryButton
-            disabled={draftId === "" || draftSubject === "" || create.isPending}
-            onClick={() => {
-              create.mutate(
-                {
-                  id: draftId,
-                  scheme: "SBL_KHAS",
-                  subject: draftSubject,
-                  expression: { field: "", op: "EQ", reference: "" },
-                  effectiveFrom: new Date().toISOString().slice(0, 10),
-                  effectiveTo: null,
-                  source: {
-                    documentId: "DOC-MANUAL",
-                    title: "Entered by hand",
-                    section: "—",
-                    page: 0,
-                    excerpt: draftExcerpt,
+          <>
+            {/* Only `isPending` was ever read off this mutation, so a rule the
+                server refused closed nothing, said nothing, and left the
+                drawer looking as though the button had not been pressed. */}
+            {create.isError ? (
+              <RefusalBanner title="The rule was not added" error={toApiError(create.error)} />
+            ) : null}
+            <PrimaryButton
+              disabled={draftId === "" || draftSubject === "" || create.isPending}
+              onClick={() => {
+                create.mutate(
+                  {
+                    id: draftId,
+                    scheme: "SBL_KHAS",
+                    subject: draftSubject,
+                    expression: { field: "", op: "EQ", reference: "" },
+                    effectiveFrom: new Date().toISOString().slice(0, 10),
+                    effectiveTo: null,
+                    source: {
+                      documentId: "DOC-MANUAL",
+                      title: "Entered by hand",
+                      section: "—",
+                      page: 0,
+                      excerpt: draftExcerpt,
+                    },
+                    supersedesId: null,
+                    supersededById: null,
+                    usedByChecks: [],
+                    affectedOpenEngagements: 0,
+                    verifiedBy: null,
+                    verifiedAt: null,
                   },
-                  supersedesId: null,
-                  supersededById: null,
-                  usedByChecks: [],
-                  affectedOpenEngagements: 0,
-                  verifiedBy: null,
-                  verifiedAt: null,
-                },
-                {
-                  onSuccess: () => {
-                    setAdding(false);
-                    setDraftId("");
-                    setDraftSubject("");
-                    setDraftExcerpt("");
-                    setTab("proposed");
+                  {
+                    onSuccess: () => {
+                      setAdding(false);
+                      setDraftId("");
+                      setDraftSubject("");
+                      setDraftExcerpt("");
+                      setTab("proposed");
+                    },
                   },
-                },
-              );
-            }}
-          >
-            Add rule
-          </PrimaryButton>
+                );
+              }}
+            >
+              Add rule
+            </PrimaryButton>
+          </>
         }
       >
         <div className="flex flex-col gap-4">

@@ -26,6 +26,7 @@ import {
   SecondaryButton,
   StatusChip,
   type MetricCellProps,
+  PartialDataBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { readableMessage, toApiError } from "@/shared/api";
@@ -172,6 +173,28 @@ export function ProposalBuilderPage() {
         }
         primaryAction={sendButton}
         metrics={metricsFor(proposal, flagged.length)}
+      />
+
+      {/* Two reads the page survives without and used to lose in silence. The
+          client is the name a consultant recognises the document by, and it
+          simply vanished from the identity line. The approval is worse: it is
+          only read AFTER a send queues, and without it `SendOutcome` falls
+          through to its bare-reference branch — so a queued approval whose
+          detail failed to load looked like one that had no SLA at all. */}
+      <PartialDataBanner
+        className="mx-5 mb-4"
+        reads={[
+          {
+            label: "The client this proposal is for",
+            error: clientQuery.isError ? toApiError(clientQuery.error) : null,
+            retry: () => void clientQuery.refetch(),
+          },
+          {
+            label: "The approval this send raised",
+            error: approvalQuery.isError ? toApiError(approvalQuery.error) : null,
+            retry: () => void approvalQuery.refetch(),
+          },
+        ]}
       />
 
       <SendOutcome

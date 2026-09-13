@@ -31,6 +31,7 @@ import {
   TNA_TONE,
   type ActionError,
   type Column,
+  PartialDataBanner,
 } from "@/shared/components/kit";
 import { readableMessage, toApiError, useActor } from "@/shared/api";
 import { useTnaAction, useReopenTna, useTna, useTnaClient, useTnaRecommendations } from "./api";
@@ -218,6 +219,21 @@ export function TnaDetailPage() {
             ) : (
               <span className="text-ink-muted">not stated</span>
             ),
+          },
+        ]}
+      />
+
+      {/* The client is half the record's title — "TNA-0042 · Aurora
+          Manufacturing". A failed read fell back to the bare reference, which
+          is also what an unmatched TNA looks like, so the failure was
+          unreadable. */}
+      <PartialDataBanner
+        className="mx-5 mb-3"
+        reads={[
+          {
+            label: "The client this TNA belongs to",
+            error: client.isError ? toApiError(client.error) : null,
+            retry: () => void client.refetch(),
           },
         ]}
       />

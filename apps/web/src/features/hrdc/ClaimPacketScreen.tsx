@@ -22,6 +22,7 @@ import {
   SecondaryButton,
   StatusChip,
   TextField,
+  RefusalBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
@@ -198,6 +199,17 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
                 }
               />
             ))}
+            {/* Attach is fire-and-forget from a row, so R3's toast is what the
+                reader gets first — but the toast is gone in five seconds and
+                the row it refers to is right here. A refused attach names the
+                document type and the rule that rejected it, which belongs
+                beside the checklist rather than only in a transient. */}
+            {attach.isError ? (
+              <RefusalBanner
+                title="That document was not attached"
+                error={toApiError(attach.error)}
+              />
+            ) : null}
             {data.requiredDocuments.every((document) => document.status === "PRESENT") ? null : (
               <p className="pt-3 text-[12px] text-ink-muted">
                 Attaching a document marks it present on the packet. Ops supplies the evidence;
