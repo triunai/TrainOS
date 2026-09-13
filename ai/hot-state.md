@@ -9,6 +9,8 @@
 
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 
+> **WRAP 13 Sep 11:52 +08** — session cleared for context. Start the next session from `ai/resume-brief.md` (agents to relaunch, blast A–E, eyeball list). In-flight at wrap: shell-fix, applier-2, proto-header — check `git log` for their last commits before relaunching.
+
 > **Last updated:** 2026-09-13 — twenty-seven screens across fourteen features are
 > mounted and reading fixtures; the kit absorbed the duplicates they were each
 > carrying; `useApi`/`useAction` is the consolidation still open.
