@@ -287,6 +287,27 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES; 017 NEW BLOCK — the SST fix itself breaks retrofit onto a database with existing quotations
+
+- PR #25 confirmed merged (`15eed1b`): re-review of fix commit `bdd49aa`
+  specifically (NOT `ff01f2b` — 014's own re-review items confirmed out
+  of scope, pending elsewhere). 015 MERGE-WITH-FIXES (DROP guard works,
+  new verify assertion is dead code behind an earlier abort). 016
+  MERGE-WITH-FIXES (rollback scope genuinely closed both arms; residue
+  disclosure says `dated` but the WHERE clause doesn't check it; new
+  registry table has no RLS). **017 BLOCK, NEW: the SST fix itself makes
+  017 unable to apply to a database with an existing quotation row**
+  (SQLSTATE 55006, queued deferred triggers vs. a same-transaction SET
+  NOT NULL), reproduced twice, plus a pre-existing unrelated wall
+  (a numeric-division scale guard that always fires). Both premise
+  corrections re-confirmed by execution. Negative result for a standing
+  rule: an empty-shim pass is not sufficient for a pack that backfills
+  existing rows — needs its own pin against pre-existing data. Routed to
+  fix-014. Operational note: user on the Data API settings page; core
+  can't be exposed until migration 001 creates it; advised disabling
+  "Automatically expose new tables" first. See `ai/project-log.md`
+  23:2x block for full detail.
+
 ## 2026-09-13 23:1x — fix-018 clears PR #20's thermo BLOCK at 5612e65; M4 measured (4 pins, not 2); 019 split and B4 rulings made, not yet coded; test_014-red discrepancy open
 
 - `fix-018` confirmed pushed `5612e65` to `lane/rpc-018` (PR #11 body):

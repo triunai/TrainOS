@@ -1119,6 +1119,111 @@ were independently true readings of what each lane checked; not yet
 reconciled which pin, if either, is stale. `fix-018` has asked for the
 exact failing text.
 
+⛔ **PR #25 confirmed MERGED at `15eed1b`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-015-017-rereview.md` — an Opus
+thermonuclear + security re-review of the fix commit `bdd49aa`,
+confirmed reviewed at that tip specifically, **not `ff01f2b`** — the doc
+itself states plainly `git diff --stat 21ec975..bdd49aa` touches no
+`014` file, so the three items from 014's own re-review (the `run:read`
+gap, T11a's tautology, the pin header mismatch) are explicitly out of
+scope here and marked pending, consistent with this thread's own record
+that those landed separately in `ff01f2b`.
+
+- **015 MERGE-WITH-FIXES, confirmed exactly**: the `DROP FUNCTION`
+  guard genuinely works, proven by execution both ways (correctly
+  pinned to the old signature, it catches a simulated future change;
+  "kept in sync" per the file's own comment, it reopens the hazard).
+  **But the new exact-overload-count verify assertion is dead code,
+  confirmed directly**: an earlier `to_regproc`-based check in the same
+  block always aborts first, with the same misleading message, whether
+  zero or two overloads exist — the new assertion never runs. The file's
+  own comment claiming it "earns its place... names the real cause" is
+  confirmed false by execution, not just by reading. The mechanism that
+  actually covers the real exposure is the new pin's T6, not this
+  assertion.
+- **016 MERGE-WITH-FIXES, confirmed exactly by execution on both
+  arms**: the OLD rollback destroys an operator's hand-configured format
+  and reports OK; the NEW rollback preserves it, preserves the allocated
+  row, and deletes only the disclosed residue (a byte-identical
+  hand-made row) — no more, no less. **Residual finding, confirmed
+  present**: the rollback's own disclosure says the residue criterion is
+  "prefix, entity, and dated," but the actual `WHERE` clause never
+  checks `dated` — the disclosed residue is narrower than reality, and
+  an operator row differing only in `dated` gets deleted contrary to
+  what the file tells the reader. Also confirmed: the new
+  `app.tenant_seed_checks` registry table has no RLS at all, unlike
+  every comparable global `app` reference table in the repo — not
+  exploitable today (schema-wide grants already block client access),
+  but the one place this repo's own standard backstop was skipped.
+- **017 BLOCK — NEW, caused by the SST fix itself, confirmed as the most
+  consequential finding in this pass.** The CRITICAL SST defect is
+  genuinely fixed (confirmed both arms: OLD code produces the
+  zero-tax-no-policy-trace row, NEW code resolves a real rate/reason/
+  policy reference on the identical insert). **But 017 cannot be applied
+  to any database already holding a quotation row**: the new SST
+  backfill's `UPDATE` queues two `DEFERRABLE` constraint triggers from
+  migration 007, and the file's own new `SET NOT NULL` then refuses with
+  `SQLSTATE 55006` while those triggers are pending, inside the same
+  one-transaction file — reproduced twice, not transient. This breaks
+  exactly the "retrofit onto a non-empty database" case 017's own header
+  claims to support; re-applying onto an already-017 database works fine
+  because the backfill matches zero rows.
+- **A second, pre-existing wall found the same way, confirmed present
+  since `21ec975`, not this fix's fault but blocking the same
+  scenario**: `017:226`'s `pg_catalog.scale(margin_rate) > 4` guard
+  checks a `GENERATED ALWAYS AS` numeric-division column, and Postgres
+  numeric division always produces scale 20 regardless of actual values
+  — so this guard fires on every non-null quotation, unconditionally.
+  Confirmed both walls should be fixed together since they block the
+  same scenario.
+- **N-1 (HIGH), confirmed exactly**: the PDPA rollback guard's
+  quotation sentinel is "any row where `sst_reason IS NOT NULL`," and
+  this same fix pack makes `sst_reason` NOT NULL on every row —
+  confirmed by direct execution that 015/016/017 now have **no rollback
+  path at all** on any database holding a single quotation, without
+  first deleting every quotation first.
+- **N-2 (HIGH), confirmed exactly — the same false-header-claim class
+  that hid the original CRIT-1, recurring a third time**: 016's header
+  still claims "no table" despite creating `app.tenant_seed_checks`;
+  017's header still says "two new functions" and names no trigger
+  despite now having at least five functions and two triggers; the
+  catalog still cites a stale `test_017` assertion count.
+- **Both premise corrections re-confirmed by direct execution, not just
+  re-quoted**: 015's original "fails invisibly" framing was overstated
+  (the pre-fix verify block already aborted, just with a misleading
+  message); 017's policy count is genuinely 234→228, not the original
+  review's `<>222`.
+- **Negative result for the log, this thread's own framing of the
+  017 finding, not a verbatim quote — but the substance is confirmed
+  directly in the doc's own words** ("this defect did not exist before
+  this fix, it was introduced by it... the break is specifically the
+  retrofit/non-empty-database case the file's own header argues it must
+  support"): **a fix that passes clean on an empty shim can still fail
+  on retrofit-onto-existing-data, and this is now true of two separate
+  defects in the same file for the same reason.** Worth a standing rule:
+  every pack that backfills existing rows needs its own pin that applies
+  over a database already holding the rows it's backfilling, not only
+  over an empty one.
+- **Confirmed and worth keeping on record**: the new pin's T6 (015) and
+  T7 (016) are confirmed to pass against BOTH the old and new code —
+  they assert correct invariants but don't actually discriminate old
+  from new, so they are not regression tests for the findings they cite,
+  even though they're not wrong to have. 017's own T11 (the SST
+  behavioral test) is confirmed the one genuinely discriminating
+  regression test in this whole fix pack.
+- **Routed to `fix-014`, confirmed as stated**; Codex still owed, not
+  substituted.
+
+⚠ **Operational note, reported and consistent with what this thread has
+already independently confirmed about the `core` schema**: the user is
+currently on the hosted project's Data API settings page. `core` cannot
+be exposed there until migration 001 actually creates it — confirmed
+directly, `CREATE SCHEMA IF NOT EXISTS core` is at `001:171` — and
+nothing has been applied to any hosted project yet, per every check this
+session. Advised: disable "Automatically expose new tables" before
+anything is applied, since that setting would conflict with 014's own
+explicit, narrower grants once 014 lands.
+
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
 `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero

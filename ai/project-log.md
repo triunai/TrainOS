@@ -15,6 +15,167 @@
 
 ---
 
+## 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES; 017 NEW BLOCK — the SST fix itself breaks retrofit onto a database with existing quotations
+
+**PR #25 confirmed MERGED at `15eed1b`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-015-017-rereview.md` — an Opus
+thermonuclear + security re-review of fix commit `bdd49aa` specifically.
+**Confirmed this reviewed `bdd49aa`, NOT `ff01f2b`**: the doc states
+plainly that `git diff --stat 21ec975..bdd49aa` touches no `014` file,
+so the three items assigned to 014's own next push (the `run:read` gap,
+T11a's tautology, the pin header mismatch) are explicitly out of scope
+here and marked pending — consistent with this thread's own separate
+record that those three items landed in `ff01f2b` instead, a different
+commit reviewed by a different pass.
+
+**015 MERGE-WITH-FIXES, confirmed exactly.** The `DROP FUNCTION` guard
+genuinely works, proven by execution in both directions: correctly
+pinned to the old signature, it catches a simulated future signature
+change; "kept in sync" per the file's own comment, it reopens the
+hazard. **But the new exact-overload-count verify assertion is dead
+code, confirmed directly by execution**: an earlier `to_regproc`-based
+check in the same verify block always aborts first, with the same
+misleading message, whether zero or two overloads exist — the new
+assertion never actually runs. The fix's own comment claiming this
+assertion "earns its place... names the real cause" is confirmed false,
+by execution, not merely by reading it skeptically. The mechanism that
+genuinely covers the real exposure is the new pin's T6, not this
+assertion.
+
+**016 MERGE-WITH-FIXES, confirmed exactly by execution on both arms.**
+Against the OLD rollback, an operator's hand-configured format is
+destroyed and the rollback reports OK. Against the NEW rollback, the
+same operator row survives, the allocated row survives, and only the
+disclosed residue (a byte-identical hand-made row) is deleted — no more,
+no less. **Residual finding, confirmed present and worth keeping
+precise**: the rollback's own disclosure claims the residue criterion is
+"prefix, entity, and dated," but the actual `WHERE` clause the DELETE
+and the post-condition both use never checks `dated` — the disclosed
+residue is narrower than reality, and an operator row differing only in
+its `dated` flag gets deleted contrary to what the file tells the
+reader. Also confirmed: the new `app.tenant_seed_checks` registry table
+— itself a genuinely better abstraction than the hardcoded check it
+replaces — has no `ENABLE`/`FORCE ROW LEVEL SECURITY` at all, unlike
+every comparable global `app` reference table in the repo. Not
+exploitable today (schema-wide grants already block client access), but
+the one place this repo's own standard backstop was skipped.
+
+**017 BLOCK — NEW, caused by the SST fix itself, confirmed as the most
+consequential finding in this pass.** The CRITICAL SST defect is
+genuinely fixed, confirmed by direct execution against both arms: the
+OLD code produces the exact zero-tax-no-policy-trace row on an insert
+touching no SST column; the NEW code resolves a real rate, reason, and
+policy reference on the identical insert. **But 017 cannot be applied to
+any database that already holds a quotation row.** The new SST
+backfill's `UPDATE` queues two `DEFERRABLE INITIALLY DEFERRED`
+constraint triggers migration 007 already put on `core.quotations`; they
+stay pending until COMMIT; and the file's own new `ALTER TABLE ... SET
+NOT NULL` then refuses to run while any trigger event is pending on that
+table, failing with `SQLSTATE 55006` — confirmed reproduced twice, not
+transient, since the whole file is one transaction and a retry starts
+from the same state. Confirmed this defect did not exist before this
+fix: the identical fixture applies cleanly under the OLD 017. This
+breaks exactly the "retrofit onto a non-empty database" case 017's own
+header claims to support; re-applying 017 onto an already-017 database
+works fine because the backfill then matches zero rows.
+
+**A second, pre-existing wall found the same way, confirmed present
+unchanged since `21ec975` — not this fix's fault, but blocking the same
+scenario.** `017:226`'s `pg_catalog.scale(margin_rate) > 4` guard checks
+a column that is `GENERATED ALWAYS AS` a division of two numerics, and
+PostgreSQL numeric division always produces scale 20 regardless of the
+actual values — so this guard fires on every non-null quotation,
+unconditionally, whether or not rounding would change anything. Both
+walls block the same "database with a live quotation" scenario and are
+confirmed as worth fixing together.
+
+**N-1 (HIGH), confirmed exactly by direct execution.** The PDPA rollback
+guard's quotation sentinel is "any row where `sst_reason IS NOT NULL`,"
+and this same fix pack makes `sst_reason` NOT NULL on every row —
+confirmed that 015/016/017 now have **no rollback path at all** on any
+database holding a single quotation, without deleting every quotation
+first. The guard's own comment ("on an empty database, which is where a
+rollback is actually exercised, this costs nothing") does not hold for
+this one sentinel the way it does for the guard's other three
+conditions.
+
+**N-2 (HIGH), confirmed exactly — the same false-header-claim class
+that hid the original CRIT-1, now recurring a third time.** 016's header
+still says "no table" despite now creating `app.tenant_seed_checks`;
+017's header still says "two new functions" and names no trigger despite
+now having at least five functions and two triggers; the catalog still
+cites a stale `test_017` assertion count.
+
+**Both premise corrections re-confirmed by direct execution, not merely
+re-quoted from the fix commit's own claim.** 015's original "fails
+invisibly with a green-looking cron table" framing was overstated — the
+pre-fix verify block already aborted, via `to_regproc` returning NULL
+for an ambiguous name, just with a misleading message rather than no
+message at all. 017's policy-count check is genuinely `228→234→228`
+— confirmed by a clean 001-017 apply measuring exactly 234, and rolling
+017 back alone returning exactly 228 — not the original review's
+inverted `<>222`.
+
+**Negative result for the log — this thread's own framing rather than a
+verbatim quote, but the substance confirmed directly in the doc's own
+words** ("this defect did not exist before this fix, it was introduced
+by it... the break is specifically the retrofit/non-empty-database case
+the file's own header argues it must support"): **a fix that passes
+clean on an empty shim can still fail on retrofit-onto-existing-data,
+and this is now true of two separate defects in the same file for the
+exact same underlying reason.** Worth a standing rule for every future
+pack in this migration line: a pack that backfills existing rows needs
+its own pin that applies the migration over a database already holding
+the rows it backfills, not only over an empty one — an empty-shim pass
+is necessary but demonstrably not sufficient evidence for this class of
+defect.
+
+**Confirmed and worth keeping on record rather than losing in the pass**:
+the new pin's T6 (015) and T7 (016) are confirmed, by direct execution,
+to pass against BOTH the old and the new code — they assert correct
+invariants but do not actually discriminate old from new, so they are
+not regression tests for the findings they cite, even though having them
+is not wrong. 017's own T11 (the SST behavioral test) is confirmed the
+one genuinely discriminating regression test in this entire fix pack —
+it fails cleanly against OLD 017 and passes against NEW 017.
+
+**Routed to `fix-014`, confirmed as stated. Codex `gpt-5.6-sol` still
+owed, not substituted.**
+
+**Operational note, reported and independently confirmed consistent
+with this thread's own record of the `core` schema.** The user is
+currently on the hosted project's Data API settings page. `core` cannot
+be exposed there until migration 001 actually creates it — confirmed
+directly by reading the file, `CREATE SCHEMA IF NOT EXISTS core` is at
+`001:171` — and nothing has been applied to any hosted project yet, per
+every check this session. Advised: disable "Automatically expose new
+tables" before anything is applied, since that setting would conflict
+with 014's own explicit, narrower grants once 014 lands.
+
+**Things worth telling future-me:**
+
+1. A review scoped to one specific commit, with an explicit statement of
+   which later commits it does NOT cover, is more useful than a review
+   that silently reviews "the tip" without saying so — this doc's own
+   `git diff --stat` check of exactly what it reviewed is what let this
+   thread confirm without ambiguity that it and `ff01f2b`'s own review
+   cover disjoint, non-overlapping changes rather than one superseding
+   the other.
+2. A fix for one CRITICAL defect can introduce an unrelated new BLOCK in
+   the same file, in the same pass — "the CRITICAL is fixed" and "this
+   pack is now mergeable" are different claims, and this is the second
+   time this session a 017-adjacent fix needed exactly this distinction
+   made explicit (the first was 018's H4 fix superseding itself against
+   017's own new trigger).
+3. Two test pins that assert something true are not automatically
+   regression tests for the finding they're named after — T6 and T7
+   passing against both old and new code is a quiet failure mode of pin
+   design worth checking for specifically: does this pin FAIL against
+   the code this finding describes, not just PASS against the fixed
+   code.
+
+---
+
 ## 2026-09-13 23:1x — fix-018 clears PR #20's thermo BLOCK at 5612e65; M4 measured (4 pins, not 2); 019 split and B4 rulings made, not yet coded; test_014-red discrepancy open
 
 **`fix-018` pushed `5612e65` to `origin/lane/rpc-018`** — confirmed via

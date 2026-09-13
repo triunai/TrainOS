@@ -454,9 +454,33 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > `fix-018` has asked for the failing text. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:1x — fix-018 clears PR #20's BLOCK at
-> 5612e65; 019 split and B4 rulings made (not yet coded); test_014 red
-> discrepancy open between fix-018 and fix-014.
+> **BLAST 13 Sep 23:2x +08** — PR #25 confirmed MERGED (`15eed1b`), one
+> file: an Opus thermonuclear + security re-review of fix commit
+> `bdd49aa` specifically (NOT `ff01f2b` — 014's own re-review items are
+> explicitly out of scope, confirmed pending). **015 and 016
+> MERGE-WITH-FIXES, 017 BLOCK (NEW).** 015: the DROP guard genuinely
+> works, but its new verify assertion is dead code (an earlier check
+> always aborts first) and the file's own comment gives backwards advice
+> that would reopen the hazard. 016: rollback-scope fix genuinely closed
+> by execution both ways; residual — the disclosed residue criterion
+> says `dated` but the WHERE clause never checks it, and the new
+> registry table has no RLS. **017: the SST CRITICAL is genuinely fixed,
+> but the fix itself introduces a NEW blocker — 017 cannot apply to any
+> database already holding a quotation row (SQLSTATE 55006, queued
+> deferred triggers vs. a new SET NOT NULL in the same transaction),
+> reproduced twice.** A second, pre-existing, unrelated wall sits behind
+> it (a numeric-division scale guard that always fires). Both premise
+> corrections re-confirmed by direct execution. Negative result worth a
+> standing rule: a fix passing clean on an empty shim can still fail on
+> retrofit-onto-existing-data — every backfilling pack needs its own pin
+> that applies over pre-existing rows, not just an empty database.
+> Routed to `fix-014`. Operational note: user is on the Data API
+> settings page; `core` can't be exposed until migration 001 creates it
+> (nothing applied yet); advised to disable "Automatically expose new
+> tables" first. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES,
+> 017 NEW BLOCK (SST fix breaks retrofit onto existing quotation rows).
 
 ### Focus
 
