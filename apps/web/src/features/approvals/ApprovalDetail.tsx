@@ -150,14 +150,24 @@ export function ApprovalDetail() {
   }, [pending]);
 
   const submit = (decision: ApprovalDecision) => {
+    /* The buttons that call `submit` render only while `pending` is true,
+       which already implies `detail` is loaded — this is for the type
+       checker, not a reachable branch. */
+    if (!detail) return;
     const needsNote = NEEDS_NOTE.includes(decision);
     if (needsNote && note.trim().length === 0) {
       setArmed(decision);
       return;
     }
     /* Fire-and-forget, per CLAUDE.md R3: the mutation carries
-       `meta.toastOnError`, so a refusal is never silent. */
-    decide.mutate({ decision, note: needsNote ? note.trim() : null });
+       `meta.toastOnError`, so a refusal is never silent.
+
+       `diffHash` is the hash off THIS detail read — echoing it back is what
+       lets `core.decide_approval`'s optimistic-concurrency guard
+       (`011:2781-2787`) tell a decision made against the diff still shown
+       here from one made against a diff that has since changed underneath
+       it. See finding #6, docs/reviews/2026-09-13-codex-retrofit-014-017.md. */
+    decide.mutate({ decision, note: needsNote ? note.trim() : null, diffHash: detail.diffHash });
     setArmed(null);
   };
 
