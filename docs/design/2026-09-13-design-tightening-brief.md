@@ -94,3 +94,15 @@ The pack's topbar has an EN | BM switch; the app has no i18n. Now (shell-fix): t
 - No per-cell slabs or heavy dividers: transparent cells on the gradient, evenly spread, at most a 1px 20%-white hairline.
 - One chevron at the card's right edge expands the card into the detail sections (eased, leak-free).
 - Gradient rule (11:56): blue family only, **2–3 colour stops max**, creativity via angle/stop positions/hue pairing (deep indigo-blue → electric #1F5BFF, or electric → cyan-leaning blue); white text AA on every stop; two candidates rendered, one chosen.
+
+## 18. Knowledge → Sources (M16-S05) — "hide the machinery until somebody needs it"
+Page answers one question: are my sources healthy, and does anything need me? Then the inventory.
+- **Header:** title "Knowledge sources" + primary "+ Add source"; one summary line "6 sources · 4 healthy · 1 changed · 1 failed"; segmented control [All 6] [Needs attention 2]; secondary "Check all" · "History". **Remove the six-cell metric strip** (Sources/Chunks/Embedded/Changed/Last full check/Monitor).
+- **Banner** (only when a source changed): "Circular 09/2026 has changed — existing answers remain available; new rules won't apply until the changes are reviewed. Review changes →" plus a "Why?" disclosure for the quarantine mechanics. No architecture essay.
+- **Table is the hero, four columns:** Source (name + muted "type · vN"), Used for (Client answers / Internal), Status (Healthy / Changed · Review required / Processing / Fetch failed), Checked (relative date). Optional Version.
+- **State-driven actions:** no per-row Check/Re-ingest pair. Changed → "Review changes →", Failed → "Retry →", Processing → "View progress →", Healthy → ⋯ on hover. 
+- **Source detail** (drawer/row expand) holds chunks, embedding state, monitor cadence, hash, version, retrieval permissions, last ingestion.
+- **Delete the two explanatory cards** ("What may be cited", "How freshness is known"); put them behind a "How sources work" help link → drawer with four bullets.
+- **Breadcrumb:** Knowledge / Sources; title "Knowledge sources". Drop "Corpus" unless corpora are a real switchable object (then Knowledge / Corpora / <name>).
+- Typography per §1: table headings and card headings in the UI font, sentence case; mono only for refs/versions.
+- Same treatment applies to the other "control panel" screens: M20-S16 usage/budgets, M18-S01 registry, M20-S20 routing — human summary first, machinery in detail.
