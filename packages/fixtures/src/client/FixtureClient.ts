@@ -39,6 +39,7 @@ import type {
   AutonomyLevel,
   Badge,
   BadgeCounts,
+  BindingFloorBasis,
   Budget,
   BudgetWrite,
   ClaimPacket,
@@ -107,6 +108,7 @@ import type {
   ProviderKeyRotateRequest,
   ProviderKeyTestResponse,
   RateCard,
+  Receivable,
   ReceivablesAging,
   Role,
   RoutingEntry,
@@ -134,10 +136,11 @@ import type {
 import { IDEMPOTENT_REPLAY_HEADER } from "@trainos/contract";
 
 import type { FixtureApproval } from "../data/approvals";
-import type { FixtureReceivable } from "../data/finance";
 import type { FixtureNotification } from "../data/shell";
 import type { FixtureTrainer, ProgrammeDelivery } from "../data/programmes";
 import type { FixtureTenant } from "../data/tenant";
+import type { FixtureCommission } from "../data/commissions";
+import type { FixtureLibraryAsset } from "../data/library";
 import { NOW, lineTotal, myr, roundHalfUpSen, sumMoney } from "../data/_helpers";
 import { approvalsSummary } from "../data/approvals";
 import { navigationFor } from "../data/shell";
@@ -165,16 +168,7 @@ import {
   resultingMarginRate,
   withFloors,
 } from "./pricing";
-import type { BindingFloor, QuotationWithFloors } from "./pricing";
 import { byIdOrRef, createStore, type FixtureStore } from "./store";
-
-/**
- * §8 an engagement as a given principal sees it.
- *
- * `finance` is required on the contract's `Engagement`, but the OPS projection
- * has to drop it, so the projection is its own type. Reported as a gap.
- */
-export type EngagementProjection = Omit<Engagement, "finance"> & { finance?: EngagementFinance };
 
 /**
  * §6 + §18 the result of pricing a delivery from the catalogue.
@@ -198,7 +192,7 @@ export interface ComputedQuotation {
   absoluteFloorPrice: Money;
   marginFloorPrice: Money;
   floorPrice: Money;
-  bindingFloorBasis: BindingFloor;
+  bindingFloorBasis: BindingFloorBasis;
   belowFloor: boolean;
   rateCardVersion: string;
   display: { perPax: Money };
@@ -211,11 +205,6 @@ export interface ProposalDraftResult {
   organisationRef: string;
   quotationRef?: string;
 }
-
-/** §9 the collections queue, carrying the widened next-action type. */
-export type FixtureCollectionsQueueResponse = Omit<CollectionsQueueResponse, "data"> & {
-  data: FixtureReceivable[];
-};
 
 /** Options every state-changing call accepts. */
 export interface RequestOptions {
@@ -408,7 +397,7 @@ export class FixtureClient {
    * it is configuring, and the record already exists in the store to stamp
    * events with. This exposes that record rather than inventing a contract
    * shape the API has decided not to have; `FixtureTenant` is a fixture type
-   * for the same reason `FixtureReceivable` and `FixtureNotification` are.
+   * for the same reason `FixtureNotification` is.
    *
    * TODO(contract §2): if organisation settings ever become writable, that is a
    * real endpoint and a real contract type, and this method goes away.
@@ -842,7 +831,7 @@ export class FixtureClient {
    * contract's `Quotation` has neither, so they are computed here and reported
    * as a gap rather than added to the contract.
    */
-  async getQuotation(id: string): Promise<QuotationWithFloors> {
+  async getQuotation(id: string): Promise<Quotation> {
     this.#requirePermission("quotation:read", "SALES");
     const quotation = byIdOrRef(this.#store.quotations, id);
     if (!quotation) throw notFound("Quotation", id);
@@ -854,7 +843,7 @@ export class FixtureClient {
    * price below the binding floor — the higher of the programme's absolute
    * floor and the margin floor derived from direct cost.
    */
-  async putQuotation(id: string, body: QuotationWrite): Promise<QuotationWithFloors> {
+  async putQuotation(id: string, body: QuotationWrite): Promise<Quotation> {
     await sleep(this.#latencyMs);
     this.#requirePermission("quotation:write", "SALES");
     const quotation = byIdOrRef(this.#store.quotations, id);
@@ -1101,7 +1090,7 @@ export class FixtureClient {
    * §8 · Engagements, participants, attendance
    * ---------------------------------------------------------------- */
 
-  async listEngagements(page?: PageRequest): Promise<ListResponse<EngagementProjection>> {
+  async listEngagements(page?: PageRequest): Promise<ListResponse<Engagement>> {
     const result = paginate(this.#store.engagements, page);
     return this.#read({ ...result, data: result.data.map((row) => this.#projectEngagement(row)) });
   }
@@ -1114,13 +1103,13 @@ export class FixtureClient {
    * missing field is honest, a zero is a lie. The contract types `finance` as
    * required, which is why the projection has its own type; reported as a gap.
    */
-  async getEngagement(id: string): Promise<EngagementProjection> {
+  async getEngagement(id: string): Promise<Engagement> {
     const engagement = byIdOrRef(this.#store.engagements, id);
     if (!engagement) throw notFound("Engagement", id);
     return this.#read(this.#projectEngagement(engagement));
   }
 
-  #projectEngagement(engagement: Engagement): EngagementProjection {
+  #projectEngagement(engagement: Engagement): Engagement {
     if (permissionsFor(this.#actorId).includes("quotation:read")) return engagement;
     const { finance: _finance, ...withoutFinance } = engagement;
     return withoutFinance;
@@ -1345,17 +1334,18 @@ export class FixtureClient {
     return this.#read(this.#store.receivablesAging);
   }
 
-  async listReceivables(page?: PageRequest): Promise<ListResponse<FixtureReceivable>> {
+  async listReceivables(page?: PageRequest): Promise<ListResponse<Receivable>> {
     return this.#read(paginate(this.#store.receivables, page ?? { sort: "-daysOverdue" }));
   }
 
   /**
    * §9 `GET /v1/collections/queue`.
    *
-   * The last rung is the ruled `ACCOUNT_TRADING_HOLD`, which the contract's
-   * `CollectionNextAction.type` cannot hold — see `FixtureReceivable`.
+   * The last rung is the ruled `ACCOUNT_TRADING_HOLD`. Ruling R7 widened
+   * `CollectionNextAction.type` to `AnyActionType` so the contract's own
+   * `Receivable` can hold it; the fixture widening it needed before is gone.
    */
-  async getCollectionsQueue(page?: PageRequest): Promise<FixtureCollectionsQueueResponse> {
+  async getCollectionsQueue(page?: PageRequest): Promise<CollectionsQueueResponse> {
     const result = paginate(this.#store.receivables, page ?? { sort: "-daysOverdue" });
     return this.#read({ data: result.data, aging: this.#store.receivablesAging, page: result.page });
   }
@@ -1368,6 +1358,23 @@ export class FixtureClient {
 
   async getCollectionRules(): Promise<ListResponse<CollectionRule>> {
     return this.#read(paginate(this.#store.collectionRules));
+  }
+
+  /**
+   * Sales commission accruals — the Finance › Commissions leaf.
+   *
+   * Not a contract endpoint: the contract puts commission ON a quotation and a
+   * rate table on the rate card, and never declares the collection. The rows
+   * are derived in `data/commissions.ts`, where the derivation is written out.
+   *
+   * Gated on `quotation:read` for the same reason `getQuotation` is: a
+   * commission row restates a quotation's sell price and its commission rate,
+   * so serving it to a principal who may not read the quotation would route
+   * around the §6 permission rather than enforce it.
+   */
+  async listCommissions(page?: PageRequest): Promise<ListResponse<FixtureCommission>> {
+    this.#requirePermission("quotation:read", "FINANCE");
+    return this.#read(paginate(this.#store.commissions, page ?? { sort: "-amount.amount" }));
   }
 
   /* ---------------------------------------------------------------- *
@@ -1921,6 +1928,18 @@ export class FixtureClient {
 
   async listKnowledgeSources(page?: PageRequest): Promise<ListResponse<KnowledgeSource>> {
     return this.#read(paginate(this.#store.knowledgeSources, page ?? { page: { size: 50 } }));
+  }
+
+  /**
+   * The content library — the Knowledge › Library leaf.
+   *
+   * The second corpus: reusable sales and delivery content, as against the
+   * monitored external documents `listKnowledgeSources` returns. Not a contract
+   * endpoint; see `data/library.ts` for why it is a separate collection rather
+   * than more knowledge sources.
+   */
+  async listLibraryAssets(page?: PageRequest): Promise<ListResponse<FixtureLibraryAsset>> {
+    return this.#read(paginate(this.#store.libraryAssets, page ?? { page: { size: 50 } }));
   }
 
   async createKnowledgeSource(body: KnowledgeSourceCreateRequest): Promise<KnowledgeSource> {

@@ -45,6 +45,7 @@ import type {
   ProposalsVsWonReport,
   ProviderKey,
   RateCard,
+  Receivable,
   ReceivablesAging,
   RoutingEntry,
   RuleChangeSet,
@@ -58,9 +59,10 @@ import type {
   BadgeCounts,
   ChannelConsent,
 } from "@trainos/contract";
+import type { FixtureCommission } from "../data/commissions";
+import type { FixtureLibraryAsset } from "../data/library";
 import * as data from "../data";
 import type { FixtureApproval } from "../data/approvals";
-import type { FixtureReceivable } from "../data/finance";
 import type { FixtureNotification } from "../data/shell";
 import type { FixtureTrainer, ProgrammeDelivery } from "../data/programmes";
 import type { FixtureTenant } from "../data/tenant";
@@ -116,10 +118,12 @@ export interface FixtureStore {
   complianceChecks: Record<string, ComplianceChecksResponse>;
 
   invoices: Invoice[];
-  receivables: FixtureReceivable[];
+  receivables: Receivable[];
   receivablesAging: ReceivablesAging;
   collectionRules: CollectionRule[];
   collectionDrafts: Record<string, MessageDraft>;
+  /** Derived from quotations, invoices and the rate card — see data/commissions.ts. */
+  commissions: FixtureCommission[];
 
   agents: Agent[];
   agentRegistrySummary: AgentRegistrySummary;
@@ -135,6 +139,7 @@ export interface FixtureStore {
   usageForecast: { period: string; forecast: { amount: number; currency: "MYR" }; cap: { amount: number; currency: "MYR" } };
 
   knowledgeSources: KnowledgeSource[];
+  libraryAssets: FixtureLibraryAsset[];
 
   executiveDashboards: Record<string, ExecutiveDashboard>;
   proposalsVsWon: ProposalsVsWonReport;
@@ -201,6 +206,7 @@ export const createStore = (): FixtureStore => ({
   receivablesAging: clone(data.receivablesAging),
   collectionRules: clone(data.collectionRules),
   collectionDrafts: clone(data.collectionDrafts),
+  commissions: clone(data.commissions),
 
   agents: clone(data.agents),
   agentRegistrySummary: clone(data.agentRegistrySummary),
@@ -216,6 +222,7 @@ export const createStore = (): FixtureStore => ({
   usageForecast: clone(data.usageForecast),
 
   knowledgeSources: clone(data.knowledgeSources),
+  libraryAssets: clone(data.libraryAssets),
 
   executiveDashboards: clone(data.executiveDashboards),
   proposalsVsWon: clone(data.proposalsVsWon),
