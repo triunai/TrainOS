@@ -4238,6 +4238,228 @@ COMMENT ON VIEW core.v_budgets IS
   'rpcClient.ts actually reads (VIEW_READS.aiBudgets) and crosses the app '
   'boundary through a definer function that re-derives the tenant itself. 018.';
 
+-- ═══ 10d · Per-tenant pipeline defaults ════════════════════════════════════
+--
+-- 016 deferred this and named the owner: "Seeding them here means writing
+-- fifteen stage names into a migration, which is the exact defect the rule
+-- names, and doing it in a file about ref formats. It belongs in a pack that
+-- can cite `docs/architecture/01` §5.3 per row. **Owner: 018 or a dedicated
+-- seed pack.** ⚠ Until then a new tenant renders no pipeline."
+--
+-- THE RULE 016 IS PROTECTING IS NOT "NEVER WRITE A STAGE NAME IN SQL" — it is
+-- "stage names and order RENDER from `pipeline_steps` rows", and something has
+-- to put the rows there. `core.pipelines` / `core.pipeline_steps` IS the
+-- configuration; this seeds a tenant's DEFAULT configuration once, and every
+-- reader still renders whatever the rows say. `core.navigation` and
+-- `core.get_pipeline_config` read them, and T9 proves it by renaming a row and
+-- asserting the output changed. A tenant that edits these rows is configuring
+-- its pipeline, not fighting a hardcoded list.
+--
+-- ── THE IDS ARE DERIVED, AND THE EXPRESSION IS AGREED WITH THE SEEDS LANE ───
+--
+-- `core.engagement_step_states` carries a composite FK onto
+-- `(tenant_id, pipeline_step_id)`, and the seeds lane (PR #16) writes 90 of
+-- those rows for the fixture tenant. If that seed and this one computed
+-- different ids for the same stage, one of the two loads fails on the foreign
+-- key. So the ids are DERIVED from the tenant and the stage rather than picked,
+-- and both packs compute the same expression:
+--
+--     pipeline row  md5(tenant_id::text || 'pipeline:' || object)::uuid
+--     step row      md5(tenant_id::text || 'pipeline:' || object || ':' || step_key)::uuid
+--
+-- ⚠ TWO CORRECTIONS TO THE RULE AS HANDED DOWN, both measured on a 001-017
+-- shim rather than reasoned about, and both raised first by the seeds lane:
+--
+--  1. The rule said `uuid_generate_v5(tenant_id, …)` with an md5 fallback
+--     "if uuid-ossp is not available". THE TWO FORMS PRODUCE DIFFERENT IDS, so
+--     a conditional between them yields one set of ids on a shim and another on
+--     the hosted project — the exact failure determinism exists to prevent.
+--     Measured: `uuid_generate_v5` gives 77324845-…, `md5(…)::uuid` gives
+--     9c3095f8-… for the same input. And uuid-ossp is AVAILABLE BUT NOT CREATED
+--     by 001-017 (001 installs pgcrypto, citext, btree_gist, pg_trgm, pg_cron,
+--     pg_net and vector — not uuid-ossp), so the v5 branch does not run at all
+--     without a new `CREATE EXTENSION` that is 001's to make. md5 is therefore
+--     the form, not the fallback.
+--
+--  2. The rule said `'pipeline:' || stage_key`. THAT COLLIDES. `WON` is a stage
+--     of BOTH pipelines — ENGAGEMENT position 1 and OPPORTUNITY position 6 —
+--     and `core.pipeline_steps` is unique on `(tenant_id, pipeline_id,
+--     step_key)`, not on `step_key` alone, so both rows are legitimate and the
+--     shared id is a primary-key violation on whichever insert runs second. The
+--     name has to carry the pipeline object, and it does above.
+--
+-- Bare md5, NOT a v5 UUID: `md5(...)::uuid` sets no version or variant nibble,
+-- and both sides have to agree byte for byte, so neither side may "tidy" it.
+-- Verified against the seeds lane's 18 published literals: 18 of 18 match.
+--
+-- ── OWNERSHIP ───────────────────────────────────────────────────────────────
+--
+-- 018 owns the DEFAULTS FOR A NEW TENANT and inserts `ON CONFLICT (id) DO
+-- NOTHING`, so the fixture seed's own rows survive whichever order the two run
+-- in. The seeds lane owns the fixture tenant's rows. Because the ids agree,
+-- the composite key `engagement_step_states` references is the same either way.
+--
+-- ── WHAT IS NOT SEEDED, AND WHY ─────────────────────────────────────────────
+--
+--   DEAL_CHAIN   The contract's third pipeline (ENQUIRY · TNA · PROPOSAL ·
+--                APPROVAL · SENT · DELIVERY). `core.pipelines.object` admits
+--                only ENGAGEMENT, OPPORTUNITY and PACKET, so NEITHER this pack
+--                NOR the seeds lane can store it today. Recorded as a spec
+--                defect in `docs/architecture/09` §"Divergences found by 018";
+--                004 is not changed here.
+--   outcome      Ruling R16's `PipelineStage.outcome` (WON / LOST) has no
+--                column on `core.pipeline_steps`. `terminal` is stored and
+--                `outcome` is omitted rather than guessed. Same divergence
+--                section.
+--   PACKET       004 admits it; no contract, document or fixture defines a
+--                packet pipeline. Seeding one would be inventing configuration.
+
+CREATE OR REPLACE FUNCTION app.seed_pipelines(p_tenant_id uuid)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE v_rows integer := 0; v_steps integer := 0;
+BEGIN
+  IF p_tenant_id IS NULL THEN
+    RAISE EXCEPTION 'seed_pipelines: p_tenant_id is required'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- `core.pipelines` carries `trg_pipelines_ref` -> `core.assign_ref('PIP')`,
+  -- which RAISES if the tenant has no `PIP` row in `core.ref_formats`. 016
+  -- seeds those from its own AFTER INSERT trigger, and per-row AFTER INSERT
+  -- triggers fire in ALPHABETICAL ORDER BY TRIGGER NAME — so this pack's
+  -- trigger is named to sort after `trg_tenants_seed_ref_formats`. Asserted
+  -- here as well, because a name-ordering dependency that is only a comment is
+  -- a dependency waiting to be renamed.
+  IF NOT EXISTS (SELECT 1 FROM core.ref_formats AS format
+                  WHERE format.tenant_id = p_tenant_id AND format.prefix = 'PIP') THEN
+    RAISE EXCEPTION
+      'seed_pipelines: tenant % has no PIP ref_format yet. 016 seeds it from '
+      'trg_tenants_seed_ref_formats, and AFTER INSERT triggers fire in '
+      'alphabetical order by name — this seed must sort after it.', p_tenant_id
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  INSERT INTO core.pipelines
+    (id, tenant_id, object, name, is_default, version, status,
+     created_by_kind, created_by_id)
+  SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid,
+         p_tenant_id, spec.object, spec.name, true, 1, 'ACTIVE', 'SYSTEM', 'migration:018'
+    FROM (VALUES
+            -- Doc 01 §3.6: two lifecycles, two rows. The nine-step delivery
+            -- lifecycle is API_CONTRACT.md's `GET /v1/engagements/{id}`
+            -- example and the contract's ENGAGEMENT_STAGE_KEYS.
+            ('ENGAGEMENT',  'Delivery lifecycle'),
+            -- The seven opportunity stages are doc 01 §5.3's own
+            -- `opportunities.stage` edge set and the contract's
+            -- OPPORTUNITY_STAGES, in that order.
+            ('OPPORTUNITY', 'Deal board')
+          ) AS spec(object, name)
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  INSERT INTO core.pipeline_steps
+    (id, tenant_id, pipeline_id, step_key, label, position, terminal, blocking_check_keys)
+  SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object || ':' || spec.step_key)::uuid,
+         p_tenant_id,
+         pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid,
+         spec.step_key, spec.label, spec.position, spec.terminal,
+         -- `blocking_check_keys` stays empty: §17 sets HRDC_CLAIM to BLOCKED
+         -- from a FAILING CHECK RESULT, not from a named key list, and 017
+         -- seeds the three check keys per tenant. Anything else here would be
+         -- configuration with no citation behind it.
+         ARRAY[]::text[]
+    FROM (VALUES
+            -- ENGAGEMENT — API_CONTRACT.md:549-553, contract ENGAGEMENT_STAGE_KEYS,
+            -- doc 01 §5.3 per row (engagements.status, trainer_bookings.state,
+            -- attendance_days.status, hrdc_packets.status, invoices.status).
+            ('ENGAGEMENT','WON',              'Won',               1::smallint, false),
+            ('ENGAGEMENT','TRAINER_CONFIRMED','Trainer confirmed', 2::smallint, false),
+            ('ENGAGEMENT','SCHEDULED',        'Scheduled',         3::smallint, false),
+            ('ENGAGEMENT','REGISTERED',       'Registered',        4::smallint, false),
+            ('ENGAGEMENT','DELIVERED',        'Delivered',         5::smallint, false),
+            ('ENGAGEMENT','ATTENDANCE_LOCKED','Attendance locked', 6::smallint, false),
+            ('ENGAGEMENT','HRDC_CLAIM',       'HRDC claim',        7::smallint, false),
+            ('ENGAGEMENT','INVOICED',         'Invoiced',          8::smallint, false),
+            ('ENGAGEMENT','PAID',             'Paid',              9::smallint, true),
+            -- OPPORTUNITY — doc 01 §5.3 `opportunities.stage`, contract
+            -- OPPORTUNITY_STAGES. WON and LOST are terminal and sit BESIDE each
+            -- other, which is ruling R16's whole point: a screen that inferred
+            -- an ending from the highest position would put LOST after WON.
+            ('OPPORTUNITY','NEW',           'New',           1::smallint, false),
+            ('OPPORTUNITY','QUALIFYING',    'Qualifying',    2::smallint, false),
+            ('OPPORTUNITY','TNA_SENT',      'TNA sent',      3::smallint, false),
+            ('OPPORTUNITY','PROPOSAL_SENT', 'Proposal sent', 4::smallint, false),
+            ('OPPORTUNITY','NEGOTIATION',   'Negotiation',   5::smallint, false),
+            ('OPPORTUNITY','WON',           'Won',           6::smallint, true),
+            ('OPPORTUNITY','LOST',          'Lost',          7::smallint, true)
+          ) AS spec(object, step_key, label, position, terminal)
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_steps = ROW_COUNT;
+
+  RETURN v_rows + v_steps;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION app.seed_pipelines_on_tenant()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+BEGIN
+  PERFORM app.seed_pipelines(NEW.id);
+  RETURN NEW;
+END;
+$fn$;
+
+-- NAME IS LOAD-BEARING. Per-row AFTER INSERT triggers fire in ALPHABETICAL
+-- ORDER BY TRIGGER NAME, and this one must run after 016's
+-- `trg_tenants_seed_ref_formats` or `core.assign_ref('PIP')` raises on every
+-- tenant insert. `trg_tenants_z_seed_pipelines` sorts after it; the obvious
+-- name, `trg_tenants_seed_pipelines`, sorts BEFORE it ('p' < 'r') and would
+-- have failed on the first tenant anyone created. The `z` is not decoration.
+--
+-- This is the FOURTH provisioning trigger on `public.tenants` — action policies
+-- (011), ref formats (016), check keys (017) and now pipelines. 017's header
+-- set the precedent explicitly: a later pack adds its own beside the others
+-- rather than editing theirs.
+DROP TRIGGER IF EXISTS trg_tenants_z_seed_pipelines ON public.tenants;
+CREATE TRIGGER trg_tenants_z_seed_pipelines
+  AFTER INSERT ON public.tenants
+  FOR EACH ROW EXECUTE FUNCTION app.seed_pipelines_on_tenant();
+
+REVOKE ALL ON FUNCTION app.seed_pipelines(uuid)      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app.seed_pipelines_on_tenant() FROM PUBLIC, anon, authenticated;
+
+-- Backfill: every tenant that already exists gets the same defaults, in the
+-- same shape 016 and 017 used for theirs. ON CONFLICT (id) DO NOTHING means a
+-- tenant that already configured its own pipelines keeps them.
+-- Raised to NOTICE here rather than at the verify block, because the backfill's
+-- own count is the thing an operator needs to see while applying this file.
+SET client_min_messages = notice;
+
+DO $backfill$
+DECLARE v_tenant uuid; v_total integer := 0; v_n integer;
+BEGIN
+  FOR v_tenant IN SELECT tenant.id FROM public.tenants AS tenant ORDER BY tenant.created_at
+  LOOP
+    BEGIN
+      v_n := app.seed_pipelines(v_tenant);
+      v_total := v_total + v_n;
+    EXCEPTION WHEN foreign_key_violation THEN
+      -- A tenant with no ref formats predates 016's backfill. Say which one
+      -- rather than failing the migration for everybody.
+      RAISE WARNING '018 backfill: tenant % has no PIP ref_format; pipelines not seeded.', v_tenant;
+    END;
+  END LOOP;
+  RAISE NOTICE '018 backfill: % pipeline and step row(s) seeded across existing tenants.', v_total;
+END
+$backfill$;
+
 -- ═══ 11 · Grants ═══════════════════════════════════════════════════════════
 --
 -- REVOKE first, GRANT second, and `anon` named explicitly beside PUBLIC even
@@ -4551,6 +4773,32 @@ BEGIN
   END IF;
   IF pg_catalog.has_table_privilege('anon', 'core.v_organisation_relations', 'SELECT') THEN
     RAISE EXCEPTION '018 verify V12d: anon can SELECT core.v_organisation_relations';
+  END IF;
+
+  -- V16b · THE PIPELINE SEED TRIGGER EXISTS AND SORTS AFTER 016'S.
+  -- Per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER BY TRIGGER NAME.
+  -- `core.pipelines` carries `trg_pipelines_ref` -> `core.assign_ref('PIP')`,
+  -- which raises if the tenant has no PIP ref_format, and 016 seeds those from
+  -- `trg_tenants_seed_ref_formats`. So this seed MUST sort after it. The name
+  -- carries that dependency, and a rename would break every tenant insert —
+  -- which is exactly the kind of thing a comment does not prevent.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger AS t
+      JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = 'tenants'
+       AND NOT t.tgisinternal AND t.tgname = 'trg_tenants_z_seed_pipelines') THEN
+    RAISE EXCEPTION '018 verify V16b: the pipeline seed trigger is missing from public.tenants';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger AS t
+      JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = 'tenants' AND NOT t.tgisinternal
+       AND t.tgname = 'trg_tenants_seed_ref_formats'
+       AND t.tgname > 'trg_tenants_z_seed_pipelines') THEN
+    RAISE EXCEPTION '018 verify V16c: the pipeline seed trigger sorts BEFORE 016''s ref-format '
+                    'seed, so core.assign_ref(''PIP'') will raise on every tenant insert';
   END IF;
 
   -- V13 · THE ENVELOPE. No function in this pack builds a success envelope by
