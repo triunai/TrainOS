@@ -364,15 +364,14 @@ function RelatedRow({ record, onOpen }: { record: RelatedRecord; onOpen: (path: 
       ) : (
         <span className="truncate text-ink">{record.ref}</span>
       )}
-      <span
-        className={
-          record.severity === "ALERT"
-            ? "ml-auto shrink-0 text-[11px] text-danger"
-            : "ml-auto shrink-0 text-[11px] text-ink-muted"
-        }
-      >
-        {record.label}
-      </span>
+      {/* An ALERT is a status and takes a chip; everything else is a caption. */}
+      {record.severity === "ALERT" ? (
+        <StatusChip tone="danger" className="ml-auto">
+          {record.label}
+        </StatusChip>
+      ) : (
+        <span className="ml-auto shrink-0 text-[11px] text-ink-muted">{record.label}</span>
+      )}
     </li>
   );
 }

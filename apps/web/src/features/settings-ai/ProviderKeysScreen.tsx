@@ -291,21 +291,24 @@ function ProviderCard({
         )}
 
         {nearCap ? (
-          <p className="text-[12px] text-warning">
+          /* The row's StatusChip carries the state. These three sentences say
+             what to do about it, and a sentence is text — text does not carry
+             status colour. */
+          <p className="text-[12px] text-ink-secondary">
             At {Math.round((provider.spendMonth.amount / (provider.cap?.amount ?? 1)) * 100)}% of
             its cap. Past it, every run scoped to this key pauses rather than overspending.
           </p>
         ) : null}
 
         {provider.status === "INVALID" && provider.activeFallbackTier ? (
-          <p className="text-[12px] text-danger">
+          <p className="text-[12px] text-ink-secondary">
             Key rejected · {provider.scopeTiers.map(tierLabel).join(", ")} is served by{" "}
             {tierLabel(provider.activeFallbackTier)} until replaced.
           </p>
         ) : null}
 
         {provider.status === "EXPIRING" && days !== null ? (
-          <p className="text-[12px] text-warning">
+          <p className="text-[12px] text-ink-secondary">
             Expires in {days} days. Rotate it before the date or the fallback chain carries the load
             unannounced.
           </p>

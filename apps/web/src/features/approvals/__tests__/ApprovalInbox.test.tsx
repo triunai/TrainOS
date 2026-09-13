@@ -39,10 +39,14 @@ describe("M02-S01 approval inbox", () => {
     const row = breached.closest("tr");
     expect(row).not.toBeNull();
 
-    /* The pack draws the breach in the danger ink. Colour lives in a class, so
-       the assertion is on the class the danger token resolves through. */
+    /* The pack draws the breach in the danger ink, and CLAUDE.md puts status
+       colour on chips only — so the question is whether the cell renders a
+       danger CHIP, not whether some span carries a class. The old assertion
+       read `sla.className` on a bare span, which meant it went on passing
+       unchanged when the colour moved onto a chip: it could not tell the two
+       apart, so it was not testing the rule it was written for. */
     const sla = within(row as HTMLElement).getByText(/over$/);
-    expect(sla.className).toContain("text-danger");
+    expect(sla).toHaveAttribute("data-tone", "danger");
 
     /* §7: `bulkApprovable` is false for anything carrying money. The checkbox
        is disabled and — this is the part that matters — the REASON is its
@@ -65,7 +69,8 @@ describe("M02-S01 approval inbox", () => {
        The missing 3-day row is reported to the fixtures owner. */
     expect(within(row).getByText(/left$/)).toBeInTheDocument();
     expect(within(row).queryByText(/over$/)).toBeNull();
-    expect(within(row).getByText(/left$/).className).not.toContain("text-danger");
+    /* Plain text, not a chip of any tone — an open window is not a status. */
+    expect(within(row).getByText(/left$/).closest("[data-tone]")).toBeNull();
   });
 
   it("reads a multi-day window in days rather than in hundreds of minutes", async () => {

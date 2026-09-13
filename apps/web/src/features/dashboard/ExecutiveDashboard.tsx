@@ -341,15 +341,14 @@ export function ExecutiveDashboard() {
                       <span className="text-[13px] font-semibold leading-snug text-ink">
                         {approval.subject}
                       </span>
-                      <span
-                        className={`font-mono text-[11px] ${
-                          approval.slaBreached ? "text-danger" : "text-ink-muted"
-                        }`}
-                      >
+                      {/* The breach is a chip, not red text: status colour
+                          lives on chips only, and it was being spent twice
+                          here — on the whole line and again on the words. */}
+                      <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-muted">
                         {approval.value ? <MoneyText value={approval.value} compact /> : null}
-                        {approval.value ? <span aria-hidden="true"> · </span> : null}
+                        {approval.value ? <span aria-hidden="true">·</span> : null}
                         {approval.slaBreached ? (
-                          <span className="font-semibold text-danger">SLA breached</span>
+                          <StatusChip tone="danger">SLA breached</StatusChip>
                         ) : (
                           <DateText value={approval.slaDueAt} withTime />
                         )}

@@ -232,15 +232,17 @@ export function ApprovalInbox() {
       {
         key: "sla",
         label: "SLA",
-        accessor: (row) => (
-          <span
-            className={
-              row.slaBreached ? "font-semibold text-danger" : "whitespace-nowrap text-ink-secondary"
-            }
-          >
-            {formatSla(row.slaRemainingMinutes, row.slaBreached)}
-          </span>
-        ),
+        /* A breach is a STATUS, so it wears a chip — CLAUDE.md puts status
+           colour on chips only. Red bold text in a cell is the same claim made
+           in the one place the design system says not to make it. */
+        accessor: (row) =>
+          row.slaBreached ? (
+            <StatusChip tone="danger">{formatSla(row.slaRemainingMinutes, true)}</StatusChip>
+          ) : (
+            <span className="whitespace-nowrap text-ink-secondary">
+              {formatSla(row.slaRemainingMinutes, false)}
+            </span>
+          ),
       },
       {
         key: "autonomy",

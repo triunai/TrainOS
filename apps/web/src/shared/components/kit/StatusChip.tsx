@@ -86,6 +86,12 @@ export function StatusChip({
   return (
     <span
       role={live ? "status" : undefined}
+      /* The tone, readable without reading Tailwind. Status colour lives only
+         on this component, so "is this drawn as a breach" is answerable by
+         asking the chip rather than by matching a class string on whatever
+         element happened to hold the text — which is how an assertion about
+         colour went on passing after the colour moved somewhere else. */
+      data-tone={tone}
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border px-2.5 py-[3px] text-[12px] font-medium",
         TONE[tone],

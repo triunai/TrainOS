@@ -1,5 +1,6 @@
 import type { RunEvent, RunEventType, TierKey } from "@trainos/contract";
 import { DateText } from "./DateText";
+import { StatusChip } from "./StatusChip";
 import { humanise, tierLabel } from "./format";
 import { AI_GLYPH } from "./tokens";
 import { cn } from "@/shared/lib/utils";
@@ -19,8 +20,17 @@ import { cn } from "@/shared/lib/utils";
  * means.
  */
 
+/**
+ * The mark carries the TYPE; the colour does not carry the status.
+ *
+ * Escalation used to be `text-warning` and a budget overrun `text-danger`,
+ * which is status colour on a non-chip — and encoded by colour alone, on a
+ * 14px glyph. The marks already differ per type, so the red and the amber were
+ * saying a second time what the mark and the title line say. The only colour
+ * left is the AI tint, which CLAUDE.md sanctions by name.
+ */
 const GLYPH: Record<RunEventType, { mark: string; className: string }> = {
-  ESCALATION: { mark: "↑", className: "text-warning" },
+  ESCALATION: { mark: "↑", className: "text-ink-muted" },
   /* The AI tint, not a status colour: a jury is model behaviour. */
   JURY: { mark: AI_GLYPH, className: "text-primary-hover" },
   TRUNCATION: { mark: "✂", className: "text-ink-muted" },
@@ -30,7 +40,7 @@ const GLYPH: Record<RunEventType, { mark: string; className: string }> = {
      tree gives a halted node: "policy interception is the thing worth seeing." */
   POLICY_HALT: { mark: "⏸", className: "text-primary-hover" },
   CACHE_HIT: { mark: "≡", className: "text-ink-muted" },
-  BUDGET_EXCEEDED: { mark: "!", className: "text-danger" },
+  BUDGET_EXCEEDED: { mark: "!", className: "text-ink-muted" },
 };
 
 /** A tier key off the untyped `detail` bag, through the kit's own formatter. */
@@ -133,7 +143,14 @@ export function RunEventRow({ event, className }: RunEventRowProps) {
       </span>
 
       <span className="min-w-0 flex-1">
-        <span className="block text-[13px] text-ink">{title(event)}</span>
+        <span className="flex flex-wrap items-center gap-1.5 text-[13px] text-ink">
+          {title(event)}
+          {/* The one event that is a failure rather than a step. It says so on
+              a chip, which is where status colour is allowed to live. */}
+          {event.type === "BUDGET_EXCEEDED" ? (
+            <StatusChip tone="danger">Budget exceeded</StatusChip>
+          ) : null}
+        </span>
         {detailLine ? (
           <span className="block pt-0.5 text-[12px] leading-relaxed text-ink-muted">
             {detailLine}

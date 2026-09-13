@@ -115,7 +115,10 @@ export function FollowUpQueuePage() {
       label: "Due",
       width: "104px",
       accessor: (row) => (
-        <span className={row.status === "OVERDUE" ? "text-danger" : "text-ink-secondary"}>
+        /* No colour here. The Status column immediately to the left already
+           renders OVERDUE through FOLLOW_UP_TONE, so this was the same fact
+           said twice — the second time in the place CLAUDE.md reserves. */
+        <span className="text-ink-secondary">
           <DateText value={row.dueDate} />
         </span>
       ),

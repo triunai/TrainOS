@@ -143,7 +143,9 @@ export function RunTraceScreen() {
             <span className="flex flex-wrap items-center gap-1.5">
               <StatusChip tone={RUN_TONE[entry.status]}>{humanise(entry.status)}</StatusChip>
               {entry.failure ? (
-                <span className="truncate font-mono text-[11px] text-danger">
+                /* The StatusChip beside it already carries FAILED in danger;
+                   colouring the code too spends the status budget twice. */
+                <span className="truncate font-mono text-[11px] text-ink-secondary">
                   {entry.failure.code}
                 </span>
               ) : null}
