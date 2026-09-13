@@ -22,3 +22,6 @@ Spawn a migrations author with docs/research/04-supabase-conventions.md + this f
 
 ## Update 18:20 — stopped mid-run
 Migrations 001–009 authored, EXECUTED on a local PG 17.11 shim (no Supabase CLI/Docker), committed. Not started: 010 finance, 011 action envelope, 012 events/outbox, 013 ai-ops, 014 RLS, 015 realtime+cron, 016 seed. Six doc defects found by execution are recorded in the catalog. Note: packages/contract/src/enums.ts generates the 69 DB enum types — a change there is a migration. public.user_profiles is an author addition.
+
+## Update 13 Sep 11:20 — stopped by user after 010
+Resumed 13 Sep morning: amendment pass A applied open rulings to 001–005 (see 06-critic-review.md Part 3 applied marks, 01d9da0); 010 finance committed (cfef7c1, marks a549e8c). Not started: 011 action envelope, 012 events/outbox, 013 ai-ops, 014 RLS, 015 realtime+cron, 016 seed. Resume with the same brief from 011.
