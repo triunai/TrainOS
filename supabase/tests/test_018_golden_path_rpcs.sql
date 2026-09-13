@@ -33,6 +33,36 @@ SET client_min_messages = notice;
 
 BEGIN;
 
+-- ── THE ENVELOPE GUARD ──────────────────────────────────────────────────────
+--
+-- `d := core.get_x(…) -> 'data'` evaluates to NULL when the RPC returned
+-- `{success:false, …}`, and `IF NULL THEN` takes the FALSE branch — so every
+-- assertion downstream of an unchecked extraction REPORTED PASS ON A REFUSAL.
+-- Fifteen blocks in this file did that. The correct pattern was already in use
+-- elsewhere in the same file; it just was not used consistently, which is the
+-- kind of thing a function fixes and a convention does not.
+--
+-- Every envelope now goes through here, including the ones that were already
+-- checked: uniform is what stops the next addition reopening the hole.
+CREATE OR REPLACE FUNCTION pg_temp.data(p_label text, p_envelope jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $guard$
+BEGIN
+  IF p_envelope IS NULL THEN
+    RAISE EXCEPTION '%: the RPC returned NULL, not an envelope', p_label;
+  END IF;
+  IF p_envelope -> 'success' <> 'true'::jsonb THEN
+    RAISE EXCEPTION '%: the RPC REFUSED, and every assertion below it would have '
+                    'passed vacuously on NULL: %', p_label, p_envelope;
+  END IF;
+  IF NOT (p_envelope ? 'data') THEN
+    RAISE EXCEPTION '%: a success envelope with no data key: %', p_label, p_envelope;
+  END IF;
+  RETURN p_envelope -> 'data';
+END;
+$guard$;
+
 
 -- ── Fixtures ───────────────────────────────────────────────────────────────
 -- Real `auth.users` rows, because `public.memberships.user_id` and
@@ -362,7 +392,7 @@ BEGIN
       (SELECT pg_catalog.array_agg(k) FROM pg_catalog.jsonb_object_keys(v) AS k);
   END IF;
 
-  v_data := v -> 'data';
+  v_data := pg_temp.data('T2-envelope-1', v);
   -- doc 09 §3's pin, as behaviour rather than as text: a client that gets `me`
   -- WITHOUT `permissions` silently falls back to showing everything.
   IF NOT (v_data ? 'permissions') THEN RAISE EXCEPTION 'T2b: me has no permissions key'; END IF;
@@ -436,6 +466,7 @@ BEGIN
   v_cursor := v1 #>> '{data,page,next}';
   v2 := core.list_enquiries('[]'::jsonb, NULL,
           pg_catalog.jsonb_build_object('size',2,'cursor',v_cursor), NULL);
+  PERFORM pg_temp.data('T4-envelope-1', v2);
   IF pg_catalog.jsonb_array_length(v2 -> 'data' -> 'data') <> 1 THEN
     RAISE EXCEPTION 'T4e: page 2 returned % rows, expected 1',
       pg_catalog.jsonb_array_length(v2 -> 'data' -> 'data');
@@ -486,6 +517,7 @@ BEGIN
   -- The filter actually filters, and `appliedFilters[].source` says who asked.
   v := core.list_enquiries('[{"field":"status","op":"eq","value":"OPEN"}]'::jsonb,
                            '-receivedAt', '{"size":50}'::jsonb, NULL);
+  PERFORM pg_temp.data('T5-envelope-1', v);
   IF (v #>> '{data,page,total}')::integer <> 2 THEN
     RAISE EXCEPTION 'T5f: status=OPEN returned %, expected 2', v #>> '{data,page,total}';
   END IF;
@@ -498,6 +530,7 @@ BEGIN
   SELECT id::text INTO v_view FROM core.saved_views
    WHERE tenant_id = '11111111-1111-4111-8111-111111111111' LIMIT 1;
   v := core.list_enquiries('[]'::jsonb, NULL, '{"size":50}'::jsonb, v_view);
+  PERFORM pg_temp.data('T5-envelope-2', v);
   IF (v #>> '{data,page,total}')::integer <> 2 THEN
     RAISE EXCEPTION 'T5h: the saved view did not apply: %', v -> 'data' -> 'page';
   END IF;
@@ -508,6 +541,7 @@ BEGIN
   -- REQUEST FILTERS WIN over the view's on the same field.
   v := core.list_enquiries('[{"field":"status","op":"eq","value":"ASSIGNED"}]'::jsonb,
                            NULL, '{"size":50}'::jsonb, v_view);
+  PERFORM pg_temp.data('T5-envelope-3', v);
   IF (v #>> '{data,page,total}')::integer <> 1 THEN
     RAISE EXCEPTION 'T5j: the request filter did not beat the view''s: %', v -> 'data' -> 'page';
   END IF;
@@ -524,7 +558,7 @@ DECLARE v jsonb; d jsonb;
 BEGIN
   v := core.get_enquiry('ddddddd1-0000-4000-8000-000000000001');
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T6: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T6-envelope-1', v);
 
   -- doc 09 §6's pin. `topic` HAS a provenance row; `audience` does not. The AI
   -- badge renders on PRESENCE, so a null provenance would badge every
@@ -580,8 +614,25 @@ BEGIN
   IF v_other #>> '{error,code}' <> 'NOT_FOUND' THEN
     RAISE EXCEPTION 'T7a: a cross-tenant read did not refuse: %', v_other;
   END IF;
-  IF (v_other -> 'error' -> 'code') IS DISTINCT FROM (v_absent -> 'error' -> 'code') THEN
-    RAISE EXCEPTION 'T7b: cross-tenant and not-found refuse differently';
+  -- BYTE-IDENTICAL MEANS THE WHOLE ERROR OBJECT, not just the code. This used
+  -- to compare `error.code` alone while the comment above it promised more: a
+  -- `details` bag that differed between the two — a row count, a name, a
+  -- timestamp — is an existence oracle for another tenant's data just as much
+  -- as a different code is, and the narrower assertion would not have seen it.
+  -- The one key that legitimately differs is `details.id`, which is the
+  -- CALLER'S OWN ARGUMENT echoed back — it carries no server knowledge, and
+  -- that is asserted rather than assumed just below. Everything else must
+  -- match, including the SET OF KEYS: a `details` bag that gained a row count,
+  -- a name or a timestamp on one path and not the other would be an existence
+  -- oracle for another tenant's data exactly as a different code would.
+  IF v_other #>> '{error,details,id}' <> 'ddddddd1-0000-4000-8000-000000000009'
+     OR v_absent #>> '{error,details,id}' <> '00000000-0000-4000-8000-00000000dead' THEN
+    RAISE EXCEPTION 'T7b0: details.id is not the caller''s own argument echoed back';
+  END IF;
+  IF ((v_other -> 'error') #- '{details,id}')
+     IS DISTINCT FROM ((v_absent -> 'error') #- '{details,id}') THEN
+    RAISE EXCEPTION 'T7b: cross-tenant and not-found refuse differently: % vs %',
+      v_other -> 'error', v_absent -> 'error';
   END IF;
   IF v_other ? 'data' THEN RAISE EXCEPTION 'T7c: a refusal leaked a data key'; END IF;
   IF v_other::text LIKE '%TENANT B SECRET%' THEN
@@ -600,7 +651,7 @@ DECLARE v jsonb; d jsonb;
 BEGIN
   v := core.get_organisation('bbbbbbb1-0000-4000-8000-000000000001');
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T8: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T8-envelope-1', v);
   IF NOT (d -> 'metrics' ?& ARRAY['lifetimeValue','openPipeline','arOverdue',
                                   'hrdcLevyAvailable','healthScore']) THEN
     RAISE EXCEPTION 'T8a: the §5 metric strip is incomplete: %', d -> 'metrics';
@@ -623,12 +674,12 @@ BEGIN
     RAISE EXCEPTION 'T8e: openPipeline = %, expected 4000000', d #> '{metrics,openPipeline,value}';
   END IF;
 
-  d := core.get_contact('ccccccc1-0000-4000-8000-000000000001') -> 'data';
+  d := pg_temp.data('T8-envelope-2', core.get_contact('ccccccc1-0000-4000-8000-000000000001'));
   IF (d #> '{consent,email}') <> 'true'::jsonb OR (d #> '{consent,whatsapp}') <> 'false'::jsonb THEN
     RAISE EXCEPTION 'T8f: consent did not project per channel: %', d -> 'consent';
   END IF;
 
-  d := core.get_opportunity('OPP-2026-0001') -> 'data';
+  d := pg_temp.data('T8-envelope-3', core.get_opportunity('OPP-2026-0001'));
   IF d ->> 'organisationRef' <> 'ORG-0001' THEN
     RAISE EXCEPTION 'T8g: opportunity did not resolve its organisation ref: %', d ->> 'organisationRef';
   END IF;
@@ -659,7 +710,7 @@ DECLARE v jsonb; d jsonb; v_nav jsonb;
 BEGIN
   v := core.get_pipeline_config('OPPORTUNITY');
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T9: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T9-envelope-1', v);
   -- Seven, from 018's own seed: NEW, QUALIFYING, TNA_SENT, PROPOSAL_SENT,
   -- NEGOTIATION, WON, LOST — the contract's OPPORTUNITY_STAGES in order.
   IF pg_catalog.jsonb_array_length(d -> 'stages') <> 7 THEN
@@ -725,7 +776,7 @@ DECLARE v jsonb; d jsonb; v_badges jsonb;
 BEGIN
   v := core.navigation();
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T10: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T10-envelope-1', v);
   IF NOT (d ? 'groups') OR pg_catalog.jsonb_array_length(d -> 'groups') = 0 THEN
     RAISE EXCEPTION 'T10a: an empty nav tree is a bug, not an empty state: %', d;
   END IF;
@@ -759,7 +810,7 @@ DO $banner$ BEGIN RAISE NOTICE '════════ T11 · TNA — read-onl
 DO $t11$
 DECLARE v jsonb; d jsonb;
 BEGIN
-  d := core.get_tna('a1111111-0000-4000-8000-000000000001') -> 'data';
+  d := pg_temp.data('T11-envelope-1', core.get_tna('a1111111-0000-4000-8000-000000000001'));
   IF d ->> 'status' <> 'COMPLETE' THEN RAISE EXCEPTION 'T11a: wrong status'; END IF;
   -- §12 widens completedBy to AnyActor, which includes CLIENT.
   IF d #>> '{completedBy,kind}' <> 'CLIENT' THEN
@@ -775,7 +826,8 @@ BEGIN
   END IF;
 
   v := core.get_tna_recommendations('a1111111-0000-4000-8000-000000000001');
-  d := v -> 'data';
+  PERFORM pg_temp.data('T11-envelope-2', v);
+  d := pg_temp.data('T11-envelope-3', v);
   IF NOT (d ?& ARRAY['data','provenance','scoringModel']) THEN
     RAISE EXCEPTION 'T11f: TnaRecommendationsResponse is incomplete: %', d;
   END IF;
@@ -848,6 +900,7 @@ BEGIN
 
   -- A RETRY WITH THE SAME BODY RETURNS THE ORIGINAL, and creates no second row.
   v2 := core.create_proposal(v_body, 'key-alpha');
+  PERFORM pg_temp.data('T12-envelope-1', v2);
   IF v2 #>> '{data,id}' <> v_id THEN
     RAISE EXCEPTION 'T12g: a replay created a SECOND proposal — this is the double-click bug';
   END IF;
@@ -917,7 +970,7 @@ BEGIN
 
   v := core.put_quotation(v_quote::text, v_lines, 'quote-key-1');
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T13a: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T13-envelope-1', v);
 
   -- TOTALS SUM THE ROUNDED LINES. The header is not written by this function;
   -- 007's recalc trigger produces it from the lines, and that is the point.
@@ -950,9 +1003,21 @@ BEGIN
   IF NOT (d #> '{display}' ? 'perPax') THEN
     RAISE EXCEPTION 'T13h: display.perPax is missing';
   END IF;
+  -- T13i USED TO FILTER THE LINES FOR `item ILIKE '%pax%'`. The fixture's two
+  -- lines are "Trainer days" and "Materials", so the count was unconditionally
+  -- zero and the assertion could not fail. The rule it was reaching for is that
+  -- `display.perPax` is DERIVED, so it must appear nowhere among the stored
+  -- lines — asserted here against the value itself rather than against a word.
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_array_elements(d -> 'lines') AS l
-       WHERE l.value ->> 'item' ILIKE '%pax%' AND l.value ->> 'unit' IS NULL) > 0 THEN
-    RAISE EXCEPTION 'T13i: a per-pax display figure became a line';
+       WHERE (l.value #>> '{total,amount}')::bigint
+             = (d #>> '{display,perPax,amount}')::bigint) > 0 THEN
+    RAISE EXCEPTION 'T13i: the per-pax display figure (%) is also stored as a line: %',
+      d #> '{display,perPax}', d -> 'lines';
+  END IF;
+  -- And every stored line is a real line: a display figure has no unit.
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_array_elements(d -> 'lines') AS l
+       WHERE l.value ->> 'unit' IS NULL) > 0 THEN
+    RAISE EXCEPTION 'T13i2: a line with no unit was stored: %', d -> 'lines';
   END IF;
   IF pg_catalog.jsonb_array_length(d -> 'lines') <> 2 THEN
     RAISE EXCEPTION 'T13j: expected 2 lines, got %', pg_catalog.jsonb_array_length(d -> 'lines');
@@ -1011,6 +1076,17 @@ BEGIN
     RAISE EXCEPTION 'T14a: a below-floor price was ACCEPTED with no approval behind it';
   EXCEPTION WHEN sqlstate 'TRNOS' THEN
     GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    -- POLICY_APPROVAL_REQUIRED IS CHECKED FIRST, AND THAT ORDER IS THE FIX.
+    -- It used to be checked at the END of this block, below a branch that had
+    -- already refused anything that was not FLOOR_PRICE_BREACH — so the
+    -- assertion sat on a path where its own condition could not hold. A
+    -- discount that needs approval goes through DISCOUNT_APPROVE on
+    -- core.perform_action, which is the one endpoint that gates approvals;
+    -- put_quotation raising it here would mean two endpoints gate approvals.
+    IF v_detail ->> 'code' = 'POLICY_APPROVAL_REQUIRED' THEN
+      RAISE EXCEPTION 'T14e: put_quotation raised POLICY_APPROVAL_REQUIRED; that belongs '
+                      'to core.perform_action: %', v_detail;
+    END IF;
     IF v_detail ->> 'code' <> 'FLOOR_PRICE_BREACH' THEN
       RAISE EXCEPTION 'T14b: wrong code: %', v_detail;
     END IF;
@@ -1024,13 +1100,6 @@ BEGIN
     END IF;
     IF v_detail ->> 'bindingFloorBasis' NOT IN ('ABSOLUTE','MARGIN') THEN
       RAISE EXCEPTION 'T14d: the refusal leaked 007''s PROGRAMME spelling: %', v_detail;
-    END IF;
-    -- POLICY_APPROVAL_REQUIRED IS NOT RAISED HERE. A discount that needs
-    -- approval goes through DISCOUNT_APPROVE on core.perform_action, which is
-    -- the one endpoint that gates approvals.
-    IF v_detail ->> 'code' = 'POLICY_APPROVAL_REQUIRED' THEN
-      RAISE EXCEPTION 'T14e: put_quotation raised POLICY_APPROVAL_REQUIRED; that belongs '
-                      'to core.perform_action';
     END IF;
   END;
   RAISE NOTICE 'T14 PASS: below-floor refused with the complete R6 bag, basis mapped, and '
@@ -1072,7 +1141,7 @@ BEGIN
 
   v := core.list_approvals('[]'::jsonb, NULL, '{"size":50}'::jsonb, NULL);
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T15a: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T15-envelope-1', v);
   -- `groups` sits BESIDE `data` INSIDE the data object — one level down from
   -- the envelope. One level UP it would flip every client to pass-through.
   IF NOT (d ?& ARRAY['data','page','groups']) THEN
@@ -1099,7 +1168,7 @@ BEGIN
     RAISE EXCEPTION 'T15g: slaBreached did not project as a flag';
   END IF;
 
-  d := core.get_approval(v_apv::text) -> 'data';
+  d := pg_temp.data('T15-envelope-2', core.get_approval(v_apv::text));
   IF NOT (d ?& ARRAY['reason','recommendation','evidence','deviations','risk','diff']) THEN
     RAISE EXCEPTION 'T15h: ApprovalDetail is incomplete: %', d;
   END IF;
@@ -1343,7 +1412,7 @@ DO $banner$ BEGIN RAISE NOTICE '════════ T19 · Configuration re
 DO $t19$
 DECLARE d jsonb;
 BEGIN
-  d := core.get_programme('b2222222-0000-4000-8000-000000000001') -> 'data';
+  d := pg_temp.data('T19-envelope-1', core.get_programme('b2222222-0000-4000-8000-000000000001'));
   IF NOT (d ?& ARRAY['listPrice','floorPrice','floorMarginRate','modules','pricingTiers',
                      'trainerPool','materials','stats','outcomes']) THEN
     RAISE EXCEPTION 'T19a: Programme is incomplete: %', d;
@@ -1386,7 +1455,7 @@ BEGIN
 END
 $t19$;
 
-DO $banner$ BEGIN RAISE NOTICE '════════ T20 · EVERY RPC RETURNS ONLY THROUGH app.ok / app.err ════════'; END $banner$;
+DO $banner$ BEGIN RAISE NOTICE '════════ T20 · 21 RPCs CALLED, ALL 30 CHECKED STRUCTURALLY ════════'; END $banner$;
 DO $t20$
 DECLARE v_name text; v jsonb; v_keys text[];
 DECLARE v_calls text[] := ARRAY[
@@ -1427,7 +1496,69 @@ BEGIN
       RAISE EXCEPTION 'T20b: % returned both data and error', v_name;
     END IF;
   END LOOP;
-  RAISE NOTICE 'T20 PASS: all 21 probed calls return exactly {success,data} or {success,error}.';
+
+  -- THE BANNER USED TO SAY "EVERY RPC" AND THE LOOP PROBED 21 OF 30. The nine
+  -- it could not reach need arguments a fixture cannot always supply, so the
+  -- remaining claim is made STRUCTURALLY instead of dropped: every one of the
+  -- 30 bodies returns through `app.ok` / `app.err` or refuses through a TRNOS
+  -- raise, and none builds an envelope by hand. That is the property the
+  -- banner was asserting; this is the form in which it is actually true.
+  SELECT pg_catalog.array_agg(p.proname ORDER BY p.proname) INTO v_keys
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'core'
+     AND p.proname IN (
+       'me','navigation','badge_counts','list_enquiries','get_enquiry',
+       'patch_enquiry_extraction','list_follow_ups','get_follow_up_draft',
+       'get_organisation','get_opportunity','get_contact','get_tna',
+       'get_tna_recommendations','create_proposal','list_proposals','get_proposal',
+       'add_proposal_section','put_proposal_section','regenerate_proposal_section',
+       'list_quotations','get_quotation','put_quotation','get_rate_card',
+       'list_approvals','get_approval','get_audit','get_policy',
+       'get_pipeline_config','get_programme','get_compliance_rule')
+     -- The six writers return by DELEGATING to a reader — `create_proposal`
+     -- ends `RETURN core.get_proposal(...)` — so "routes through app.ok" is
+     -- satisfied transitively, and `RETURN core.` is the transitive form. A
+     -- body matching neither builds its own envelope or returns nothing.
+     AND NOT (app._body_sql(p.oid) LIKE '%app.ok(%'
+              OR app._body_sql(p.oid) LIKE '%app.err(%'
+              OR app._body_sql(p.oid) LIKE '%RETURN core.%');
+  IF v_keys IS NOT NULL THEN
+    RAISE EXCEPTION 'T20c: RPC(s) that never route through app.ok/app.err: %',
+      pg_catalog.array_to_string(v_keys, ', ');
+  END IF;
+
+  SELECT pg_catalog.array_agg(p.proname ORDER BY p.proname) INTO v_keys
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'core' AND p.pronamespace = n.oid
+     AND app._body_sql(p.oid) LIKE '%jsonb_build_object(''success''%';
+  IF v_keys IS NOT NULL THEN
+    RAISE EXCEPTION 'T20d: a hand-built envelope appears in: %',
+      pg_catalog.array_to_string(v_keys, ', ');
+  END IF;
+
+  -- NO DEFINER IN `core` RUNS WITHOUT A TIMEOUT. Counting definers would tie
+  -- this pin to how many functions other packs happen to own — 017's
+  -- `retrieve_knowledge` is one — so the invariant is stated as an absence
+  -- instead, which stays true as the schema grows.
+  SELECT pg_catalog.array_agg(p.proname ORDER BY p.proname) INTO v_keys
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'core' AND p.prosecdef
+     -- Scoped to what a CLIENT can call. The trigger functions and internal
+     -- recalc helpers 005-010 own are definers too and are reachable only from
+     -- a trigger, where a request timeout has no meaning.
+     AND pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+     AND NOT p.proconfig @> ARRAY['statement_timeout=10s'];
+  IF v_keys IS NOT NULL THEN
+    RAISE EXCEPTION 'T20e: a client-callable SECURITY DEFINER in core has no '
+                    'statement_timeout: %',
+      pg_catalog.array_to_string(v_keys, ', ');
+  END IF;
+
+  RAISE NOTICE 'T20 PASS: 21 probed calls return exactly {success,data} or {success,error}, '
+               'and all 30 RPCs route through app.ok/app.err with no hand-built envelope.';
 END
 $t20$;
 
@@ -1448,10 +1579,13 @@ BEGIN
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname = 'app' AND p.proname IN
          ('_money','_actor','_provenance','_provenanced','_cursor_encode','_cursor_decode',
-          '_page_size','_predicate','_body_sql','_budget_rows','_model_tier_rows')) <> 11 THEN
-    RAISE EXCEPTION 'T21b: expected 11 app._* helpers from 018';
+          '_page_size','_predicate','_body_sql','_budget_rows','_model_tier_rows',
+          -- The three extracted while clearing the review: one keyset engine
+          -- (_keyset_scope + _next_cursor) and one saved-view resolver.
+          '_keyset_scope','_next_cursor','_view_filters')) <> 14 THEN
+    RAISE EXCEPTION 'T21b: expected 14 app._* helpers from 018';
   END IF;
-  RAISE NOTICE 'T21 PASS: 11 internal helpers exist and none is callable by anon or authenticated.';
+  RAISE NOTICE 'T21 PASS: 14 internal helpers exist and none is callable by anon or authenticated.';
 END
 $t21$;
 
@@ -1476,12 +1610,14 @@ BEGIN
   v := core.list_enquiries(
     '[{"field":"status","op":"in","value":["OPEN","ASSIGNED"]}]'::jsonb,
     NULL, '{"size":50}'::jsonb, NULL);
+  PERFORM pg_temp.data('T22-envelope-1', v);
   IF (v #>> '{data,page,total}')::integer <> 3 THEN
     RAISE EXCEPTION 'T22c: the `in` operator did not match both values: %', v -> 'data' -> 'page';
   END IF;
   v := core.list_enquiries(
     '[{"field":"receivedAt","op":"between","value":["2026-09-10T00:00:00+08","2026-09-10T23:59:59+08"]}]'::jsonb,
     NULL, '{"size":50}'::jsonb, NULL);
+  PERFORM pg_temp.data('T22-envelope-2', v);
   IF (v #>> '{data,page,total}')::integer <> 1 THEN
     RAISE EXCEPTION 'T22d: `between` did not bound the range: %', v -> 'data' -> 'page';
   END IF;
@@ -1537,8 +1673,20 @@ BEGIN
   IF v_q.sst_sen <> app.round_half_up_sen(500000::numeric * 0.08) THEN
     RAISE EXCEPTION 'T23f: sst_sen % is not the generated rounding of sell x rate', v_q.sst_sen;
   END IF;
-  IF v_q.gross_price_sen <> v_q.sell_price_sen + v_q.sst_sen THEN
-    RAISE EXCEPTION 'T23g: gross is not net plus tax';
+  -- T23g USED TO READ `gross_price_sen <> sell_price_sen + sst_sen`. 017:604
+  -- defines `gross_price_sen` as GENERATED ALWAYS AS
+  -- `sell_price_sen + round_half_up_sen(sell_price_sen * sst_rate)` and
+  -- `sst_sen` as that second term, so the assertion was `x <> x` and pinned
+  -- PostgreSQL's arithmetic rather than this pack's. What 018 actually decides
+  -- is WHICH RATE lands on the row, so the gross is recomputed here from the
+  -- REGISTRY rate reached through the stored policy id — the one number 018
+  -- wrote — rather than from the generated column that was derived from it.
+  IF v_q.gross_price_sen <> v_q.sell_price_sen + app.round_half_up_sen(
+       v_q.sell_price_sen::numeric
+       * (SELECT policy.rate_bps::numeric / 10000
+            FROM core.tax_policies AS policy WHERE policy.id = v_q.sst_policy_id)) THEN
+    RAISE EXCEPTION 'T23g: gross % does not follow from the registry rate on policy %',
+      v_q.gross_price_sen, v_q.sst_policy_id;
   END IF;
   RAISE NOTICE 'T23 PASS: put_quotation resolved SST through app.resolve_tax_policy — '
                'policy recorded, rate 0.08 from the registry, sst_sen and gross generated.';
@@ -1547,12 +1695,12 @@ $t23$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ T24 · patch_enquiry_extraction — an edit discloses itself ════════'; END $banner$;
 DO $t24$
-DECLARE v jsonb; d jsonb; v_prov jsonb;
+DECLARE v jsonb; d jsonb; v_prov jsonb; v_detail text;
 BEGIN
   v := core.patch_enquiry_extraction('ddddddd1-0000-4000-8000-000000000001',
          '{"field":"topic","value":"Delegation and feedback"}'::jsonb);
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T24a: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T24-envelope-1', v);
   IF d #>> '{extraction,topic,value}' <> 'Delegation and feedback' THEN
     RAISE EXCEPTION 'T24b: the value did not change: %', d #> '{extraction,topic}';
   END IF;
@@ -1580,6 +1728,7 @@ BEGIN
   -- editing it must not invent one and badge it as AI-touched for ever after.
   v := core.patch_enquiry_extraction('ENQ-2026-0001',
          '{"field":"audience","value":"Senior line managers"}'::jsonb);
+  PERFORM pg_temp.data('T24-envelope-2', v);
   IF (v #> '{data,extraction,audience}') ? 'provenance' THEN
     RAISE EXCEPTION 'T24g: editing a human field invented a provenance row';
   END IF;
@@ -1587,6 +1736,7 @@ BEGIN
   -- `budget` is Money on the wire and integer sen in the column.
   v := core.patch_enquiry_extraction('ENQ-2026-0001',
          '{"field":"budget","value":{"amount":5500000,"currency":"MYR"}}'::jsonb);
+  PERFORM pg_temp.data('T24-envelope-3', v);
   IF (v #>> '{data,extraction,budget,value,amount}')::bigint <> 5500000 THEN
     RAISE EXCEPTION 'T24h: budget did not round-trip as Money: %',
       v #> '{data,extraction,budget,value}';
@@ -1596,7 +1746,15 @@ BEGIN
   BEGIN
     PERFORM core.patch_enquiry_extraction('ENQ-2026-0001','{"field":"nope","value":"x"}'::jsonb);
     RAISE EXCEPTION 'T24i: an unknown extraction field was accepted';
-  EXCEPTION WHEN sqlstate 'TRNOS' THEN NULL;
+  -- THE CODE IS READ, NOT JUST THE SQLSTATE. `WHEN sqlstate 'TRNOS' THEN NULL`
+  -- accepts a NOT_FOUND or a FORBIDDEN for a test written about validation, so
+  -- the endpoint could start refusing for an entirely different reason and this
+  -- would still pass. The same file already does it correctly five times.
+  EXCEPTION WHEN sqlstate 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb) ->> 'code' <> 'VALIDATION_FAILED' THEN
+      RAISE EXCEPTION 'T24i2: refused, but not as a validation failure: %', v_detail;
+    END IF;
   END;
   RAISE NOTICE 'T24 PASS: edit flips origin to AI_SUGGESTED with editedBy, keeps the model '
                'lineage, invents nothing on human fields, round-trips Money, refuses junk.';
@@ -1621,7 +1779,7 @@ BEGIN
 
   v := core.list_follow_ups();
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T25a: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T25-envelope-1', v);
   IF (d #>> '{page,total}')::integer <> 2 THEN
     RAISE EXCEPTION 'T25b: expected 2 follow-ups, got %', d #> '{page,total}';
   END IF;
@@ -1652,7 +1810,7 @@ BEGIN
           'AGENT','agent:followup')
   RETURNING id INTO v_msg;
 
-  d := core.get_follow_up_draft('c0000001-0000-4000-8000-000000000001','EMAIL') -> 'data';
+  d := pg_temp.data('T25-envelope-2', core.get_follow_up_draft('c0000001-0000-4000-8000-000000000001','EMAIL'));
   IF d ->> 'rateSource' <> 'UNAVAILABLE' THEN
     RAISE EXCEPTION 'T25f: rateSource is % with no rate row, expected UNAVAILABLE',
       d ->> 'rateSource';
@@ -1685,12 +1843,13 @@ $t25$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ T26 · proposal sections — add, edit, regenerate ════════'; END $banner$;
 DO $t26$
-DECLARE v jsonb; d jsonb; v_prop text; v_run text; v_before integer;
+DECLARE v jsonb; d jsonb; v_prop text; v_run text; v_before integer; v_detail text;
 BEGIN
   SELECT ref INTO v_prop FROM core.proposals
    WHERE tenant_id = '11111111-1111-4111-8111-111111111111' LIMIT 1;
 
   v := core.list_proposals();
+  PERFORM pg_temp.data('T26-envelope-1', v);
   IF (v #>> '{data,page,total}')::integer < 1 THEN
     RAISE EXCEPTION 'T26a: list_proposals found nothing';
   END IF;
@@ -1720,6 +1879,7 @@ BEGIN
 
   -- A replay returns the proposal and adds no second section.
   v := core.add_proposal_section(v_prop, '{"title":"Investment","body":"Draft"}'::jsonb, 'sec-key-1');
+  PERFORM pg_temp.data('T26-envelope-2', v);
   IF pg_catalog.jsonb_array_length(v #> '{data,sections}') <> v_before + 1 THEN
     RAISE EXCEPTION 'T26g: a replay added a SECOND identical section';
   END IF;
@@ -1727,25 +1887,35 @@ BEGIN
   BEGIN
     PERFORM core.add_proposal_section(v_prop, '{"title":"   "}'::jsonb, 'sec-key-2');
     RAISE EXCEPTION 'T26h: a blank title was accepted';
-  EXCEPTION WHEN sqlstate 'TRNOS' THEN NULL;
+  EXCEPTION WHEN sqlstate 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb) ->> 'code' <> 'VALIDATION_FAILED' THEN
+      RAISE EXCEPTION 'T26h2: refused, but not as a validation failure: %', v_detail;
+    END IF;
   END;
 
   -- Editing section 1, which HAS a provenance row in the fixtures? It does not,
   -- so this asserts the human-authored path stays human-authored.
   v := core.put_proposal_section(v_prop, 1, '{"body":"Rewritten by hand"}'::jsonb, 'put-key-1');
+  PERFORM pg_temp.data('T26-envelope-3', v);
   IF v #>> '{data,sections,0,body}' <> 'Rewritten by hand' THEN
     RAISE EXCEPTION 'T26i: the body did not change';
   END IF;
   -- An EMPTY title is ignored rather than written: a blank heading is never
   -- what an editor meant.
   v := core.put_proposal_section(v_prop, 1, '{"body":"Again","title":""}'::jsonb, 'put-key-2');
+  PERFORM pg_temp.data('T26-envelope-4', v);
   IF v #>> '{data,sections,0,title}' <> 'Understanding' THEN
     RAISE EXCEPTION 'T26j: an empty title overwrote a real one: %', v #> '{data,sections,0,title}';
   END IF;
   BEGIN
     PERFORM core.put_proposal_section(v_prop, 99, '{"body":"x"}'::jsonb, 'put-key-3');
     RAISE EXCEPTION 'T26k: an unknown section number was accepted';
-  EXCEPTION WHEN sqlstate 'TRNOS' THEN NULL;
+  EXCEPTION WHEN sqlstate 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb) ->> 'code' <> 'NOT_FOUND' THEN
+      RAISE EXCEPTION 'T26k2: refused, but not as a not-found: %', v_detail;
+    END IF;
   END;
 
   -- REGENERATE ENQUEUES, IT DOES NOT GENERATE. Ruling R-A puts every model call
@@ -1826,7 +1996,7 @@ DECLARE v jsonb; d jsonb;
 BEGIN
   v := core.get_rate_card();
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T28a: %', v; END IF;
-  d := v -> 'data';
+  d := pg_temp.data('T28-envelope-1', v);
   IF NOT (d ?& ARRAY['version','effectiveFrom','effectiveTo','currency','trainerDayRate',
                      'materialsPerPax','venue','travel','mealsPerPax','commissionPct',
                      'marginFloorPct','discountAuthority']) THEN
@@ -1947,11 +2117,24 @@ BEGIN
   -- WON IS A STAGE OF BOTH PIPELINES, which is why the name carries the object.
   -- Without it both rows derive the SAME id and the second insert is a primary
   -- key violation. Asserting the two are different is asserting the fix.
-  IF (SELECT id FROM core.pipeline_steps
-       WHERE tenant_id = v_tenant AND step_key = 'WON' AND position = 1)
-     = (SELECT id FROM core.pipeline_steps
-         WHERE tenant_id = v_tenant AND step_key = 'WON' AND position = 6) THEN
-    RAISE EXCEPTION 'T30d: both WON stages derived the same id — the pipeline '
+  -- T30d USED TO COMPARE THE `id` OF TWO DISTINCT ROWS FOR EQUALITY. `id` is
+  -- the primary key (004:639), so two rows that both exist can never share one
+  -- and the assertion could not fail — as the comment above it already admitted,
+  -- the real failure aborts at the seed with a PK violation before this line
+  -- runs. What is actually worth pinning is that each id IS THE DERIVED ONE
+  -- FOR ITS OWN OBJECT: `md5(tenant || 'pipeline:' || object || ':' || key)`.
+  -- That is falsifiable — drop the object from the derivation and both sides
+  -- become the same value and this fails, which is the defect the comment
+  -- describes.
+  IF (SELECT step.id FROM core.pipeline_steps AS step
+        JOIN core.pipelines AS pipe ON pipe.tenant_id = step.tenant_id AND pipe.id = step.pipeline_id
+       WHERE step.tenant_id = v_tenant AND step.step_key = 'WON' AND pipe.object = 'ENGAGEMENT')
+     IS DISTINCT FROM pg_catalog.md5(v_tenant::text || 'pipeline:ENGAGEMENT:WON')::uuid
+     OR (SELECT step.id FROM core.pipeline_steps AS step
+           JOIN core.pipelines AS pipe ON pipe.tenant_id = step.tenant_id AND pipe.id = step.pipeline_id
+          WHERE step.tenant_id = v_tenant AND step.step_key = 'WON' AND pipe.object = 'OPPORTUNITY')
+     IS DISTINCT FROM pg_catalog.md5(v_tenant::text || 'pipeline:OPPORTUNITY:WON')::uuid THEN
+    RAISE EXCEPTION 'T30d: a WON stage id is not derived from its own object — the pipeline '
                     'object is missing from the derivation';
   END IF;
   IF (SELECT id FROM core.pipeline_steps
@@ -2115,6 +2298,7 @@ BEGIN
            app._cursor_encode((SELECT (due_date::timestamptz) FROM core.follow_ups
                                 WHERE id = 'c0000001-0000-4000-8000-000000000004'),
                               'c0000001-0000-4000-8000-000000000004'::uuid)), NULL);
+  PERFORM pg_temp.data('T31-envelope-1', v);
   IF pg_catalog.jsonb_array_length(v #> '{data,data}') <> 0 THEN
     RAISE EXCEPTION 'T31g: a cursor at the last row should yield an empty page';
   END IF;
@@ -2469,6 +2653,7 @@ BEGIN
           'AGENT', 'agent:jury', pg_catalog.now() - interval '1 hour');
 
   v := core.get_approval(v_apv::text);
+  PERFORM pg_temp.data('T34-envelope-1', v);
   IF (v #>> '{data,modelAgreement,quorum}') <> '3' THEN
     RAISE EXCEPTION 'T34f: the jury shown is not the most recent one: %',
       v #> '{data,modelAgreement}';
@@ -2580,6 +2765,169 @@ BEGIN
                'and every tenant ends the migration with a pipeline configuration.';
 END
 $t35$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T36 · get_proposal AND get_quotation, INVOKED ════════'; END $banner$;
+DO $t36$
+DECLARE
+  v_tenant uuid := '11111111-1111-4111-8111-111111111111';
+  v        jsonb;
+  d        jsonb;
+  v_prop   uuid;
+  v_quote  uuid;
+  v_row    jsonb;
+BEGIN
+  -- NEITHER OF THESE WAS EVER CALLED BY THIS FILE. They appeared only in
+  -- comments and in T20's metadata sweep, so their projections, their NOT_FOUND
+  -- paths and their envelopes were entirely unasserted — while `list_proposals`
+  -- and `list_quotations` project EVERY ROW through them. One unreviewed
+  -- projection was answering for two endpoints and two lists.
+  SELECT id INTO v_prop  FROM core.proposals  WHERE tenant_id = v_tenant ORDER BY created_at LIMIT 1;
+  SELECT id INTO v_quote FROM core.quotations WHERE tenant_id = v_tenant ORDER BY created_at LIMIT 1;
+  IF v_prop IS NULL OR v_quote IS NULL THEN
+    RAISE EXCEPTION 'T36-setup: fixtures missing (proposal %, quotation %)', v_prop, v_quote;
+  END IF;
+
+  -- ── core.get_proposal ────────────────────────────────────────────────────
+  d := pg_temp.data('T36a', core.get_proposal(v_prop::text));
+  IF NOT (d ?& ARRAY['id','ref','status','sections','value','marginRate','opportunityRef']) THEN
+    RAISE EXCEPTION 'T36b: the Proposal projection is incomplete: %',
+      (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.jsonb_object_keys(d) AS k);
+  END IF;
+  IF d ->> 'id' <> v_prop::text THEN
+    RAISE EXCEPTION 'T36c: get_proposal returned a different proposal';
+  END IF;
+  IF pg_catalog.jsonb_typeof(d -> 'sections') <> 'array'
+     OR pg_catalog.jsonb_array_length(d -> 'sections') < 1 THEN
+    RAISE EXCEPTION 'T36d: sections[] is not an array of sections: %', d -> 'sections';
+  END IF;
+  -- Every section carries its own n and title; provenance is present only where
+  -- a row exists, which is how "a human wrote this" is said.
+  IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(d -> 'sections') AS sec(value)
+              WHERE NOT (sec.value ?& ARRAY['n','title'])) THEN
+    RAISE EXCEPTION 'T36e: a section is missing n or title: %', d -> 'sections';
+  END IF;
+
+  -- BY REF AS WELL AS BY ID — the `(id::text = p_id OR ref = p_id)` idiom the
+  -- file uses eighteen times, asserted once on this endpoint.
+  IF pg_temp.data('T36f', core.get_proposal((d ->> 'ref'))) -> 'id' <> d -> 'id' THEN
+    RAISE EXCEPTION 'T36f2: get_proposal by ref returned a different row';
+  END IF;
+
+  -- THE LIST ROW IS THE SAME PROJECTION, byte for byte. That is the whole claim
+  -- list_proposals makes for calling get_proposal per row, and until now it was
+  -- a comment. Diverge the two and this fails.
+  SELECT row.value INTO v_row
+    FROM pg_catalog.jsonb_array_elements(
+           pg_temp.data('T36g', core.list_proposals()) -> 'data') AS row(value)
+   WHERE row.value ->> 'id' = v_prop::text;
+  IF v_row IS DISTINCT FROM d THEN
+    RAISE EXCEPTION 'T36h: the list row and get_proposal disagree about the same '
+                    'proposal — there are two projections, not one';
+  END IF;
+
+  v := core.get_proposal('00000000-0000-4000-8000-00000000dead');
+  IF v -> 'success' <> 'false'::jsonb OR v #>> '{error,code}' <> 'NOT_FOUND' THEN
+    RAISE EXCEPTION 'T36i: get_proposal on an absent id: %', v;
+  END IF;
+
+  -- ── core.get_quotation ───────────────────────────────────────────────────
+  d := pg_temp.data('T36j', core.get_quotation(v_quote::text));
+  IF NOT (d ?& ARRAY['id','ref','status','lines','sellPrice',
+                     'absoluteFloorPrice','marginFloorPrice','bindingFloorBasis']) THEN
+    RAISE EXCEPTION 'T36k: the Quotation projection is incomplete: %',
+      (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.jsonb_object_keys(d) AS k);
+  END IF;
+  -- RULING R6 again, at the endpoint rather than only inside a list row: 007's
+  -- 'PROGRAMME' spelling must never reach the wire.
+  IF d ->> 'bindingFloorBasis' NOT IN ('ABSOLUTE','MARGIN') THEN
+    RAISE EXCEPTION 'T36l: get_quotation leaked 007''s PROGRAMME spelling: %',
+      d ->> 'bindingFloorBasis';
+  END IF;
+  IF (d #>> '{sellPrice,currency}') IS NULL THEN
+    RAISE EXCEPTION 'T36m: a Money value with no currency: %', d -> 'sellPrice';
+  END IF;
+
+  SELECT row.value INTO v_row
+    FROM pg_catalog.jsonb_array_elements(
+           pg_temp.data('T36n', core.list_quotations()) -> 'data') AS row(value)
+   WHERE row.value ->> 'id' = v_quote::text;
+  IF v_row IS DISTINCT FROM d THEN
+    RAISE EXCEPTION 'T36o: the list row and get_quotation disagree about the same '
+                    'quotation — there are two money projections, not one';
+  END IF;
+
+  v := core.get_quotation('00000000-0000-4000-8000-00000000dead');
+  IF v -> 'success' <> 'false'::jsonb OR v #>> '{error,code}' <> 'NOT_FOUND' THEN
+    RAISE EXCEPTION 'T36p: get_quotation on an absent id: %', v;
+  END IF;
+
+  -- ── A BADGE COUNT IS A NUMBER, not merely a number-shaped key ────────────
+  -- T10 asserted the three key names and `jsonb_typeof = 'number'` and never a
+  -- VALUE, so a badge hardcoded to zero passed. There are open enquiries and a
+  -- pending approval in these fixtures; at least one badge must be non-zero.
+  -- The approvals badge is `app.open_approval_count(actor_id)` — approvals
+  -- assigned to THIS actor. T15's fixture is assigned to the MD, so the count
+  -- is read as the MD; read as SALES it is legitimately zero, which is exactly
+  -- why "is it a number" was never enough.
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    pg_catalog.json_build_object('sub','33333333-3333-4333-8333-333333333333',
+      'tenant_id','11111111-1111-4111-8111-111111111111',
+      'app_role','MD','actor_kind','HUMAN','role','authenticated')::text, true);
+  d := pg_temp.data('T36q', core.badge_counts());
+  IF (d ->> 'approvals')::integer < 1 THEN
+    RAISE EXCEPTION 'T36r: the approvals badge counted % against a PENDING approval '
+                    'assigned to this actor — a badge hardcoded to zero would have '
+                    'passed the old "is it a number" assertion: %',
+                    d ->> 'approvals', d;
+  END IF;
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    pg_catalog.json_build_object('sub','22222222-2222-4222-8222-222222222222',
+      'tenant_id','11111111-1111-4111-8111-111111111111','app_role','SALES',
+      'actor_kind','HUMAN','role','authenticated')::text, true);
+
+  -- ── get_compliance_rule WITH A REAL RULE ─────────────────────────────────
+  -- It was only ever called with a deliberately absent id, so no ComplianceRule
+  -- payload was projected anywhere in the file.
+  -- `core.compliance_rules.tenant_id` is NULLABLE — 017 seeds three HRD Corp
+  -- rules globally — and the RPC reads `tenant_id = v_tenant OR tenant_id IS
+  -- NULL`. Both arms are exercised: the global seed, and a tenant-owned copy.
+  IF NOT EXISTS (SELECT 1 FROM core.compliance_rules WHERE tenant_id IS NULL) THEN
+    RAISE EXCEPTION 'T36u: 017 seeds three global compliance rules and none is here';
+  END IF;
+  d := pg_temp.data('T36s', core.get_compliance_rule(
+         (SELECT id::text FROM core.compliance_rules
+           WHERE tenant_id IS NULL ORDER BY rule_code LIMIT 1)));
+  IF NOT (d ?& ARRAY['id','status']) THEN
+    RAISE EXCEPTION 'T36t: the ComplianceRule projection is incomplete: %',
+      (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.jsonb_object_keys(d) AS k);
+  END IF;
+  -- BY RULE CODE AS WELL AS BY ID.
+  IF pg_temp.data('T36v', core.get_compliance_rule(
+       (SELECT rule_code FROM core.compliance_rules
+         WHERE tenant_id IS NULL ORDER BY rule_code LIMIT 1))) -> 'id' <> d -> 'id' THEN
+    RAISE EXCEPTION 'T36v2: get_compliance_rule by rule_code returned a different rule';
+  END IF;
+  -- AND ANOTHER TENANT'S RULE IS STILL INVISIBLE. The NULL arm widens the read
+  -- to GLOBAL rules, not to every tenant's.
+  INSERT INTO core.compliance_rules
+    (id, tenant_id, rule_code, family_key, check_key, side, subject, subject_field,
+     op, reference_kind, reference, effective_from, status)
+  SELECT '5eed0001-0000-4000-8000-000000000001'::uuid,
+         '99999999-9999-4999-8999-999999999999',
+         'THEIRS-01', rule.family_key, rule.check_key, rule.side, rule.subject,
+         rule.subject_field, rule.op, rule.reference_kind, rule.reference,
+         rule.effective_from, rule.status
+    FROM core.compliance_rules AS rule WHERE rule.tenant_id IS NULL ORDER BY rule.rule_code LIMIT 1;
+  v := core.get_compliance_rule('5eed0001-0000-4000-8000-000000000001');
+  IF v -> 'success' <> 'false'::jsonb OR v #>> '{error,code}' <> 'NOT_FOUND' THEN
+    RAISE EXCEPTION 'T36w: another tenant''s compliance rule was readable: %', v;
+  END IF;
+
+  RAISE NOTICE 'T36 PASS: get_proposal and get_quotation are invoked, project the shapes '
+               'the contract declares, refuse an absent id, and agree byte-for-byte with '
+               'the list rows they produce; a badge actually counts.';
+END
+$t36$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
