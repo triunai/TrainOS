@@ -43,5 +43,7 @@ export {
   type TransportErrorCode,
 } from "./errors";
 
+export { useOrganisationDirectory, type OrganisationDirectory } from "./useOrganisationDirectory";
+
 export { queryClient } from "./queryClient";
 export { queryKeys } from "./queryKeys";
