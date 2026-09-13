@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { Budget, TierKey, UsageBreakdownRow } from "@trainos/contract";
 import {
   Breadcrumb,
+  BUDGET_TONE,
   BudgetBar,
   ContentCard,
   DataTable,
@@ -61,12 +62,6 @@ const GROUPS: { id: UsageGroupBy; label: string }[] = [
 function budgetLabel(budget: Pick<Budget, "scope" | "key">): string {
   return budget.scope === "TIER" ? tierLabel(budget.key as TierKey) : humanise(budget.key);
 }
-
-const BUDGET_TONE = {
-  WITHIN: "neutral",
-  NEAR: "warning",
-  PAUSED: "danger",
-} as const;
 
 const BUDGET_LABEL = {
   WITHIN: "Within cap",

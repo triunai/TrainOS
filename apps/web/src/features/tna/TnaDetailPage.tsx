@@ -13,8 +13,13 @@ import {
   Breadcrumb,
   CitationChip,
   DataTable,
+  describeActionError,
   ErrorState,
   Fab,
+  formatDate,
+  formatDateRange,
+  formatTime,
+  humanise,
   LoadingState,
   MiniBar,
   MoneyText,
@@ -23,11 +28,7 @@ import {
   RefChip,
   SecondaryButton,
   StatusChip,
-  describeActionError,
-  formatDate,
-  formatDateRange,
-  formatTime,
-  humanise,
+  TNA_TONE,
   type ActionError,
   type Column,
 } from "@/shared/components/kit";
@@ -173,7 +174,7 @@ export function TnaDetailPage() {
         ]}
         chips={
           <>
-            <StatusChip tone={record.status === "COMPLETE" ? "success" : "neutral"} live>
+            <StatusChip tone={TNA_TONE[record.status]} live>
               {humanise(record.status)}
             </StatusChip>
             <StatusChip>Questionnaire returned</StatusChip>

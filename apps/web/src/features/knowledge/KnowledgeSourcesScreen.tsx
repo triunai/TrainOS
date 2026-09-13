@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import type {
-  EmbeddingStatus,
   KnowledgeSource,
   KnowledgeSourceType,
   MonitorStatus,
@@ -11,19 +10,20 @@ import {
   ContentCard,
   DataTable,
   DateText,
+  EMBEDDING_TONE,
   EmptyState,
   ErrorState,
   ExceptionBanner,
   GhostButton,
   humanise,
   LoadingState,
+  MONITOR_TONE,
   PrimaryButton,
   RecordHeader,
   RefusalBanner,
   SecondaryButton,
   StatusChip,
   type Column,
-  type StatusTone,
 } from "@/shared/components/kit";
 import { useCheckSource, useKnowledgeSources, useReingestSource } from "./api";
 
@@ -47,24 +47,11 @@ import { useCheckSource, useKnowledgeSources, useReingestSource } from "./api";
  * yet — trading a known good for an unknown one.
  */
 
-const MONITOR_TONE: Record<MonitorStatus, StatusTone> = {
-  WATCHING: "neutral",
-  CHANGED_REVIEW_PENDING: "warning",
-  FAILED: "danger",
-  MANUAL: "neutral",
-};
-
 const MONITOR_LABEL: Record<MonitorStatus, string> = {
   WATCHING: "Watching weekly",
   CHANGED_REVIEW_PENDING: "Changed · review pending",
   FAILED: "Failed · fetch",
   MANUAL: "Manual",
-};
-
-const EMBEDDING_TONE: Record<EmbeddingStatus, StatusTone> = {
-  INDEXED: "neutral",
-  PENDING: "info",
-  FAILED: "danger",
 };
 
 /**

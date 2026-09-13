@@ -12,12 +12,12 @@ import {
   LoadingState,
   PillTabGroup,
   PrimaryButton,
+  RULE_TONE,
   SecondaryButton,
   StatusChip,
   TextArea,
   TextField,
   type Column,
-  type StatusTone,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
@@ -35,16 +35,6 @@ import { useComplianceRules, useCreateComplianceRule } from "./api";
  * it against the circular PDF. An unverified rule is shown as unverified rather
  * than quietly treated as law.
  */
-
-/**
- * Rule status to chip tone. Belongs beside the other status maps in the kit's
- * `statusTone.ts` — asked for it as `RULE_TONE`; local until it lands.
- */
-const RULE_TONE: Record<RuleStatus, StatusTone> = {
-  ACTIVE: "success",
-  PROPOSED: "warning",
-  SUPERSEDED: "neutral",
-};
 
 const OPERATOR: Record<string, string> = {
   EQ: "=",

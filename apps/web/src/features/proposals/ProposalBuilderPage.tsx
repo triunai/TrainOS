@@ -16,15 +16,16 @@ import {
   ContentCard,
   ErrorState,
   ExceptionBanner,
+  formatDate,
   GhostButton,
+  humanise,
   LoadingState,
   PrimaryButton,
+  PROPOSAL_TONE,
   ProvenancePanel,
   RecordHeader,
   SecondaryButton,
   StatusChip,
-  formatDate,
-  humanise,
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { toApiError } from "@/shared/api";
@@ -153,7 +154,7 @@ export function ProposalBuilderPage() {
           ]}
           chips={
             <>
-              <StatusChip tone={proposal.status === "DRAFT" ? "neutral" : "info"}>
+              <StatusChip tone={PROPOSAL_TONE[proposal.status]}>
                 {humanise(proposal.status)}
               </StatusChip>
               {proposal.runId ? (

@@ -13,13 +13,13 @@ import {
   humanise,
   LoadingState,
   MoneyText,
+  PROVIDER_KEY_TONE,
   RecordHeader,
   RefusalBanner,
   SecondaryButton,
   StatusChip,
   TierChip,
   tierLabel,
-  type StatusTone,
 } from "@/shared/components/kit";
 import { AddProviderKeyDrawer } from "./AddProviderKeyDrawer";
 import { useProviders, useRevealProvider, useTestProvider } from "./api";
@@ -42,13 +42,6 @@ import { AI_MODELS_PATH, USAGE_PATH } from "./paths";
  * States rendered (§4): one invalid key with the live fallback named, one at
  * 90% of cap, one expiring, and one slot with no key at all.
  */
-
-const STATUS_TONE: Record<ProviderKeyStatus, StatusTone> = {
-  VALID: "success",
-  INVALID: "danger",
-  EXPIRING: "warning",
-  NOT_SET: "neutral",
-};
 
 const STATUS_LABEL: Record<ProviderKeyStatus, string> = {
   VALID: "Valid",
@@ -242,7 +235,7 @@ function ProviderCard({
       title={provider.label}
       eyebrow={humanise(provider.provider)}
       actions={
-        <StatusChip tone={STATUS_TONE[provider.status]} shape="square">
+        <StatusChip tone={PROVIDER_KEY_TONE[provider.status]} shape="square">
           {STATUS_LABEL[provider.status]}
         </StatusChip>
       }

@@ -7,10 +7,11 @@ import {
   ContentCard,
   DateText,
   describeActionError,
+  DIFF_OP_TONE,
   DiffBlock,
   ErrorState,
-  formatDate,
   ExceptionBanner,
+  formatDate,
   LoadingState,
   PrimaryButton,
   RecordHeader,
@@ -43,8 +44,6 @@ import { HRDC_RULE_CHANGES_PATH } from "./paths";
  * contract as `RULE_CHANGE_MIN_CONFIDENCE`; asked fixtures to export it.
  */
 const RULE_CHANGE_MIN_CONFIDENCE = 0.8;
-
-const OP_TONE = { ADD: "success", MODIFY: "info", SUPERSEDE: "warning" } as const;
 
 /** A change's before/after as the kit's diff lines. */
 function diffOf(change: RuleChange): DiffLine[] {
@@ -327,7 +326,7 @@ function ChangeCard({
       title={`${change.targetRuleId ?? "New rule"}${change.newRuleId ? ` → ${change.newRuleId}` : ""}`}
       actions={
         <div className="flex items-center gap-2">
-          <StatusChip tone={OP_TONE[change.op]}>{change.op}</StatusChip>
+          <StatusChip tone={DIFF_OP_TONE[change.op]}>{change.op}</StatusChip>
           <AIChip
             provenance={{
               origin: "AI_SUGGESTED",

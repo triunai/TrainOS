@@ -14,19 +14,22 @@ import {
   ErrorState,
   ExceptionBanner,
   Fab,
+  formatDate,
+  formatDateRange,
   GhostButton,
+  HRDC_PACKET_PANEL_TONE,
+  humanise,
+  INVOICE_TONE,
   LifecycleStepper,
   LoadingState,
   MoneyText,
+  ORGANISATION_TONE,
   PillTabGroup,
   PrimaryButton,
   RecordHeader,
   RefChip,
   SecondaryButton,
   StatusChip,
-  formatDate,
-  formatDateRange,
-  humanise,
   type Column,
 } from "@/shared/components/kit";
 import { toApiError } from "@/shared/api";
@@ -221,7 +224,7 @@ export function Organisation360Page() {
                     >
                       <RefChip type="INVOICE" />
                       <span className="font-medium text-ink">{invoice.ref}</span>
-                      <StatusChip tone={invoice.status === "OVERDUE" ? "danger" : "neutral"}>
+                      <StatusChip tone={INVOICE_TONE[invoice.status]}>
                         {humanise(invoice.status)}
                         {invoice.daysOverdue ? ` · ${invoice.daysOverdue} days` : ""}
                       </StatusChip>
@@ -371,7 +374,7 @@ function RecordHeaderBlock({
       ]}
       chips={
         <>
-          <StatusChip tone={org.status === "ACTIVE_CLIENT" ? "success" : "neutral"} live>
+          <StatusChip tone={ORGANISATION_TONE[org.status]} live>
             {humanise(org.status)}
           </StatusChip>
           {org.hrdcRegistered ? <StatusChip tone="info">HRD Corp registered</StatusChip> : null}
@@ -445,7 +448,7 @@ function PacketRow({ packet }: { packet: RelatedHrdcPacket }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <span className="text-ink-secondary">{packet.ref} claim</span>
-      <StatusChip tone={packet.state === "BLOCKED" ? "warning" : atRisk ? "danger" : "neutral"}>
+      <StatusChip tone={HRDC_PACKET_PANEL_TONE[packet.state]}>
         {packet.state === "BLOCKED"
           ? `Blocked · ${packet.missingDocuments ?? 0} docs`
           : atRisk

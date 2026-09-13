@@ -10,12 +10,15 @@ import type {
 import { RATE_CARD_PLACEHOLDER_VERSION } from "@trainos/contract";
 import type { QuotationWithFloors } from "@trainos/fixtures";
 import {
+  BINDING_FLOOR_TONE,
   Breadcrumb,
   ContentCard,
   DataTable,
   ErrorState,
   ExceptionBanner,
+  formatMoney,
   GhostButton,
+  humanise,
   LoadingState,
   MiniBar,
   MoneyInput,
@@ -24,8 +27,6 @@ import {
   RecordHeader,
   SecondaryButton,
   StatusChip,
-  formatMoney,
-  humanise,
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
@@ -144,7 +145,7 @@ export function CostingWorksheetPage() {
           chips={
             <>
               <StatusChip tone="neutral">Draft</StatusChip>
-              <StatusChip tone={quotation.bindingFloorBasis === "MARGIN" ? "warning" : "info"}>
+              <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
                 {quotation.bindingFloorBasis === "MARGIN"
                   ? "Margin floor binds"
                   : "Tier floor binds"}
@@ -284,9 +285,7 @@ export function CostingWorksheetPage() {
                   value={
                     <span className="flex items-center gap-2">
                       <MoneyText value={quotation.floorPrice} />
-                      <StatusChip
-                        tone={quotation.bindingFloorBasis === "MARGIN" ? "warning" : "info"}
-                      >
+                      <StatusChip tone={BINDING_FLOOR_TONE[quotation.bindingFloorBasis]}>
                         {humanise(quotation.bindingFloorBasis)}
                       </StatusChip>
                     </span>
