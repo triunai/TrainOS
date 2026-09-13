@@ -6,11 +6,13 @@ import {
   CitationChip,
   CompletenessBar,
   ContentCard,
+  DateField,
   DateText,
   describeActionError,
   DocumentChecklistRow,
   ErrorState,
   ExceptionBanner,
+  humanise,
   LoadingState,
   MoneyText,
   PACKET_TONE,
@@ -19,11 +21,10 @@ import {
   RuleCheckRow,
   SecondaryButton,
   StatusChip,
-  humanise,
+  TextField,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
-import { StandInField } from "./StandInField";
 import { HRDC_PACKET_PATH } from "./paths";
 import {
   useAttachDocument,
@@ -244,16 +245,16 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
 
           <ContentCard title="Mark as submitted">
             <div className="flex flex-col gap-3 pt-1">
-              <StandInField
+              <TextField
                 label="eTRIS reference number"
                 value={reference}
                 onChange={setReference}
                 placeholder="CLM-2026-______"
+                mono
                 disabled={!complete}
               />
-              <StandInField
+              <DateField
                 label="Submitted on"
-                type="date"
                 value={submittedOn}
                 onChange={setSubmittedOn}
                 disabled={!complete}

@@ -9,14 +9,15 @@ import {
   describeActionError,
   ErrorState,
   ExceptionBanner,
+  formatDate,
+  formatTime,
+  humanise,
   LoadingState,
   PillTabGroup,
   RecordHeader,
   SecondaryButton,
   StatusChip,
-  formatDate,
-  formatTime,
-  humanise,
+  TextField,
   toast,
   type Column,
 } from "@/shared/components/kit";
@@ -319,7 +320,7 @@ export function AttendanceCapturePage() {
               Unlocking voids the claim packet and requires a fresh approval before submission. The
               request is written to the audit log and notifies Operations and Finance.
             </p>
-            <ReasonField label="Reason" value={reason} onChange={setReason} />
+            <TextField label="Reason" value={reason} onChange={setReason} />
           </div>
         }
         confirmLabel="Request unlock"
@@ -335,40 +336,6 @@ export function AttendanceCapturePage() {
         }}
       />
     </div>
-  );
-}
-
-/**
- * A labelled text input for the unlock reason.
- *
- * The kit ships no `TextField` yet — `MoneyInput` is its only input — so this
- * is styled from tokens and carries no colour of its own. Requested from the
- * `kit` agent; this collapses to `<TextField/>` when it lands. It is duplicated
- * in `features/portal` rather than imported across features, because
- * `.dependency-cruiser.cjs` forbids reaching into another feature and a shared
- * control belongs in the kit, not in a sibling screen.
- */
-function ReasonField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
-        {label}
-      </span>
-      <input
-        type="text"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-control border border-border bg-card px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-disabled focus-visible:border-primary-border focus-visible:ring-2 focus-visible:ring-primary/30"
-      />
-    </label>
   );
 }
 

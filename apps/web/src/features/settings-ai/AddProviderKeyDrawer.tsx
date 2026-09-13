@@ -2,12 +2,15 @@ import { useState } from "react";
 import { AI_PROVIDERS, TIER_KEYS } from "@trainos/contract";
 import type { AiProvider, BillingOwner, Money, TierKey } from "@trainos/contract";
 import {
+  DateField,
   Drawer,
+  Field,
+  humanise,
   MoneyInput,
   PrimaryButton,
   SecondaryButton,
+  TextField,
   tierLabel,
-  humanise,
 } from "@/shared/components/kit";
 import { Checkbox } from "@/shared/components/ui/checkbox";
 import { RefusalBanner } from "./RefusalBanner";
@@ -104,66 +107,62 @@ export function AddProviderKeyDrawer({ open, onClose }: AddProviderKeyDrawerProp
           <RefusalBanner title="The key was not saved" error={create.error} />
         ) : null}
 
-        <Field label="Provider">
-          <select
-            value={provider}
-            onChange={(event) => setProvider(event.target.value as AiProvider)}
-            className="w-full rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
-          >
-            {AI_PROVIDERS.map((option) => (
-              <option key={option} value={option}>
-                {humanise(option)}
-              </option>
-            ))}
-          </select>
-          <p className="text-[12px] text-ink-muted">
-            Any OpenAI-compatible endpoint also works — OpenRouter, Cerebras, Groq or your own host
-            — because routing, escalation and the jury are ours and only the wire format is theirs.
-          </p>
+        <Field
+          label="Provider"
+          hint="Any OpenAI-compatible endpoint also works — OpenRouter, Cerebras, Groq or your own host — because routing, escalation and the jury are ours and only the wire format is theirs."
+        >
+          {(control) => (
+            <select
+              {...control}
+              value={provider}
+              onChange={(event) => setProvider(event.target.value as AiProvider)}
+              className="w-full rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
+            >
+              {AI_PROVIDERS.map((option) => (
+                <option key={option} value={option}>
+                  {humanise(option)}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
 
-        <Field label="Label">
-          <input
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            placeholder="Anthropic direct"
-            className="w-full rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
-          />
-        </Field>
+        <TextField label="Label" value={label} onChange={setLabel} placeholder="Anthropic direct" />
 
-        <Field label="Key">
-          <input
-            value={key}
-            type="password"
-            autoComplete="off"
-            onChange={(event) => setKey(event.target.value)}
-            placeholder="sk-…"
-            className="w-full rounded-control border border-border bg-card px-3 py-2 font-mono text-[13px] text-ink"
-          />
-          <p className="text-[12px] text-ink-muted">
-            Stored encrypted and never returned in full. Every read gives back the masked form;
-            revealing it again is a separate, audited action.
-          </p>
-        </Field>
+        <TextField
+          label="Key"
+          type="password"
+          value={key}
+          onChange={setKey}
+          placeholder="sk-…"
+          autoComplete="off"
+          mono
+          hint="Stored encrypted and never returned in full. Every read gives back the masked form; revealing it again is a separate, audited action."
+        />
 
         <Field label="Scope — which tiers this key serves">
-          <div className="grid grid-cols-3 gap-2">
-            {TIER_KEYS.map((tier) => (
-              <label key={tier} className="flex items-center gap-2 text-[12px] text-ink-secondary">
-                <Checkbox
-                  checked={scopeTiers.includes(tier)}
-                  onCheckedChange={(checked) =>
-                    setScopeTiers((previous) =>
-                      checked === true
-                        ? [...previous, tier]
-                        : previous.filter((candidate) => candidate !== tier),
-                    )
-                  }
-                />
-                {tierLabel(tier)}
-              </label>
-            ))}
-          </div>
+          {(control) => (
+            <div {...control} className="grid grid-cols-3 gap-2">
+              {TIER_KEYS.map((tier) => (
+                <label
+                  key={tier}
+                  className="flex items-center gap-2 text-[12px] text-ink-secondary"
+                >
+                  <Checkbox
+                    checked={scopeTiers.includes(tier)}
+                    onCheckedChange={(checked) =>
+                      setScopeTiers((previous) =>
+                        checked === true
+                          ? [...previous, tier]
+                          : previous.filter((candidate) => candidate !== tier),
+                      )
+                    }
+                  />
+                  {tierLabel(tier)}
+                </label>
+              ))}
+            </div>
+          )}
         </Field>
 
         <MoneyInput
@@ -174,24 +173,20 @@ export function AddProviderKeyDrawer({ open, onClose }: AddProviderKeyDrawerProp
         />
 
         <Field label="Billing owner">
-          <select
-            value={billingOwner}
-            onChange={(event) => setBillingOwner(event.target.value as BillingOwner)}
-            className="w-full rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
-          >
-            <option value="CLIENT_ACCOUNT">Client account</option>
-            <option value="PASS_THROUGH">Pass-through</option>
-          </select>
+          {(control) => (
+            <select
+              {...control}
+              value={billingOwner}
+              onChange={(event) => setBillingOwner(event.target.value as BillingOwner)}
+              className="w-full rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
+            >
+              <option value="CLIENT_ACCOUNT">Client account</option>
+              <option value="PASS_THROUGH">Pass-through</option>
+            </select>
+          )}
         </Field>
 
-        <Field label="Rotation date">
-          <input
-            type="date"
-            value={rotationDate}
-            onChange={(event) => setRotationDate(event.target.value)}
-            className="w-full rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
-          />
-        </Field>
+        <DateField label="Rotation date" value={rotationDate} onChange={setRotationDate} />
 
         <div className="rounded-control border border-border bg-surface px-3 py-2.5">
           <p className="text-[12px] font-medium text-ink">Data residency · {RESIDENCY[provider]}</p>
@@ -202,16 +197,5 @@ export function AddProviderKeyDrawer({ open, onClose }: AddProviderKeyDrawerProp
         </div>
       </div>
     </Drawer>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
-        {label}
-      </span>
-      {children}
-    </div>
   );
 }

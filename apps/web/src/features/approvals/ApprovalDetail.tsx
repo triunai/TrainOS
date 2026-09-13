@@ -19,12 +19,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { ApprovalDecision, DiffLine } from "@trainos/contract";
 import {
   AIChip,
+  APPROVAL_TONE,
   CitationChip,
   DangerButton,
   DateText,
   DiffBlock,
   ErrorState,
   ExceptionBanner,
+  humanise,
   JuryChip,
   KeyboardShortcut,
   LoadingState,
@@ -34,8 +36,7 @@ import {
   RefChip,
   SecondaryButton,
   StatusChip,
-  APPROVAL_TONE,
-  humanise,
+  TextArea,
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
@@ -249,18 +250,10 @@ export function ApprovalDetail() {
 
       {armed && NEEDS_NOTE.includes(armed) ? (
         <div className="mx-5 mb-4 flex flex-col gap-2 rounded-control border border-border bg-surface p-3.5">
-          <label
-            htmlFor="approval-note"
-            className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted"
-          >
-            {DECISION_LABEL[armed]} — say why
-          </label>
-          <textarea
-            id="approval-note"
+          <TextArea
+            label={`${DECISION_LABEL[armed]} — say why`}
             value={note}
-            onChange={(event) => setNote(event.target.value)}
-            rows={3}
-            className="rounded-control border border-border bg-card px-3 py-2 text-[13px] text-ink"
+            onChange={setNote}
             placeholder="The requester sees this. Be specific about what has to change."
           />
           <div className="flex items-center gap-2">

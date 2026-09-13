@@ -3,10 +3,11 @@ import type { PortalAcceptance } from "@trainos/contract";
 import {
   ContentCard,
   DateText,
-  PrimaryButton,
-  SecondaryButton,
   formatDate,
   formatTime,
+  PrimaryButton,
+  SecondaryButton,
+  TextField,
 } from "@/shared/components/kit";
 import { readableMessage, type ApiError } from "@/shared/api";
 
@@ -94,8 +95,8 @@ function AcceptForm({
           Your name and role are recorded with the date, time and IP address as an electronic
           signature. This is not a certificate-based signature.
         </p>
-        <Field label="Full name" value={name} onChange={setName} autoComplete="name" />
-        <Field
+        <TextField label="Full name" value={name} onChange={setName} autoComplete="name" />
+        <TextField
           label="Your role"
           value={role}
           onChange={setRole}
@@ -113,41 +114,6 @@ function AcceptForm({
         </div>
       </form>
     </ContentCard>
-  );
-}
-
-/**
- * A plain labelled text input.
- *
- * The kit has no `TextField` yet — `MoneyInput` is the only input it ships — so
- * this is styled from tokens only and carries no colour of its own. Requested
- * from the `kit` agent; this call site collapses to `<TextField/>` when it
- * lands, and nothing else on the page changes.
- */
-export function Field({
-  label,
-  value,
-  onChange,
-  autoComplete,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  autoComplete?: string;
-}) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
-        {label}
-      </span>
-      <input
-        type="text"
-        value={value}
-        autoComplete={autoComplete}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-control border border-border bg-card px-2.5 text-[13px] text-ink outline-none placeholder:text-ink-disabled focus-visible:border-primary-border focus-visible:ring-2 focus-visible:ring-primary/30"
-      />
-    </label>
   );
 }
 

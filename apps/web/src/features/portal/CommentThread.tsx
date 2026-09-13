@@ -1,8 +1,14 @@
 import { useState, type FormEvent } from "react";
 import type { PortalComment } from "@trainos/contract";
-import { EmptyState, SecondaryButton, formatDate, formatTime } from "@/shared/components/kit";
+import {
+  EmptyState,
+  formatDate,
+  formatTime,
+  SecondaryButton,
+  TextArea,
+  TextField,
+} from "@/shared/components/kit";
 import { readableMessage, type ApiError } from "@/shared/api";
-import { Field } from "./AcceptancePanel";
 
 /**
  * The comment thread on the client proposal page.
@@ -96,18 +102,8 @@ function CommentComposer({
 
   return (
     <form className="flex flex-col gap-2 pt-1" onSubmit={submit}>
-      <Field label="Your name" value={author} onChange={setAuthor} autoComplete="name" />
-      <label className="flex flex-col gap-1">
-        <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
-          Add a comment
-        </span>
-        <textarea
-          value={body}
-          rows={3}
-          onChange={(event) => setBody(event.target.value)}
-          className="resize-none rounded-control border border-border bg-card px-2.5 py-2 text-[13px] leading-[1.55] text-ink outline-none placeholder:text-ink-disabled focus-visible:border-primary-border focus-visible:ring-2 focus-visible:ring-primary/30"
-        />
-      </label>
+      <TextField label="Your name" value={author} onChange={setAuthor} autoComplete="name" />
+      <TextArea label="Add a comment" value={body} onChange={setBody} />
       {error ? (
         <p role="alert" className="text-[12px] text-danger">
           {readableMessage(error)}

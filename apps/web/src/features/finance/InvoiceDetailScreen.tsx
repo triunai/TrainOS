@@ -5,12 +5,15 @@ import {
   ActionOutcome,
   ContentCard,
   DataTable,
+  DateField,
   DateText,
   describeActionError,
   Drawer,
   EmptyState,
   ErrorState,
   ExceptionBanner,
+  formatDate,
+  humanise,
   INVOICE_TONE,
   LoadingState,
   MoneyInput,
@@ -21,13 +24,11 @@ import {
   SecondaryButton,
   StatusChip,
   SYNC_TONE,
-  formatDate,
-  humanise,
+  TextField,
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
-import { StandInField } from "./StandInField";
 import { useInvoice, useInvoices, useRecordPayment, useRepushInvoice } from "./api";
 import { INVOICES_PATH } from "./paths";
 
@@ -405,12 +406,13 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
             onChange={setAmount}
             hint="Part payment is fine; the outstanding balance follows the sum of what is recorded."
           />
-          <StandInField label="Received on" type="date" value={paidOn} onChange={setPaidOn} />
-          <StandInField
+          <DateField label="Received on" value={paidOn} onChange={setPaidOn} />
+          <TextField
             label="Bank reference"
             value={reference}
             onChange={setReference}
             placeholder="FT26…"
+            mono
             hint="What the statement shows. A payment nobody can trace is not reconciled."
           />
           {recordPayment.error ? (

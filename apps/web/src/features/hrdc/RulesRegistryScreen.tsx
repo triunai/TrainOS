@@ -14,13 +14,14 @@ import {
   PrimaryButton,
   SecondaryButton,
   StatusChip,
+  TextArea,
+  TextField,
   type Column,
   type StatusTone,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
 import { useComplianceRules, useCreateComplianceRule } from "./api";
-import { StandInField } from "./StandInField";
 
 /**
  * M12-S07 · HRD Corp rules registry.
@@ -301,19 +302,20 @@ export function RulesRegistryScreen() {
             attached, and a human activates it from the rule-change review once the wording has been
             checked against the circular.
           </p>
-          <StandInField
+          <TextField
             label="Rule id"
             value={draftId}
             onChange={setDraftId}
             placeholder="HRD-0__"
+            mono
           />
-          <StandInField
+          <TextField
             label="Subject"
             value={draftSubject}
             onChange={setDraftSubject}
             placeholder="What the rule governs"
           />
-          <StandInField
+          <TextArea
             label="Source excerpt"
             value={draftExcerpt}
             onChange={setDraftExcerpt}
