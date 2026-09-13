@@ -479,8 +479,32 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > (nothing applied yet); advised to disable "Automatically expose new
 > tables" first. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES,
-> 017 NEW BLOCK (SST fix breaks retrofit onto existing quotation rows).
+> **BLAST 13 Sep 23:3x +08** — `fix-014` pushed two commits addressing
+> PR #24's 011-013 findings to `cloud/migrations`, tip `0d9e00c` (not yet
+> a PR): CRIT-1 fixed (`apply_effects` now calls `enqueue_effect_jobs`
+> with an existence check; T16 claims the job as the worker would).
+> **CRIT-2 fixed and confirmed WORSE than reviewed**: beyond the
+> reveal-audit trigger, `key_fingerprint` sat in the frozen-column set,
+> so BYOK rotation had never succeeded once for ANY key, not just
+> revealed ones — now the fingerprint may change only when `key_ref`
+> changes in the same statement. T1 fixed (a third CRIT): a successful
+> replay was recorded as a permanent failure via a silent early-return
+> guard, now reopens the effect properly. HIGH-1 fixed, with a real
+> negative result: the first version of the new permission check ran
+> after payload validation, so an unauthorized refusal leaked the
+> action's own payload schema — now checked immediately, pinned to leak
+> nothing. S5 (13 refusals moved off the wrong error code), S3 (fixed,
+> confirmation owed on hosted — can't be proven on the local shim), S7
+> (pin headers now correctly scope the 014 dependency to the pin, not
+> the migration) all fixed. Deliberately deferred to backlog, confirmed
+> by absence from the diff: bulk_decide's response shape, the worker
+> heartbeat bug, and 013's no-consumers question. T5's diff-hash guard
+> routed to `fix-014` now, not deferred. Counts unchanged: 18/18, 17
+> pins, 52/52, check:grants 0. Re-review reported dispatched. Full
+> detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:3x — fix-014 closes 011-013's CRITs at
+> 0d9e00c; BYOK rotation had never worked at all, worse than reviewed.
 
 ### Focus
 

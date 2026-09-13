@@ -15,6 +15,147 @@
 
 ---
 
+## 2026-09-13 23:3x — fix-014 closes PR #24's 011-013 findings at 0d9e00c; BYOK rotation had never worked at all, worse than reviewed; a third CRIT found and closed
+
+**`fix-014` pushed two commits to `origin/cloud/migrations`, tip
+`0d9e00c`** (via `2bac9bf`) — confirmed present, not yet a PR. Addresses
+PR #24's 011-013 findings. Every fix reproduced live first, each with a
+pin confirmed to fail against the pre-fix SQL before it passes.
+
+**CRIT-1 (T2/O2) fixed, confirmed exactly.** `app.apply_effects` now
+calls `app.enqueue_effect_jobs`, with an explicit existence check so an
+011-without-012 database gets a stated error rather than "function does
+not exist." T16 confirmed to walk the entire seam end to end — perform,
+approve, then CLAIM the job the way the worker actually would, on the
+stated reasoning that a row the worker cannot take is the same outage
+one indirection further down than the enqueue itself.
+
+**CRIT-2 (S1) fixed, and confirmed genuinely WORSE than the original
+review found — a real severity escalation on inspection, not a
+restatement of the same finding.** Fixing the reveal-audit trigger's
+short-circuit (the documented fix) exposed a second, entirely
+independent blocker the review never found: `key_fingerprint` sat in the
+table's own frozen-column set, so rotation's own
+`key_fingerprint = p_fingerprint` write raised `IMMUTABLE_COLUMN` for
+**every** key, revealed or not. BYOK rotation had never succeeded once,
+for any key — not merely blocked on previously-revealed keys, as the
+original review's finding believed. The frozen-column list was
+internally inconsistent with itself: `key_ref`, the other half of "the
+material changed," was never in the frozen set to begin with. The fix
+unfreezes the column and re-expresses the protection as what is
+actually true of a rotation: the fingerprint may change only when
+`key_ref` changes in the same statement. T14 walks set→reveal→rotate and
+confirms an unpaired fingerprint write is still refused.
+
+**T1 fixed — a third CRIT, on top of the two the review already
+named, confirmed exactly.** `app.replay_dead_letter` copies `effect_id`
+onto the replacement job after the original dead-lettering had already
+moved that effect to `DEAD_LETTERED`, and `app.report_effect_result`
+returns early, silently, on `SETTLED`/`DEAD_LETTERED` — so a genuinely
+successful replay was recorded as a permanent failure in the ledger,
+uncorrectable later since `PARTIALLY_FAILED` reconciliation is guarded
+`AND status='EXECUTING'`, a state the action had already left by the
+time the replay succeeded. The replay now reopens the effect to
+`DISPATCHED` and clears `last_error` first — the same state
+`apply_effects` leaves an effect in when it first hands it to the queue,
+which is what this row genuinely is again after a successful replay.
+
+**HIGH-1 (T3) fixed, confirmed exactly, with a genuine negative result
+worth keeping precise rather than folding into "fixed" and moving on.**
+Measured directly against a freshly provisioned tenant: 19 of 22 action
+types have a policy row; three (`ENQUIRY_ARCHIVE`, `OPPORTUNITY_CONVERT`,
+`TNA_RECOMMENDATION_ACCEPT`) have none at all, so for those three the
+no-policy fall-through to bare `EXECUTING` was the only path that
+existed. `app.action_types` gains `required_permission`, seeded for all
+22 from migration 002's own permission catalogue, checked immediately
+after the action type is known for HUMAN and CLIENT actors (agents are
+governed by the autonomy grant instead, not a role permission).
+**The first version of this check ran AFTER payload validation, and the
+pin itself caught the leak this created**: an unauthorized `SALES` probe
+of `PAYMENT_RECORD` came back with `{"field":"amount","reason":
+"REQUIRED"}` — the action's own payload schema, handed to a caller who
+had no right to attempt it at all. `T17c3` now pins specifically that
+the corrected version leaks nothing.
+
+**S5 fixed, confirmed exactly.** All thirteen of 013's `42501`
+authorization refusals now raise `TRNOS` instead, closing the
+session-expiry misrender the original finding named. Two raises
+deliberately keep `42501`, with the file stating why: those two guard
+against a direct table write, not a caller through an RPC, and no RPC
+path can ever reach them.
+
+**S3 fixed, with the confirmation gap stated honestly rather than
+claimed as verified.** `service_role` is now in the revoke list for the
+five BYOK definer functions. Confirmed directly in the commit's own
+words: this genuinely cannot be proven on the local shim, which has no
+Supabase `ALTER DEFAULT PRIVILEGES` bootstrap, so `service_role` holds
+no EXECUTE either way and the pin is identical before and after the fix.
+The fix is correct regardless — revoking a privilege nobody holds costs
+nothing — but hosted confirmation is recorded as owed, not claimed.
+
+**S7 fixed, confirmed exactly.** Both the 012 and 013 pin headers now
+state the 001-014 dependency as a dependency **of the pin**, not of the
+migration — 012 and 013 themselves apply and verify cleanly with
+nothing after them. This is the precise distinction the catalog needed
+and previously lacked.
+
+**T8 folded in, confirmed present**: `app.effect_applier` is now cleared
+at the end of `apply_effects`, closing a real residue risk this thread
+had not previously flagged: inside `bulk_decide`'s loop, a second
+approval's effects could otherwise run with the first approval's
+applier still named. Catalog corrections folded: 011's function count
+corrected to 28 (already confirmed three independent ways by PR #24's
+own review), catalog rows for 011/012/013 carry an amendment note dated
+13 Sep.
+
+**Deliberately deferred to the backlog rather than silently dropped,
+confirmed by their absence from both commits' diffs — neither touches
+anything under `apps/**` or `packages/**`**: `bulk_decide`'s
+response-shape mismatch (T4/F4, needs a coordinated web-and-SQL change,
+not a migration-only fix), the worker heartbeat lease bug (S4, lives
+entirely in `apps/worker`), and whether 013 stays permanently without
+consumers (T11, a product ruling about whether to build a
+`SupabaseKeyStore`/`SupabaseRoutingConfig`, not a defect a migration fix
+can close). **T5's diff-hash guard finding (`DIFF_CHANGED` can
+mathematically never fire) is routed to `fix-014` as an active item
+now, confirmed distinct from the deferred-to-backlog set above** — not
+deferred, actively queued.
+
+**Validation counts, confirmed exactly**: 18/18 forward apply from a
+dropped database, 17/17 pins pass (post-rollback pin correctly refusing
+counts as a pass), rollback 017→014 clean, R1-R4 pass, re-apply clean,
+17/17 pins pass again, `lint:sql` 52/52, `check:grants` 0, `check:rpc`
+4 pass/0 broken.
+
+**Re-review reported dispatched** — not yet independently confirmed by
+this thread; a report to verify next round.
+
+**Things worth telling future-me:**
+
+1. Fixing the documented cause of a defect can expose a second,
+   independent defect blocking the exact same outcome — CRIT-2 here is
+   the clearest case this session: the reveal-audit trigger fix was
+   necessary but not sufficient, and only trying the actual fix against
+   a real rotation attempt surfaced the frozen-column wall behind it.
+   "The review's documented cause is fixed" and "the feature now works"
+   are different claims whenever a second, unrelated wall exists.
+2. A permission check placed after input validation instead of before
+   it isn't just an ordering nitpick — it's an information-disclosure
+   bug in its own right (an unauthorized caller learns the shape of an
+   action they can't perform), and this is exactly the kind of defect
+   that only running the check in the wrong order, then reading what
+   comes back, reveals. A code review reading the two branches in
+   isolation would likely see both as "does the right check" without
+   noticing which one runs first.
+3. "Deferred to backlog" and "actively routed to fix-014 now" are
+   different dispositions for findings that could both plausibly be
+   called "not fixed in this commit" — keeping them visibly distinct
+   (T5 routed now vs. T4/S4/T11 deferred) matters for whoever picks up
+   `fix-014` next, so they don't have to re-derive which of the
+   remaining items is actually queued.
+
+---
+
 ## 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES; 017 NEW BLOCK — the SST fix itself breaks retrofit onto a database with existing quotations
 
 **PR #25 confirmed MERGED at `15eed1b`**, one file —

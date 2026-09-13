@@ -287,6 +287,26 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:3x — fix-014 closes PR #24's 011-013 findings at 0d9e00c; BYOK rotation had never worked at all, worse than reviewed; a third CRIT found and closed
+
+- `fix-014` confirmed pushed two commits to `cloud/migrations`, tip
+  `0d9e00c` (not yet a PR): CRIT-1 fixed (apply_effects now calls
+  enqueue_effect_jobs with an existence check). **CRIT-2 fixed and
+  confirmed WORSE than reviewed: key_fingerprint was frozen, so BYOK
+  rotation had never worked for ANY key, not just revealed ones** — now
+  fixed to allow the fingerprint to change only alongside key_ref. T1
+  fixed as a third CRIT (a successful replay was silently recorded as
+  permanent failure via an early-return guard). HIGH-1 fixed with a
+  negative result: the first version of the new permission check leaked
+  an unauthorized caller's target action's payload schema by checking
+  after validation instead of before — now checked first, pinned to
+  leak nothing. S5/S3/S7 fixed (S3's fix can't be proven on the local
+  shim, confirmation owed on hosted). Deferred to backlog: bulk_decide
+  shape, worker heartbeat, 013-no-consumers ruling. Routed to fix-014
+  now (not deferred): the diff-hash guard that can never fire. Counts
+  unchanged: 18/18, 17 pins, 52/52, check:grants 0. Re-review reported
+  dispatched. See `ai/project-log.md` 23:3x block for full detail.
+
 ## 2026-09-13 23:2x — PR #25: 015/016 MERGE-WITH-FIXES; 017 NEW BLOCK — the SST fix itself breaks retrofit onto a database with existing quotations
 
 - PR #25 confirmed merged (`15eed1b`): re-review of fix commit `bdd49aa`

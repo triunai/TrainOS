@@ -950,6 +950,92 @@ exactly against the doc's own count.
   apply for this whole migration line stays gated on PR #6's eventual
   clean verdict.
 
+✅ **`fix-014` pushed two commits addressing PR #24's 011–013 findings to
+`origin/cloud/migrations`, tip `0d9e00c`** (via `2bac9bf`) — confirmed
+present, not yet a PR. Every fix reproduced live first, each with a pin
+confirmed to fail against the pre-fix SQL:
+
+- **CRIT-1 (T2/O2) fixed, confirmed exactly**: `app.apply_effects` now
+  calls `app.enqueue_effect_jobs`, with an explicit existence check so
+  an 011-without-012 database gets a stated error rather than "function
+  does not exist." T16 confirmed to walk the whole seam — perform,
+  approve, then CLAIM the job as the worker actually would, on the
+  reasoning that a row the worker can't take is the same outage one
+  indirection down.
+- **CRIT-2 (S1) fixed, and confirmed WORSE than the original review
+  found — a genuine severity escalation, not a restatement.** Fixing the
+  reveal-audit trigger's short-circuit exposed a second, independent
+  blocker the review never found: `key_fingerprint` sat in the table's
+  own frozen-column set, so rotation's `key_fingerprint = p_fingerprint`
+  raised `IMMUTABLE_COLUMN` for **every** key, revealed or not — BYOK
+  rotation had never succeeded once, for any key, not merely on
+  previously-revealed ones as the review believed. Confirmed as an
+  internally-inconsistent frozen list too: `key_ref`, the other half of
+  "the material changed," was never frozen. Now the fingerprint may
+  change only when `key_ref` changes in the same statement, pinned by
+  T14.
+- **T1 fixed (third CRIT, confirmed, on top of the two already
+  known)**: `app.replay_dead_letter` copies `effect_id` onto the
+  replacement job after the original dead-lettering already moved that
+  effect to `DEAD_LETTERED`, and `app.report_effect_result` returns
+  early, silently, on `SETTLED`/`DEAD_LETTERED` — so a genuinely
+  successful replay was recorded as a permanent failure, uncorrectable
+  later since `PARTIALLY_FAILED` reconciliation is guarded
+  `AND status='EXECUTING'`, a state the action had already left. The
+  replay now reopens the effect to `DISPATCHED` and clears `last_error`
+  first.
+- **HIGH-1 (T3) fixed, confirmed exactly, with a real negative result
+  worth keeping precise.** Measured directly: 19 of 22 action types have
+  a policy row; three (`ENQUIRY_ARCHIVE`, `OPPORTUNITY_CONVERT`,
+  `TNA_RECOMMENDATION_ACCEPT`) had none, so the no-policy fall-through
+  was their only path. `app.action_types` gains `required_permission`
+  for all 22, checked for HUMAN/CLIENT actors (agents are governed by
+  the autonomy grant instead) immediately after the action type is
+  known. **The first version of this check ran AFTER payload
+  validation, and the pin itself caught the leak**: an unauthorized
+  `SALES` probe of `PAYMENT_RECORD` came back with the action's own
+  payload schema (`{"field":"amount","reason":"REQUIRED"}`) — a
+  refusal that handed the caller information about an action they had
+  no right to attempt. `T17c3` now pins that the refusal leaks nothing.
+- **S5 fixed, confirmed exactly**: all thirteen of 013's `42501`
+  authorization refusals now raise `TRNOS` instead, closing the
+  session-expiry misrender the original finding named — confirmed two
+  raises deliberately keep `42501`, with the file stating why: those two
+  guard against a direct table write, not a caller, and no RPC path
+  reaches them.
+- **S3 fixed, with the confirmation gap stated rather than
+  claimed.** `service_role` is now in the revoke list for the five BYOK
+  functions. Confirmed directly in the commit's own words: this cannot
+  be proven on the local shim (no Supabase `ALTER DEFAULT PRIVILEGES`
+  bootstrap, so `service_role` holds no EXECUTE either way, pin
+  identical before and after) — the fix is correct regardless, but
+  hosted confirmation is recorded as owed, not claimed as verified.
+- **S7 fixed, confirmed exactly**: both pin headers now state the
+  001–014 dependency as a dependency **of the pin**, not of the
+  migration — 012 and 013 themselves apply and verify cleanly with
+  nothing after them, confirmed as the precise distinction the catalog
+  needed.
+- **T8 folded in**: `app.effect_applier` is now cleared at the end of
+  `apply_effects`, closing a real residue risk inside `bulk_decide`'s
+  loop. Catalog corrections folded: 011's function count corrected to
+  28 (confirmed three ways already by PR #24's own review), catalog rows
+  for 011/012/013 carry an amendment note.
+- **Deliberately deferred rather than silently dropped, confirmed by
+  absence from both commits' diffs (neither touches `apps/**` or
+  `packages/**`)**: `bulk_decide`'s response-shape mismatch (T4/F4,
+  needs a web+SQL change together), the worker heartbeat lease bug (S4,
+  lives in `apps/worker`), and whether 013 stays without consumers (T11,
+  a product ruling, not a migration fix) — routed to the backlog. **T5's
+  diff-hash guard (`DIFF_CHANGED` can never fire) is routed to
+  `fix-014` now**, confirmed as an active item rather than deferred.
+- **Validation counts confirmed exactly**: 18/18 forward apply from a
+  dropped database, 17/17 pins pass (post-rollback pin correctly
+  refusing counts as a pass), rollback 017→014 clean, R1–R4 pass,
+  re-apply clean, 17/17 pins again, `lint:sql` 52/52, `check:grants` 0,
+  `check:rpc` 4 pass/0 broken.
+- **Re-review reported dispatched** — not yet independently confirmed by
+  this thread.
+
 ✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
 `origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
 a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header
