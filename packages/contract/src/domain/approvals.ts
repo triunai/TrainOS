@@ -92,6 +92,16 @@ export interface ModelAgreement {
 export interface ApprovalDecideRequest {
   decision: ApprovalDecision;
   note: string | null;
+  /**
+   * The `diffHash` off the `ApprovalRequest`/`ApprovalDetail` the screen is
+   * currently rendering, echoed back as `p_expected_diff_hash` so
+   * `core.decide_approval`'s optimistic-concurrency check
+   * (`011:2781-2787`) can refuse a decision made against a stale diff.
+   *
+   * Required, not optional: the only caller (M02-S02) always has one, having
+   * just read it off the same approval it is now deciding.
+   */
+  diffHash: string;
 }
 
 /**
@@ -115,6 +125,8 @@ export interface ApprovalDecideResponse {
 export interface ApprovalDiffChangedDetails {
   diffChanged: true;
   diff: DiffLine[];
+  /** The fresh diff's hash — what a retried decide should echo back. */
+  diffHash: string;
 }
 
 /**
