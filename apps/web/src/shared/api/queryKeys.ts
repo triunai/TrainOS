@@ -50,6 +50,11 @@ export const queryKeys = {
   commissions: list(["commissions"] as const),
   rateCard: ["rate-card"] as const,
   knowledgeSources: list(["knowledge-sources"] as const),
+  /* §2 `GET /v1/templates` and the library it draws on. Three features read
+     these and each had written its own array literal, which this file exists to
+     stop: "hooks never hardcode a key array" is only true if the key is here. */
+  templates: list(["templates"] as const),
+  libraryAssets: list(["library-assets"] as const),
   agents: list(["agents"] as const),
   runs: list(["runs"] as const),
   modelTiers: ["model-tiers"] as const,

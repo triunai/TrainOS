@@ -26,7 +26,7 @@ export function useContacts(page?: PageRequest) {
 export function useTemplates(type?: TemplateType) {
   const client = useApi();
   return useQuery({
-    queryKey: ["templates", type ?? "ALL"] as const,
+    queryKey: [...queryKeys.templates.lists(), type ?? "ALL"] as const,
     queryFn: () => client.listTemplates(type),
   });
 }
