@@ -32,6 +32,7 @@ import { tasksRoutes } from "./tasks.routes";
 import { reportsRoutes } from "./reports.routes";
 import { settingsRoutes } from "./settings.routes";
 import { PrincipalLayout } from "./PrincipalLayout";
+import { PublicLayout } from "./PublicLayout";
 
 /**
  * The route table is GENERATED from the navigation tree. There is no second
@@ -106,6 +107,9 @@ const FEATURE_ROUTES = [
  * nesting it under `AppShell` would put a sidebar, a search field and a
  * notification bell in front of someone with no account. Another public screen
  * adds an entry to `portalRoutes` rather than a second mount point here.
+ *
+ * They sit under `PublicLayout`, OUTSIDE `PrincipalLayout`: a client has no
+ * session and no `Me`, and the session guard would send them to sign-in.
  */
 const PUBLIC_ROUTES = [...portalRoutes];
 
@@ -159,7 +163,9 @@ export function AppRoutes() {
             }
           />
         </Route>
+      </Route>
 
+      <Route element={<PublicLayout />}>
         {PUBLIC_ROUTES.map((route) => (
           <Route key={route.path} path={route.path} element={route.element} />
         ))}
