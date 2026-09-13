@@ -1,4 +1,5 @@
 import type {
+  AgentStatus,
   ApprovalStatus,
   BindingFloorBasis,
   BudgetState,
@@ -6,9 +7,11 @@ import type {
   CheckState,
   EmbeddingStatus,
   EngagementStatus,
+  HoursSavedBasis,
   HrdcPacketPanelState,
   InvoiceStatus,
   LifecycleState,
+  MessageCategory,
   MonitorStatus,
   OpportunityStage,
   OrganisationStatus,
@@ -20,6 +23,7 @@ import type {
   RuleChangeOp,
   RuleStatus,
   RunStatus,
+  Severity,
   SyncState,
   TierStatus,
   TNAStatus,
@@ -313,4 +317,73 @@ export const HRDC_PACKET_PANEL_TONE: Record<HrdcPacketPanelState, StatusTone> = 
   DEADLINE_AT_RISK: "warning",
   BLOCKED: "warning",
   SUBMITTED: "success",
+};
+
+/* ------------------------------------------------------------------ *
+ * R14 · the four vocabularies the two-branch ternaries were deciding
+ * inline. Each map is total over its enum for the same reason as every
+ * map above: an enum value added to the contract must break the build
+ * here rather than fall silently into an `else` that paints it neutral.
+ * ------------------------------------------------------------------ */
+
+/**
+ * §12 `AgentStatus` on the agent registry.
+ *
+ * `PAUSED` is the one that earns a colour, and it earns it because a paused
+ * agent is the only one on the register that is not doing the work somebody is
+ * relying on it for. `RETIRED` is a decision already taken and stays neutral —
+ * the same reading `PROGRAMME_TONE` gives its own `RETIRED`.
+ */
+export const AGENT_TONE: Record<AgentStatus, StatusTone> = {
+  ACTIVE: "neutral",
+  PAUSED: "warning",
+  RETIRED: "neutral",
+};
+
+/**
+ * §12 `Severity`, wherever a severity is rendered as a chip rather than as an
+ * `ExceptionBanner`.
+ *
+ * `DANGER` and `ALERT` are both `danger`: they differ in who raised them, not
+ * in what the reader must do, and a chip vocabulary that distinguishes them
+ * would be spending a colour on provenance. The two-branch ternary this
+ * replaces tested only `WARN`, so a `DANGER` constraint rendered neutral —
+ * the exact swallow R14 names.
+ */
+export const SEVERITY_TONE: Record<Severity, StatusTone> = {
+  INFO: "neutral",
+  WARN: "warning",
+  DANGER: "danger",
+  ALERT: "danger",
+};
+
+/**
+ * §12 `MessageCategory` — the WhatsApp send category that sets the rate.
+ *
+ * `MARKETING` costs roughly six times `UTILITY` per message, which is the one
+ * fact on these three screens worth a colour. `SERVICE` is free inside the
+ * customer-service window and stays neutral with `UTILITY`.
+ *
+ * One map rather than three: this vocabulary renders on the settings template
+ * register, the knowledge template register and the marketing screen, and
+ * CLAUDE.md makes a pattern on more than two screens a named thing.
+ */
+export const MESSAGE_CATEGORY_TONE: Record<MessageCategory, StatusTone> = {
+  MARKETING: "warning",
+  UTILITY: "neutral",
+  SERVICE: "neutral",
+};
+
+/**
+ * §12 `HoursSavedBasis` — whether the hours-saved figure is a measurement or a
+ * worked example.
+ *
+ * The basis is the status of the number, and this is the one place in the app
+ * where `success` marks a claim as load-bearing rather than marking good news:
+ * `MEASURED` is a fact the reader may quote, `ILLUSTRATIVE` is one they may
+ * not.
+ */
+export const HOURS_SAVED_TONE: Record<HoursSavedBasis, StatusTone> = {
+  MEASURED: "success",
+  ILLUSTRATIVE: "warning",
 };

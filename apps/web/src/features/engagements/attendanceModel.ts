@@ -1,4 +1,5 @@
 import type { AttendanceMark, AttendanceRow, AttendanceSheet } from "@trainos/contract";
+import type { StatusTone } from "@/shared/components/kit";
 
 /**
  * Read-only derivations over attendance sheets.
@@ -14,6 +15,25 @@ import type { AttendanceMark, AttendanceRow, AttendanceSheet } from "@trainos/co
  */
 
 export type ParticipantAttendanceStatus = "COMPLETE" | "PARTIAL" | "ABSENT";
+
+/**
+ * R14 · participant status → chip tone, total over the union.
+ *
+ * It lives here rather than in the kit's `statusTone.ts` because this union is
+ * not a contract enum: it is DERIVED by `statusOf` from the marks, and the two
+ * belong in one file so a fourth status cannot be added to one without the
+ * other refusing to compile.
+ *
+ * `PARTIAL` and `ABSENT` both warn. An HRD Corp claim needs a complete sheet,
+ * so both are the same fact to the person reading this table — somebody has to
+ * be chased — and splitting them would spend a second colour on how far short
+ * the row falls rather than on whether it falls short.
+ */
+export const PARTICIPANT_ATTENDANCE_TONE: Record<ParticipantAttendanceStatus, StatusTone> = {
+  COMPLETE: "neutral",
+  PARTIAL: "warning",
+  ABSENT: "warning",
+};
 
 export interface ParticipantDay {
   day: number;

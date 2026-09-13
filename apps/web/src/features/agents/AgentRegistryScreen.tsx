@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Agent, AutonomyGrant } from "@trainos/contract";
 import {
+  AGENT_TONE,
   AutonomyChip,
   ContentCard,
   DataTable,
@@ -175,9 +176,7 @@ export function AgentRegistryScreen() {
         key: "status",
         label: "Status",
         accessor: (agent) => (
-          <StatusChip tone={agent.status === "PAUSED" ? "warning" : "neutral"}>
-            {humanise(agent.status)}
-          </StatusChip>
+          <StatusChip tone={AGENT_TONE[agent.status]}>{humanise(agent.status)}</StatusChip>
         ),
         width: "95px",
       },

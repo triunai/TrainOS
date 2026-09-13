@@ -28,6 +28,7 @@ import {
   RecordHeader,
   RefChip,
   SecondaryButton,
+  SEVERITY_TONE,
   StatusChip,
   TNA_TONE,
   type ActionError,
@@ -295,7 +296,11 @@ export function TnaDetailPage() {
               {record.constraints.map((constraint) => (
                 <StatusChip
                   key={constraint.code}
-                  tone={constraint.severity === "WARN" ? "warning" : "neutral"}
+                  /* `severity` is present only when the constraint is at risk,
+                     so an absent one is genuinely neutral. The ternary this
+                     replaces tested WARN alone and painted a DANGER constraint
+                     the same as an unflagged one. */
+                  tone={constraint.severity ? SEVERITY_TONE[constraint.severity] : "neutral"}
                 >
                   {constraint.label}
                 </StatusChip>

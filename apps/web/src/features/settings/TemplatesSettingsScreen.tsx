@@ -8,6 +8,7 @@ import {
   FilterBar,
   ListToolbar,
   LoadingState,
+  MESSAGE_CATEGORY_TONE,
   MoneyText,
   PillTabGroup,
   RecordHeader,
@@ -137,7 +138,7 @@ export function TemplatesSettingsScreen() {
       width: "116px",
       accessor: (template) =>
         template.category ? (
-          <StatusChip tone={template.category === "MARKETING" ? "warning" : "neutral"}>
+          <StatusChip tone={MESSAGE_CATEGORY_TONE[template.category]}>
             {humanise(template.category)}
           </StatusChip>
         ) : (
