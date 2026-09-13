@@ -149,6 +149,21 @@ describe("M12-S07 · rules registry", () => {
     const drawer = await screen.findByRole("dialog");
     expect(within(drawer).getByText(/does not take effect/)).toBeInTheDocument();
   });
+
+  it("puts the status track and the filter controls on ONE row, per brief §10b", async () => {
+    renderScreen(<RulesRegistryScreen />, { role: "FINANCE" });
+
+    await screen.findByText("HRD Corp rules");
+
+    const tabs = screen.getByRole("tablist", { name: "Rule status" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+
+    /* Not "both exist" — both resolve to the SAME toolbar row. The filter row
+       used to be a second band under the track, which is what §10b forbids. */
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+  });
 });
 
 describe("M12-S08 · rule change review", () => {

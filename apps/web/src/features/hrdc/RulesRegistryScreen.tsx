@@ -9,6 +9,7 @@ import {
   EmptyState,
   ErrorState,
   FilterBar,
+  ListToolbar,
   LoadingState,
   PillTabGroup,
   PrimaryButton,
@@ -183,29 +184,37 @@ export function RulesRegistryScreen() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 px-6">
-        <PillTabGroup
-          label="Rule status"
-          activeId={tab}
-          onSelect={setTab}
-          tabs={[
-            { id: "active", label: "Active", count: countOf("ACTIVE") },
-            { id: "proposed", label: "Proposed", count: countOf("PROPOSED") },
-            { id: "superseded", label: "Superseded", count: countOf("SUPERSEDED") },
-            { id: "all", label: "All", count: all.length },
-          ]}
-        />
-        <FilterBar
-          shown={visible.length}
-          total={all.length}
-          onRemove={() => setScheme(null)}
-          filters={
-            scheme === null
-              ? []
-              : [{ id: "scheme:eq", label: "Scheme", value: scheme.replace("_", "-") }]
-          }
-        />
-      </div>
+      {/* Brief §10b: the status track and the scheme filter are one row, with
+          the table directly beneath. They used to stack, which put two rules
+          between the heading and the first rule row. */}
+      <ListToolbar
+        className="px-6"
+        tabs={
+          <PillTabGroup
+            label="Rule status"
+            activeId={tab}
+            onSelect={setTab}
+            tabs={[
+              { id: "active", label: "Active", count: countOf("ACTIVE") },
+              { id: "proposed", label: "Proposed", count: countOf("PROPOSED") },
+              { id: "superseded", label: "Superseded", count: countOf("SUPERSEDED") },
+              { id: "all", label: "All", count: all.length },
+            ]}
+          />
+        }
+        filters={
+          <FilterBar
+            shown={visible.length}
+            total={all.length}
+            onRemove={() => setScheme(null)}
+            filters={
+              scheme === null
+                ? []
+                : [{ id: "scheme:eq", label: "Scheme", value: scheme.replace("_", "-") }]
+            }
+          />
+        }
+      />
 
       <div className="px-6 py-4">
         {rules.isPending ? <LoadingState rows={7} label="Loading the rules registry" /> : null}

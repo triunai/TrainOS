@@ -141,4 +141,24 @@ describe("M02-S01 approval inbox", () => {
       expect(screen.getByText(/Median decision time this week:/)).toBeInTheDocument(),
     );
   });
+
+  it("puts the saved views and the filter controls on ONE row, per brief §10b", async () => {
+    renderInbox();
+
+    const tabs = await screen.findByRole("tablist", { name: "Approval views" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+    const valueToggle = screen.getByRole("button", { name: /Value ≥ RM 5,000/ });
+
+    /* Not "both exist" — both resolve to the SAME toolbar row, and the value
+       toggle travels with the filters rather than staying up with the views. */
+    const row = tabs.closest("[data-list-toolbar]");
+    expect(row).not.toBeNull();
+    expect(filters.closest("[data-list-toolbar]")).toBe(row);
+    expect(valueToggle.closest("[data-list-toolbar]")).toBe(row);
+
+    /* "Review next" opens a record, so it is NOT a narrowing: it moved to the
+       page header when the filters took the right of the toolbar row. */
+    const reviewNext = screen.getByRole("button", { name: "Review next" });
+    expect(reviewNext.closest("[data-list-toolbar]")).toBeNull();
+  });
 });

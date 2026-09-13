@@ -15,7 +15,7 @@
  *     checkbox whose accessible name is the reason — not a silent no-op.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ApprovalRequest, FilterClause, UrgencyGroup } from "@trainos/contract";
 import {
@@ -28,6 +28,7 @@ import {
   ExceptionBanner,
   FilterBar,
   KeyboardShortcut,
+  ListToolbar,
   LoadingState,
   MoneyText,
   PillTabGroup,
@@ -277,21 +278,30 @@ export function ApprovalInbox() {
     }
   };
 
-  const header = (
-    <>
-      <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-5">
-        <h1 className="text-[22px] font-semibold tracking-[-0.015em]">Approvals</h1>
-        {typeof inbox.data?.page.total === "number" ? (
-          <StatusChip tone="info">Assigned to me · {inbox.data.page.total}</StatusChip>
-        ) : null}
-      </div>
-    </>
+  /**
+   * The page identity, and the one action that acts on the queue as a whole.
+   *
+   * "Review next" moved up here from the tab row when brief §10b put the
+   * filters on that row: an action that opens a record is not a narrowing, and
+   * leaving it beside the filters would have pushed "N of M shown" off the
+   * right edge, where the count reads as the row's result. The loading and
+   * error branches call this with nothing, because there is no next item to
+   * review until the queue has loaded.
+   */
+  const headerRow = (actions?: ReactNode) => (
+    <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-5">
+      <h1 className="text-[22px] font-semibold tracking-[-0.015em]">Approvals</h1>
+      {typeof inbox.data?.page.total === "number" ? (
+        <StatusChip tone="info">Assigned to me · {inbox.data.page.total}</StatusChip>
+      ) : null}
+      {actions ? <div className="ml-auto flex items-center gap-2">{actions}</div> : null}
+    </div>
   );
 
   if (inbox.isPending || views.isPending) {
     return (
       <div className="flex flex-col">
-        {header}
+        {headerRow()}
         <LoadingState rows={7} label="Loading the approval queue" className="px-5" />
       </div>
     );
@@ -305,7 +315,7 @@ export function ApprovalInbox() {
 
     return (
       <div className="flex flex-col">
-        {header}
+        {headerRow()}
         <ErrorState
           title="The approval queue could not be loaded"
           error={failure}
@@ -322,36 +332,44 @@ export function ApprovalInbox() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {header}
+      {headerRow(
+        cursor ? <PrimaryButton onClick={() => open(cursor)}>Review next</PrimaryButton> : null,
+      )}
 
-      <div className="flex flex-wrap items-center gap-2.5 px-5 pb-3">
-        {tabs.length > 0 && viewId !== null ? (
-          <PillTabGroup
-            tabs={tabs}
-            activeId={viewId}
-            onSelect={(id) => {
-              setActiveViewId(id);
-              setSelected(new Set());
-              setFocusedIndex(0);
-            }}
-            label="Approval views"
-          />
-        ) : null}
-
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <SecondaryButton onClick={() => setHighValueOnly((on) => !on)}>
-            {highValueOnly ? "Clear value filter" : "Value ≥ RM 5,000"}
-          </SecondaryButton>
-          {cursor ? <PrimaryButton onClick={() => open(cursor)}>Review next</PrimaryButton> : null}
-        </div>
-      </div>
-
-      <FilterBar
-        filters={filterChips}
-        onRemove={() => setHighValueOnly(false)}
-        onClearAll={() => setHighValueOnly(false)}
-        shown={rows.length}
-        total={total}
+      {/* Brief §10b: the saved views and the narrowing applied to them are one
+          row, with the queue directly beneath. The value toggle travels with
+          the filters because that is what it is — it writes the same chip the
+          FilterBar then offers to dismiss. */}
+      <ListToolbar
+        className="px-5 pb-3"
+        tabs={
+          tabs.length > 0 && viewId !== null ? (
+            <PillTabGroup
+              tabs={tabs}
+              activeId={viewId}
+              onSelect={(id) => {
+                setActiveViewId(id);
+                setSelected(new Set());
+                setFocusedIndex(0);
+              }}
+              label="Approval views"
+            />
+          ) : null
+        }
+        filters={
+          <>
+            <SecondaryButton onClick={() => setHighValueOnly((on) => !on)}>
+              {highValueOnly ? "Clear value filter" : "Value ≥ RM 5,000"}
+            </SecondaryButton>
+            <FilterBar
+              filters={filterChips}
+              onRemove={() => setHighValueOnly(false)}
+              onClearAll={() => setHighValueOnly(false)}
+              shown={rows.length}
+              total={total}
+            />
+          </>
+        }
       />
 
       {bulkBlockers ? (
