@@ -128,7 +128,12 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           du -sh apps/web/dist/assets/*.js apps/web/dist/assets/*.css 2>/dev/null | sort -h >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
+      # Best-effort: the bundle is a convenience output, not the gate. This
+      # job's verdict is `npm run build` above. A shared artifact-storage
+      # quota is an account-level condition no branch can fix, and it must
+      # not be able to report a green build as a red one.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with: { name: dist, path: apps/web/dist/, retention-days: 7 }
 
   test:
@@ -145,8 +150,10 @@ jobs:
       - name: Coverage report (advisory until the first threshold lands)
         run: npm run test:coverage
         continue-on-error: true
+      # Best-effort for the same reason: the verdict is `npm test` above.
       - name: Upload coverage report
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with: { name: coverage-report, path: apps/web/coverage/, retention-days: 7 }
 

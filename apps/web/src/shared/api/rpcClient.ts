@@ -5,6 +5,7 @@ import type {
   ApprovalDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AuditEntry,
   ApprovalRequestRef,
   BadgeCounts,
   Budget,
@@ -14,11 +15,15 @@ import type {
   Contact,
   Enquiry,
   EnquiryDetail,
+  EnquiryExtractionPatch,
+  FollowUp,
   ErrorCode,
   ErrorDetails,
   HrdcDeadline,
   KnowledgeSource,
   ListResponse,
+  MessageChannel,
+  MessageDraft,
   Me,
   MeProfile,
   ModelTier,
@@ -33,7 +38,9 @@ import type {
   Programme,
   ProgrammeDelivery,
   Proposal,
+  ProposalSectionRegenerateResponse,
   Quotation,
+  RateCard,
   RuleChangeSet,
   SavedView,
   Template,
@@ -50,6 +57,8 @@ import type {
   DecideInput,
   ProposalInput,
   QuotationInput,
+  SectionInput,
+  SectionWriteInput,
   TrainOsClient,
 } from "./client";
 import { fail, ok, transportError, type ApiError, type DomainError, type Result } from "./errors";
@@ -229,7 +238,9 @@ export function classifyTransportFailure(failure: TransportFailure): ApiError {
   }
 
   if (MISSING_FUNCTION_CODES.has(code)) {
-    return transportError("SERVER", `${failure.message} — endpoint not deployed`, { status: 404 });
+    return transportError("NOT_DEPLOYED", `${failure.message} — endpoint not deployed`, {
+      status: 404,
+    });
   }
 
   if (UNAUTHENTICATED_CODES.has(code)) {
@@ -340,16 +351,26 @@ export const RPC_NAMES = {
     "badge_counts",
     "list_enquiries",
     "get_enquiry",
+    "patch_enquiry_extraction",
+    "list_follow_ups",
+    "get_follow_up_draft",
     "get_organisation",
     "get_opportunity",
     "get_tna",
     "get_tna_recommendations",
     "create_proposal",
+    "list_proposals",
     "get_proposal",
+    "add_proposal_section",
+    "put_proposal_section",
+    "regenerate_proposal_section",
+    "list_quotations",
     "get_quotation",
     "put_quotation",
+    "get_rate_card",
     "list_approvals",
     "get_approval",
+    "get_audit",
     "get_policy",
     "get_pipeline_config",
     "get_contact",
@@ -455,6 +476,26 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<EnquiryDetail>("get_enquiry", { p_id: id });
   }
 
+  /**
+   * §4 edit-before-use on one extracted field.
+   *
+   * The patch is a VALUE, not a merge the client computes: the field's
+   * provenance flips to `AI_SUGGESTED` with `editedBy` on the server, and a
+   * client that assembled the new record itself would be inventing the
+   * provenance the chip on that field reads.
+   */
+  patchExtraction(id: string, patch: EnquiryExtractionPatch): Promise<Result<EnquiryDetail>> {
+    return this.call<EnquiryDetail>("patch_enquiry_extraction", { p_id: id, p_patch: patch });
+  }
+
+  listFollowUps(query: PageRequest): Promise<Result<ListResponse<FollowUp>>> {
+    return this.call<ListResponse<FollowUp>>("list_follow_ups", pageArgs(query));
+  }
+
+  getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>> {
+    return this.call<MessageDraft>("get_follow_up_draft", { p_id: id, p_channel: channel });
+  }
+
   getOrganisation(id: string): Promise<Result<Organisation>> {
     return this.call<Organisation>("get_organisation", { p_id: id });
   }
@@ -495,12 +536,66 @@ export class SupabaseRpcClient implements TrainOsClient {
     });
   }
 
+  listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>> {
+    return this.call<ListResponse<Proposal>>("list_proposals", pageArgs(query));
+  }
+
   getProposal(id: string): Promise<Result<Proposal>> {
     return this.call<Proposal>("get_proposal", { p_id: id });
   }
 
+  addSection(id: string, input: SectionInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("add_proposal_section", {
+      p_id: id,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  putSection(id: string, n: number, input: SectionWriteInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("put_proposal_section", {
+      p_id: id,
+      p_n: n,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  /**
+   * A fresh generation, and the run that produced it.
+   *
+   * Not idempotent by key on purpose: a second "Regenerate" is a second
+   * request for a new draft, and replaying the first response would hand the
+   * reader the text they just rejected.
+   */
+  regenerateSection(id: string, n: number): Promise<Result<ProposalSectionRegenerateResponse>> {
+    return this.call<ProposalSectionRegenerateResponse>("regenerate_proposal_section", {
+      p_id: id,
+      p_n: n,
+    });
+  }
+
+  /**
+   * §6 every quotation, priced.
+   *
+   * An RPC rather than a §8 view read, and not because of the page envelope
+   * alone: `quotation:read` is withheld from OPS, and the refusal has to be
+   * the server's. A view with RLS on it answers an unauthorised reader with an
+   * EMPTY LIST, which the screen would draw as "no quotations" — a refusal
+   * rendered as a fact about the data.
+   */
+  listQuotations(query: PageRequest): Promise<Result<ListResponse<Quotation>>> {
+    return this.call<ListResponse<Quotation>>("list_quotations", pageArgs(query));
+  }
+
   getQuotation(id: string): Promise<Result<Quotation>> {
     return this.call<Quotation>("get_quotation", { p_id: id });
+  }
+
+  rateCard(): Promise<Result<RateCard>> {
+    return this.call<RateCard>("get_rate_card");
   }
 
   putQuotation(id: string, input: QuotationInput): Promise<Result<Quotation>> {
@@ -535,6 +630,23 @@ export class SupabaseRpcClient implements TrainOsClient {
       p_decision: input.decision,
       p_note: input.note ?? null,
       p_idempotency_key: input.idempotencyKey,
+    });
+  }
+
+  /**
+   * §2 `GET /v1/{resourceType}/{id}/audit`.
+   *
+   * `resourceType` is a plain string because the contract keys the trail by
+   * one: `approvals::{ref}`, `proposals::{ref}`. Narrowing it to a union here
+   * would be a shape this client invented, and E3 exists to stop exactly that.
+   *
+   * The approval IS the resource on M02-S02, not the thing it acts on: the
+   * trail an approver needs is how this decision reached them.
+   */
+  audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>> {
+    return this.call<ListResponse<AuditEntry>>("get_audit", {
+      p_resource_type: resourceType,
+      p_id: id,
     });
   }
 

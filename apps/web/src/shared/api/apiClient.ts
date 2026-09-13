@@ -2,8 +2,11 @@ import type {
   ActionRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  EnquiryExtractionPatch,
+  MessageChannel,
   PageRequest,
   ProposalCreateRequest,
+  ProposalSectionWrite,
   QuotationWrite,
   SavedView,
   TemplateType,
@@ -82,6 +85,12 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     listEnquiries: async (page?: PageRequest) => must(await rpc.listEnquiries(page ?? {})),
     getEnquiry: async (id: string) => must(await rpc.getEnquiry(id)),
+    patchEnquiryExtraction: async (id: string, patch: EnquiryExtractionPatch) =>
+      must(await rpc.patchExtraction(id, patch)),
+
+    listFollowUps: async (page?: PageRequest) => must(await rpc.listFollowUps(page ?? {})),
+    getFollowUpDraft: async (id: string, channel: MessageChannel) =>
+      must(await rpc.getFollowUpDraft(id, channel)),
 
     getOrganisation: async (id: string) => must(await rpc.getOrganisation(id)),
     getOrganisationRelations: async (id: string) => must(await rpc.getOrganisationRelations(id)),
@@ -101,9 +110,35 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
           ),
         }),
       ),
+    listProposals: async (page?: PageRequest) => must(await rpc.listProposals(page ?? {})),
     getProposal: async (id: string) => must(await rpc.getProposal(id)),
-
+    /* No options bag on the fixture signature for the two section writes, so
+       the key is derived here — the same derivation the hooks use, not a
+       second one. `n` rides in the subject because section 2 of a proposal is
+       a different intent from section 3 of the same one. */
+    addProposalSection: async (
+      id: string,
+      body: { title: string; body?: string },
+      options?: RequestOptions,
+    ) =>
+      must(
+        await rpc.addSection(id, {
+          ...body,
+          idempotencyKey: key(options, derivedIdempotencyKey("proposal-section-add", id, body)),
+        }),
+      ),
+    putProposalSection: async (id: string, n: number, body: ProposalSectionWrite) =>
+      must(
+        await rpc.putSection(id, n, {
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("proposal-section-put", `${id}#${n}`, body),
+        }),
+      ),
+    regenerateProposalSection: async (id: string, n: number) =>
+      must(await rpc.regenerateSection(id, n)),
+    listQuotations: async (page?: PageRequest) => must(await rpc.listQuotations(page ?? {})),
     getQuotation: async (id: string) => must(await rpc.getQuotation(id)),
+    getRateCard: async () => must(await rpc.rateCard()),
     /* No options bag on the fixture signature, so the key is derived here — the
        same derivation the hooks use, not a second one. */
     putQuotation: async (id: string, body: QuotationWrite) =>
@@ -116,6 +151,7 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     listApprovals: async (page?: PageRequest) => must(await rpc.listApprovals(page ?? {})),
     getApproval: async (id: string) => must(await rpc.getApproval(id)),
+    getAudit: async (resourceType: string, id: string) => must(await rpc.audit(resourceType, id)),
     decideApproval: async (id: string, body: ApprovalDecideRequest, options?: RequestOptions) =>
       must(
         await rpc.decideApproval(id, {

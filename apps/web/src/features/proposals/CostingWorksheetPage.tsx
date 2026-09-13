@@ -13,6 +13,7 @@ import { RATE_CARD_PLACEHOLDER_VERSION } from "@trainos/contract";
 import {
   BINDING_FLOOR_TONE,
   DataTable,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatMoney,
@@ -33,7 +34,7 @@ import {
   PartialDataBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, toApiError } from "@/shared/api";
+import { isDomainError, isNotDeployed, notDeployedState, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
@@ -86,6 +87,10 @@ export function CostingWorksheetPage() {
   );
 
   if (quotationQuery.isPending) return <LoadingState label="Loading the costing worksheet" />;
+
+  if (isNotDeployed(quotationQuery.error)) {
+    return <EmptyState {...notDeployedState("This costing worksheet")} />;
+  }
 
   if (quotationQuery.isError || !quotation) {
     /* `ErrorState` withholds "Try again" on a domain refusal itself, now that

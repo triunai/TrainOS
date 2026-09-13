@@ -16,8 +16,7 @@ import {
   USER_SITI,
   TRAINER_FARAH,
 } from "@trainos/contract";
-import { isContractError } from "@trainos/fixtures";
-import { queryKeys, stableIdempotencyKey, useApi } from "@/shared/api";
+import { isDomainError, queryKeys, stableIdempotencyKey, toApiError, useApi } from "@/shared/api";
 
 /**
  * The proposals and quotations data layer.
@@ -61,10 +60,20 @@ export type ActionPayload<P> = P & Record<string, unknown>;
  * floors is not a floor breach this screen can explain — returning a
  * half-populated object would put `undefined` into the banner's sentence, so
  * it returns null and the screen falls back to the generic refusal surface.
+ *
+ * It asks the SEAM whether this is a refusal, not the fixture package. The
+ * test was `isContractError`, which is the oracle's own class: true for a
+ * refusal the fixture client threw and false for the identical refusal raised
+ * by `core.put_quotation` as SQLSTATE `TRNOS`. On Supabase the floor-price
+ * banner — the whole point of M07-S03 — would simply have stopped appearing.
+ * `toApiError` narrows both, and is idempotent, so an `ApiErrorException` that
+ * has already been converted is not reclassified as a transport failure.
  */
 export function floorBreachOf(error: unknown): FloorPriceBreachDetails | null {
-  if (!isContractError(error) || error.code !== "FLOOR_PRICE_BREACH") return null;
-  const details = error.details;
+  if (error === null || error === undefined) return null;
+  const refusal = toApiError(error);
+  if (!isDomainError(refusal) || refusal.code !== "FLOOR_PRICE_BREACH") return null;
+  const details = refusal.details;
   if (
     !details ||
     details.floorPrice === undefined ||
