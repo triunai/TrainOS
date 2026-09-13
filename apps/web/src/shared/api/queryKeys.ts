@@ -47,6 +47,8 @@ export const queryKeys = {
   claimPackets: list(["claim-packets"] as const),
   invoices: list(["invoices"] as const),
   collections: list(["collections"] as const),
+  commissions: list(["commissions"] as const),
+  rateCard: ["rate-card"] as const,
   knowledgeSources: list(["knowledge-sources"] as const),
   agents: list(["agents"] as const),
   runs: list(["runs"] as const),

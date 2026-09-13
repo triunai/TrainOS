@@ -16,6 +16,8 @@ import { INVOICE_AURORA } from "@trainos/contract";
 export const INVOICES_PATH = "/finance/invoices";
 export const INVOICE_DETAIL_PATTERN = "/finance/invoices/:invoiceRef";
 export const COLLECTIONS_PATH = "/finance/collections";
+export const COMMISSIONS_PATH = "/finance/commissions";
+export const PROFITABILITY_PATH = "/finance/profitability";
 
 /** INV-2026-0311 — validated now, one earlier CUSTOMER_NOT_MAPPED failure kept. */
 export const DEFAULT_INVOICE_REF = INVOICE_AURORA;

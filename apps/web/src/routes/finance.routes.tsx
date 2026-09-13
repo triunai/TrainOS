@@ -1,6 +1,12 @@
 import { lazy, Suspense, type ReactElement } from "react";
 import { LoadingState } from "@/shared/components/states";
-import { COLLECTIONS_PATH, INVOICES_PATH, INVOICE_DETAIL_PATTERN } from "@/features/finance";
+import {
+  COLLECTIONS_PATH,
+  COMMISSIONS_PATH,
+  INVOICES_PATH,
+  INVOICE_DETAIL_PATTERN,
+  PROFITABILITY_PATH,
+} from "@/features/finance";
 
 /**
  * The finance feature's route registrations — M13-S02 and M13-S05.
@@ -31,6 +37,14 @@ const CollectionsQueueScreen = lazy(() =>
   import("@/features/finance").then((module) => ({ default: module.CollectionsQueueScreen })),
 );
 
+const CommissionsScreen = lazy(() =>
+  import("@/features/finance").then((module) => ({ default: module.CommissionsScreen })),
+);
+
+const ProfitabilityScreen = lazy(() =>
+  import("@/features/finance").then((module) => ({ default: module.ProfitabilityScreen })),
+);
+
 export const financeRoutes: FeatureRoute[] = [
   {
     path: INVOICES_PATH,
@@ -56,6 +70,24 @@ export const financeRoutes: FeatureRoute[] = [
     element: (
       <Suspense fallback={<LoadingState label="Loading the collections queue" />}>
         <CollectionsQueueScreen />
+      </Suspense>
+    ),
+  },
+  {
+    path: COMMISSIONS_PATH,
+    label: "Commissions",
+    element: (
+      <Suspense fallback={<LoadingState label="Loading commission accruals" />}>
+        <CommissionsScreen />
+      </Suspense>
+    ),
+  },
+  {
+    path: PROFITABILITY_PATH,
+    label: "Profitability",
+    element: (
+      <Suspense fallback={<LoadingState label="Loading engagement profitability" />}>
+        <ProfitabilityScreen />
       </Suspense>
     ),
   },
