@@ -9,8 +9,8 @@ on top of PR #6). Prerequisites: migrations 001–019 applied, and `core` ticked
 under **Project Settings → Data API → Exposed schemas** (the app calls
 `core.me()`).
 
-`<render>` below is the Render site's origin, e.g. `https://trainos.onrender.com`,
-with no trailing slash.
+`<render>` below is the Render site's origin, `https://alex-project-k3vx.onrender.com`
+(deployed from main; the app lives at `/dashboard`), with no trailing slash.
 
 ## 1 · Google Cloud Console
 
@@ -36,7 +36,8 @@ email); while it is in "Testing", add each tester's Google address under
    - Redirect URLs: `<render>/auth/callback` and
      `http://localhost:5180/auth/callback`
 3. **Authentication → Hooks → Customize Access Token (JWT) Claims** → add hook
-   → type Postgres → schema `app`, function `custom_access_token_hook` → enable.
+   → type Postgres → schema `app`, function `custom_access_token_hook` → enable
+   (URI `pg-functions://postgres/app/custom_access_token_hook`, `002:589-592`).
 
 Step 3 is not optional. The tenant and role are JWT claims written by that hook
 (`002_tenancy_identity_and_permissions.sql:576`; its own comment at `:589`
@@ -85,9 +86,9 @@ link is an operator act in the **SQL Editor**.
 
    It must return `true`. If it does not, stop and raise it; do not disable RLS.
 
-3. Run, with the placeholders replaced (valid roles: `SALES`, `SALES_MANAGER`,
-   `OPS`, `FINANCE`, `MD`, `ADMIN`, `CLIENT` — `002:102`; `TRAINER` also needs a
-   `trainer_id`):
+3. Run, with the placeholders replaced. The template links the first user as
+   `MD`; other valid roles are `SALES`, `SALES_MANAGER`, `OPS`, `FINANCE`,
+   `ADMIN`, `CLIENT` (`002:102`), and `TRAINER` also needs a `trainer_id`:
 
    ```sql
    begin;
@@ -95,10 +96,13 @@ link is an operator act in the **SQL Editor**.
    -- A new tenant. Skip this line if the tenant already exists.
    -- Seeds ref formats, action policies and the default pipeline via triggers
    -- (016:254, 011, 019) and refuses to return a half-provisioned tenant.
-   select app.provision_tenant('<tenant-slug>', '<Tenant name>', 'Asia/Kuala_Lumpur');
+   select app.provision_tenant('<tenant-slug>', '<Tenant name>', 'Asia/Kuala_Lumpur', NULL);
 
-   insert into public.memberships (tenant_id, user_id, role, client_scope, team_scope)
-   select t.id, u.id, '<ROLE>'::app.app_role, 'ALL'::app.data_scope, 'ALL'::app.data_scope
+   -- status defaults to 'ACTIVE' and is_default to true (002:161-163); stated
+   -- explicitly because the hook only reads an ACTIVE membership (002:546).
+   insert into public.memberships
+     (tenant_id, user_id, role, status, is_default, client_scope, team_scope)
+   select t.id, u.id, 'MD'::app.app_role, 'ACTIVE', true, 'ALL'::app.data_scope, 'ALL'::app.data_scope
      from public.tenants t, auth.users u
     where t.slug = '<tenant-slug>' and u.email = '<you@example.com>';
 
