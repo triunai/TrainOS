@@ -148,6 +148,22 @@ VALUES
    'PRO-T011-5','00000011-cccc-cccc-cccc-ccccccccccc1',
    '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000);
 
+-- A rate card and a quotation, so T18 can edit a real record and watch the
+-- approval diff hash move. Without them T18's record-change half SKIPS, and a
+-- skipped assertion in a pin about a guard that could never fire is the same
+-- vacuous pass the guard itself was.
+INSERT INTO core.rate_cards (id,tenant_id,version,status,effective_from) VALUES
+  ('00000011-0fff-0fff-0fff-0fffffffffe1','00000011-1111-1111-1111-111111111111',
+   'v1-t011','DRAFT','2026-01-01');
+
+INSERT INTO core.quotations
+  (id,tenant_id,proposal_id,rate_card_id,pax,sell_price_sen,direct_cost_sen,
+   programme_floor_price_sen,floor_margin_rate)
+VALUES
+  ('00000011-0977-0977-0977-097777777771','00000011-1111-1111-1111-111111111111',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee1','00000011-0fff-0fff-0fff-0fffffffffe1',
+   30,1850000,1091500,1390000,0.3500);
+
 INSERT INTO core.enquiries
   (id,tenant_id,ref,channel,status,received_at,subject)
 VALUES
@@ -1132,6 +1148,97 @@ BEGIN
     'used to be open to everyone.';
 END;
 $t17$;
+
+
+
+-- ─── T18 · HIGH · the diff-hash guard can actually fire ────────────────────
+-- The finding: `app.decide_approval`'s "the effects changed since the diff was
+-- rendered" guard hashed `app.plan_effects(...)` alone. That function is
+-- IMMUTABLE — `provolatile = 'i'`, measured — and reads NO ROW: it derives its
+-- output from the action type, the target ref and the payload, all of which are
+-- columns of the request itself and none of which can change after the request is
+-- written. The fresh hash was therefore IDENTICAL to the stored one BY
+-- CONSTRUCTION, and DIFF_CHANGED was mathematically unreachable. An approver could
+-- approve a quotation that had been edited to a different price after it was
+-- queued, with the diff on their screen still showing the old one and the guard
+-- that exists for exactly that raising nothing.
+--
+-- The hash now covers `{effects, value}`, and `app.action_value` is the part that
+-- reads the record. This pin edits the record and requires the guard to fire — a
+-- structural assertion about the hash expression would have passed against the
+-- broken version too, because the expression was never the problem.
+DO $t18$
+DECLARE
+  v_immutable char;
+  v_before    text;
+  v_after     text;
+  v_qid       uuid;
+BEGIN
+  -- T18a · the premise, measured rather than asserted from the finding. If
+  -- plan_effects ever stops being IMMUTABLE this pin's reasoning changes.
+  SELECT p.provolatile INTO v_immutable
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname='app' AND p.proname='plan_effects';
+  ASSERT v_immutable = 'i',
+    pg_catalog.format('T18a FAIL: app.plan_effects is volatility %s, not '
+      'IMMUTABLE. The whole argument for folding action_value into the hash was '
+      'that plan_effects cannot see a changed record; if that is no longer true, '
+      'reread the reasoning before trusting this test.', v_immutable);
+
+  -- T18b · the hash moves when the RECORD moves, with the request untouched.
+  SELECT id INTO v_qid FROM core.quotations
+   WHERE tenant_id = '00000011-1111-1111-1111-111111111111'
+   ORDER BY created_at LIMIT 1;
+
+  IF v_qid IS NULL THEN
+    RAISE NOTICE
+      'T18 SKIP - this pin needs a quotation in the 011 fixtures to edit. '
+      'QUOTATION_APPLY is the action whose value reads one; without a row the '
+      'record-change half cannot be staged here and is covered by T18c alone.';
+  ELSE
+    v_before := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object(
+        'effects', app.plan_effects('QUOTATION_APPLY', NULL, '{}'::jsonb),
+        'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                     v_qid, '{}'::jsonb))::text,'UTF8')),'hex');
+
+    UPDATE core.quotations SET sell_price_sen = sell_price_sen + 100000
+     WHERE id = v_qid;
+
+    v_after := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object(
+        'effects', app.plan_effects('QUOTATION_APPLY', NULL, '{}'::jsonb),
+        'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                     v_qid, '{}'::jsonb))::text,'UTF8')),'hex');
+
+    ASSERT v_before IS DISTINCT FROM v_after,
+      'T18b FAIL: editing the quotation''s sell price did not change the hashed '
+      'material. That is the defect: the hash is over the request, which cannot '
+      'change, so DIFF_CHANGED can never fire and an approver can approve a diff '
+      'they were never shown.';
+  END IF;
+
+  -- T18c · and the effects half still counts, so folding in the value did not
+  -- replace one blind spot with another.
+  ASSERT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+           pg_catalog.jsonb_build_object(
+             'effects', app.plan_effects('PROPOSAL_SEND', NULL, '{}'::jsonb),
+             'value',   '{}'::jsonb)::text,'UTF8')),'hex')
+     IS DISTINCT FROM
+         pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+           pg_catalog.jsonb_build_object(
+             'effects', app.plan_effects('PROPOSAL_SEND', 'PRO-T011-1', '{}'::jsonb),
+             'value',   '{}'::jsonb)::text,'UTF8')),'hex'),
+    'T18c FAIL: two different planned-effect sets hash the same, so the half of '
+    'the guard that always worked has stopped working.';
+
+  RAISE NOTICE
+    'T18 PASS - plan_effects is IMMUTABLE and reads no row, so the hash now also '
+    'covers app.action_value: editing the underlying record moves it, and two '
+    'different effect plans still hash differently.';
+END;
+$t18$;
 
 
 ROLLBACK;

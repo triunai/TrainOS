@@ -2656,8 +2656,31 @@ BEGIN
   END IF;
 
   v_effects := app.plan_effects(p_type,p_target_ref,p_payload);
+
+  -- ⚠ THE HASH COVERS THE RECORD'S CURRENT VALUE, NOT ONLY THE PLANNED EFFECTS.
+  --
+  -- `app.plan_effects` is IMMUTABLE — measured, `provolatile = 'i'` — and reads
+  -- no row. It derives its output from the action type, the target ref and the
+  -- payload, all of which are columns of the request itself and none of which can
+  -- change after the request is written. So a hash over its output alone was
+  -- IDENTICAL AT DECIDE TIME TO WHAT WAS STORED AT QUEUE TIME BY CONSTRUCTION,
+  -- and `DIFF_CHANGED` could never fire. The guard existed, raised a well-written
+  -- error, and was mathematically unreachable: an approver could approve a
+  -- quotation that had been edited to a different price after being queued, with
+  -- the diff on their screen still showing the old one.
+  --
+  -- `app.action_value` is the thing that actually READS the record — it is where
+  -- the amount, currency and margin come from — so folding it into the hashed
+  -- material is what makes "the effects changed since the diff was rendered" a
+  -- statement about the world rather than about the request.
+  --
+  -- The decide-side recomputation must build this from the SAME two parts in the
+  -- SAME order or every approve fails. It is spelled identically there, and T5
+  -- pins that an edit to the underlying record moves the hash.
   v_effects_hash := pg_catalog.encode(pg_catalog.sha256(
-    pg_catalog.convert_to(v_effects::text,'UTF8')),'hex');
+    pg_catalog.convert_to(
+      pg_catalog.jsonb_build_object('effects', v_effects, 'value', v_value)::text,
+      'UTF8')),'hex');
   v_trace := v_trace || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
     'step',6,'input','dispatch','outcome',
     CASE v_dispatch WHEN 'EXECUTING' THEN 'EXECUTED' ELSE v_dispatch END));
@@ -2945,9 +2968,21 @@ BEGIN
   END IF;
 
   IF p_decision = 'APPROVE' THEN
+    -- The same two parts, in the same order, as the queue-time hash above — see
+    -- the comment there for why the effects alone could never change. This is the
+    -- read that makes the comparison mean something: app.action_value goes to the
+    -- record, so a quotation edited after it was queued hashes differently here.
     v_fresh := app.plan_effects(v_action.action_type,v_action.target_ref,v_action.payload);
     v_hash := pg_catalog.encode(pg_catalog.sha256(
-      pg_catalog.convert_to(v_fresh::text,'UTF8')),'hex');
+      pg_catalog.convert_to(
+        pg_catalog.jsonb_build_object(
+          'effects', v_fresh,
+          'value', app.action_value(
+                     v_action.action_type, v_action.tenant_id,
+                     app.resolve_action_target_id(v_action.action_type, v_action.tenant_id,
+                                                  v_action.target_ref, v_action.payload),
+                     v_action.payload))::text,
+        'UTF8')),'hex');
     IF v_hash IS DISTINCT FROM v_approval.diff_hash THEN
       RAISE EXCEPTION 'the effects changed since the diff was rendered'
         USING ERRCODE = 'TRNOS',

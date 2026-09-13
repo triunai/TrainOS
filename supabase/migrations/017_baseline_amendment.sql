@@ -220,13 +220,30 @@ $jsonb$;
 DO $precision$
 DECLARE v_bad integer;
 BEGIN
+  -- ⚠ ASK WHETHER ROUNDING LOSES ANYTHING, NOT WHAT THE SCALE SAYS.
+  --
+  -- An earlier version tested `scale(margin_rate) > 4`, which is TRUE FOR EVERY
+  -- ROW and therefore blocked 017 on any database holding a single quotation.
+  -- `margin_rate` is GENERATED as
+  --   (sell_price_sen - direct_cost_sen)::numeric / NULLIF(sell_price_sen,0)::numeric
+  -- and numeric division produces a scale of 20 regardless of the value: a margin
+  -- of exactly 0.41 is stored as 0.41000000000000000000, `scale()` returns 20, and
+  -- narrowing it to numeric(6,4) loses NOTHING. Measured on a 001-016 database
+  -- with one ordinary quotation, where this guard refused an apply that was
+  -- entirely safe — a wall in front of the door, not a lock on it.
+  --
+  -- The question the guard's own prose asks is whether the value would CHANGE.
+  -- That is what it now tests. A margin of 0.28571 still refuses, because rounding
+  -- it to 0.2857 could move a quotation across the floor that decided whether it
+  -- needed an approval, and a migration is not the place to make that call.
   SELECT pg_catalog.count(*) INTO v_bad
     FROM core.quotations
    WHERE margin_rate IS NOT NULL
-     AND pg_catalog.scale(margin_rate) > 4;
+     AND margin_rate IS DISTINCT FROM pg_catalog.round(margin_rate, 4);
   IF v_bad > 0 THEN
     RAISE EXCEPTION
-      '017: % quotation(s) hold a margin_rate with more than 4 decimal places. '
+      '017: % quotation(s) hold a margin_rate that numeric(6,4) cannot represent '
+      'exactly. '
       'Narrowing to numeric(6,4) would ROUND them, and a rounded margin can cross '
       'the floor that decides whether the quotation needed an approval. Resolve '
       'these rows deliberately before applying 017.', v_bad;
@@ -840,6 +857,31 @@ BEGIN
   END IF;
 END;
 $sst_backfill$;
+
+-- ⚠ DRAIN 007'S DEFERRED TRIGGERS BEFORE ALTERING THE TABLE AGAIN.
+--
+-- The backfill above is an UPDATE on `core.quotations`, and 007 puts DEFERRABLE
+-- constraint triggers on that table — they queue at statement time and fire at
+-- COMMIT. This file is ONE transaction, so COMMIT is at the very end, and the
+-- `SET NOT NULL` two lines below hit
+--   55006  cannot ALTER TABLE "quotations" because it has pending trigger events
+-- on any database that actually had a quotation to back-fill. Which is to say: it
+-- worked perfectly on an empty database and refused on every real one. Reproduced
+-- twice — build 001-016, insert one ordinary quotation, apply 017.
+--
+-- `SET CONSTRAINTS ALL IMMEDIATE` runs the queued checks NOW and empties the
+-- queue. It also makes every deferred constraint immediate for the remainder of
+-- this transaction, which is the right posture for a migration anyway: a
+-- constraint that fails should fail at the statement that broke it, where the
+-- error names something, rather than at a COMMIT hundreds of lines later that
+-- names the whole file.
+--
+-- The alternative — leaving the columns nullable behind a NOT VALID CHECK, as
+-- most of this file does — was rejected here on purpose. These two columns are
+-- the tax position on a customer document; NOT NULL is enforced by the storage
+-- layer on every future write, and a NOT VALID CHECK is enforced by nothing until
+-- somebody validates it.
+SET CONSTRAINTS ALL IMMEDIATE;
 
 -- Now, and only now, the columns can carry the constraint the model needs. A
 -- NULL here after this line means a write path found a way past the trigger.

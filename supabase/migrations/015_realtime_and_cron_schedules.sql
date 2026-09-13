@@ -203,8 +203,14 @@ $preflight$;
 -- active job. Expired leases would stop being recovered and nothing would say so.
 --
 -- 016 hit exactly this trap on `app.provision_tenant` and fixed it the same way.
--- The DROP is written for the CURRENT signature too, so it stays correct when the
--- signature changes: whoever edits the parameter list edits the line above it.
+--
+-- ⚠ DO NOT "KEEP THE DROP IN STEP" BY EDITING IT TO THE NEW SIGNATURE. An earlier
+-- version of this comment said to do exactly that, which reopens the hazard it is
+-- guarding: a DROP that names only the NEW signature drops nothing on a database
+-- carrying the OLD one, and the CREATE then adds a second overload beside it —
+-- the precise outcome the DROP exists to prevent. When the parameter list changes,
+-- ADD a line for the new signature and LEAVE the old ones, newest first. 014's
+-- rollback drops three spellings of app.apply_tenant_policies for this reason.
 DROP FUNCTION IF EXISTS app.reap_jobs_all_tenants(integer);
 
 CREATE OR REPLACE FUNCTION app.reap_jobs_all_tenants(p_limit_per_tenant integer DEFAULT 200)
@@ -280,6 +286,54 @@ BEGIN
     RAISE EXCEPTION '015 verify: expected exactly 2 trainos cron jobs, found %', v_n;
   END IF;
 
+  -- EXACTLY ONE OVERLOAD, asserted directly — AND ASSERTED BEFORE THE COMMAND
+  -- LOOP BELOW, which is the whole reason this check is here rather than after it.
+  --
+  -- An earlier version sat after that loop and was DEAD CODE. `to_regproc` returns
+  -- NULL for an ambiguous bare name, so a second overload made the loop abort
+  -- first, with "is scheduled against app.reap_jobs_all_tenants, which does not
+  -- resolve to a function" — an accurate sentence pointing at entirely the wrong
+  -- cause, sending the reader to look for a missing function rather than a
+  -- duplicated one. The check that names the real cause has to run first or it
+  -- never runs at all.
+  --
+  -- ⚠ MEASURED, BECAUSE THE OBVIOUS CLAIM ABOUT THIS IS WRONG. A review recorded
+  -- this pack as having no overload guard and the trap therefore "failing
+  -- invisibly with a green-looking cron table". Half true. The command check
+  -- above ALREADY aborts on a second overload, by accident of `to_regproc`, which
+  -- returns NULL rather than an oid when a bare name is ambiguous — verified by
+  -- creating a second, defaulted-trailing-argument overload on a live database
+  -- and re-running the pre-fix block, which failed. What it failed WITH was
+  -- "does not resolve to a function", which sends the reader looking for a
+  -- missing function rather than a duplicated one.
+  --
+  -- So this check earns its place on two grounds, neither of them the one the
+  -- finding stated: it names the real cause, and it is the assertion a LATER
+  -- migration's `CREATE OR REPLACE ... (integer, text DEFAULT NULL)` would have
+  -- to survive — nothing re-runs 015's verify after 015, and at that point the
+  -- cron job really does fail every thirty seconds into a table nobody reads
+  -- while `cron.job` still shows it active.
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname = 'reap_jobs_all_tenants';
+  IF v_n <> 1 THEN
+    RAISE EXCEPTION
+      '015 verify: app.reap_jobs_all_tenants has % overloads, not 1. The cron '
+      'command calls it with one argument; two overloads differing only by a '
+      'defaulted trailing parameter make that call ambiguous, and pg_cron records '
+      'the failure in job_run_details while cron.job still looks healthy.', v_n;
+  END IF;
+
+  -- And the command really does resolve to THAT function, not merely to something
+  -- with a resolvable name. to_regprocedure with the exact argument list fails on
+  -- an arity change that to_regproc would accept.
+  IF pg_catalog.to_regprocedure('app.reap_jobs_all_tenants(integer)') IS NULL THEN
+    RAISE EXCEPTION
+      '015 verify: app.reap_jobs_all_tenants(integer) does not exist with that '
+      'exact signature, which is the one the cron command calls.';
+  END IF;
+
   -- Every scheduled command must name a function that RESOLVES. A cron command is
   -- an unchecked string: schedule a typo and pg_cron records the failure in
   -- job_run_details forever while the cron table looks healthy.
@@ -319,45 +373,6 @@ BEGIN
                   WHERE jobname = 'trainos_reap_jobs' AND schedule = '30 seconds') THEN
     RAISE EXCEPTION
       '015 verify: trainos_reap_jobs is not on the native sub-minute schedule';
-  END IF;
-
-  -- EXACTLY ONE OVERLOAD, asserted directly.
-  --
-  -- ⚠ MEASURED, BECAUSE THE OBVIOUS CLAIM ABOUT THIS IS WRONG. A review recorded
-  -- this pack as having no overload guard and the trap therefore "failing
-  -- invisibly with a green-looking cron table". Half true. The command check
-  -- above ALREADY aborts on a second overload, by accident of `to_regproc`, which
-  -- returns NULL rather than an oid when a bare name is ambiguous — verified by
-  -- creating a second, defaulted-trailing-argument overload on a live database
-  -- and re-running the pre-fix block, which failed. What it failed WITH was
-  -- "does not resolve to a function", which sends the reader looking for a
-  -- missing function rather than a duplicated one.
-  --
-  -- So this check earns its place on two grounds, neither of them the one the
-  -- finding stated: it names the real cause, and it is the assertion a LATER
-  -- migration's `CREATE OR REPLACE ... (integer, text DEFAULT NULL)` would have
-  -- to survive — nothing re-runs 015's verify after 015, and at that point the
-  -- cron job really does fail every thirty seconds into a table nobody reads
-  -- while `cron.job` still shows it active.
-  SELECT pg_catalog.count(*)::integer INTO v_n
-    FROM pg_catalog.pg_proc AS p
-    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'app' AND p.proname = 'reap_jobs_all_tenants';
-  IF v_n <> 1 THEN
-    RAISE EXCEPTION
-      '015 verify: app.reap_jobs_all_tenants has % overloads, not 1. The cron '
-      'command calls it with one argument; two overloads differing only by a '
-      'defaulted trailing parameter make that call ambiguous, and pg_cron records '
-      'the failure in job_run_details while cron.job still looks healthy.', v_n;
-  END IF;
-
-  -- And the command really does resolve to THAT function, not merely to something
-  -- with a resolvable name. to_regprocedure with the exact argument list fails on
-  -- an arity change that to_regproc would accept.
-  IF pg_catalog.to_regprocedure('app.reap_jobs_all_tenants(integer)') IS NULL THEN
-    RAISE EXCEPTION
-      '015 verify: app.reap_jobs_all_tenants(integer) does not exist with that '
-      'exact signature, which is the one the cron command calls.';
   END IF;
 
   RAISE NOTICE '015 verify: OK - 2 cron jobs, both resolving, neither touching pg_net';

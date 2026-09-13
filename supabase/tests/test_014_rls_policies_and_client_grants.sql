@@ -1748,9 +1748,18 @@ SELECT ('00000014-ac00-0000-0000-00000000000' || g)::uuid,
 FROM pg_catalog.generate_series(3,5) AS g;
 
 -- The hash of the diff as first rendered — what the human's screen carries.
+-- ⚠ THE HASH IS OVER {effects, value}, NOT OVER THE EFFECTS ALONE, and this
+-- fixture has to spell it the same way 011 does or the fresh-vs-stored check
+-- fires first and this pin measures that instead. `app.plan_effects` is
+-- IMMUTABLE and reads no row, so a hash over it alone could never change — which
+-- is the defect 011 now fixes by folding `app.action_value` in.
 INSERT INTO t014_hashes
 SELECT 'before', pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
-  app.plan_effects('PROPOSAL_SEND',NULL,'{}'::jsonb)::text,'UTF8')),'hex');
+  pg_catalog.jsonb_build_object(
+    'effects', app.plan_effects('PROPOSAL_SEND',NULL,'{}'::jsonb),
+    'value',   app.action_value('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111',
+                 app.resolve_action_target_id('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111',NULL,'{}'::jsonb),
+                 '{}'::jsonb))::text,'UTF8')),'hex');
 
 INSERT INTO core.approval_requests
   (id,tenant_id,action_request_id,policy_id,action_type,subject,requested_by_kind,
@@ -1784,7 +1793,11 @@ UPDATE core.action_requests SET target_ref = 'PRO-T014-0001'
 
 INSERT INTO t014_hashes
 SELECT 'after', pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
-  app.plan_effects('PROPOSAL_SEND','PRO-T014-0001','{}'::jsonb)::text,'UTF8')),'hex');
+  pg_catalog.jsonb_build_object(
+    'effects', app.plan_effects('PROPOSAL_SEND','PRO-T014-0001','{}'::jsonb),
+    'value',   app.action_value('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111',
+                 app.resolve_action_target_id('PROPOSAL_SEND','00000014-1111-1111-1111-111111111111','PRO-T014-0001','{}'::jsonb),
+                 '{}'::jsonb))::text,'UTF8')),'hex');
 
 UPDATE core.approval_requests
    SET diff      = app.plan_effects('PROPOSAL_SEND','PRO-T014-0001','{}'::jsonb),

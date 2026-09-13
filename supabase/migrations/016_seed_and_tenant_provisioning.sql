@@ -274,6 +274,23 @@ COMMENT ON COLUMN app.tenant_seed_checks.note IS
   'Shown verbatim in provision_tenant''s exception. State the consequence, not the '
   'mechanism: the person reading it is mid-incident.';
 
+-- ⚠ RLS, THE SAME POSTURE EVERY OTHER `app` CONFIG TABLE CARRIES.
+--
+-- A revoke alone was what this table shipped with, and it is the weaker half of a
+-- pair this repo uses everywhere else: `app.role_permissions` (002:263) and every
+-- other `app.*` configuration table are RLS ENABLED AND FORCED with no policy, on
+-- top of the revoke. The revoke is the grant layer and RLS is the row layer, and
+-- 014's own header spends a page on why a table that relies on only one of them is
+-- one edit from relying on neither — a future `GRANT SELECT ON ALL TABLES IN
+-- SCHEMA app` would open this table and nothing would notice.
+--
+-- Deny-all with no policy, not tenant-scoped: this table has no `tenant_id` and
+-- is not tenant data. It is the list of things a provisioned tenant must have, it
+-- is read by `app.provision_tenant`, which is SECURITY DEFINER and therefore
+-- unaffected, and no client role has any business reading it at all.
+ALTER TABLE app.tenant_seed_checks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.tenant_seed_checks FORCE  ROW LEVEL SECURITY;
+
 REVOKE ALL ON app.tenant_seed_checks FROM PUBLIC, anon, authenticated;
 
 INSERT INTO app.tenant_seed_checks (pack, label, schema_name, table_name, note) VALUES

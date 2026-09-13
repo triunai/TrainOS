@@ -473,4 +473,53 @@ END;
 $t7$;
 
 
+
+-- ─── T8 · the seed registry carries the same posture as every app config table ─
+-- `app.tenant_seed_checks` shipped with a REVOKE and no RLS, while
+-- `app.role_permissions` and every comparable `app.*` configuration table are RLS
+-- enabled AND forced with no policy on top of their revoke. One layer instead of
+-- two: a future `GRANT SELECT ON ALL TABLES IN SCHEMA app` would open this table
+-- and nothing would object. This is the table that decides what "provisioned"
+-- means, so a client able to read it learns the shape of every tenant's seed.
+DO $t8$
+DECLARE v_priv text;
+BEGIN
+  ASSERT (SELECT c.relrowsecurity AND c.relforcerowsecurity
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+           WHERE n.nspname='app' AND c.relname='tenant_seed_checks'),
+    'T8a FAIL: app.tenant_seed_checks is not RLS enabled AND forced. Every other '
+    'app configuration table is, and the revoke beside it is the other half of a '
+    'pair, not the whole guard.';
+
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy AS p
+      JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname='app' AND c.relname='tenant_seed_checks'),
+    'T8b FAIL: a policy was added to app.tenant_seed_checks. Forced RLS with NO '
+    'policy is the deny-all posture; a policy here is somebody opening it.';
+
+  -- has_table_privilege, not information_schema: a privilege held through PUBLIC
+  -- appears under neither client role name.
+  SELECT pg_catalog.string_agg(w.priv, ', ' ORDER BY w.priv) INTO v_priv
+    FROM pg_catalog.unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS w(priv)
+   WHERE has_table_privilege('authenticated','app.tenant_seed_checks', w.priv)
+      OR has_table_privilege('anon','app.tenant_seed_checks', w.priv);
+  ASSERT v_priv IS NULL,
+    pg_catalog.format('T8c FAIL: a client role holds %s on app.tenant_seed_checks.', v_priv);
+
+  -- And provision_tenant still reads it, which is the point of the posture: the
+  -- function is SECURITY DEFINER, so deny-all costs the product nothing.
+  ASSERT (SELECT pg_catalog.count(*) FROM app.tenant_seed_checks) >= 3,
+    'T8d FAIL: the registry is empty or unreadable by the owner, which would make '
+    'provision_tenant''s guard decorative.';
+
+  RAISE NOTICE
+    'T8 PASS - app.tenant_seed_checks is RLS forced with no policy and no client '
+    'privilege, and provision_tenant can still read it.';
+END;
+$t8$;
+
+
 ROLLBACK;

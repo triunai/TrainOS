@@ -107,10 +107,22 @@ DROP TABLE IF EXISTS app.tenant_seed_checks;
 --   * its prefix is one the forward migration would derive — an `assign_ref`
 --     trigger in `core` carries it as TG_ARGV[0], the same query §2 uses, not a
 --     list, AND
---   * its `entity`, `dated` and `width` are EXACTLY what that derivation produces.
+--   * its `entity` and `width` are EXACTLY what that derivation produces.
 --
--- A hand-made row differs in at least one of those in practice: a different
--- width, a different dated flag, an entity name that is not the triggered table.
+-- ⚠ `dated` IS DELIBERATELY NOT ONE OF THEM, and the text above used to claim it
+-- was while the predicate below never tested it — a disclosed criterion that did
+-- not exist. It is left out rather than added because `dated` is the one derived
+-- attribute an OPERATOR LEGITIMATELY CHANGES: 016 derives it from a hardcoded
+-- list for the prefixes it cannot infer, that list is itself a known open finding
+-- against the domain model, and refs are immutable once allocated. A tenant whose
+-- operator corrected a wrong `dated` flag before allocating against it would, if
+-- `dated` were in the predicate, have that row treated as foreign and LEFT BEHIND
+-- by this rollback — stranding a corrected format that 016 would then re-create
+-- wrongly on the next apply. Matching on entity and width keeps such a row in
+-- 016's own set, which is where it belongs.
+--
+-- A hand-made row differs in at least one of the two that ARE tested: a different
+-- width, or an entity name that is not the triggered table.
 -- One that matches the derivation in every column is genuinely indistinguishable
 -- from a seeded row, and is deleted. That residue is stated rather than papered
 -- over, and it is bounded: such a row is byte-identical to what re-applying 016
