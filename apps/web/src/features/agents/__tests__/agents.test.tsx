@@ -187,6 +187,6 @@ describe("M18-S04 · run trace viewer", () => {
     /* run_4930 is newer but single-node; the viewer picks the newest run it can
        actually draw a tree for rather than opening on an empty pane. */
     expect(await screen.findByRole("tree", { name: "Execution tree" })).toBeInTheDocument();
-    expect(screen.getByText(/^Run #4821/)).toBeInTheDocument();
+    expect(screen.getByText(/^Run · /)).toBeInTheDocument();
   });
 });

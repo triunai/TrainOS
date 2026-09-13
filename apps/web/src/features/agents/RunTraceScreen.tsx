@@ -205,7 +205,13 @@ export function RunTraceScreen() {
   return (
     <div className="flex flex-col gap-4 pb-10">
       <RecordHeader
-        title={`Run ${run.ref} · ${run.orchestrator ? humanise(run.orchestrator) : agentName}`}
+        /* §15a. The ref moves out of the h1 into `recordRef` — the run's NAME is
+           the thing that ran, and the mono identity line owns the reference. */
+        accent
+        collapsible
+        recordType="run"
+        title={`Run · ${run.orchestrator ? humanise(run.orchestrator) : agentName}`}
+        recordRef={run.ref}
         meta={[
           run.trigger.ref ? `trigger ${run.trigger.type} · ${run.trigger.ref}` : run.trigger.type,
           `${subAgents} sub-agents`,
