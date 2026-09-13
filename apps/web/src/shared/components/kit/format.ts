@@ -246,6 +246,29 @@ export function plural(count: number, one: string, many?: string): string {
   return `${count} ${count === 1 ? one : (many ?? `${one}s`)}`;
 }
 
+/**
+ * The two message channels, spelled the way the product spells them.
+ *
+ * `humanise("WHATSAPP")` gives "Whatsapp", which is wrong in the only way a
+ * brand name can be wrong and which reached two screenshots before anyone
+ * noticed.
+ *
+ * The union is written out here because the contract inlines
+ * `'EMAIL' | 'WHATSAPP'` at each of its four use sites and exports no name for
+ * it — noted as a contract gap. The map is keyed by the union, so a third
+ * channel is a compile error here rather than a silently lower-cased name.
+ */
+export type MessageChannel = "EMAIL" | "WHATSAPP";
+
+const CHANNEL_LABEL: Record<MessageChannel, string> = {
+  EMAIL: "Email",
+  WHATSAPP: "WhatsApp",
+};
+
+export function channelLabel(channel: MessageChannel): string {
+  return CHANNEL_LABEL[channel];
+}
+
 /* ---- Lifecycle ------------------------------------------------------ */
 
 const STATE_WORD: Record<LifecycleStep["state"], string> = {

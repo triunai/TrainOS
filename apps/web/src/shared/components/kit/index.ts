@@ -42,10 +42,12 @@ export {
   toEditable,
   tierLabel,
   initials,
+  channelLabel,
   humanise,
   plural,
   stepLabel,
   describeSteps,
+  type MessageChannel,
 } from "./format";
 export {
   aiVariantOf,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { plural } from "@/shared/components/kit";
+import { channelLabel, plural } from "@/shared/components/kit";
 
 /**
  * The helper exists because "1 suggested next steps" reached a screenshot. The
@@ -19,5 +19,13 @@ describe("plural", () => {
   it("takes an irregular plural, because 2 companys is not a word", () => {
     expect(plural(2, "company", "companies")).toBe("2 companies");
     expect(plural(1, "company", "companies")).toBe("1 company");
+  });
+});
+
+describe("channelLabel", () => {
+  it("spells WhatsApp the way the brand does", () => {
+    /* `humanise("WHATSAPP")` gives "Whatsapp", which reached two screenshots. */
+    expect(channelLabel("WHATSAPP")).toBe("WhatsApp");
+    expect(channelLabel("EMAIL")).toBe("Email");
   });
 });
