@@ -245,6 +245,7 @@ export {
 export { PillTabGroup, type PillTabGroupProps } from "./PillTabGroup";
 export { RowActionMenu, type RowAction, type RowActionMenuProps } from "./RowActionMenu";
 export { ListToolbar, type ListToolbarProps } from "./ListToolbar";
+export { SplitWorkspace, type SplitWorkspaceProps } from "./SplitWorkspace";
 
 /* ---- Calendar (added 13 Sep 2026; no artboard draws one) ------------ */
 export {

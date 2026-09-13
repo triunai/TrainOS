@@ -78,6 +78,7 @@ import {
   SkeletonMetrics,
   SkeletonTable,
   SkeletonText,
+  SplitWorkspace,
   StateCardPanel,
   StatusChip,
   TierChip,
@@ -885,6 +886,86 @@ export default function KitShowcase() {
             ]}
           />
         </Stack>
+      </Entry>
+
+      <Entry
+        id="split"
+        title="Split workspace · brief §16b"
+        note="The master/detail shape, and the ruling that replaced the shared 72px header row. The two panes are independent: the list pane has NO header — the page's tabs and filters sit above the whole workspace and the list starts under them — while the detail pane keeps its own header sticky inside its own scroll. Scroll either side here and the other stays put; scroll the right and its title stays. Columns are minmax(360px, 40%) 1fr, and the only rules drawn are the seam and the one under the sticky header."
+      >
+        <div className="h-[280px] overflow-hidden rounded-control border border-border">
+          <SplitWorkspace
+            className="h-full"
+            listLabel="Enquiry queue"
+            list={
+              <ul className="flex flex-col">
+                {LEADS.map((lead) => (
+                  <li
+                    key={lead.ref}
+                    className="flex flex-col gap-1 border-b border-border px-4 py-3"
+                  >
+                    <span className="flex items-baseline gap-2">
+                      <span className="truncate text-[13px] font-semibold text-ink">
+                        {lead.organisation}
+                      </span>
+                      <span className="ml-auto shrink-0 text-[13px] font-medium tabular-nums text-ink">
+                        <MoneyText value={lead.value} />
+                      </span>
+                    </span>
+                    <span className="truncate text-[12px] text-ink-muted">
+                      {lead.ref} · {lead.contact}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            }
+            detailLabel="Enquiry preview"
+            detailHeader={
+              <div className="flex items-center gap-3">
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <h3 className="truncate text-[16px] font-semibold leading-6 text-ink">
+                    Quotation request · 48 store managers
+                  </h3>
+                  <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
+                    ENQ-2026-0912 · Amirah Yusof
+                  </p>
+                </div>
+                <SecondaryButton>Open</SecondaryButton>
+              </div>
+            }
+            detail={
+              <div className="flex flex-col gap-6 px-5 pb-6 pt-5">
+                <section className="flex flex-col gap-2">
+                  <h4 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                    Original message
+                  </h4>
+                  <p className="text-[14px] leading-[1.65] text-ink">
+                    Blocks inside the detail pane are separated by spacing, not by rules. A hairline
+                    appears only where removing it would make a relationship ambiguous — here, under
+                    the sticky header that content passes beneath.
+                  </p>
+                </section>
+                <section className="flex flex-col gap-2">
+                  <h4 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                    Extracted details
+                  </h4>
+                  <p className="text-[14px] leading-[1.65] text-ink">
+                    Scroll this pane and the header stays; the queue on the left does not move.
+                  </p>
+                </section>
+                <section className="flex flex-col gap-2">
+                  <h4 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                    Suggested action
+                  </h4>
+                  <p className="text-[14px] leading-[1.65] text-ink">
+                    The withdrawn SPLIT_HEADER_HEIGHT pinned both panes to one 72px row, which
+                    forced a header onto a list that had nothing to put in it.
+                  </p>
+                </section>
+              </div>
+            }
+          />
+        </div>
       </Entry>
 
       <Entry
