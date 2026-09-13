@@ -208,7 +208,7 @@ describe("RecordHeader accent", () => {
     expect(region.dataset.open).toBe("false");
 
     /* And it is the size of the controls beside it, not the kit default. */
-    expect(chevron().className).toContain("h-9");
+    expect(chevron().className).toContain("h-[38px]");
   });
 
   it("puts the chevron at the card's far right, after the primary", () => {

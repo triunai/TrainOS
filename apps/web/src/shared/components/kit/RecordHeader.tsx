@@ -255,12 +255,15 @@ export function RecordHeader({
                 controls={bodyId}
                 label="the record detail"
                 tone={showCard ? "onAccent" : "ink"}
-                /* 36px, the height of the buttons beside it. At the kit's
+                /* 38px square: the exact box a KitButton makes at this size
+                   (1px border + 8px padding + a 20px line, measured in the
+                   browser at 38px for Approve beside it), so the row has one
+                   height rather than one height and a near-miss. At the kit's
                    default 28px it read as decoration rather than a control and
                    was easy to miss with a real pointer — which is exactly how
                    it was reported: "the click does not open it". */
                 className={cn(
-                  "ml-1 h-9 w-9 rounded-pill border",
+                  "ml-1 h-[38px] w-[38px] rounded-pill border",
                   showCard
                     ? "border-[rgb(var(--on-accent)/0.45)]"
                     : "border-border text-ink-secondary",
