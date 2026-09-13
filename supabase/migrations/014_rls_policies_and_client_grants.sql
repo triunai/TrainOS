@@ -618,12 +618,64 @@ REVOKE ALL ON TABLE core.v_approval_requests FROM PUBLIC, anon, authenticated;
 -- the envelope does not own team membership, 002 does.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC, anon;
 
+-- ⚠ THESE SIX LINES RESTATE 002:696-701 EXACTLY, PRIVILEGE FOR PRIVILEGE.
+-- They are written out rather than omitted so that the pre-014 baseline is
+-- readable in one place and so that a later edit that widens one of them is a
+-- visible diff against a stated intent rather than an invisible drift. If you
+-- are about to add a privilege to any line below, it is a change to 002's
+-- authorization model and belongs in a migration that says so in its header.
+--
+-- THE ONE THAT WAS WIDENED, AND WHY IT IS NOT ANY MORE. An earlier draft of this
+-- file granted DELETE on `public.memberships`, on the mistaken reading that it
+-- was restating 002. It was not: 002 grants SELECT, INSERT and UPDATE there and
+-- withholds DELETE deliberately, and the DELETE would have been a privilege
+-- escalation with a clean audit trail, by this route:
+--
+--   `memberships_write_admin` (002:749) is `FOR ALL`, so its USING clause — tenant
+--   match AND role = 'ADMIN', with NO aal2 term — already permits a DELETE.
+--   `memberships_no_self_edit` (002:763), the RESTRICTIVE policy 002's own comment
+--   calls "THE escalation stop", is `FOR UPDATE` ONLY. It never sees a DELETE.
+--   So an ADMIN holding the DELETE privilege could delete their own membership row
+--   and INSERT a replacement naming a higher role: `app.role()` reads the JWT, not
+--   the table, so they are still an ADMIN for the length of the transaction that
+--   removes the evidence, and the next token mint reads the row they wrote.
+--   It also destroys the soft-delete audit trail 002:768 requires — removal is
+--   `status = 'REMOVED'`, an UPDATE, which is the path the restrictive policy
+--   guards and the reason no DELETE privilege is needed to remove a member.
+--
+-- The privilege is withheld AND a restrictive DELETE policy is added below, so
+-- the grant layer and the policy layer agree instead of one of them being the
+-- only thing standing between an ADMIN and their own role.
 GRANT SELECT                         ON public.tenants       TO authenticated;
 GRANT UPDATE                         ON public.tenants       TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.teams         TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.team_members  TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.memberships   TO authenticated;
+GRANT SELECT, INSERT, UPDATE         ON public.memberships   TO authenticated;
 GRANT SELECT, INSERT, UPDATE         ON public.user_profiles TO authenticated;
+
+-- Stated as a REVOKE as well as an omission. A REVOKE of a privilege that was
+-- never granted is a no-op — this file's own header says so about 011's fifteen
+-- vacuous column revokes — so this line is not the guard. The guard is the
+-- policy below and the verify block's assertion. The line is here so that a
+-- future `GRANT ALL ON ALL TABLES IN SCHEMA public` has something to undo.
+REVOKE DELETE ON public.memberships FROM authenticated;
+
+-- THE SECOND LAYER. 002 wrote no DELETE policy for memberships and recorded that
+-- as the reason removal is a soft delete; but `memberships_write_admin` is
+-- `FOR ALL`, so the absence of a DELETE policy is not a refusal — it is a
+-- permission waiting for a privilege. This RESTRICTIVE policy makes it a refusal.
+-- USING (false) rather than a predicate: there is no membership row any client
+-- role may hard-delete, including somebody else's, because the audit trail is the
+-- point and a row deleted by an ADMIN is as gone as a row deleted by its owner.
+DROP POLICY IF EXISTS memberships_no_client_delete ON public.memberships;
+CREATE POLICY memberships_no_client_delete ON public.memberships
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (false);
+COMMENT ON POLICY memberships_no_client_delete ON public.memberships IS
+  'migration:014 — no client role hard-deletes a membership. 002''s '
+  'memberships_no_self_edit is FOR UPDATE only, so without this a DELETE grant '
+  'would let an ADMIN delete-and-reinsert their own row past the escalation stop. '
+  'Removal is status = ''REMOVED'', an UPDATE, which that policy does guard.';
 
 -- `user_profiles` gets no DELETE: 002 wrote no DELETE policy for it, and under
 -- FORCE that is already a refusal. The grant is withheld anyway so the two layers
@@ -928,6 +980,57 @@ BEGIN
     RAISE EXCEPTION
       '014 verify: core table(s) whose tenant_id is not the leading column of any '
       'index, so every policy evaluation is a sequential scan: %', v_missing;
+  END IF;
+
+  -- (11) THE `public.*` GRANT SET IS EXACTLY 002's, PRIVILEGE FOR PRIVILEGE.
+  --      Re-derived with has_table_privilege rather than read out of
+  --      information_schema.table_privileges, because that view lists privileges
+  --      by their named grantee and does NOT report a privilege held through
+  --      membership of PUBLIC. A future `GRANT DELETE ON public.memberships TO
+  --      PUBLIC` would leave every information_schema check in this file and its
+  --      pin green while `authenticated` could delete. has_table_privilege
+  --      resolves inheritance and PUBLIC, so it answers the question actually
+  --      being asked: can this role do this, by any route.
+  FOR v_missing IN
+    SELECT x FROM pg_catalog.unnest(ARRAY[
+      -- relation                 privileges authenticated MUST hold (002:696-701)
+      'tenants:SELECT,UPDATE',
+      'teams:SELECT,INSERT,UPDATE,DELETE',
+      'team_members:SELECT,INSERT,UPDATE,DELETE',
+      'memberships:SELECT,INSERT,UPDATE',
+      'user_profiles:SELECT,INSERT,UPDATE']) AS t(x)
+  LOOP
+    DECLARE
+      v_rel  text := pg_catalog.split_part(v_missing, ':', 1);
+      v_want text[] := pg_catalog.string_to_array(pg_catalog.split_part(v_missing, ':', 2), ',');
+      v_priv text;
+    BEGIN
+      FOREACH v_priv IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] LOOP
+        IF has_table_privilege('authenticated', 'public.' || v_rel, v_priv) <> (v_priv = ANY (v_want)) THEN
+          RAISE EXCEPTION
+            '014 verify: authenticated %s %s on public.%s, and 002 says the '
+            'opposite. 014 restates 002''s grant set and must not widen it — a '
+            'DELETE on memberships in particular is a role-escalation path, '
+            'because 002''s escalation stop is FOR UPDATE only.',
+            CASE WHEN v_priv = ANY (v_want) THEN 'LACKS' ELSE 'HOLDS' END, v_priv, v_rel;
+        END IF;
+      END LOOP;
+    END;
+  END LOOP;
+
+  -- (12) And the policy layer agrees with the grant layer on the one that matters.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy p
+      JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = 'memberships'
+       AND p.polname = 'memberships_no_client_delete'
+       AND NOT p.polpermissive AND p.polcmd = 'd')
+  THEN
+    RAISE EXCEPTION
+      '014 verify: memberships_no_client_delete is missing or is not a RESTRICTIVE '
+      'DELETE policy. Without it the only thing refusing a membership hard-delete '
+      'is the absent privilege, and 002''s memberships_write_admin is FOR ALL.';
   END IF;
 
   SELECT pg_catalog.count(*) INTO v_n

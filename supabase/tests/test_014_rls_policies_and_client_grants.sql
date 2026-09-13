@@ -85,6 +85,8 @@ $setup$;
 INSERT INTO auth.users (id,email) VALUES
   ('00000014-0000-0000-0000-0000000000a1','t014-alpha-sales@example.invalid'),
   ('00000014-0000-0000-0000-0000000000a2','t014-alpha-manager@example.invalid'),
+  ('00000014-0000-0000-0000-0000000000a3','t014-alpha-admin@example.invalid'),
+  ('00000014-0000-0000-0000-0000000000a4','t014-alpha-ops@example.invalid'),
   ('00000014-0000-0000-0000-0000000000b1','t014-beta-sales@example.invalid');
 
 INSERT INTO public.tenants (id,name,slug,timezone) VALUES
@@ -98,12 +100,21 @@ VALUES
    'SALES','HUMAN',NULL,'ACTIVE',true),
   ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a2',
    'SALES_MANAGER','HUMAN',NULL,'ACTIVE',true),
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a3',
+   'ADMIN','HUMAN',NULL,'ACTIVE',true),
+  -- OPS, not TRAINER: a TRAINER membership needs a trainer_id
+  -- (002:171 memberships_trainer_id_present) and this pin's subject is a role
+  -- that legitimately lacks portal:token:issue, not the trainer record model.
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a4',
+   'OPS','HUMAN',NULL,'ACTIVE',true),
   ('00000014-2222-2222-2222-222222222222','00000014-0000-0000-0000-0000000000b1',
    'SALES','HUMAN',NULL,'ACTIVE',true);
 
 INSERT INTO public.user_profiles (tenant_id,user_id,display_name) VALUES
   ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a1','T014 Alpha Sales'),
   ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a2','T014 Alpha Manager'),
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a3','T014 Alpha Admin'),
+  ('00000014-1111-1111-1111-111111111111','00000014-0000-0000-0000-0000000000a4','T014 Alpha Ops'),
   ('00000014-2222-2222-2222-222222222222','00000014-0000-0000-0000-0000000000b1','T014 Beta Sales');
 
 INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width) VALUES
@@ -158,7 +169,16 @@ INSERT INTO t014_claims VALUES
   ('alpha_manager',
    '{"sub":"00000014-0000-0000-0000-0000000000a2","role":"authenticated","tenant_id":"00000014-1111-1111-1111-111111111111","app_role":"SALES_MANAGER","actor_kind":"HUMAN","aal":"aal1"}'),
   ('beta_sales',
-   '{"sub":"00000014-0000-0000-0000-0000000000b1","role":"authenticated","tenant_id":"00000014-2222-2222-2222-222222222222","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}');
+   '{"sub":"00000014-0000-0000-0000-0000000000b1","role":"authenticated","tenant_id":"00000014-2222-2222-2222-222222222222","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}'),
+  -- aal2, because 002's memberships_write_admin WITH CHECK demands it and an
+  -- aal1 ADMIN would be refused for the wrong reason: the pin has to fail on the
+  -- privilege it is testing, not on a second factor it forgot to satisfy.
+  ('alpha_admin',
+   '{"sub":"00000014-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000014-1111-1111-1111-111111111111","app_role":"ADMIN","actor_kind":"HUMAN","aal":"aal2"}'),
+  ('alpha_ops',
+   '{"sub":"00000014-0000-0000-0000-0000000000a4","role":"authenticated","tenant_id":"00000014-1111-1111-1111-111111111111","app_role":"OPS","actor_kind":"HUMAN","aal":"aal1"}'),
+  ('beta_admin',
+   '{"sub":"00000014-0000-0000-0000-0000000000b1","role":"authenticated","tenant_id":"00000014-2222-2222-2222-222222222222","app_role":"ADMIN","actor_kind":"HUMAN","aal":"aal2"}');
 
 -- One probe helper. Runs a statement and returns a jsonb verdict instead of
 -- letting the exception escape, so a refusal is DATA the assertions can compare
@@ -813,5 +833,128 @@ BEGIN
     'hash, and the three app functions plus app.ok remain unreachable by a client.';
 END;
 $t10$;
+
+
+-- ─── T11 · CRIT-1 · an ADMIN cannot delete their way to a higher role ────────
+-- The finding this pin exists for: 014 granted DELETE on public.memberships,
+-- which 002 withheld. 002's escalation stop, `memberships_no_self_edit`, is
+-- `FOR UPDATE` only, and `memberships_write_admin` is `FOR ALL` — so a DELETE
+-- privilege plus those two policies is a complete delete-then-reinsert path to
+-- any role, run by an aal2 ADMIN against their own row, with the audit trail
+-- 002:768 requires removed in the same statement.
+--
+-- Both layers are pinned, separately, because either one alone is one edit from
+-- being the only one:
+--   T11a/b  the privilege is absent and the attempt is refused by it.
+--   T11c/d  the row survives and the role is unchanged.
+--   T11e    with the privilege DELIBERATELY RE-GRANTED inside this transaction,
+--           the restrictive policy still refuses. This is the half that would
+--           have caught the original defect, because the original defect WAS a
+--           grant, and a pin that only checks for the grant's absence tells you
+--           nothing about what happens the day somebody adds it back.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.admin_self_delete',
+  pg_temp.t014_try($$DELETE FROM public.memberships
+                      WHERE user_id = '00000014-0000-0000-0000-0000000000a3'::uuid$$)::text, true);
+SELECT pg_catalog.set_config('t014.admin_other_delete',
+  pg_temp.t014_try($$DELETE FROM public.memberships
+                      WHERE user_id = '00000014-0000-0000-0000-0000000000a1'::uuid$$)::text, true);
+-- The soft-delete path 002 says removal actually is, so the pin proves the
+-- product still works rather than only that the attack fails.
+SELECT pg_catalog.set_config('t014.admin_soft_remove',
+  pg_temp.t014_try($$UPDATE public.memberships SET status = 'REMOVED'
+                      WHERE user_id = '00000014-0000-0000-0000-0000000000a1'::uuid$$)::text, true);
+RESET ROLE;
+
+-- Now re-grant the privilege this migration withholds, and try again. Inside the
+-- pin's transaction, so it is gone at ROLLBACK like every other fixture.
+GRANT DELETE ON public.memberships TO authenticated;
+SELECT pg_catalog.set_config('request.jwt.claims',
+  (SELECT claims FROM t014_claims WHERE who='alpha_admin'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t014.admin_delete_with_grant',
+  pg_temp.t014_try_value($$WITH d AS (
+      DELETE FROM public.memberships
+       WHERE user_id = '00000014-0000-0000-0000-0000000000a3'::uuid
+       RETURNING 1)
+    SELECT to_jsonb(pg_catalog.count(*)) FROM d$$)::text, true);
+RESET ROLE;
+REVOKE DELETE ON public.memberships FROM authenticated;
+
+DO $t11$
+DECLARE
+  v_self    jsonb := pg_catalog.current_setting('t014.admin_self_delete')::jsonb;
+  v_other   jsonb := pg_catalog.current_setting('t014.admin_other_delete')::jsonb;
+  v_soft    jsonb := pg_catalog.current_setting('t014.admin_soft_remove')::jsonb;
+  v_granted jsonb := pg_catalog.current_setting('t014.admin_delete_with_grant')::jsonb;
+  v_role    text;
+BEGIN
+  -- T11a · the privilege itself, resolved through role inheritance and PUBLIC.
+  ASSERT NOT has_table_privilege('authenticated','public.memberships','DELETE'),
+    'T11a FAIL: authenticated holds DELETE on public.memberships. 002:699 grants '
+    'SELECT, INSERT and UPDATE and withholds DELETE on purpose: removal is '
+    'status = ''REMOVED'' so the audit trail of who had access when survives, and '
+    'a DELETE walks straight past memberships_no_self_edit, which is FOR UPDATE.';
+
+  ASSERT has_table_privilege('authenticated','public.memberships','SELECT')
+     AND has_table_privilege('authenticated','public.memberships','INSERT')
+     AND has_table_privilege('authenticated','public.memberships','UPDATE'),
+    'T11b0 FAIL: 014 removed one of 002''s three real membership privileges. The '
+    'fix for the DELETE was to restore 002''s set, not to narrow past it.';
+
+  -- T11b · the attack, run.
+  ASSERT NOT (v_self->>'ok')::boolean,
+    pg_catalog.format('T11b FAIL: an aal2 ADMIN deleted their own membership row. '
+      'That is the first half of delete-and-reinsert-at-a-higher-role, and 002''s '
+      'UPDATE-only escalation stop never sees it. Result: %s', v_self::text);
+  ASSERT v_self->>'sqlstate' = '42501',
+    pg_catalog.format('T11b1 FAIL: the self-delete was refused, but not by the '
+      'privilege layer (sqlstate %s). Expected 42501 insufficient_privilege — a '
+      'refusal from somewhere else means the grant is still there and something '
+      'accidental is standing in the way.', v_self->>'sqlstate');
+
+  ASSERT NOT (v_other->>'ok')::boolean,
+    pg_catalog.format('T11c FAIL: an ADMIN hard-deleted another member''s row. '
+      'Same missing audit trail, one indirection further away: %s', v_other::text);
+
+  -- T11d · and the product path still works.
+  ASSERT (v_soft->>'ok')::boolean,
+    pg_catalog.format('T11d FAIL: an aal2 ADMIN cannot soft-remove a member with '
+      'status = ''REMOVED''. Withholding DELETE is only correct while the path 002 '
+      'says to use instead is open: %s', v_soft::text);
+
+  ASSERT EXISTS (
+    SELECT 1 FROM public.memberships
+     WHERE user_id = '00000014-0000-0000-0000-0000000000a3'
+       AND tenant_id = '00000014-1111-1111-1111-111111111111'
+       AND role = 'ADMIN'),
+    'T11e FAIL: the ADMIN''s own membership row is gone or changed after the '
+    'attempts above. The escalation succeeded.';
+
+  -- T11f · the second layer, with the privilege handed back.
+  ASSERT (v_granted->>'ok')::boolean
+     AND (v_granted->'value')::text = '0',
+    pg_catalog.format('T11f FAIL: with DELETE re-granted, an aal2 ADMIN deleted '
+      '%s membership row(s). The restrictive policy memberships_no_client_delete '
+      'is the layer that has to hold when a future migration re-adds the grant, '
+      'and it did not. Result: %s',
+      COALESCE((v_granted->'value')::text,'?'), v_granted::text);
+
+  SELECT m.role::text INTO v_role FROM public.memberships m
+   WHERE m.user_id = '00000014-0000-0000-0000-0000000000a3';
+  ASSERT v_role = 'ADMIN',
+    pg_catalog.format('T11g FAIL: the ADMIN''s stored role is now %s.', v_role);
+
+  RAISE NOTICE
+    'T11 PASS - DELETE on public.memberships is not granted, an aal2 ADMIN is '
+    'refused at 42501 for their own row and for another member''s, the soft-remove '
+    'UPDATE 002 prescribes still works, and with the privilege deliberately '
+    're-granted the restrictive policy still deletes nothing.';
+END;
+$t11$;
+
 
 ROLLBACK;
