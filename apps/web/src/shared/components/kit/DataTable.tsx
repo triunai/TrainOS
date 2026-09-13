@@ -38,6 +38,14 @@ export interface Column<Row> {
   label: string;
   accessor: (row: Row) => ReactNode;
   align?: "left" | "right";
+  /**
+   * Cell typography. Brief §1: mono is for machine-ish values only — a ref
+   * (`HRDC-2201-8834`), a version, a checksum — so a column opts IN to it here.
+   * Numbers are not machine-ish: a right-aligned column gets the UI font with
+   * tabular numerals, which is what makes a money column align, and mono makes
+   * an amount read as a serial number.
+   */
+  variant?: "code";
   sortable?: boolean;
   /** Column width, e.g. "120px" or "20%". Omit to share the remainder. */
   width?: string;
@@ -210,7 +218,7 @@ export function DataTable<Row>({
                        half of the combination §9 names as the thing that reads
                        as generated. Every screen already passes a sentence-case
                        label, so this is the whole migration. */
-                    "whitespace-nowrap px-3 py-2 text-[12px] font-medium text-ink-muted",
+                    "whitespace-nowrap px-3 py-2 font-sans text-[12px] font-medium text-ink-muted",
                     column.align === "right" && "text-right",
                   )}
                 >
@@ -293,7 +301,10 @@ function TableBlock<Row>({
           <th
             colSpan={columnCount}
             scope="colgroup"
-            className="border-b border-t border-divider bg-surface px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
+            /* The group caption is a header too, so it takes the same
+               typography as the column heads: UI font, sentence case as the
+               screen passed it, muted ink. */
+            className="border-b border-t border-divider bg-surface px-3 py-1.5 text-left font-sans text-[12px] font-medium text-ink-muted"
           >
             <span className="inline-flex items-center gap-2">
               {block.caption}
@@ -355,7 +366,15 @@ function TableBlock<Row>({
                 className={cn(
                   PAD[density],
                   "align-middle text-ink",
-                  column.align === "right" && "text-right font-mono tabular-nums",
+                  column.align === "right" && "text-right",
+                  /* Brief §1: a number is set in the UI font with tabular
+                     numerals, never in mono. Right-aligned means numeric here —
+                     money, pax, counts — and the figures line up because the
+                     numerals are tabular, not because the face is monospaced. */
+                  column.align === "right" && column.variant !== "code" && "tabular-nums",
+                  /* Mono only where the column said so: a ref, a version, an
+                     id. Opting in is the column's job, never this file's. */
+                  column.variant === "code" && "font-mono",
                 )}
               >
                 {column.accessor(row)}

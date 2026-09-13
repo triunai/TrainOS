@@ -17,6 +17,12 @@ const columns: Column<Row>[] = [
   { key: "name", label: "Name", accessor: (row) => row.name, sortable: true },
 ];
 
+const typographyColumns: Column<Row>[] = [
+  { key: "ref", label: "Ref", variant: "code", accessor: (row) => row.id },
+  { key: "value", label: "Value", align: "right", accessor: () => "RM 67,200" },
+  { key: "name", label: "Last checked", accessor: (row) => row.name },
+];
+
 const rows: Row[] = [
   { id: "r1", name: "Alpha", hasMoney: false },
   { id: "r2", name: "Beta", hasMoney: true },
@@ -80,6 +86,86 @@ describe("DataTable", () => {
     render(<DataTable columns={columns} groups={groups} rowKey={(r) => r.id} label="Enquiries" />);
     const captionCell = screen.getByText("Breaching SLA").closest("th");
     expect(captionCell).toHaveAttribute("colspan", "1");
+  });
+
+  /* Tightening brief §1 and §9. Both of these were defects found on real
+     screens: every money column read in mono, and every heading read as a
+     tracked uppercase mono eyebrow. The assertions are written as refusals so
+     the old treatment cannot come back through a later edit. */
+  it("sets a right-aligned numeric cell in the UI font with tabular numerals, never mono", () => {
+    render(
+      <DataTable columns={typographyColumns} rows={rows} rowKey={(r) => r.id} label="Enquiries" />,
+    );
+
+    const money = screen.getAllByText("RM 67,200")[0]?.closest("td");
+    expect(money).toBeTruthy();
+    expect(money?.className).toContain("tabular-nums");
+    expect(money?.className).toContain("text-right");
+    expect(money?.className).not.toContain("font-mono");
+  });
+
+  it("keeps mono only for a column that opts in with variant code", () => {
+    render(
+      <DataTable columns={typographyColumns} rows={rows} rowKey={(r) => r.id} label="Enquiries" />,
+    );
+
+    const ref = screen.getByText("r1").closest("td");
+    expect(ref?.className).toContain("font-mono");
+
+    /* And nothing else in the row borrowed it. */
+    const plain = screen.getByText("Alpha").closest("td");
+    expect(plain?.className).not.toContain("font-mono");
+  });
+
+  it("renders column headers in the UI font, sentence case and muted ink, with no letterspacing", () => {
+    render(
+      <DataTable columns={typographyColumns} rows={rows} rowKey={(r) => r.id} label="Enquiries" />,
+    );
+
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers).toHaveLength(3);
+
+    for (const header of headers) {
+      expect(header.className).toContain("font-sans");
+      expect(header.className).toContain("text-[12px]");
+      expect(header.className).toContain("text-ink-muted");
+      expect(header.className).not.toContain("font-mono");
+      expect(header.className).not.toContain("uppercase");
+      expect(header.className).not.toContain("tracking-");
+    }
+
+    /* The label is the screen's words, rendered as given. */
+    expect(screen.getByText("Last checked")).toBeInTheDocument();
+  });
+
+  it("gives a sortable header the same typography, with no uppercase on the button", () => {
+    render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        label="Enquiries"
+        sortKey="name"
+        sortDirection="asc"
+        onSort={vi.fn()}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: /Name/ });
+    expect(button.className).not.toContain("uppercase");
+    expect(button.className).not.toContain("tracking-");
+    expect(button.className).not.toContain("font-mono");
+  });
+
+  it("gives a group caption the same header typography", () => {
+    const groups: RowGroup<Row>[] = [{ caption: "Breaching SLA", rows: [rows[0]] }];
+    render(<DataTable columns={columns} groups={groups} rowKey={(r) => r.id} label="Enquiries" />);
+
+    const caption = screen.getByText("Breaching SLA").closest("th");
+    expect(caption?.className).toContain("font-sans");
+    expect(caption?.className).not.toContain("font-mono");
+    expect(caption?.className).not.toContain("uppercase");
+    expect(caption?.className).not.toContain("tracking-");
   });
 
   it("gives a suggested row the AI tint, and never a fill", () => {

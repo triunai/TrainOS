@@ -500,7 +500,10 @@ export default function KitShowcase() {
     {
       key: "ref",
       label: "Ref",
-      accessor: (row) => <span className="font-mono text-[12px]">{row.ref}</span>,
+      /* The one kind of value that stays mono: a machine reference. It opts in
+         through the column rather than a span each screen writes for itself. */
+      variant: "code",
+      accessor: (row) => row.ref,
       width: "110px",
     },
     {
@@ -533,7 +536,7 @@ export default function KitShowcase() {
       accessor: (row) => (
         <span className="flex items-center gap-2">
           <MiniBar value={row.score} width="44px" label={`Score for ${row.ref}`} />
-          <span className="font-mono text-[12px]">{Math.round(row.score * 100)}</span>
+          <span className="text-[12px] tabular-nums">{Math.round(row.score * 100)}</span>
         </span>
       ),
       width: "110px",
@@ -806,7 +809,7 @@ export default function KitShowcase() {
       <Entry
         id="table"
         title="Data table, filter bar and pill tabs · Kit §08"
-        note="Every list screen is this component with different columns. The third row cannot be bulk-selected and says why — bulkApprovable is false for anything carrying money."
+        note='Every list screen is this component with different columns. The third row cannot be bulk-selected and says why — bulkApprovable is false for anything carrying money. Headings are UI font in sentence case, money and counts are UI font with tabular numerals, and mono survives only where a column asks for it with variant="code" — the Ref column here, and nothing else.'
       >
         <Stack>
           <PillTabGroup
