@@ -131,7 +131,13 @@ export function CostingWorksheetPage() {
           which the bare `flex flex-col gap-4` root did not have. Same shape as
           the engagement and invoice detail screens. */}
       <RecordHeader
-        title={`${quotation.ref} · costing`}
+        /* §15a. The ref moves out of the h1 into `recordRef` — CLAUDE.md gives
+           the mono identity line the refs and the title the record's name. */
+        accent
+        collapsible
+        recordType="costing"
+        title="Costing worksheet"
+        recordRef={quotation.ref}
         meta={[
           quotation.proposalRef,
           `${quotation.lines.length} cost lines`,
