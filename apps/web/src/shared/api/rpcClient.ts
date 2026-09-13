@@ -90,15 +90,25 @@ import type { TransportFailure, TransportResponse } from "./transport";
 const DOMAIN_SQLSTATE = "TRNOS";
 
 /**
- * "That function is not deployed." Matched on CODE, never on message text.
+ * "That is not deployed." Matched on CODE, never on message text.
  *
  * A missing function is a deployment fact, not flakiness: the feature must
  * degrade to unsupported rather than to a generic failure that invites a retry
  * of something that can never succeed. Every RPC this client names is specified
  * but unbuilt today, so this path is the app's normal state until the
  * migrations lane lands.
+ *
+ * `PGRST106` is here on measured evidence, not on principle. The hosted project
+ * answers EVERY call this client makes with
+ * `{"code":"PGRST106","message":"Invalid schema: core","hint":"Only the
+ * following schemas are exposed: public, graphql_public"}`. `config.toml:18`
+ * exposes `core`, but that file configures the LOCAL CLI stack — the hosted
+ * project's exposed-schema list is a separate setting that has not been
+ * changed. Classified as a 500 it reads as "TrainOS is down"; classified here
+ * it reads as "this endpoint is not deployed", which is both true and
+ * actionable. `PGRST205` is the same fact for a table.
  */
-const MISSING_FUNCTION_CODES = new Set(["PGRST202", "42883", "42P01"]);
+const MISSING_FUNCTION_CODES = new Set(["PGRST202", "PGRST106", "PGRST205", "42883", "42P01"]);
 
 /** PostgREST's JWT rejections, plus Postgres' own privilege refusal. */
 const UNAUTHENTICATED_CODES = new Set(["PGRST301", "PGRST302", "42501"]);

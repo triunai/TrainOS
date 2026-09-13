@@ -14,6 +14,53 @@ The client degrades a missing function to a transport failure on `PGRST202` /
 
 ---
 
+## 0a · The hosted project does not expose `core`. Nothing works until it does.
+
+Measured on 2026-09-13 against the hosted project with the publishable key,
+through supabase-js:
+
+```
+core.rpc("me")                       PGRST106  Invalid schema: core
+core.from("enquiries").select("*")   PGRST106  Invalid schema: core
+public.from("tenants").select("id")  PGRST205  Could not find the table
+                                               'public.tenants' in the schema cache
+```
+
+with the hint `Only the following schemas are exposed: public, graphql_public`.
+
+`supabase/config.toml:18` does list `["public", "core", "graphql_public"]`, and
+that is exactly the trap: **it configures the LOCAL CLI stack.** The hosted
+project's exposed-schema list is a separate setting that has never been changed.
+Every RPC and every view read in this document is addressed to `core`, so **all
+of them will fail with `PGRST106` on the hosted project regardless of whether
+the SQL is correct.** Applying 001–014 will not change that by itself.
+
+Fix it as part of the same deploy, in one of two places:
+
+- Dashboard → Project Settings → API → Data API → **Exposed schemas**: add
+  `core`; or
+- in SQL, which is reviewable and repeatable:
+
+  ```sql
+  ALTER ROLE authenticator
+    SET pgrst.db_schemas = 'public, core, graphql_public';
+  NOTIFY pgrst, 'reload config';
+  ```
+
+Do **not** add `app`. It is absent on purpose, and it is what keeps the policy
+gate's internals unreachable from a browser.
+
+`PGRST205` on `public.tenants` is the second half of the same probe and is the
+expected answer: the database is empty and stays empty until 001–014 are
+applied.
+
+The client already treats both codes as deployment facts rather than server
+faults, so a feature degrades to "not deployed" instead of drawing a retry
+button over a configuration setting. Two cases in the conformance suite pin
+that classification.
+
+---
+
 ## 0 · The posture every function in this document shares
 
 ```sql
@@ -591,6 +638,10 @@ Run these before and after the migration:
 | `npm run check:grants` | nothing client-callable is over-granted |
 | `npm run lint:sql` | the migration parses |
 | `npm test -w apps/web --` | the conformance suite: both clients answer identically through the envelope round trip |
+
+Before trusting any of it against the hosted project, re-run the probe in §0a
+and confirm `core.rpc(...)` no longer answers `PGRST106`. A green migration
+against an unexposed schema is a green migration nobody can call.
 
 The conformance suite is the useful one here. It drives the real RPC client
 through the real port with a double that answers each function from the fixture

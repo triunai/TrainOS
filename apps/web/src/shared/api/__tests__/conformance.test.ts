@@ -13,8 +13,7 @@ import { ContractError, createFixtureClient, isContractError } from "@trainos/fi
 
 import { createRpcApiClient, type ApiClient } from "../apiClient";
 import { isDomainError } from "../errors";
-import { createRpcClient } from "../rpcClient";
-import { unwrapEnvelope } from "../rpcClient";
+import { classifyTransportFailure, createRpcClient, unwrapEnvelope } from "../rpcClient";
 import { __setTransportForTests } from "../supabase";
 import type { RpcTransport, TransportResponse } from "../transport";
 
@@ -285,5 +284,36 @@ describe("error classification", () => {
     const result = unwrapEnvelope({ success: false, error: { code: "FORBIDDEN" } });
     expect(result.error).not.toBeNull();
     expect(result.error !== null && isDomainError(result.error)).toBe(true);
+  });
+
+  /**
+   * MEASURED against the hosted project, not assumed.
+   *
+   * Every call this client makes today comes back
+   * `{"code":"PGRST106","message":"Invalid schema: core"}`, because the hosted
+   * project exposes only `public, graphql_public`. `config.toml` exposes
+   * `core`, but that file configures the LOCAL CLI stack. Classified as a 500
+   * this reads as "TrainOS is down" and invites a retry that can never work;
+   * classified as a deployment fact it reads as "not deployed", which is true
+   * and actionable.
+   */
+  it("reads an unexposed schema as not deployed, not as a server fault", () => {
+    const error = classifyTransportFailure({
+      message: "Invalid schema: core",
+      code: "PGRST106",
+      hint: "Only the following schemas are exposed: public, graphql_public",
+    });
+    expect(error.kind).toBe("transport");
+    expect(error).toMatchObject({ code: "SERVER", status: 404 });
+    expect(error.message).toContain("not deployed");
+  });
+
+  /** A table PostgREST has never seen is the same kind of fact as a function. */
+  it("reads a table missing from the schema cache as not deployed", () => {
+    const error = classifyTransportFailure({
+      message: "Could not find the table 'public.tenants' in the schema cache",
+      code: "PGRST205",
+    });
+    expect(error).toMatchObject({ kind: "transport", code: "SERVER", status: 404 });
   });
 });
