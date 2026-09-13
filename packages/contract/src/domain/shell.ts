@@ -218,3 +218,23 @@ export interface TemplateSection {
   title: string;
   aiEnabled: boolean;
 }
+
+/* ------------------------------------------------------------------ *
+ * §none · Notifications — ruled R8
+ * ------------------------------------------------------------------ */
+
+/**
+ * §none — ruled R8. The top-bar bell is drawn on every screen with a fixed
+ * count of four, but §2 publishes no shape for it. Shape lifted verbatim from
+ * the fixture package's `FixtureNotification`, which had filled the gap
+ * locally.
+ */
+export interface Notification {
+  id: string;
+  at: Timestamp;
+  severity: 'INFO' | 'WARN' | 'DANGER';
+  title: string;
+  body: string;
+  path: string;
+  read: boolean;
+}

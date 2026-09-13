@@ -222,8 +222,16 @@ export type MessageCategory = (typeof MESSAGE_CATEGORIES)[number];
 export const AGENT_STATUSES = ['ACTIVE', 'PAUSED', 'RETIRED'] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
-/** §12 `RunStatus` */
-export const RUN_STATUSES = ['RUNNING', 'SUCCEEDED', 'FAILED', 'HALTED'] as const;
+/**
+ * §12 `RunStatus`.
+ *
+ * Ruling R5: `RESUMABLE` added. A run that yields at the
+ * 300s worker wall clock with a checkpoint (architecture doc 05 §8.5) is still
+ * running, just not in this worker; before this ruling the agent runtime had
+ * to report `status: RUNNING, outcome: RESUMABLE` because the union had no
+ * member for it.
+ */
+export const RUN_STATUSES = ['RUNNING', 'SUCCEEDED', 'FAILED', 'HALTED', 'RESUMABLE'] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /** §12 `RunStepStatus` */
@@ -455,18 +463,41 @@ export type RuleResolutionBasis = (typeof RULE_RESOLUTION_BASES)[number];
 export const HOURS_SAVED_BASES = ['MEASURED', 'ILLUSTRATIVE'] as const;
 export type HoursSavedBasis = (typeof HOURS_SAVED_BASES)[number];
 
-/** §17 model providers named in the tier, provider and trace examples. */
+/**
+ * §17 model providers named in the tier, provider and trace examples.
+ *
+ * Ruling R4: `OPENROUTER` and `OTHER` added. BYOK (bring your own key) is a
+ * selling point — the agent runtime accepts an OpenRouter key and any
+ * OpenAI-compatible endpoint — but until this ruling the runtime had to map
+ * an OpenRouter call onto `OPENAI` to fit the union, which lies on the
+ * provenance badge about which vendor actually served the call. `OTHER`
+ * covers the OpenAI-compatible catch-all (DeepSeek keeps its own value).
+ */
 export const AI_PROVIDERS = [
   'ANTHROPIC',
   'GOOGLE',
   'OPENAI',
   'DEEPSEEK',
+  'OPENROUTER',
+  'OTHER',
 ] as const;
 export type AiProvider = (typeof AI_PROVIDERS)[number];
 
 /** §17 knowledge-source types. Only `HRDC_CIRCULAR` appears in the example. */
 export const KNOWLEDGE_SOURCE_TYPES = ['HRDC_CIRCULAR'] as const;
 export type KnowledgeSourceType = (typeof KNOWLEDGE_SOURCE_TYPES)[number];
+
+/**
+ * Ruling R6: which of a quotation's two independent price floors is binding.
+ * `Quotation` carried `floorPrice` and `floorMarginRate` but nothing that said
+ * which constraint actually produced that number, so the fixture package
+ * derived it locally as `QuotationWithFloors`. `MARGIN` means the
+ * margin-derived floor (from direct cost) is higher and binds; `ABSOLUTE`
+ * means the programme's tier floor is higher and binds. DECISIONS §5 +
+ * architecture doc 04.
+ */
+export const BINDING_FLOOR_BASES = ['MARGIN', 'ABSOLUTE'] as const;
+export type BindingFloorBasis = (typeof BINDING_FLOOR_BASES)[number];
 
 /** §17 retrieval scopes on a knowledge source. */
 export const RETRIEVAL_SCOPES = ['COMPLIANCE', 'CLIENT_FACING'] as const;

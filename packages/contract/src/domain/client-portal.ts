@@ -32,6 +32,20 @@ export interface PortalSection {
   body: string;
 }
 
+/**
+ * §none — ruled R8. Who the client reaches out to from the portal page: no
+ * source names this, but a client-safe proposal page with a comment thread
+ * and no visible point of contact is not a rendering the design pack asks
+ * for. Typed conservatively, matching `Contact`'s shape minus the tenant-side
+ * fields the client should never see.
+ */
+export interface PortalVendorContact {
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+}
+
 /** §11 the recorded acceptance. */
 export interface PortalAcceptance {
   acceptedBy: string;
@@ -58,6 +72,11 @@ export interface PortalComment {
  */
 export interface PortalProposal {
   ref: Ref;
+  /**
+   * Ruling R8. The page header needs a title to render and nothing supplied
+   * one; `organisationName` names the client, not the proposal.
+   */
+  title: string;
   organisationName: string;
   issuedAt: DateOnly;
   sections: PortalSection[];
@@ -65,6 +84,8 @@ export interface PortalProposal {
   status: ProposalStatus;
   acceptance: PortalAcceptance | null;
   comments: PortalComment[];
+  /** Ruling R8 — who the client reaches out to from this page. */
+  vendorContact: PortalVendorContact;
 }
 
 /** §11 `POST /v1/public/proposals/{token}/comments`. */

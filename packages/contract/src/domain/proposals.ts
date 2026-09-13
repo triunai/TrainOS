@@ -17,6 +17,7 @@ import type {
   Timestamp,
 } from '../envelope';
 import type {
+  BindingFloorBasis,
   EvidenceType,
   GapPriority,
   HRDCScheme,
@@ -139,6 +140,32 @@ export interface TrainerPoolEntry {
   rating?: number;
 }
 
+/**
+ * §none — ruled R8. `GET /v1/trainers` is in the §13 matrix and M06-S02
+ * renders a pool table, but the contract published only `TrainerPoolEntry`
+ * (the summary embedded on a programme) and `TrainerAvailability` (a
+ * recommendation-time check) — neither is the trainer record itself. Shape
+ * lifted verbatim from the fixture package's `FixtureTrainer`, which had
+ * filled the gap locally.
+ */
+export interface Trainer {
+  id: string;
+  ref: Ref;
+  name: string;
+  email: string;
+  bands: TrainerBand;
+  tttCertified: boolean;
+  tttRef: string | null;
+  tttValidTo: DateOnly | null;
+  /** §17 `CHK_TRAINER_ACCREDITATION` reads this. */
+  hrdTdf: boolean;
+  rating: number;
+  programmeRefs: Ref[];
+  /** Dates the trainer is already committed, as `YYYY-MM-DD` day keys. */
+  bookedDates: DateOnly[];
+  lastDeliveredAt: Timestamp | null;
+}
+
 /** §6 a material asset shipped with the programme. */
 export interface ProgrammeMaterial {
   type: string;
@@ -150,6 +177,23 @@ export interface ProgrammeMaterial {
 export interface ProgrammeStats {
   deliveries: number;
   averageEvaluation: number;
+}
+
+/**
+ * §none — ruled R8. `GET /v1/programmes/{id}/deliveries` has no response type
+ * in the contract; `ProgrammeStats` above is the rollup, not the row list.
+ * Shape lifted verbatim from the fixture package's `ProgrammeDelivery`, which
+ * followed the M06-S02 data-contract line
+ * (`Delivery{clientId,dates,pax,evaluation,valueRM}`).
+ */
+export interface ProgrammeDelivery {
+  engagementRef: Ref;
+  organisationRef: Ref;
+  organisationName: string;
+  dates: string;
+  pax: number;
+  evaluation: number;
+  value: Money;
 }
 
 /**
@@ -289,6 +333,16 @@ export interface Quotation extends EntityEnvelope {
   marginRate: Rate;
   floorPrice: Money;
   floorMarginRate: Rate;
+  /**
+   * Ruling R6: the two floors made explicit. `floorPrice` above is whichever
+   * of these two is binding; before this ruling nothing recorded which
+   * constraint actually produced it, and the fixture package derived it
+   * locally. The higher of the two binds — DECISIONS §5 + architecture
+   * doc 04.
+   */
+  absoluteFloorPrice: Money;
+  marginFloorPrice: Money;
+  bindingFloorBasis: BindingFloorBasis;
   commissionRate: Rate;
   commission: Money;
   commissionPayableOn: 'COLLECTION' | 'INVOICE';

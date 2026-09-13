@@ -31,7 +31,7 @@ import type {
   Severity,
   SyncState,
 } from '../enums';
-import type { ActionType } from '../actions';
+import type { AnyActionType } from '../actions';
 
 /* ------------------------------------------------------------------ *
  * §9 · HRD Corp claim packet — M12-S02
@@ -399,9 +399,17 @@ export interface ReceivablesAging {
   dsoDays: number;
 }
 
-/** §9 the next step the ladder proposes for an overdue invoice. */
+/**
+ * §9 the next step the ladder proposes for an overdue invoice.
+ *
+ * Ruling R7: `type` widened from `ActionType` (the §3 nineteen only) to
+ * `AnyActionType` (§3 + the §17 AI-ops pair + the ruled types). The ladder's
+ * final step is `ACCOUNT_TRADING_HOLD` (ruling R3), a `RULED_ACTION_TYPES`
+ * member, which `ActionType` cannot hold; before this ruling the fixture
+ * package had to widen the row locally as `FixtureReceivable`.
+ */
 export interface CollectionNextAction {
-  type: ActionType;
+  type: AnyActionType;
   status: string;
   autonomy: AutonomyLevel;
 }

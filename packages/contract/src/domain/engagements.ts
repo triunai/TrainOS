@@ -112,7 +112,16 @@ export interface Engagement extends EntityEnvelope {
   lifecycle: LifecycleStep[];
   checklist: EngagementChecklistItem[];
   sessions: EngagementSession[];
-  finance: EngagementFinance;
+  /**
+   * Ruling R7: made optional. Tenancy CD-1 withholds `quotation:read` (and
+   * margin generally) from OPS, so the OPS projection of an engagement drops
+   * this block entirely rather than zeroing it — a missing field is honest,
+   * a zeroed one would lie about margin. Before this ruling the field was
+   * required and the fixture package had to type its OPS-safe projection as
+   * `Omit<Engagement, 'finance'> & { finance?: EngagementFinance }` instead
+   * of `Engagement` itself.
+   */
+  finance?: EngagementFinance;
   /** §18 — the rule-set version stored at grant submission. */
   ruleSetVersion?: string;
 }

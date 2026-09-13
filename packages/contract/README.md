@@ -133,6 +133,94 @@ Source note: this rule is API_CONTRACT §9, in the `GET /v1/collections/rules`
 sentence, not DECISIONS §7 — DECISIONS §7 is the rounding decision. The
 substance is unchanged.
 
+### R4: `AiProvider` gains `OPENROUTER` and `OTHER`
+
+BYOK (bring your own key) is a selling point of the agent runtime — it accepts
+an Anthropic key, an OpenRouter key, a DeepSeek key, or any OpenAI-compatible
+endpoint, and runs the same orchestrator against whichever it finds. `§17`'s
+`AiProvider` union names only `ANTHROPIC`, `GOOGLE`, `OPENAI` and `DEEPSEEK`,
+so the runtime had to map an OpenRouter call onto `OPENAI` to fit the type.
+That lies on the provenance badge: the badge would say a call was served by
+OpenAI when it was actually served, at OpenRouter's discretion, by whichever
+underlying model OpenRouter routed to. Ruling: add `OPENROUTER`, and `OTHER`
+for the generic OpenAI-compatible case that names no vendor at all. `enums.ts`
+carries the reasoning inline.
+
+### R5: `RunStatus` gains `RESUMABLE`
+
+Architecture doc 05 §8.5: an Edge Function worker is killed at its wall clock
+(300s in the runtime's default slice budget), so a run that cannot checkpoint
+cannot exceed that budget. A run that yields with a checkpoint is still
+running — just not in this worker — but `§12`'s `RunStatus` has only
+`RUNNING | SUCCEEDED | FAILED | HALTED`, none of which says "yielded, resume
+me." Before this ruling the runtime reported `status: RUNNING, outcome:
+RESUMABLE` and carried the real disposition on a wrapper object outside the
+contract, purely because the union had no member for it. Ruling: add
+`RESUMABLE` to `RunStatus` itself.
+
+### R6: `Quotation` gains its two floors and which one binds
+
+DECISIONS §5 and architecture doc 04: a quotation clears two independent price
+floors — the programme's absolute tier floor, and a margin floor derived from
+direct cost — and the higher one binds. `Quotation` already carried
+`floorPrice` (whichever floor is binding) and `floorMarginRate`, but nothing
+recorded which of the two constraints actually produced that number, so a
+screen showing "why is this the floor" had nothing to read. Ruling: add
+`absoluteFloorPrice`, `marginFloorPrice` and `bindingFloorBasis: 'MARGIN' |
+'ABSOLUTE'` (the latter published as `BindingFloorBasis` / `BINDING_FLOOR_BASES`
+in `enums.ts`). This replaces the fixture package's local `QuotationWithFloors`
+decorator, which computed the same three fields outside the contract.
+
+### R7: `Engagement.finance` becomes optional; `CollectionNextAction.type` widens
+
+Two independent findings, one ruling pass:
+
+- **`Engagement.finance` optional.** Tenancy CD-1 withholds `quotation:read`,
+  and margin generally, from the `OPS` role. The fixture client's OPS
+  projection of an engagement therefore has to drop the `finance` block
+  entirely — a missing field is honest, a zeroed one would lie about margin —
+  but `Engagement.finance` was required, so that projection could not be typed
+  as an `Engagement` at all. It was typed locally as `Omit<Engagement,
+  'finance'> & { finance?: EngagementFinance }`. Ruling: make the field
+  optional on `Engagement` itself, with a doc comment recording that the OPS
+  projection is the reason and that its absence means "hidden by role," never
+  "zero."
+- **`CollectionNextAction.type` widens to `AnyActionType`.** The collections
+  ladder's final step is `ACCOUNT_TRADING_HOLD` (ruling R3), which lives in
+  `RULED_ACTION_TYPES`, not the §3 `ActionType` list `CollectionNextAction.type`
+  was typed against. The one row that most needs to name that action type
+  could not. It was widened locally as `FixtureReceivable`. Ruling: type the
+  field as `AnyActionType` (§3 plus the §17 AI-ops pair plus the ruled types),
+  matching how every other `type` field that can carry a ruled action type is
+  already typed.
+
+### R8: `Trainer`, `Notification`, `ProgrammeDelivery`, and the portal's vendor contact
+
+Four gaps the fixture package reported rather than patched, closed here by
+lifting the shapes it had already worked out:
+
+- **`Trainer`.** `GET /v1/trainers` is in the §13 matrix and M06-S02 renders a
+  pool table, but the contract published only `TrainerPoolEntry` (a summary
+  embedded on a programme) and `TrainerAvailability` (a recommendation-time
+  check), neither of which is the trainer record itself. Added, shape lifted
+  verbatim from the fixture package's `FixtureTrainer`.
+- **`Notification`.** The top-bar bell renders on every screen with a fixed
+  count of four; §2 publishes no shape for it. Added, shape lifted verbatim
+  from the fixture package's `FixtureNotification`.
+- **`ProgrammeDelivery`.** `GET /v1/programmes/{id}/deliveries` has no response
+  type; `ProgrammeStats` is the rollup, not the row list. Added, shape lifted
+  verbatim from the fixture package's `ProgrammeDelivery`, which followed the
+  M06-S02 data-contract line.
+- **`PortalProposal.title` and `vendorContact`.** No source names either. A
+  client-facing proposal page needs a title to render in its own header
+  (`organisationName` names the client, not the proposal), and a comment
+  thread with no visible point of contact is not a page the design pack asks
+  for. `title: string` and `vendorContact: PortalVendorContact` (`name, role,
+  email, phone`) added, typed conservatively.
+
+None of the four had a prior contract source — each is marked `§none — ruled
+R8` in code rather than attributed to a section it did not come from.
+
 ## Fields with no source
 
 Copied from §15, then extended with what the contract itself leaves ambiguous.
@@ -200,8 +288,10 @@ Each is typed conservatively and marked in code.
     is `string[]`; only the quotation grants are published as constants, and
     only because ruling R2 fixed them.
 16. **`/notifications` and `/assistant/messages` exist only in API.md.** Neither
-    appears in the §13 matrix or in any §2–§18 shape, so neither is typed or
-    listed in `ENDPOINTS`.
+    appears in the §13 matrix, so neither is listed in `ENDPOINTS`. Ruling R8
+    added the `Notification` shape the first would return; the endpoint row
+    itself is still missing from `ENDPOINTS` and is carried as an open item
+    below, since adding endpoint rows was outside this ruling's scope.
 
 ### Open questions carried into the code
 
@@ -222,6 +312,52 @@ Every §16 and §17 open question that constrains a type is marked in place with
 §17 Q5 (pass-through billing meter) do not change a type, so they are recorded
 here rather than in code. §16 Q10 (money rounding) and §17 Q1 (rule resolution)
 are answered by §18 and need no marker.
+
+## Open items from the fixtures and agent-runtime gap reports
+
+Rulings R4–R8 close the type-shape gaps the two downstream packages reported.
+The rest of what they reported is not a missing type — a table, an endpoint
+row, or a naming inconsistency — so it is catalogued here rather than
+answered with an invented type:
+
+1. **`OrganisationMetrics` disagrees with its own §5 example.** The JSON
+   flattens money onto the metric (`{ amount, currency, drillTo }`); the type
+   is `MetricValue<Money>` (`{ value: { amount, currency }, drillTo }`). The
+   type is not wrong — `MetricValue<T>` is used consistently elsewhere — but
+   one of the two needs correcting in the contract text, and this package
+   cannot decide which without asking the contract owner.
+2. **Two pipelines share the name `ENGAGEMENT`.** §5 says the relations
+   panel's lifecycle comes from `config/pipelines?object=ENGAGEMENT`, but its
+   keys (`ENQUIRY · TNA · PROPOSAL · APPROVAL · SENT · DELIVERY`) are not the
+   §8 engagement keys (`WON · TRAINER_CONFIRMED · …`). `LifecycleStep.key` is
+   already a bare `string` by design (stage names render from configuration,
+   never a client union), so no type changes; the fixture package seeded two
+   distinct pipeline objects (`ENGAGEMENT` and `DEAL_CHAIN`) as a workaround.
+   The naming collision in §5 itself is still open.
+3. **No per-action confidence minimum.** §3 step 4 compares an agent's
+   `confidence` against "the agent's minimum for that action," and nothing in
+   §2–§18 publishes that table. Adding one would mean inventing every
+   threshold; the fixture package's `MINIMUM_CONFIDENCE` stays a fixture-only
+   table until the real values exist.
+4. **No `409` code for a stale diff or a blocked bulk decide.** §7 describes
+   both as `409`s, but the §1 error table has only `AGENT_PAUSED` at that
+   status. Adding two more codes without documented `details` shapes would be
+   a guess; the fixture package's reuse of `AGENT_PAUSED` for both, with the
+   documented `details`, stays a fixture-level stand-in.
+5. **No way to add a proposal section.** §13 publishes `PUT
+   /sections/{n}` and `POST /sections/{n}/regenerate`, both of which require
+   the section to already exist, so M07-S02's "Add section" control has no
+   endpoint to call. This is a missing endpoint, not a missing type — nothing
+   in `ProposalSection` would need to change — so it is left for whoever owns
+   the §13 endpoint matrix rather than added speculatively here.
+6. **The permission vocabulary is still uncatalogued beyond `QUOTATION_PERMISSIONS`.**
+   Already tracked as item 15 above; repeated here because both downstream
+   packages independently hit it (every non-quotation grant in the fixture
+   `/me` responses is invented and marked as such).
+
+Not carried forward: Siti Nordin vs. Siti Rahman (§8 vs. the design-pack
+inventory) is a data disagreement, not a contract gap — the fixture package
+already ruled it in the contract's favour and no type is affected.
 
 ## Conventions the package enforces by construction
 
