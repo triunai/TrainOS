@@ -7,6 +7,24 @@
 > contract — a PR-body extractor keys on those literal strings. Renaming one
 > silently degrades that section to a placeholder.
 
+## SESSION 2026-09-14 — WRAP AFTER SESSION LIMIT; RESUME ON OPUS
+
+> **WRAP 14 Sep 00:10 +08** — all lanes died at 22:25 on the account session limit. Start from `ai/resume-brief.md` "WRAP 14 Sep 00:10". Main 8bb95ed. Open: PR #6 (tip 2edab79, four 011–013 residuals half-written on `fix/014-review` 87ca109 UNVERIFIED), PR #11 (66ad184, awaiting one rebase), PR #16 (7d47434, ready), `fix/bulk-decide-items` 72e27cb UNVERIFIED WIP, PR #15 draft blocked.
+
+### Focus
+
+Finish the four 011–013 residuals on `fix/014-review`, push to `cloud/migrations`, run the two final review passes, merge #6 → #16 → #11 (after its rebase), then the first hosted apply one pack per round.
+
+### Next Active Task
+
+Resume on Opus: `cd ~/Repos/personal-work/trainos-wt/fix-014`, read the WIP diff at 87ca109, finish the CLIENT permissions / action_requests reconcile / key_ref audit / REVEAL_AUDIT_MISMATCH items with failing-first pins on the 5436 shim.
+
+### Blockers
+
+- GitHub Actions down since 13 Sep 20:36 (org billing / spending limit). Merges run on local gates + independent review.
+- Codex quota (reset 00:29 14 Sep); Codex slot owed across 011–019.
+- Hosted apply gated on "PR #6 MAY MERGE"; `core` schema exposure only possible after 001 is applied.
+
 ## SESSION 2026-09-13 — HEADLESS BLAST, API PHASE + UI CARRY-OVER
 
 > **BLAST 13 Sep 19:25 +08** — orchestrator launched four lanes on top of the
