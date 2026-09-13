@@ -15,8 +15,8 @@ accessed 2026-09-13 unless noted; USD/1M tokens unless stated.
 | DeepSeek V4-Pro (`deepseek-v4-pro`) | $0.66 off-peak / $1.32 peak | $1.98 off-peak / $3.96 peak | — | $0.022 off-peak / $0.044 peak | — | same |
 | gpt-oss-120B (Cerebras) | $0.35 | $0.75 | — | — | — | Cerebras/aggregator (see note) |
 | gpt-oss-120B (Groq) | $0.15 | $0.60 | — | $0.075 | 50% off | groq.com pricing (via aggregator, see note) |
-| Qwen3.7 Flash (DashScope, Intl/Singapore, ≤32K ctx) | $0.03 | $0.13 | — | — | — | Alibaba DashScope pricing (via aggregator, see note); rises to $0.10/$0.40 at 32K–256K, $0.20/$0.80 at 256K–1M; Mainland endpoint 60–70% cheaper |
-| Gemini 3.1 Pro (≤200K ctx) | $2.00 | $12.00 | — | $0.20 (90% off) | — | ai.google.dev pricing (via aggregator, see note); ≥200K ctx re-rates whole request to $4.00/$18.00 |
+| Qwen3.7 Flash (via OpenRouter, ≤1M ctx) | $0.03 | $0.13 | $0.038 (5m) | $0.006 std / $0.003 (5m) | — | [openrouter.ai/qwen/qwen3.7-flash](https://openrouter.ai/qwen/qwen3.7-flash), confirmed 2026-09-13; matches §4.1 exactly. (Correction: an earlier pass in this file cited a tiered DashScope-native rate rising to $0.20/$0.80 at 256K–1M context from an unverified aggregator — OpenRouter's own product page shows a flat rate across the full 1M-token window and is the higher-confidence source.) |
+| Gemini 3.1 Pro (≤200K ctx) | $2.00 | $12.00 | — | $0.20 (90% off) | — | ai.google.dev pricing (via aggregator, see note); ≥200K ctx re-rates whole request to $4.00/$18.00. **Confirm GA status before quoting**: this is the price after a preview→GA transition — Gemini 3.1 Pro *Preview* was $1.00/$6.00, half the current rate, so a client-facing document should re-check ai.google.dev/gemini-api/docs/pricing directly rather than rely on an aggregator snapshot of a model that repriced recently. |
 | GPT-5.2 | $1.75 | $14.00 | — | $0.175 | $0.875/$7.00 | [developers.openai.com/api/docs/pricing](https://developers.openai.com/api/docs/pricing) |
 | GPT-5.6 Terra | $2.00 | $12.00 | — | $0.20 | $1.00/$6.00 | same |
 | GPT-5.6 Sol (promo thru 2026-11-21) | $4.00 | $20.00 | — | $0.40 | $2.00/$10.00 | same |
