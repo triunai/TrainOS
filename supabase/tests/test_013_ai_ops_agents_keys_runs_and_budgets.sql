@@ -1742,6 +1742,14 @@ DECLARE
   v_ref    text;
   v_stamp  timestamptz;
   v_denied boolean := false;
+  -- ⚠ ONE VARIABLE PER PROBE. T14g and T14h each raise their own refusal and
+  -- each must be able to fail on its own. A single shared flag meant T14h's
+  -- `v_denied := false` reset ran BETWEEN T14g's probe and T14g's assertion,
+  -- so the T14g assertion was reading T14h's result: deleting the
+  -- fingerprint-alone raise from app.enforce_key_material_pairing left this
+  -- pin at 14/14 with T14 still claiming "EITHER ... alone is refused".
+  -- Live-reproduced on the fix-014 shim before this was corrected.
+  v_denied_fp boolean := false;
 BEGIN
   PERFORM pg_temp.t013_claims(
     '00000013-0000-0000-0000-0000000000a1',
@@ -1800,7 +1808,7 @@ BEGIN
        SET key_fingerprint = pg_catalog.sha256('t14-third'::bytea)
      WHERE provider_ref = 'prv_t14';
   EXCEPTION WHEN OTHERS THEN
-    v_denied := true;
+    v_denied_fp := true;
     ASSERT SQLERRM LIKE '%key_ref did not%',
       pg_catalog.format('T14g1 FAIL: the unpaired fingerprint write was refused, '
         'but not by the pairing guard: %s', SQLERRM);
@@ -1830,7 +1838,7 @@ BEGIN
     'locator and the material identify one secret, and either moving without the '
     'other is a substitution.';
 
-  ASSERT v_denied,
+  ASSERT v_denied_fp,
     'T14g FAIL: key_fingerprint was changed on its own, with key_ref unchanged. '
     'Unfreezing the column to make rotation possible must not make it freely '
     'writable — a fingerprint that moves without its locator is either half a '
