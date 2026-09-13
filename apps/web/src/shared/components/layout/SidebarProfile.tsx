@@ -2,16 +2,11 @@ import { useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import { Avatar, ProfileModal } from "@/shared/components/kit";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
-import { ROLE_LABEL } from "@/shared/config/roles";
-import {
-  FIXTURE_PROFILE_DETAILS,
-  orgAndLocation,
-  profileChips,
-  scopeLabels,
-} from "@/shared/config/profileDetails";
+import { ROLE_LABEL, scopeLabels } from "@/shared/config/roles";
 import { useMe } from "@/shared/hooks/useMe";
 import { useT } from "@/shared/i18n";
 import { ThemeSwitch } from "./ThemeSwitch";
+import { useMeProfile } from "./useMeProfile";
 import { VERSION_LINE } from "./version";
 
 /**
@@ -55,9 +50,66 @@ import { VERSION_LINE } from "./version";
  * over the same control, which keeps the control in the one place a reader
  * who just collapsed the rail is already looking.
  *
- * Every value the modal shows that the API does not return comes from
- * `shared/config/profileDetails.ts`, where it is marked as invented.
+ * The modal's eleven extra fields come from `GET /v1/me/profile`, fetched only
+ * when the modal opens. `shared/config/profileDetails.ts` held them as invented
+ * constants until that endpoint landed, and is what this deleted.
  */
+
+/**
+ * The two sentences the contract deliberately does NOT pre-join.
+ *
+ * `MeProfile` publishes `lastSignInAt`, `browser` and `place` separately, and
+ * says why: "Chrome · Shah Alam, GMT+8" and "11-09-2026 08:04:22 AM" are one
+ * sentence and one locale decision, and a contract that shipped them joined
+ * would have put this app's date format on the server.
+ *
+ * They are local to this file rather than added to the kit's `format.ts`
+ * because this modal is their only caller and the format is the pack's own
+ * wording for this one panel. `formatDate` renders "11 Sep 2026" and stays the
+ * app's date format everywhere else; a second exported date helper that looked
+ * general but was really Kit §07's would be the divergence the consolidation
+ * rule exists to stop. If a second screen ever wants it, it moves to the kit.
+ *
+ * Both render in the HOLDER's timezone from `Me`, not the browser's. A last
+ * sign-in shown in the reader's local time is the one value on this panel that
+ * has to be checkable against what the account holder remembers doing.
+ */
+function formatSignIn(timestamp: string, timeZone: string): string {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "—";
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).formatToParts(parsed);
+
+  const at = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${at("day")}-${at("month")}-${at("year")} ${at("hour")}:${at("minute")}:${at(
+    "second",
+  )} ${at("dayPeriod").toUpperCase()}`;
+}
+
+/** `Asia/Kuala_Lumpur` -> `GMT+8`. Falls back to the zone's own name. */
+function gmtOffset(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      timeZoneName: "shortOffset",
+    }).formatToParts(new Date());
+    return parts.find((part) => part.type === "timeZoneName")?.value ?? timeZone;
+  } catch {
+    /* An unknown zone from the server must not take the modal down. */
+    return timeZone;
+  }
+}
 
 export interface SidebarProfileProps {
   /** The 64px icon rail. */
@@ -71,7 +123,9 @@ export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarP
   const { me } = useMe();
   const t = useT();
   const [open, setOpen] = useState(false);
-  const details = FIXTURE_PROFILE_DETAILS;
+  /* Not fetched until the modal is opened — see `useMeProfile`. */
+  const profile = useMeProfile(open);
+  const details = profile.data;
 
   const label = collapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar");
 
@@ -95,28 +149,61 @@ export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarP
     </button>
   );
 
-  /* One modal, one set of props, whichever shape the band is in. */
+  /* One modal, one set of props, whichever shape the band is in.
+
+     A field reads "Loading…" while the request is in flight and "Unavailable"
+     if it was refused, rather than an empty card: a blank value next to a
+     staff number reads as "you have no staff number", which is a different
+     claim from "we could not ask". The identity line, the role and the data
+     scope come from `Me` and are on screen either way. */
+  const placeholder = profile.isError ? "Unavailable" : "Loading…";
+  const field = (value: string | undefined) =>
+    details === undefined ? placeholder : (value ?? "—");
+
   const modal = (
     <ProfileModal
       open={open}
       onClose={() => setOpen(false)}
       name={me.name}
       roleLabel={ROLE_LABEL[me.role]}
-      orgAndLocation={orgAndLocation(details)}
-      lastSignIn={`Last sign in ${details.lastSignIn}`}
-      session={details.session}
+      orgAndLocation={
+        details === undefined ? placeholder : `${details.tenant.name} · ${details.location}`
+      }
+      lastSignIn={
+        details === undefined
+          ? `Last sign in ${placeholder}`
+          : `Last sign in ${formatSignIn(details.session.lastSignInAt, me.timezone)}`
+      }
+      session={
+        details === undefined
+          ? placeholder
+          : `${details.session.browser} · ${details.session.place}, ${gmtOffset(me.timezone)}`
+      }
       version={VERSION_LINE}
-      orgName={details.orgName}
-      orgCode={details.orgCode}
-      chips={profileChips(details)}
+      orgName={details?.tenant.name ?? placeholder}
+      orgCode={details?.tenant.code ?? ""}
+      chips={
+        details === undefined
+          ? []
+          : [
+              { label: `${details.moduleCount} modules`, tone: "accent" as const },
+              details.session.twoFactorEnabled
+                ? { label: "2FA on", tone: "success" as const }
+                : { label: "2FA off", tone: "neutral" as const },
+              {
+                label: `${details.session.activeSessions} active sessions`,
+                tone: "neutral" as const,
+              },
+            ]
+      }
       dataScope={scopeLabels(me)}
       headerAction={<ThemeSwitch />}
       fields={[
-        { label: "Job title", value: details.jobTitle },
-        { label: "Department", value: details.department },
-        { label: "Email", value: details.email },
-        { label: "Mobile", value: details.mobile },
-        { label: "Staff no.", value: details.staffNumber },
+        { label: "Job title", value: field(details?.jobTitle) },
+        { label: "Department", value: field(details?.department) },
+        { label: "Email", value: field(details?.email) },
+        { label: "Mobile", value: field(details?.mobile) },
+        { label: "Staff no.", value: field(details?.staffNumber) },
         /* The pack draws this one as "Coming soon" and so does this: `Me`
            carries a locale and a timezone, but nothing can change them yet,
            and a control that cannot act is worse than an honest label. */

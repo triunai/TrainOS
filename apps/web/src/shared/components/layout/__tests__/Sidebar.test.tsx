@@ -22,10 +22,13 @@
  * every offset below is measured from it.
  */
 
+import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiProvider } from "@/shared/api";
 import { I18nProvider } from "@/shared/i18n";
 import { BreadcrumbProvider } from "../BreadcrumbProvider";
 import { Sidebar } from "../Sidebar";
@@ -59,25 +62,35 @@ vi.mock("@/shared/theme", async () => {
   };
 });
 
+/**
+ * The profile band reads `GET /v1/me/profile` through the query cache, so the
+ * rail needs a client even in a test that is only measuring its geometry. The
+ * query is `enabled` only while the modal is open, so the tests below that
+ * never open it make no request at all.
+ */
+const withProviders = (children: ReactNode) => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <ApiProvider>
+      <I18nProvider>{children}</I18nProvider>
+    </ApiProvider>
+  </QueryClientProvider>
+);
+
 const renderAt = (path: string) =>
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <I18nProvider>
-        <Sidebar role="SALES" />
-      </I18nProvider>
-    </MemoryRouter>,
+    <MemoryRouter initialEntries={[path]}>{withProviders(<Sidebar role="SALES" />)}</MemoryRouter>,
   );
 
 /** The rail and the bar together, which is the only way to compare their tops. */
 const renderShellTop = () =>
   render(
     <MemoryRouter initialEntries={["/dashboard"]}>
-      <I18nProvider>
+      {withProviders(
         <BreadcrumbProvider>
           <Topbar />
           <Sidebar role="SALES" />
-        </BreadcrumbProvider>
-      </I18nProvider>
+        </BreadcrumbProvider>,
+      )}
     </MemoryRouter>,
   );
 

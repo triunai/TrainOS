@@ -1,4 +1,4 @@
-import { ROLES, type Role } from "@trainos/contract";
+import { ROLES, type Me, type Role } from "@trainos/contract";
 
 /**
  * The design pack's navigation ROLE map is keyed by six lowercase role names
@@ -56,3 +56,28 @@ export const ROLE_LABEL: Readonly<Record<Role, string>> = {
   CLIENT: "Client",
   AGENT: "Agent (service principal)",
 };
+
+/**
+ * The pack's wording for the two data-scope selects the profile modal draws.
+ *
+ * Lives here, beside `ROLE_LABEL`, because it is the same kind of thing: a
+ * contract vocabulary rendered in the pack's own words. It arrived in
+ * `profileDetails.ts` with the eleven invented profile fields, but unlike those
+ * it was never invented — `Me.dataScope` carries the values — so it stayed when
+ * that file was deleted.
+ *
+ * The map is open, not a closed `Record<DataScope, string>`: the contract says
+ * only `MY_ACCOUNTS` and `MY_TEAM` appear in its example and §12 catalogues
+ * neither, so an unknown value renders as itself rather than as blank.
+ */
+export const SCOPE_LABEL: Readonly<Record<string, string>> = {
+  ALL: "All clients",
+  MY_ACCOUNTS: "My accounts",
+  MY_TEAM: "My team",
+  OWN: "Own records",
+};
+
+export const scopeLabels = (me: Me) => ({
+  clients: SCOPE_LABEL[me.dataScope.clients] ?? me.dataScope.clients,
+  teams: SCOPE_LABEL[me.dataScope.teams] ?? me.dataScope.teams,
+});

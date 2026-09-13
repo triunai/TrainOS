@@ -6,6 +6,7 @@ export {
   type BreadcrumbContextValue,
 } from "./BreadcrumbProvider";
 export { useBadgeCounts, useUnreadCount } from "./useBadgeCounts";
+export { useMeProfile } from "./useMeProfile";
 export { Sidebar } from "./Sidebar";
 export { Topbar } from "./Topbar";
 export { NavBadge } from "./NavBadge";
