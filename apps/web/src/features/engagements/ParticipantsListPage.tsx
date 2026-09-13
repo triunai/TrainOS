@@ -62,7 +62,6 @@ export function ParticipantsListPage() {
 
   const navigate = useNavigate();
   const [status, setStatus] = useState<StatusFilter>("ALL");
-  const [engagementRef, setEngagementRef] = useState("ALL");
   const [department, setDepartment] = useState("ALL");
   const [query, setQuery] = useState("");
   const [density, setDensity] = useState<Density>("comfortable");
@@ -89,8 +88,13 @@ export function ParticipantsListPage() {
 
   const needle = query.trim().toLowerCase();
 
+  /* No engagement facet. The search already matches a row's cohort TITLE as
+     well as the participant's name and ref — which is exactly what its
+     placeholder promises, "Name, reference or cohort" — so a select listing
+     the same cohorts was the same narrowing offered twice, and it was the
+     control whose options are records that made this toolbar overflow. One
+     facet removed is worth more than a cap on it. */
   const narrowed = all.filter((row) => {
-    if (engagementRef !== "ALL" && row.engagement.ref !== engagementRef) return false;
     if (department !== "ALL" && row.participant.department !== department) return false;
     if (needle.length === 0) return true;
     return (
@@ -108,9 +112,6 @@ export function ParticipantsListPage() {
 
   const chips: FilterChipModel[] = [];
   if (needle.length > 0) chips.push({ id: "query", label: "Search", value: query.trim() });
-  if (engagementRef !== "ALL") {
-    chips.push({ id: "engagement", label: "Engagement", value: engagementRef });
-  }
   if (department !== "ALL") {
     chips.push({ id: "department", label: "Department", value: humanise(department) });
   }
@@ -230,12 +231,10 @@ export function ParticipantsListPage() {
             total={chips.length > 0 ? all.length : undefined}
             onRemove={(id) => {
               if (id === "query") setQuery("");
-              if (id === "engagement") setEngagementRef("ALL");
               if (id === "department") setDepartment("ALL");
             }}
             onClearAll={() => {
               setQuery("");
-              setEngagementRef("ALL");
               setDepartment("ALL");
             }}
           >
@@ -244,15 +243,6 @@ export function ParticipantsListPage() {
               value={query}
               onChange={setQuery}
               placeholder="Name, reference or cohort"
-            />
-            <FilterSelect
-              label="Engagement"
-              value={engagementRef}
-              onChange={setEngagementRef}
-              options={[
-                { value: "ALL", label: "Any engagement" },
-                ...cohorts.map((cohort) => ({ value: cohort.ref, label: cohort.title })),
-              ]}
             />
             <FilterSelect
               label="Department"

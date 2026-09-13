@@ -51,19 +51,41 @@ describe("M10 · participant directory", () => {
     expect(screen.getByText("Nurul Izzati")).toBeInTheDocument();
   });
 
-  it("narrows to one cohort through the engagement facet", async () => {
+  /* The engagement facet is gone (13 Sep ruling). It listed the same cohorts
+     the search already matches, so it was one narrowing offered twice — and
+     being a select whose options are RECORDS, it sized itself to the longest
+     cohort title and was what pushed this toolbar over the tabs. */
+  it("narrows to one cohort through the search, which is what its placeholder promises", async () => {
     const user = userEvent.setup();
     renderList();
 
     await screen.findByText("Ahmad Firdaus");
+    const search = screen.getByLabelText("Search");
+    expect(search).toHaveAttribute("placeholder", "Name, reference or cohort");
 
-    const facet = screen.getByLabelText("Engagement");
-    const options = within(facet).getAllByRole("option");
-    /* The first is "Any engagement"; the second is a real cohort. */
-    await user.selectOptions(facet, options[1]);
+    /* A cohort TITLE, not a participant name: the third thing the placeholder
+       offers is the one the removed facet used to do. */
+    await user.type(search, "Leading Through Change");
 
-    expect(await screen.findByText("Engagement:")).toBeInTheDocument();
+    expect(await screen.findByText("Search:")).toBeInTheDocument();
     expect(screen.getByText(/of \d+ shown/)).toBeInTheDocument();
+
+    const table = screen.getByRole("table", { name: "Participants" });
+    await waitFor(() => {
+      const titles = within(table).getAllByText(/Leading Through Change/);
+      expect(titles.length).toBeGreaterThan(0);
+    });
+    /* Narrowed to that cohort, so a row from another one is gone. */
+    expect(within(table).queryByText(/Safety Leadership/)).not.toBeInTheDocument();
+  });
+
+  it("offers no engagement facet, so the row carries Search and Department only", async () => {
+    renderList();
+    await screen.findByText("Ahmad Firdaus");
+
+    expect(screen.queryByLabelText("Engagement")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Search")).toBeInTheDocument();
+    expect(screen.getByLabelText("Department")).toBeInTheDocument();
   });
 
   it("empties honestly when the search matches nobody", async () => {
