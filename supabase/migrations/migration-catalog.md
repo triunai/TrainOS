@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 14 · **Applied:** 0 · **Authored, not applied:** 14
+**Migrations:** 15 · **Applied:** 0 · **Authored, not applied:** 15
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place)
 
@@ -13,6 +13,25 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-13 — **015: the scheduler, and the seven jobs it deliberately does not schedule.**
+001's header promised that "nine scheduled behaviours in the design… are scheduled with cron.schedule in 015". 015 schedules **two**, and the other seven are the content of the migration. One function, two cron jobs, no table, no view, no type, no trigger, no policy. **Applied nowhere.**
+
+**Ruling R-B is the reason and it is stated with its counter-evidence.** Background work is one Node worker (`apps/worker`, merged on main) polling `app.claim_jobs`; pg_cron is for `reap_jobs` and cron-history retention only; there are no pg_net nudges. ⚠ **This contradicts current Supabase documentation and the header says so outright**: `docs/research/2026-09-13-supabase-current-docs.md` §4 records that Supabase's own guide documents `cron.schedule` → `net.http_post` → Edge Function as supported and confirms requests do not start until the transaction commits. That research is right and is not overruled on technical grounds — it is overruled by **R-A, which says this product has no Edge Functions at all**, so the far end of the nudge does not exist. A supported pattern pointing at nothing is still pointing at nothing. Recorded in full because the next author will read the same Supabase page and wonder why this file ignores it. The payoff is that nothing in this database makes an outbound HTTP request, and pg_net's beta caveats — "signatures may change", ~200 req/s, a 2000 ms default timeout, an UNLOGGED queue with a 6-hour response TTL — become a list of things the product does not have to reason about.
+
+**`trainos_reap_jobs` runs every 30 seconds as ONE job.** Sub-minute schedules are native on 15.1.1.61+, so doc 05's tick is one job rather than the six-jobs-each-sleeping-a-different-offset trick that burns six connections and drifts. 30 rather than 10 seconds because the worker's poll loop is the latency path and the reaper is the recovery path. Recovery is what makes `C-08` real: a handler that OOMs mid-job leaves the row CLAIMED forever, and a worker that has died cannot recover itself.
+
+**The command is `app.reap_jobs_all_tenants(200)`, not `app.reap_jobs(NULL, 1000)`, and that is the one genuinely new object.** 012's `H-16` made the CLAIM fair per tenant with `row_number() OVER (PARTITION BY tenant_id)`; the REAPER's four statements each take a flat LIMIT across all tenants ordered by time. One tenant whose provider is down fills that limit every tick and every other tenant's expired leases are never recovered — the same starvation, arriving through the recovery path. The wrapper gives each tenant its own budget and is driven from the tenants that actually have reapable work rather than from `public.tenants`. **T3 measures it**: Alpha holds 50 expired leases, Beta holds 1, the budget is 10 per tenant, and Beta's job comes back in the same tick — plus a control proving a single-tenant reap really does leave the other tenant alone, so the wrapper is not decoration.
+
+**`trainos_reap_cron_history` runs daily at 03:17 UTC.** `cron.job_run_details` is never purged automatically **and is not cleared when a job is unscheduled** — the second half is the one that surprises people. At a 30-second tick the reaper alone writes ~1.05M history rows a year on a table nothing reads after a few days. ⚠ **The 7-day window is unsourced and the header says so**: no research doc and no design doc gives a number, and 7 days is already compiled into 012's `app.reap_cron_history`, inherited here rather than re-litigated, stated as judgement so nobody later cites this file as its authority. T4 proves the boundary by probing at 6 days and 8 days rather than reading it out of the function.
+
+**The seven unscheduled jobs each carry their reason.** The outbox drain and the webhook dispatcher are R-B. The four retention sweeps over business-visible rows (`reap_outbox`, `reap_dead_letters`, `reap_webhook_bodies`, `reap_webhook_deliveries`) exist as functions and are **not** scheduled because each needs a retention PERIOD agreed with the customer first — 017 creates `core.data_retention_policies` for exactly that, and scheduling them now would be deleting on a window nobody signed off. The levy staleness sweep and the embedding refresh have no function to schedule at all. **Scheduling a job whose function does not exist is worse than not scheduling it**: pg_cron records the failure in `job_run_details` and raises nothing, so it is a broken behaviour with a green-looking cron table — which is why both the verify block and T1 resolve every scheduled command's function through `to_regproc`, and T5 goes further and EXECUTES both commands as registered, because a cron command is a string nothing type-checks.
+
+**⚠ Nothing is done to Realtime, and that is not the same as forgetting it.** The research (§7) is unambiguous that RLS on `realtime.messages` is already enabled and the schema is locked — policies are the only lever, `realtime.send` runs as the admin role and bypasses an INSERT deny, and `{ config: { private: true } }` is client configuration. The two things a migration could add are a policy over `(select realtime.topic())` and a publication membership, and both are blocked on a fact this lane does not have: **which topics this product broadcasts.** Nothing publishes a realtime message today. Inventing the topic vocabulary inside a cron migration is the same defect as a hardcoded stage list. One security property is carried forward explicitly: **policies are cached for the life of the connection and recomputed only on connect or on a new `access_token`, so revoking a permission does not close a live socket** — the design will have to disconnect explicitly, and that now lives in the migration history rather than only in a research doc.
+
+**⚠ The harness's pg_cron is a STUB that runs nothing**, so T1 and T2 test what was REGISTERED and T3–T5 test the functions by calling them directly. What this pin does not prove is that the real background worker fires a '30 seconds' schedule — that is the extension's behaviour, not this migration's, and it is named rather than covered by a test that would pass on a stub either way.
+
+**Spine untouched.** No action type, no branch in the envelope; the reaper operates on `app.outbox`, which is the envelope's external-effect queue and not the envelope.
 
 **Last updated:** 2026-09-13 — **014: the database stops being deny-all, and three defects were found by granting rather than by reading.**
 014 lands 228 policies over 115 `core` relations, SELECT-only client grants on 114 tables and two views, the `public.*` grants that put 002's twelve `authenticated` policies into service for the first time, and the three `core` wrappers that make the 011 envelope reachable from a browser. One function, no table, no type, no trigger. **Applied nowhere.**
@@ -152,6 +171,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 015 | `015_realtime_and_cron_schedules.sql` | **The scheduler: two pg_cron jobs, and the seven the design listed that are deliberately not here (2026-09-13).** One function, two jobs, no table, no type, no trigger, no policy. Ruling R-B — background work is the Node worker at `apps/worker` polling `app.claim_jobs`; pg_cron covers `reap_jobs` and cron-history retention only; **no pg_net nudges**. ⚠ This contradicts current Supabase docs, which document `cron.schedule` → `net.http_post` → Edge Function as supported; the header records that in full and overrules it on R-A (this product has no Edge Functions, so the far end of the nudge does not exist) rather than on technical grounds. Net effect: nothing in this database makes an outbound HTTP request, and pg_net's beta caveats stop being the product's problem. **`trainos_reap_jobs` is ONE job at `'30 seconds'`** — sub-minute is native, so doc 05's tick is not six staggered jobs each sleeping an offset. Its command is the pack's only new object, `app.reap_jobs_all_tenants()`: 012's `H-16` made the CLAIM tenant-fair, but the REAPER takes a flat LIMIT across all tenants ordered by time, so one tenant with a dead provider starves every other tenant's expired leases — the same defect through the recovery path. T3 measures the fix with Alpha at 50 leases, Beta at 1 and a budget of 10 each, plus a control proving a single-tenant reap really is single-tenant. **`trainos_reap_cron_history` daily at 03:17** because `cron.job_run_details` is never purged automatically **and is not cleared when a job is unscheduled**; ⚠ the 7-day window is 012's unsourced judgement, stated as such, and T4 proves it at 6 and 8 days. The seven unscheduled jobs each carry a reason — four retention sweeps wait on 017's `data_retention_policies` because deleting on an unapproved window is worse than not deleting, and two have no function to schedule at all. Scheduling a missing function is worse than not scheduling it (pg_cron logs and never raises), so verify and T1 resolve every command through `to_regproc` and T5 EXECUTES both. ⚠ **Realtime is deliberately untouched**: RLS on `realtime.messages` is already on and the schema locked, and the only migration-shaped additions need the topic vocabulary, which nothing in the product has yet. Carried forward: Realtime caches policies for the life of a connection, so a revoked permission does not close a live socket. ⚠ The harness's pg_cron is a stub that runs nothing; registration is pinned, firing is not. Spine untouched. |
 | 014 | `014_rls_policies_and_client_grants.sql` | **The database stops being deny-all: 228 RLS policies, the client grant layer, and the three `core` wrappers over the 011 envelope (2026-09-13).** One function, 115 policied relations, zero tables, zero types, zero triggers. **The pack is `app.apply_tenant_policies()` plus a catalogue-driven loop**, not 114 hand-written blocks — 004's `finalise_table` argument applied to the policy layer, where it is stronger, because a policy typo applies successfully and admits the wrong rows. Two policies per table: a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy with the predicate in USING *and* WITH CHECK, so tenant isolation cannot be widened by adding a policy beside it and is already correct on the day somebody grants a write. **`authenticated` gets SELECT and nothing else on `core`** — the spine rule enforced at the privilege layer, since a browser with UPDATE on `core.proposals` can move it with no action_request, no policy evaluation and no audit row; T9 proves the refusal is `42501` and not a policy matching zero rows, which would report success. **The global-row fallback is DERIVED from `attnotnull`, never listed**, so 009's national rules stay visible to every tenant and a NOT NULL table cannot accidentally get the permissive form. **Three defects found by granting rather than by reading:** `app.require_tenant_id` was not executable by `authenticated`, so every finished policy ERRORED instead of denying (a policy predicate runs as the querying role; 002 had granted the other four claim readers and missed this one because nothing used it yet); `core.rule_set_versions` has no tenant index because 009 hand-rolled it past `finalise_table`, caught by a check written as a regression test on 004 and fired on 1 relation in 114; and `core.budget_status`/`core.model_tier_status` are security-invoker views over `app.usage_rollup` and therefore **cannot be granted at all** — both are revoked with the reason, and the AI budget screens have no data path until 018. `core.v_approval_requests` stays ungranted per doc 09 §12 and T7 pins that it is readable through a definer and refused directly. Six earlier pins amended in place from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014; one draft change (revoking `anon`'s `app` USAGE) was caught by test_011 T13b as a regression against 011's M-04 and reverted. Spine untouched — and this is the migration that makes bypassing the spine impossible rather than discouraged. |
 | 013 | `013_ai_ops_agents_keys_runs_and_budgets.sql` | **AI operations: the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree and evals (2026-09-13).** Nineteen tables, two security-invoker views, twenty-nine functions, zero policies, zero new types. **`core.runs` settles the `run_id` divergence by reconciliation rather than by retyping**: the run has a `uuid` id AND a `ref`, so 012's text run ids resolve through `UNIQUE (tenant_id, ref)` and 007/009's uuid columns finally get the foreign keys their own comments said 013 would add. Neither side is altered and no row is rewritten. **Secrets are handled by mechanism, not by assertion**: no RPC takes a raw BYOK key at all, so it never reaches a request body, `log_min_duration_statement` or `pg_stat_activity`; the once-per-24-hours reveal ceiling is the PREDICATE of an UPDATE so two concurrent reveals cannot both pass; the audit row is written first and a trigger re-derives that it exists, so a reveal whose audit fails takes the transaction with it. The agent key is minted in the database from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach it through `select=*` or an embed, which is what `H-09` asked for and is stronger than omitting a column from a grant. Every security path is shaped to FAIL CLOSED under the carried FORCE-with-no-policy residue: a `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" where a definer function reads zero rows, and these degrade to "always refuse". Run I/O masking is honest about its limits — the pin asserts that a person's NAME survives it, so the day masking improves, the pin says the header is out of date. Spine untouched. |
 | 012 | `012_events_outbox_and_jobs.sql` | **Domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhooks and the retention reapers doc 05 promised and never wrote (2026-09-13).** Ten tables, one security-invoker view, thirty functions. `core.events` is the business record and is append-only by revoke, by a row trigger AND by a statement-level `BEFORE TRUNCATE` trigger — a row trigger does not fire for `TRUNCATE`, so before that the guarantee was defeated by one statement. `C-09` is answered by exactly one narrow exemption: `app.redact_event_actor` writes its own audit row and the append-only trigger re-derives from the row that the change was a redaction and nothing else, so PDPA erasure has a path and only that path. `C-08`, the poison pill, is closed on both lanes — `claim_jobs` will not hand out a job at `max_attempts` and `reap_jobs` dead-letters it instead of returning the lease — which is what stops a handler that OOMs the isolate re-pushing the same invoice to the accounting package forever. `H-12` and `M-14`: `fail_job` and `heartbeat_job` now check tenant, state AND owner, so worker A cannot dead-letter or extend a job worker B is running; the race is pinned end to end, not asserted. `H-16` gives the claim per-tenant fairness by `row_number() OVER (PARTITION BY tenant_id)`, proved by flooding fifty jobs from one tenant and watching the other's single interactive job still come back. `M-20`: a provider idempotency key is `<subject>#<attempt>` from a stored counter, never the job id, so replaying a dead-lettered push cannot submit the same invoice twice. **The seam with 011 is one enum and one raising function**: `app.effect_status` is reused by oid, the outbox's own state vocabulary is deliberately different, and `app.effect_status_for_job_state` raises on anything but SUCCEEDED and DEAD (R14). Spine untouched — 012 wires the envelope's external effects to a queue without changing the envelope. |
@@ -343,6 +363,93 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 015 (`015_realtime_and_cron_schedules.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.**
+**⚠ Codex (gpt-5.6-sol xhigh) review PENDING.** Sources: rulings R-A and R-B
+(`ai/briefs/2026-09-13-api-phase-plan.md`); `docs/research/2026-09-13-supabase-current-docs.md`
+§4 (pg_cron sub-minute schedules, `job_run_details` growth, pg_net limits) and §7 (Realtime RLS
+and connection-lifetime policy caching); 001's header (ruling R-EXT, "scheduled with
+cron.schedule in 015"); 012's `app.reap_jobs`, `app.reap_cron_history` and finding `H-16`.
+
+### What it does
+
+- **`app.reap_jobs_all_tenants(p_limit_per_tenant)`** — the cron entry point, and the only new
+  object. Calls `app.reap_jobs` once per tenant that has `CLAIMED` or `FAILED` work.
+- **`trainos_reap_jobs`**, every 30 seconds, native sub-minute, one job.
+- **`trainos_reap_cron_history`**, daily at 03:17 UTC, calling 012's sweep at its 7-day window.
+- **Spine untouched.**
+
+### Why the fanout exists, in full
+
+`app.reap_jobs(p_tenant_id, p_limit)` already treats `NULL` as "every tenant", so
+`SELECT app.reap_jobs(NULL, 1000)` is the obvious schedule and is not the one used. 012's `H-16`
+gave the CLAIM per-tenant fairness through `row_number() OVER (PARTITION BY tenant_id)`, proved
+by flooding fifty jobs from one tenant and watching the other's single interactive job still
+come back. The REAPER never got the same treatment: its four statements each take a flat
+`LIMIT p_limit` ordered by `visible_after` or `run_after`. A tenant whose provider is down fills
+that limit on every tick, and every other tenant's expired leases are never recovered — `H-16`'s
+starvation, arriving through the recovery path rather than the claim path. The wrapper is a
+FUNCTION rather than SQL inlined into the cron command because a cron command is a string
+nothing type-checks: a typo is discovered in `job_run_details` days later, while a function is
+resolved at CREATE time.
+
+### The 7-point RPC contract check, worked
+
+Not applicable in the usual sense, and stated rather than skipped: **015 exposes no RPC.** It
+creates one function, `app.reap_jobs_all_tenants`, which is `REVOKE ALL … FROM PUBLIC, anon,
+authenticated` and is called by exactly one caller, the cron job. (1) No envelope, because it
+returns `integer` to pg_cron and not to a client. (2)–(5) No client surface, no contract entry,
+no call site in `apps/web`, no casts. (6) Schedules are rows in `cron.job` and survive a reload
+by construction. (7) No public route; `anon` receives nothing.
+
+### Pin — `tests/test_015_realtime_and_cron_schedules.sql`
+
+Five checks, 13 assertions, all executed, all PASS against the full applied set 001–015. The
+ones that earn their place: **T3**, which does not merely assert the wrapper runs but reproduces
+the starvation condition — 50 expired leases in one tenant, 1 in another, a budget of 10 per
+tenant — and then adds a control proving a single-tenant reap leaves the other tenant untouched,
+so a wrapper that had quietly become a flat reap would fail rather than pass. **T4**, which
+probes the retention boundary at 6 days and 8 days instead of reading the interval out of the
+function body. **T5**, which EXECUTES both scheduled commands exactly as they are registered in
+`cron.job`, because "scheduled" and "works" are different claims and only one of them is
+normally tested. **T2**, which pins ruling R-B as an assertion — no `cron.job` command may
+contain `net.http` — precisely because the pattern it forbids is the one Supabase's own
+documentation recommends, so the next author will have a good reason to add it back.
+
+### Rollback — `rollbacks/015_realtime_and_cron_schedules_rollback.sql`
+
+Round-tripped twice. Unschedules before dropping the function they call, or there is a window in
+which an active job points at a function that no longer exists. **`cron.job_run_details` rows
+are deliberately NOT deleted**: unscheduling a job does not clear its history, those rows are
+the evidence of what ran and when, and a rollback that swept them would destroy the audit trail
+of the jobs it is removing at the moment somebody most wants it. Asserts that 012's two reapers
+survive — 015 owns the schedules, never the functions.
+
+### Deliberately NOT built
+
+The outbox drain and webhook dispatcher (R-B). The four retention sweeps over business-visible
+rows — the functions exist and are callable by hand, but each needs a retention period agreed
+with the customer, which is what 017's `core.data_retention_policies` is for; **scheduling them
+first would be deleting on a window nobody signed off.** The levy staleness sweep and the
+embedding refresh, neither of which has a function to schedule. Any Realtime policy or
+publication membership, which would require inventing the topic vocabulary inside a cron
+migration.
+
+### ⚠ Carried risk and standing conditions
+
+- **The harness's pg_cron is a local stub that executes nothing.** Registration is pinned;
+  firing is not, and firing is the extension's behaviour rather than this migration's.
+- **The 7-day retention window has no source.** Inherited from 012. If a customer or a
+  regulator ever names a number for operational logs, this is one of the places it lands.
+- **Four retention sweeps are unscheduled and their tables grow unbounded until 017's policy
+  rows exist and are approved.** `app.outbox`, `app.dead_letters` and the two webhook tables.
+  **Owner: after 017.**
+- **Realtime has no database-side configuration at all.** When it lands, the connection-lifetime
+  policy cache means revoking access does not close an open socket.
 
 ---
 
