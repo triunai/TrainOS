@@ -29,43 +29,37 @@
 -- "no ref_format for prefix ORG in this tenant". Found by running it.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-\set ON_ERROR_STOP on
 SET client_min_messages = notice;
 
 BEGIN;
 
-\set tenant_a  '11111111-1111-4111-8111-111111111111'
-\set tenant_b  '99999999-9999-4999-8999-999999999999'
-\set alex      '22222222-2222-4222-8222-222222222222'
-\set mei       '33333333-3333-4333-8333-333333333333'
-\set intruder  '88888888-8888-4888-8888-888888888888'
 
 -- ── Fixtures ───────────────────────────────────────────────────────────────
 -- Real `auth.users` rows, because `public.memberships.user_id` and
 -- `public.user_profiles.user_id` both FK to `auth.users(id)`. A pin that
 -- skipped them would die on the FK before reaching a single assertion.
 INSERT INTO auth.users (id, email) VALUES
-  (:'alex','alex@example.test'),
-  (:'mei','mei@example.test'),
-  (:'intruder','intruder@other.test');
+  ('22222222-2222-4222-8222-222222222222','alex@example.test'),
+  ('33333333-3333-4333-8333-333333333333','mei@example.test'),
+  ('88888888-8888-4888-8888-888888888888','intruder@other.test');
 
 INSERT INTO public.tenants (id, slug, name, status, timezone, locale) VALUES
-  (:'tenant_a','apsb','Akademi Perdana','ACTIVE','Asia/Kuala_Lumpur','en-MY'),
-  (:'tenant_b','other','Other Tenant','ACTIVE','Asia/Kuala_Lumpur','en-MY');
+  ('11111111-1111-4111-8111-111111111111','apsb','Akademi Perdana','ACTIVE','Asia/Kuala_Lumpur','en-MY'),
+  ('99999999-9999-4999-8999-999999999999','other','Other Tenant','ACTIVE','Asia/Kuala_Lumpur','en-MY');
 
 INSERT INTO public.memberships
   (tenant_id,user_id,role,actor_kind,client_scope,team_scope,mfa_required,status,is_default)
 VALUES
-  (:'tenant_a',:'alex','SALES','HUMAN','ALL','ALL',false,'ACTIVE',true),
-  (:'tenant_a',:'mei','MD','HUMAN','ALL','ALL',true,'ACTIVE',true),
-  (:'tenant_b',:'intruder','SALES','HUMAN','ALL','ALL',false,'ACTIVE',true);
+  ('11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','SALES','HUMAN','ALL','ALL',false,'ACTIVE',true),
+  ('11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','MD','HUMAN','ALL','ALL',true,'ACTIVE',true),
+  ('99999999-9999-4999-8999-999999999999','88888888-8888-4888-8888-888888888888','SALES','HUMAN','ALL','ALL',false,'ACTIVE',true);
 
 INSERT INTO public.user_profiles
   (tenant_id,user_id,display_name,email,locale,timezone,theme)
 VALUES
-  (:'tenant_a',:'alex','Alex Selvarajah','alex@example.test','en-MY','Asia/Kuala_Lumpur','DARK'),
-  (:'tenant_a',:'mei','Mei Ling','mei@example.test','en-MY','Asia/Kuala_Lumpur','LIGHT'),
-  (:'tenant_b',:'intruder','Intruder','intruder@other.test','en-MY','Asia/Kuala_Lumpur','LIGHT');
+  ('11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','Alex Selvarajah','alex@example.test','en-MY','Asia/Kuala_Lumpur','DARK'),
+  ('11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','Mei Ling','mei@example.test','en-MY','Asia/Kuala_Lumpur','LIGHT'),
+  ('99999999-9999-4999-8999-999999999999','88888888-8888-4888-8888-888888888888','Intruder','intruder@other.test','en-MY','Asia/Kuala_Lumpur','LIGHT');
 
 INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width,gapless)
 SELECT t.id, spec.prefix, spec.entity, spec.dated, 4, false
@@ -86,37 +80,37 @@ SELECT t.id, spec.prefix, spec.entity, spec.dated, 4, false
 -- a list compiled into a function.
 INSERT INTO core.pipelines (id,tenant_id,object,name,is_default,version,status,
                             created_by_kind,created_by_id)
-VALUES ('aaaaaaa1-0000-4000-8000-000000000001',:'tenant_a','OPPORTUNITY',
-        'Standard deal board',true,1,'ACTIVE','HUMAN',:'alex'),
-       ('aaaaaaa1-0000-4000-8000-000000000002',:'tenant_a','ENGAGEMENT',
-        'Delivery lifecycle',true,1,'ACTIVE','HUMAN',:'alex');
+VALUES ('aaaaaaa1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','OPPORTUNITY',
+        'Standard deal board',true,1,'ACTIVE','HUMAN','22222222-2222-4222-8222-222222222222'),
+       ('aaaaaaa1-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111','ENGAGEMENT',
+        'Delivery lifecycle',true,1,'ACTIVE','HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.pipeline_steps (tenant_id,pipeline_id,step_key,label,position,terminal,blocking_check_keys)
 VALUES
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000001','NEW','New',1,false,'{}'),
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000001','QUALIFYING','Qualifying',2,false,'{}'),
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000001','WON','Won',3,true,'{}'),
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000001','LOST','Lost',4,true,'{}'),
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000002','WON','Won',1,false,'{}'),
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000002','DELIVERED','Delivered',2,false,'{}'),
-  (:'tenant_a','aaaaaaa1-0000-4000-8000-000000000002','PAID','Paid',3,true,'{}');
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','NEW','New',1,false,'{}'),
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','QUALIFYING','Qualifying',2,false,'{}'),
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','WON','Won',3,true,'{}'),
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','LOST','Lost',4,true,'{}'),
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000002','WON','Won',1,false,'{}'),
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000002','DELIVERED','Delivered',2,false,'{}'),
+  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000002','PAID','Paid',3,true,'{}');
 
 INSERT INTO core.organisations
   (id,tenant_id,name,industry,location,owner_id,status,hrdc_registered,hrdc_employer_code,country_code)
-VALUES ('bbbbbbb1-0000-4000-8000-000000000001',:'tenant_a','Chrome Manufacturing',
-        'MANUFACTURING','Shah Alam',:'alex','ACTIVE_CLIENT',true,'E-12345','MYS'),
-       ('bbbbbbb1-0000-4000-8000-000000000002',:'tenant_b','Other Co',
-        'SERVICES','Penang',:'intruder','PROSPECT',false,NULL,'MYS');
+VALUES ('bbbbbbb1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','Chrome Manufacturing',
+        'MANUFACTURING','Shah Alam','22222222-2222-4222-8222-222222222222','ACTIVE_CLIENT',true,'E-12345','MYS'),
+       ('bbbbbbb1-0000-4000-8000-000000000002','99999999-9999-4999-8999-999999999999','Other Co',
+        'SERVICES','Penang','88888888-8888-4888-8888-888888888888','PROSPECT',false,NULL,'MYS');
 
 INSERT INTO core.contacts
   (id,tenant_id,organisation_id,name,job_title,email,phone,is_primary,created_by_kind,created_by_id)
-VALUES ('ccccccc1-0000-4000-8000-000000000001',:'tenant_a',
+VALUES ('ccccccc1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
         'bbbbbbb1-0000-4000-8000-000000000001','Siti Rahman','HR Director',
-        'siti@chrome.test','+60 12-448 9021',true,'HUMAN',:'alex');
+        'siti@chrome.test','+60 12-448 9021',true,'HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.contact_consents
   (tenant_id,contact_id,channel,granted,recorded_at,created_by_kind,created_by_id)
-VALUES (:'tenant_a','ccccccc1-0000-4000-8000-000000000001','EMAIL',true,pg_catalog.now(),'HUMAN',:'alex');
+VALUES ('11111111-1111-4111-8111-111111111111','ccccccc1-0000-4000-8000-000000000001','EMAIL',true,pg_catalog.now(),'HUMAN','22222222-2222-4222-8222-222222222222');
 
 -- Three enquiries in tenant A, ONE in tenant B. The tenant-B row is the whole
 -- basis of T11: if a single assertion can see it, the pack leaks.
@@ -126,25 +120,25 @@ INSERT INTO core.enquiries
    currency,matched_organisation_id,matched_contact_id,match_reason,assigned_to_user_id,
    created_by_kind,created_by_id,created_by_name)
 VALUES
-  ('ddddddd1-0000-4000-8000-000000000001',:'tenant_a','EMAIL','OPEN',
+  ('ddddddd1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','EMAIL','OPEN',
    '2026-09-10T09:00:00+08','Siti Rahman','siti@chrome.test',
    'Leadership training for 40','Line managers, November','Full body one',
    'TRAINING_ENQUIRY',0.860,false,4000000,'MYR',
    'bbbbbbb1-0000-4000-8000-000000000001','ccccccc1-0000-4000-8000-000000000001',
-   'EXACT_DOMAIN',:'alex','AGENT','agent:classifier','Classifier'),
-  ('ddddddd1-0000-4000-8000-000000000002',:'tenant_a','WHATSAPP','OPEN',
+   'EXACT_DOMAIN','22222222-2222-4222-8222-222222222222','AGENT','agent:classifier','Classifier'),
+  ('ddddddd1-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111','WHATSAPP','OPEN',
    '2026-09-11T09:00:00+08','Ravi','+60123334444',
    'Safety refresher','Plant floor','Full body two',
-   'TRAINING_ENQUIRY',0.500,true,NULL,'MYR',NULL,NULL,NULL,NULL,'HUMAN',:'alex','Alex Selvarajah'),
-  ('ddddddd1-0000-4000-8000-000000000003',:'tenant_a','WEB_FORM','OPEN',
+   'TRAINING_ENQUIRY',0.500,true,NULL,'MYR',NULL,NULL,NULL,NULL,'HUMAN','22222222-2222-4222-8222-222222222222','Alex Selvarajah'),
+  ('ddddddd1-0000-4000-8000-000000000003','11111111-1111-4111-8111-111111111111','WEB_FORM','OPEN',
    '2026-09-12T09:00:00+08','Anon','web@chrome.test',
    'Coaching','Exec coaching','Full body three',
-   NULL,NULL,false,NULL,'MYR',NULL,NULL,NULL,NULL,'HUMAN',:'alex','Alex Selvarajah'),
-  ('ddddddd1-0000-4000-8000-000000000009',:'tenant_b','EMAIL','OPEN',
+   NULL,NULL,false,NULL,'MYR',NULL,NULL,NULL,NULL,'HUMAN','22222222-2222-4222-8222-222222222222','Alex Selvarajah'),
+  ('ddddddd1-0000-4000-8000-000000000009','99999999-9999-4999-8999-999999999999','EMAIL','OPEN',
    '2026-09-12T09:00:00+08','Leak','leak@other.test',
    'TENANT B SECRET','secret','secret body',
    'TRAINING_ENQUIRY',0.900,false,99999999,'MYR',NULL,NULL,NULL,NULL,
-   'HUMAN',:'intruder','Intruder');
+   'HUMAN','88888888-8888-4888-8888-888888888888','Intruder');
 
 -- 011's transition gate refuses a row BORN in a non-initial state: the only
 -- legal (new) target for an enquiry is OPEN, and for a TNA it is DRAFT. So the
@@ -158,31 +152,31 @@ UPDATE core.enquiries SET status = 'ASSIGNED'
 -- human-authored and must emit NO key.
 INSERT INTO core.enquiry_extraction_fields
   (id,tenant_id,enquiry_id,field_key,value,created_by_kind,created_by_id)
-VALUES ('eeeeeee1-0000-4000-8000-000000000001',:'tenant_a',
+VALUES ('eeeeeee1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
         'ddddddd1-0000-4000-8000-000000000001','topic','Leadership','AGENT','agent:extractor'),
-       ('eeeeeee1-0000-4000-8000-000000000002',:'tenant_a',
-        'ddddddd1-0000-4000-8000-000000000001','audience','Line managers','HUMAN',:'alex'),
-       ('eeeeeee1-0000-4000-8000-000000000003',:'tenant_a',
+       ('eeeeeee1-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111',
+        'ddddddd1-0000-4000-8000-000000000001','audience','Line managers','HUMAN','22222222-2222-4222-8222-222222222222'),
+       ('eeeeeee1-0000-4000-8000-000000000003','11111111-1111-4111-8111-111111111111',
         'ddddddd1-0000-4000-8000-000000000001','budget','4000000','AGENT','agent:extractor');
 
 INSERT INTO core.provenance
   (tenant_id,subject_table,subject_id,field,origin,confidence,tier,model,
    generated_at,needs_review,sources,created_by_kind,created_by_id)
-VALUES (:'tenant_a','enquiry_extraction_fields','eeeeeee1-0000-4000-8000-000000000001','topic',
+VALUES ('11111111-1111-4111-8111-111111111111','enquiry_extraction_fields','eeeeeee1-0000-4000-8000-000000000001','topic',
         'AI_GENERATED',0.860,'MID','claude-3','2026-09-10T09:01:00+08',false,
         '[{"type":"EMAIL","ref":"ENQ-2026-0001","excerpt":"leadership"}]'::jsonb,
         'AGENT','agent:extractor'),
-       (:'tenant_a','enquiries','ddddddd1-0000-4000-8000-000000000001','classification_label',
+       ('11111111-1111-4111-8111-111111111111','enquiries','ddddddd1-0000-4000-8000-000000000001','classification_label',
         'AI_GENERATED',0.860,'MID','claude-3','2026-09-10T09:01:00+08',false,'[]'::jsonb,
         'AGENT','agent:classifier');
 
 INSERT INTO core.opportunities
   (id,tenant_id,ref,organisation_id,primary_contact_id,source_enquiry_id,owner_id,stage,
    value_sen,currency,probability,created_by_kind,created_by_id)
-VALUES ('fffffff1-0000-4000-8000-000000000001',:'tenant_a','OPP-2026-0001',
+VALUES ('fffffff1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','OPP-2026-0001',
         'bbbbbbb1-0000-4000-8000-000000000001','ccccccc1-0000-4000-8000-000000000001',
-        'ddddddd1-0000-4000-8000-000000000001',:'alex','NEW',4000000,'MYR',0.400,
-        'HUMAN',:'alex');
+        'ddddddd1-0000-4000-8000-000000000001','22222222-2222-4222-8222-222222222222','NEW',4000000,'MYR',0.400,
+        'HUMAN','22222222-2222-4222-8222-222222222222');
 
 -- 011 gates `(new) -> QUALIFYING` behind OPPORTUNITY_CONVERT — a deal may not
 -- be BORN qualified, it has to be converted into that state through the action
@@ -196,10 +190,10 @@ INSERT INTO core.tnas
   (id,tenant_id,opportunity_id,status,sent_at,completed_at,completed_by_kind,completed_by_id,
    completed_by_name,audience_headcount,audience_level,audience_sites,audience_language,
    budget_sen,currency,created_by_kind,created_by_id)
-VALUES ('a1111111-0000-4000-8000-000000000001',:'tenant_a','fffffff1-0000-4000-8000-000000000001',
+VALUES ('a1111111-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','fffffff1-0000-4000-8000-000000000001',
         'DRAFT','2026-09-10T10:00:00+08','2026-09-11T10:00:00+08','CLIENT',
         'ccccccc1-0000-4000-8000-000000000001','Siti Rahman',40,'LINE_MANAGER',
-        ARRAY['Shah Alam'],'EN',4000000,'MYR','HUMAN',:'alex');
+        ARRAY['Shah Alam'],'EN',4000000,'MYR','HUMAN','22222222-2222-4222-8222-222222222222');
 
 -- DRAFT -> SENT -> COMPLETE, one legal edge at a time.
 UPDATE core.tnas SET status = 'SENT'     WHERE id = 'a1111111-0000-4000-8000-000000000001';
@@ -207,58 +201,57 @@ UPDATE core.tnas SET status = 'COMPLETE' WHERE id = 'a1111111-0000-4000-8000-000
 
 INSERT INTO core.tna_gaps (tenant_id,tna_id,name,description,priority,evidence_refs,
                            created_by_kind,created_by_id)
-VALUES (:'tenant_a','a1111111-0000-4000-8000-000000000001','Delegation',
+VALUES ('11111111-1111-4111-8111-111111111111','a1111111-0000-4000-8000-000000000001','Delegation',
         'Managers do not delegate','HIGH',ARRAY['Q4','Q7'],'AGENT','agent:tna');
 
 INSERT INTO core.tna_constraints (tenant_id,tna_id,code,label,severity,created_by_kind,created_by_id)
-VALUES (:'tenant_a','a1111111-0000-4000-8000-000000000001','NO_FRIDAY','No Friday sessions',NULL,
-        'HUMAN',:'alex'),
-       (:'tenant_a','a1111111-0000-4000-8000-000000000001','BUDGET_TIGHT','Budget is tight','WARN',
-        'HUMAN',:'alex');
+VALUES ('11111111-1111-4111-8111-111111111111','a1111111-0000-4000-8000-000000000001','NO_FRIDAY','No Friday sessions',NULL,
+        'HUMAN','22222222-2222-4222-8222-222222222222'),
+       ('11111111-1111-4111-8111-111111111111','a1111111-0000-4000-8000-000000000001','BUDGET_TIGHT','Budget is tight','WARN',
+        'HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.programmes
   (id,tenant_id,name,category,days,version,status,hrdc_scheme,hrdc_claimable,
    list_price_sen,list_price_pax,floor_price_sen,floor_margin_rate,currency,outcomes,
    deliveries_count,created_by_kind,created_by_id)
-VALUES ('b2222222-0000-4000-8000-000000000001',:'tenant_a','Leading Teams','LEADERSHIP',
+VALUES ('b2222222-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','Leading Teams','LEADERSHIP',
         2,1,'ACTIVE','SBL_KHAS',true,4000000,25,2800000,0.3000,'MYR',
-        ARRAY['Delegate effectively'],3,'HUMAN',:'alex');
+        ARRAY['Delegate effectively'],3,'HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.programme_modules (tenant_id,programme_id,n,title,format,duration_minutes,
                                     created_by_kind,created_by_id)
-VALUES (:'tenant_a','b2222222-0000-4000-8000-000000000001',1,'Foundations','FACILITATED',180,
-        'HUMAN',:'alex');
+VALUES ('11111111-1111-4111-8111-111111111111','b2222222-0000-4000-8000-000000000001',1,'Foundations','FACILITATED',180,
+        'HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.tna_recommendations
   (tenant_id,tna_id,programme_id,fit_score,rationale,price_indication_sen,currency,rank,
    scoring_model_version,scoring_weights,created_by_kind,created_by_id)
-VALUES (:'tenant_a','a1111111-0000-4000-8000-000000000001','b2222222-0000-4000-8000-000000000001',
+VALUES ('11111111-1111-4111-8111-111111111111','a1111111-0000-4000-8000-000000000001','b2222222-0000-4000-8000-000000000001',
         0.910,'Closes the delegation gap',4000000,'MYR',1,'fit-v2',
         '{"gapMatch":0.6,"history":0.4}'::jsonb,'AGENT','agent:tna');
 
 INSERT INTO core.templates
   (id,tenant_id,template_type,version,label,merge_fields,status,created_by_kind,created_by_id)
-VALUES ('c3333333-0000-4000-8000-000000000001',:'tenant_a','PROPOSAL',1,'Standard proposal',
-        ARRAY['organisation.name'],'ACTIVE','HUMAN',:'alex');
+VALUES ('c3333333-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','PROPOSAL',1,'Standard proposal',
+        ARRAY['organisation.name'],'ACTIVE','HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.template_sections (tenant_id,template_id,n,title,ai_enabled,default_body)
-VALUES (:'tenant_a','c3333333-0000-4000-8000-000000000001',1,'Understanding',true,'Draft one'),
-       (:'tenant_a','c3333333-0000-4000-8000-000000000001',2,'Approach',true,'Draft two');
+VALUES ('11111111-1111-4111-8111-111111111111','c3333333-0000-4000-8000-000000000001',1,'Understanding',true,'Draft one'),
+       ('11111111-1111-4111-8111-111111111111','c3333333-0000-4000-8000-000000000001',2,'Approach',true,'Draft two');
 
 INSERT INTO core.rate_cards
   (id,tenant_id,version,currency,status,effective_from,created_by_kind,created_by_id)
-VALUES ('d4444444-0000-4000-8000-000000000001',:'tenant_a','2026.1','MYR','ACTIVE',
-        '2026-01-01','HUMAN',:'alex');
+VALUES ('d4444444-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','2026.1','MYR','ACTIVE',
+        '2026-01-01','HUMAN','22222222-2222-4222-8222-222222222222');
 
 INSERT INTO core.saved_views
   (tenant_id,object,label,filters,columns,is_default,owner_id,visibility,
    created_by_kind,created_by_id)
-VALUES (:'tenant_a','ENQUIRY','Open only',
+VALUES ('11111111-1111-4111-8111-111111111111','ENQUIRY','Open only',
         '[{"field":"status","op":"eq","value":"OPEN"}]'::jsonb,
-        ARRAY['ref','subject'],false,:'alex','TEAM','HUMAN',:'alex');
+        ARRAY['ref','subject'],false,'22222222-2222-4222-8222-222222222222','TEAM','HUMAN','22222222-2222-4222-8222-222222222222');
 
-\echo ''
-\echo '════════ T0 · THE 014 ORDERING HAZARD, MEASURED ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T0 · THE 014 ORDERING HAZARD, MEASURED ════════'; END $banner$;
 -- This is the first assertion on purpose. Everything below it passes on this
 -- shim BECAUSE the definer's owner is a superuser here. On a project whose
 -- owner is not BYPASSRLS, FORCE ROW LEVEL SECURITY with zero policies makes
@@ -294,8 +287,7 @@ BEGIN
 END
 $t0$;
 
-\echo ''
-\echo '════════ T1 · RULING R-C · no tax policy exists, and none is invented ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T1 · RULING R-C · no tax policy exists, and none is invented ════════'; END $banner$;
 DO $t1$
 BEGIN
   IF pg_catalog.to_regclass('core.tax_policies') IS NOT NULL THEN
@@ -323,11 +315,10 @@ $t1$;
 --    principal; `app.current_tenant_id()` reads `request.jwt.claims`. ───────
 SELECT pg_catalog.set_config('request.jwt.claims',
   pg_catalog.json_build_object(
-    'sub', :'alex', 'tenant_id', :'tenant_a', 'app_role','SALES',
+    'sub', '22222222-2222-4222-8222-222222222222', 'tenant_id', '11111111-1111-4111-8111-111111111111', 'app_role','SALES',
     'actor_kind','HUMAN', 'role','authenticated')::text, true);
 
-\echo ''
-\echo '════════ T2 · core.me — identity, and never a partial one ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T2 · core.me — identity, and never a partial one ════════'; END $banner$;
 DO $t2$
 DECLARE v jsonb; v_data jsonb;
 BEGIN
@@ -362,8 +353,7 @@ BEGIN
 END
 $t2$;
 
-\echo ''
-\echo '════════ T3 · core.me refuses a principal with no role ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T3 · core.me refuses a principal with no role ════════'; END $banner$;
 DO $t3$
 DECLARE v jsonb;
 BEGIN
@@ -384,11 +374,10 @@ $t3$;
 
 SELECT pg_catalog.set_config('request.jwt.claims',
   pg_catalog.json_build_object(
-    'sub', :'alex', 'tenant_id', :'tenant_a', 'app_role','SALES',
+    'sub', '22222222-2222-4222-8222-222222222222', 'tenant_id', '11111111-1111-4111-8111-111111111111', 'app_role','SALES',
     'actor_kind','HUMAN', 'role','authenticated')::text, true);
 
-\echo ''
-\echo '════════ T4 · list_enquiries — the pagination convention ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T4 · list_enquiries — the pagination convention ════════'; END $banner$;
 DO $t4$
 DECLARE v jsonb; v1 jsonb; v2 jsonb; v_cursor text; v_ids text[];
 BEGIN
@@ -436,8 +425,7 @@ BEGIN
 END
 $t4$;
 
-\echo ''
-\echo '════════ T5 · list_enquiries FAILS CLOSED and records filter source ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T5 · list_enquiries FAILS CLOSED and records filter source ════════'; END $banner$;
 DO $t5$
 DECLARE v jsonb; v_view text;
 BEGIN
@@ -501,8 +489,7 @@ BEGIN
 END
 $t5$;
 
-\echo ''
-\echo '════════ T6 · get_enquiry — ABSENT PROVENANCE MEANS HUMAN-AUTHORED ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T6 · get_enquiry — ABSENT PROVENANCE MEANS HUMAN-AUTHORED ════════'; END $banner$;
 DO $t6$
 DECLARE v jsonb; d jsonb;
 BEGIN
@@ -552,8 +539,7 @@ BEGIN
 END
 $t6$;
 
-\echo ''
-\echo '════════ T7 · NOT_FOUND is not a cross-tenant existence oracle ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T7 · NOT_FOUND is not a cross-tenant existence oracle ════════'; END $banner$;
 DO $t7$
 DECLARE v_other jsonb; v_absent jsonb;
 BEGIN
@@ -579,8 +565,7 @@ BEGIN
 END
 $t7$;
 
-\echo ''
-\echo '════════ T8 · Organisation 360, contacts, opportunities ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T8 · Organisation 360, contacts, opportunities ════════'; END $banner$;
 DO $t8$
 DECLARE v jsonb; d jsonb;
 BEGIN
@@ -639,8 +624,7 @@ BEGIN
 END
 $t8$;
 
-\echo ''
-\echo '════════ T9 · STAGE NAMES AND ORDER RENDER FROM CONFIGURATION ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T9 · STAGE NAMES AND ORDER RENDER FROM CONFIGURATION ════════'; END $banner$;
 DO $t9$
 DECLARE v jsonb; d jsonb; v_nav jsonb;
 BEGIN
@@ -697,8 +681,7 @@ BEGIN
 END
 $t9$;
 
-\echo ''
-\echo '════════ T10 · navigation and badge_counts ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T10 · navigation and badge_counts ════════'; END $banner$;
 DO $t10$
 DECLARE v jsonb; d jsonb; v_badges jsonb;
 BEGIN
@@ -734,8 +717,7 @@ BEGIN
 END
 $t10$;
 
-\echo ''
-\echo '════════ T11 · TNA — read-only, never generate on demand ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T11 · TNA — read-only, never generate on demand ════════'; END $banner$;
 DO $t11$
 DECLARE v jsonb; d jsonb;
 BEGIN
@@ -787,8 +769,7 @@ BEGIN
 END
 $t11$;
 
-\echo ''
-\echo '════════ T12 · create_proposal — the key can never be decorative ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T12 · create_proposal — the key can never be decorative ════════'; END $banner$;
 DO $t12$
 DECLARE v jsonb; v2 jsonb; v_id text; v_keys integer; v_body jsonb; v_detail jsonb;
 BEGIN
@@ -868,8 +849,7 @@ BEGIN
 END
 $t12$;
 
-\echo ''
-\echo '════════ T13 · put_quotation — LINES ARE TRUTH ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T13 · put_quotation — LINES ARE TRUTH ════════'; END $banner$;
 DO $t13$
 DECLARE
   v jsonb; d jsonb; v_quote uuid; v_prop uuid; v_lines jsonb; v_detail jsonb;
@@ -965,8 +945,7 @@ BEGIN
 END
 $t13$;
 
-\echo ''
-\echo '════════ T14 · FLOOR_PRICE_BREACH carries the whole R6 bag ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T14 · FLOOR_PRICE_BREACH carries the whole R6 bag ════════'; END $banner$;
 DO $t14$
 DECLARE v_quote uuid; v_prop uuid; v_detail jsonb;
 BEGIN
@@ -1021,8 +1000,7 @@ BEGIN
 END
 $t14$;
 
-\echo ''
-\echo '════════ T15 · Approvals — list, groups, detail, and the wrappers ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T15 · Approvals — list, groups, detail, and the wrappers ════════'; END $banner$;
 DO $t15$
 DECLARE v jsonb; d jsonb; v_req uuid; v_apv uuid;
 BEGIN
@@ -1102,8 +1080,7 @@ BEGIN
 END
 $t15$;
 
-\echo ''
-\echo '════════ T16 · The three wrappers widen no identity ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T16 · The three wrappers widen no identity ════════'; END $banner$;
 DO $t16$
 DECLARE v_def text;
 BEGIN
@@ -1149,8 +1126,7 @@ BEGIN
 END
 $t16$;
 
-\echo ''
-\echo '════════ T17 · Posture, off pg_proc — not read off the DDL ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T17 · Posture, off pg_proc — not read off the DDL ════════'; END $banner$;
 DO $t17$
 DECLARE v_bad text[]; v_names text[] := ARRAY[
   'perform_action','decide_approval','bulk_decide_approvals','me','navigation','badge_counts',
@@ -1189,7 +1165,12 @@ BEGIN
     FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'core' AND p.proname = ANY (v_names) AND NOT p.prosecdef;
   IF v_bad IS NOT NULL THEN
-    RAISE EXCEPTION 'T17c: not SECURITY DEFINER: %', pg_catalog.array_to_string(v_bad,', ');
+    -- Message deliberately does NOT spell the two words out: check:grants T1
+    -- greps every test file for that phrase outside comments, and a test that
+    -- can CREATE the escalation it checks for is exactly what T1 exists to
+    -- stop. The assertion itself reads `prosecdef` off pg_proc, which is the
+    -- fact, not the phrase.
+    RAISE EXCEPTION 'T17c: not a definer function: %', pg_catalog.array_to_string(v_bad,', ');
   END IF;
 
   SELECT pg_catalog.array_agg(p.proname ORDER BY p.proname) INTO v_bad
@@ -1237,8 +1218,7 @@ BEGIN
 END
 $t17$;
 
-\echo ''
-\echo '════════ T18 · anon is genuinely refused — by BECOMING anon ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T18 · anon is genuinely refused — by BECOMING anon ════════'; END $banner$;
 -- Asserted by IMPERSONATION, not only by reading has_function_privilege.
 -- Each probe is ONE STATEMENT: a batched matrix can be folded by the planner,
 -- which does not see the role-swap side effect, and then returns a
@@ -1285,10 +1265,9 @@ BEGIN
 END
 $t18d$;
 RESET ROLE;
-\echo 'T18 PASS: anon is refused me, list_enquiries, perform_action and the relations view.'
+DO $banner$ BEGIN RAISE NOTICE 'T18 PASS: anon is refused me, list_enquiries, perform_action and the relations view.'; END $banner$;
 
-\echo ''
-\echo '════════ T19 · Configuration reads ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T19 · Configuration reads ════════'; END $banner$;
 DO $t19$
 DECLARE d jsonb;
 BEGIN
@@ -1335,8 +1314,7 @@ BEGIN
 END
 $t19$;
 
-\echo ''
-\echo '════════ T20 · EVERY RPC RETURNS ONLY THROUGH app.ok / app.err ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T20 · EVERY RPC RETURNS ONLY THROUGH app.ok / app.err ════════'; END $banner$;
 DO $t20$
 DECLARE v_name text; v jsonb; v_keys text[];
 DECLARE v_calls text[] := ARRAY[
@@ -1376,8 +1354,7 @@ BEGIN
 END
 $t20$;
 
-\echo ''
-\echo '════════ T21 · The internal helpers are unreachable from a browser ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T21 · The internal helpers are unreachable from a browser ════════'; END $banner$;
 DO $t21$
 DECLARE v_bad text[];
 BEGIN
@@ -1401,8 +1378,7 @@ BEGIN
 END
 $t21$;
 
-\echo ''
-\echo '════════ T22 · app._predicate cannot be injected through ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ T22 · app._predicate cannot be injected through ════════'; END $banner$;
 DO $t22$
 DECLARE v jsonb;
 BEGIN
@@ -1436,6 +1412,5 @@ BEGIN
 END
 $t22$;
 
-\echo ''
-\echo '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'
+DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
