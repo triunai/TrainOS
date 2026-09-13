@@ -4,7 +4,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { APPROVAL_AURORA, PROPOSAL_AURORA, USER_KELVIN } from "@trainos/contract";
+import { APPROVAL_AURORA, PROPOSAL_AURORA, USER_KELVIN, USER_SITI } from "@trainos/contract";
 import { APPROVAL_ATTENDANCE, APPROVAL_RULE_CHANGE } from "../data/approvals";
 import { createFixtureClient } from "../index";
 import type { FixtureClient } from "../client/FixtureClient";
@@ -203,5 +203,54 @@ describe("the audit drawer", () => {
     expect(audit.data.length).toBeGreaterThan(0);
     expect(audit.data.some((entry) => entry.event === "ProposalDrafted")).toBe(true);
     expect(audit.data.some((entry) => entry.runId === "run_4821")).toBe(true);
+  });
+});
+
+/**
+ * §6 the three collections §13 never published.
+ *
+ * The nav tree has a leaf above each of these records, so the list has to
+ * exist for the screen above it to be honest. These assert the two things a
+ * screen depends on and a reviewer would otherwise have to remember: that the
+ * list returns the same rows the record does, and that the quotation list is
+ * gated exactly as the quotation record is.
+ */
+describe("the collections the contract left out", () => {
+  it("lists every TNA the store holds, reachable by ref", async () => {
+    const list = await api.listTnas({ page: { size: 50 } });
+    expect(list.data.length).toBeGreaterThan(0);
+
+    const first = list.data[0];
+    await expect(api.getTna(first!.ref)).resolves.toMatchObject({ ref: first!.ref });
+  });
+
+  it("lists every proposal, and the list row equals the record", async () => {
+    const list = await api.listProposals({ page: { size: 50 } });
+    const row = list.data.find((proposal) => proposal.ref === PROPOSAL_AURORA);
+    expect(row).toBeDefined();
+
+    const record = await api.getProposal(PROPOSAL_AURORA);
+    expect(row!.status).toBe(record.status);
+    expect(row!.value).toEqual(record.value);
+  });
+
+  it("prices every quotation row, so a list can name the binding floor", async () => {
+    const list = await api.listQuotations({ page: { size: 50 } });
+    expect(list.data.length).toBeGreaterThan(0);
+
+    for (const quotation of list.data) {
+      expect(["ABSOLUTE", "MARGIN"]).toContain(quotation.bindingFloorBasis);
+      expect(quotation.absoluteFloorPrice).toBeDefined();
+      expect(quotation.marginFloorPrice).toBeDefined();
+    }
+  });
+
+  it("refuses the quotation list to OPS, exactly as it refuses the record", async () => {
+    const ops = createFixtureClient({ latencyMs: 0, actorId: USER_SITI });
+
+    await expect(ops.listQuotations()).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      details: { requiredRole: "SALES", requiredPermission: "quotation:read" },
+    });
   });
 });

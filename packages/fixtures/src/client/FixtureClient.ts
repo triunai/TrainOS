@@ -615,6 +615,19 @@ export class FixtureClient {
    * §6 · TNA, programmes, proposals, quotations
    * ---------------------------------------------------------------- */
 
+  /**
+   * §6 every TNA.
+   *
+   * §13 publishes `GET /v1/tna/{id}` and no collection beside it, because the
+   * pack reaches a TNA from its opportunity rather than from a list. The nav
+   * tree still has a `Sales › TNA` leaf, so the list has to exist for the
+   * screen above it to be honest — added here and reported as a contract gap,
+   * the same way `addProposalSection` was.
+   */
+  async listTnas(page?: PageRequest): Promise<ListResponse<Tna>> {
+    return this.#read(paginate(this.#store.tnas, page));
+  }
+
   async getTna(id: string): Promise<Tna> {
     const tna = byIdOrRef(this.#store.tnas, id);
     if (!tna) throw notFound("TNA", id);
@@ -712,6 +725,11 @@ export class FixtureClient {
       );
       return proposal;
     });
+  }
+
+  /** §6 every proposal. Same gap as `listTnas`: §13 publishes only the record. */
+  async listProposals(page?: PageRequest): Promise<ListResponse<Proposal>> {
+    return this.#read(paginate(this.#store.proposals, page));
   }
 
   async getProposal(id: string): Promise<Proposal> {
@@ -831,6 +849,24 @@ export class FixtureClient {
    * contract's `Quotation` has neither, so they are computed here and reported
    * as a gap rather than added to the contract.
    */
+  /**
+   * §6 every quotation, priced.
+   *
+   * Gated exactly as `getQuotation` is: the tenancy design withholds
+   * `quotation:read` from OPS, and a list that answered where the record
+   * refuses would be a way round the gate rather than a convenience. Each row
+   * goes through `withFloors`, so `bindingFloorBasis` travels with it and a
+   * list row can say which constraint holds the price up without a second read.
+   */
+  async listQuotations(page?: PageRequest): Promise<ListResponse<Quotation>> {
+    this.#requirePermission("quotation:read", "SALES");
+    const result = paginate(this.#store.quotations, page);
+    return this.#read({
+      ...result,
+      data: result.data.map((row) => withFloors(row, this.#programmeForQuotation(row))),
+    });
+  }
+
   async getQuotation(id: string): Promise<Quotation> {
     this.#requirePermission("quotation:read", "SALES");
     const quotation = byIdOrRef(this.#store.quotations, id);
