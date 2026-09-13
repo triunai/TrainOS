@@ -76,9 +76,17 @@ describe("Sales › Leads", () => {
     const preview = screen.getByRole("region", { name: "Lead preview" });
 
     /* No shared header row and no shared hairline: the rule between the panes
-       is the only line, and each pane owns its scroll. */
-    expect(preview.className).toContain("overflow-auto");
+       is the only line, and each pane owns its scroll. `overflow-y-auto` rather
+       than `overflow-auto` since the geometry moved into the kit — the pane
+       still owns the scroll, and it is now the only axis it scrolls on. */
+    expect(preview.className).toContain("overflow-y-auto");
+    expect(queue.className).toContain("overflow-y-auto");
     expect(queue.className).toContain("border-r");
+
+    /* And it is the kit's component doing it, not a second hand-rolled copy —
+       which is what this screen carried until SplitWorkspace landed. */
+    expect(queue.closest("[data-split-workspace]")).not.toBeNull();
+    expect(preview.closest("[data-split-workspace]")).toBe(queue.closest("[data-split-workspace]"));
   });
 
   it("renders the deal, the client and the people as typography, not badges", async () => {

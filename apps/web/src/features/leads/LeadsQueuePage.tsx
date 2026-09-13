@@ -15,6 +15,7 @@ import {
   PrimaryButton,
   RecordHeader,
   SecondaryButton,
+  SplitWorkspace,
   StatusChip,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
@@ -38,8 +39,9 @@ import { useContacts, useOpportunities, useOpportunity, useOpportunityStages } f
  * `minmax(360px, 40%) 1fr`: the list needs a floor wide enough for a client
  * name and a money column, and a ceiling that stops it eating the record.
  *
- * The kit's `SplitWorkspace` had not landed when this was written, so the rules
- * are built here. Adopting it is a deletion, not a rewrite.
+ * All of that is the kit's `SplitWorkspace` now, which this screen composes.
+ * The rules above were built here first, before the component landed; adopting
+ * it was the deletion this docblock promised it would be.
  *
  * A lead here is a §5 `Opportunity`: the thing an accepted enquiry becomes.
  * `/sales/pipeline` shows the same objects as a board. Two views of one object
@@ -196,48 +198,84 @@ export function LeadsQueuePage() {
         />
       )}
 
-      {/* Two independent panes. The only line between them is the rule, and
-          each scrolls on its own — a shared scroll would drag one pane's header
-          out of the other's sight line. */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_1fr] grid-rows-[minmax(0,1fr)]">
-        <section
-          aria-label="Lead queue"
-          className="flex min-h-0 min-w-0 flex-col border-r border-border"
-        >
-          <div className="min-h-0 flex-1 overflow-auto">
-            {leads.isPending ? (
-              <LoadingState rows={6} label="Loading the lead queue" />
-            ) : leads.isError ? (
-              <ErrorState
-                title="The lead queue did not load"
-                error={toApiError(leads.error)}
-                onRetry={() => void leads.refetch()}
-              />
-            ) : visible.length === 0 ? (
-              <EmptyState
-                title="No leads at this stage"
-                description="Nothing has reached this stage of the pipeline. Switch to All to see the whole book."
-              />
-            ) : (
-              <ul className="flex flex-col">
-                {visible.map((lead) => (
-                  <LeadRow
-                    key={lead.ref}
-                    lead={lead}
-                    organisationName={directory.nameOf(lead.organisationRef)}
-                    stages={stageList}
-                    overdue={overdue(lead, today)}
-                    selected={lead.ref === current}
-                    onSelect={() => setSelectedRef(lead.ref)}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
+      {/* The two independent panes, now the kit's. This screen built the rules
+          by hand because SplitWorkspace had not landed; adopting it is the
+          deletion its docblock promised, and the grid, the seam, the two
+          scrolls and the sticky header all move into one place. */}
+      <SplitWorkspace
+        listLabel="Lead queue"
+        list={
+          leads.isPending ? (
+            <LoadingState rows={6} label="Loading the lead queue" />
+          ) : leads.isError ? (
+            <ErrorState
+              title="The lead queue did not load"
+              error={toApiError(leads.error)}
+              onRetry={() => void leads.refetch()}
+            />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              title="No leads at this stage"
+              description="Nothing has reached this stage of the pipeline. Switch to All to see the whole book."
+            />
+          ) : (
+            <ul className="flex flex-col">
+              {visible.map((lead) => (
+                <LeadRow
+                  key={lead.ref}
+                  lead={lead}
+                  organisationName={directory.nameOf(lead.organisationRef)}
+                  stages={stageList}
+                  overdue={overdue(lead, today)}
+                  selected={lead.ref === current}
+                  onSelect={() => setSelectedRef(lead.ref)}
+                />
+              ))}
+            </ul>
+          )
+        }
 
-        <section aria-label="Lead preview" className="flex min-h-0 min-w-0 flex-col overflow-auto">
-          {detail.isPending && current ? (
+        detailLabel="Lead preview"
+        /* The sticky geometry moves into the kit; what stays here is the
+           record's own identity, which is the only part this screen knows. */
+        {...(detail.data
+          ? {
+              detailHeader: (
+                <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <h2
+                      className="truncate text-[16px] font-semibold leading-6"
+                      title={directory.nameOf(detail.data.organisationRef)}
+                    >
+                      {directory.nameOf(detail.data.organisationRef)}
+                    </h2>
+                    <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
+                      {detail.data.ref} · {stageLabelOf(detail.data.stage, stageList)} · owner{" "}
+                      {detail.data.owner.name}
+                    </p>
+                  </div>
+                  {detail.data.sourceEnquiryRef ? (
+                    <SecondaryButton
+                      onClick={() =>
+                        navigate(`/sales/enquiries/${detail.data?.sourceEnquiryRef ?? ""}`)
+                      }
+                    >
+                      Open enquiry
+                    </SecondaryButton>
+                  ) : null}
+                  <PrimaryButton
+                    onClick={() =>
+                      navigate(`/sales/organisations/${detail.data?.organisationRef ?? ""}`)
+                    }
+                  >
+                    Open organisation
+                  </PrimaryButton>
+                </div>
+              ),
+            }
+          : {})}
+        detail={
+          detail.isPending && current ? (
             <LoadingState rows={5} label="Loading the lead" />
           ) : detail.isError ? (
             <ErrorState
@@ -252,40 +290,6 @@ export function LeadsQueuePage() {
             />
           ) : (
             <>
-              {/* The detail pane's own header. Sticky rather than fixed-height:
-                  it belongs to this pane's scroll, not to a row shared with the
-                  list, and the primary stays reachable at any scroll depth. */}
-              <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card px-5 py-3.5">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <h2
-                    className="truncate text-[16px] font-semibold leading-6"
-                    title={directory.nameOf(detail.data.organisationRef)}
-                  >
-                    {directory.nameOf(detail.data.organisationRef)}
-                  </h2>
-                  <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
-                    {detail.data.ref} · {stageLabelOf(detail.data.stage, stageList)} · owner{" "}
-                    {detail.data.owner.name}
-                  </p>
-                </div>
-                {detail.data.sourceEnquiryRef ? (
-                  <SecondaryButton
-                    onClick={() =>
-                      navigate(`/sales/enquiries/${detail.data?.sourceEnquiryRef ?? ""}`)
-                    }
-                  >
-                    Open enquiry
-                  </SecondaryButton>
-                ) : null}
-                <PrimaryButton
-                  onClick={() =>
-                    navigate(`/sales/organisations/${detail.data?.organisationRef ?? ""}`)
-                  }
-                >
-                  Open organisation
-                </PrimaryButton>
-              </div>
-
               {/* Blocks are separated by SPACING, not rules: removing a border
                   here leaves no relationship ambiguous, which CLAUDE.md says is
                   the test for keeping one. */}
@@ -394,9 +398,9 @@ export function LeadsQueuePage() {
                 </section>
               </div>
             </>
-          )}
-        </section>
-      </div>
+          )
+        }
+      />
     </div>
   );
 }

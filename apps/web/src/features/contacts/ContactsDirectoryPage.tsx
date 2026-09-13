@@ -24,6 +24,7 @@ import {
   PrimaryButton,
   RecordHeader,
   SecondaryButton,
+  SplitWorkspace,
   StatusChip,
   channelLabel,
   humanise,
@@ -43,8 +44,8 @@ import { useContact, useContactConsent, useContacts, useOrganisationRelations } 
  * header: two independent panes, no shared header row, no shared hairline. The
  * directory starts immediately under the toolbar because the tab row already
  * counts it, and the record pane owns a sticky header and its own scroll.
- * `minmax(360px, 40%) 1fr`. The kit's `SplitWorkspace` had not landed when this
- * was written, so the rules are built here; adopting it is a deletion.
+ * `minmax(360px, 40%) 1fr`. All of it is the kit's `SplitWorkspace` now, which
+ * this screen composes — the deletion this docblock promised.
  *
  * TWO DECISIONS THE ANATOMY FORCED, both recorded rather than quietly taken:
  *
@@ -171,46 +172,69 @@ export function ContactsDirectoryPage() {
         }
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_1fr] grid-rows-[minmax(0,1fr)]">
-        <section
-          aria-label="Contact directory"
-          className="flex min-h-0 min-w-0 flex-col border-r border-border"
-        >
-          <div className="min-h-0 flex-1 overflow-auto">
-            {contacts.isPending ? (
-              <LoadingState rows={6} label="Loading the contact directory" />
-            ) : contacts.isError ? (
-              <ErrorState
-                title="The directory did not load"
-                error={toApiError(contacts.error)}
-                onRetry={() => void contacts.refetch()}
-              />
-            ) : visible.length === 0 ? (
-              <EmptyState
-                title="Nobody in this view"
-                description="No contact matches the view in play. Switch to All to see everyone on record."
-              />
-            ) : (
-              <ul className="flex flex-col">
-                {visible.map((contact) => (
-                  <ContactRow
-                    key={contact.ref}
-                    contact={contact}
-                    organisationName={directory.nameOf(contact.organisationRef)}
-                    selected={contact.ref === current}
-                    onSelect={() => setSelectedRef(contact.ref)}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        <section
-          aria-label="Contact record"
-          className="flex min-h-0 min-w-0 flex-col overflow-auto"
-        >
-          {detail.isPending && current ? (
+      {/* The kit's two independent panes. This screen built the rules by hand
+          before SplitWorkspace landed; composing it is the deletion its
+          docblock promised. */}
+      <SplitWorkspace
+        listLabel="Contact directory"
+        list={
+          contacts.isPending ? (
+            <LoadingState rows={6} label="Loading the contact directory" />
+          ) : contacts.isError ? (
+            <ErrorState
+              title="The directory did not load"
+              error={toApiError(contacts.error)}
+              onRetry={() => void contacts.refetch()}
+            />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              title="Nobody in this view"
+              description="No contact matches the view in play. Switch to All to see everyone on record."
+            />
+          ) : (
+            <ul className="flex flex-col">
+              {visible.map((contact) => (
+                <ContactRow
+                  key={contact.ref}
+                  contact={contact}
+                  organisationName={directory.nameOf(contact.organisationRef)}
+                  selected={contact.ref === current}
+                  onSelect={() => setSelectedRef(contact.ref)}
+                />
+              ))}
+            </ul>
+          )
+        }
+        detailLabel="Contact record"
+        /* The sticky geometry is the kit's; what stays is this record's own
+           identity, which is the only part the screen knows. */
+        {...(detail.data
+          ? {
+              detailHeader: (
+                <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <h2 className="truncate text-[16px] font-semibold leading-6">
+                      {detail.data.name}
+                    </h2>
+                    <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
+                      {detail.data.ref} · {detail.data.role} ·{" "}
+                      {directory.nameOf(detail.data.organisationRef)}
+                    </p>
+                  </div>
+                  {detail.data.primary ? <StatusChip>Primary contact</StatusChip> : null}
+                  <PrimaryButton
+                    onClick={() =>
+                      navigate(`/sales/organisations/${detail.data?.organisationRef ?? ""}`)
+                    }
+                  >
+                    Open organisation
+                  </PrimaryButton>
+                </div>
+              ),
+            }
+          : {})}
+        detail={
+          detail.isPending && current ? (
             <LoadingState rows={5} label="Loading the contact" />
           ) : detail.isError ? (
             <ErrorState
@@ -225,29 +249,6 @@ export function ContactsDirectoryPage() {
             />
           ) : (
             <>
-              {/* This pane's own sticky header, not a row shared with the
-                  directory: the name, the refs and the primary stay reachable
-                  at any scroll depth without moving the list. */}
-              <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card px-5 py-3.5">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <h2 className="truncate text-[16px] font-semibold leading-6">
-                    {detail.data.name}
-                  </h2>
-                  <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
-                    {detail.data.ref} · {detail.data.role} ·{" "}
-                    {directory.nameOf(detail.data.organisationRef)}
-                  </p>
-                </div>
-                {detail.data.primary ? <StatusChip>Primary contact</StatusChip> : null}
-                <PrimaryButton
-                  onClick={() =>
-                    navigate(`/sales/organisations/${detail.data?.organisationRef ?? ""}`)
-                  }
-                >
-                  Open organisation
-                </PrimaryButton>
-              </div>
-
               {/* Blocks separated by spacing, not rules — removing the border
                   leaves no relationship ambiguous, which is CLAUDE.md's test. */}
               <div className="flex flex-col gap-8 px-5 pb-8 pt-6">
@@ -276,9 +277,9 @@ export function ContactsDirectoryPage() {
                 />
               </div>
             </>
-          )}
-        </section>
-      </div>
+          )
+        }
+      />
     </div>
   );
 }
