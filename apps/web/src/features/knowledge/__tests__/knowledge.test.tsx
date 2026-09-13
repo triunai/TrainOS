@@ -1,100 +1,231 @@
 import { describe, it, expect } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KnowledgeSourcesScreen } from "../KnowledgeSourcesScreen";
 import { renderScreen } from "@/test/renderScreen";
 
-/** The §4 "states rendered" for M16-S05, against the real fixture client. */
+/**
+ * M16-S05, against the real fixture client.
+ *
+ * The rewrite (tightening brief §18) moved most of what this file used to
+ * assert OFF the page and into a drawer, so the tests follow the facts rather
+ * than delete them: the chunk count, the embedding state and the hash are still
+ * checked, one click further in. What is genuinely gone is asserted gone —
+ * the metric band, the per-row button pair and the two explanatory cards.
+ */
+
+function rowFor(name: string): HTMLElement {
+  const table = screen.getByRole("table", { name: "Knowledge sources" });
+  return within(table).getByText(name).closest("tr") as HTMLElement;
+}
 
 describe("M16-S05 · knowledge sources", () => {
+  it("answers 'is anything asking for me' in the header, before the inventory", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    expect(await screen.findByRole("heading", { name: "Knowledge sources" })).toBeInTheDocument();
+    /* Counted from the data, not written down: six sources, two of which have
+       changed or are failing to fetch. */
+    expect(screen.getByText(/6 sources · 4 healthy · 2 need attention/)).toBeInTheDocument();
+  });
+
   it("offers Add source as its one solid primary", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
     expect(await screen.findByRole("button", { name: "Add source" })).toBeInTheDocument();
   });
 
-  it("says the changed source is quarantined from rule extraction AND still searchable", async () => {
+  it("has no metric band — the six numbers moved into the row drawer", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    const banner = await screen.findByRole("alert");
-    expect(banner).toHaveTextContent(/Circular 09\/2026 changed since its last ingest/);
-    expect(banner).toHaveTextContent(
-      /quarantined from rule extraction until its diffs are reviewed/,
-    );
-    expect(banner).toHaveTextContent(/stays searchable meanwhile/);
+    await screen.findByRole("table", { name: "Knowledge sources" });
+    expect(screen.queryByText("Last full check")).not.toBeInTheDocument();
+    expect(screen.queryByText("Embedded")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Chunks$/)).not.toBeInTheDocument();
+  });
+
+  it("is four columns wide, in sentence case", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    const table = await screen.findByRole("table", { name: "Knowledge sources" });
+    const headings = within(table)
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent?.trim());
+    expect(headings).toEqual(["Source", "Used for", "Status", "Checked", "Actions"]);
+  });
+
+  it("names the document and its type and version, and what it is read for", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await screen.findByRole("table", { name: "Knowledge sources" });
+
+    const changed = rowFor("Circular 09/2026");
+    expect(within(changed).getByText(/HRD Corp circular/)).toBeInTheDocument();
+    expect(within(changed).getByText("v1")).toBeInTheDocument();
+    /* The only source carrying CLIENT_FACING. */
+    expect(within(changed).getByText("Client answers")).toBeInTheDocument();
+
+    const sop = rowFor("Akademi Perdana delivery SOP");
+    expect(within(sop).getByText("Internal")).toBeInTheDocument();
+  });
+
+  it("promotes exactly one action, and only on a row with something wrong", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await screen.findByRole("table", { name: "Knowledge sources" });
+
+    expect(
+      within(rowFor("Circular 09/2026")).getByRole("button", { name: /Review changes/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(rowFor("eTRIS submission help centre")).getByRole("button", { name: /Retry/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(rowFor("HRD Corp trainer guidelines")).getByRole("button", { name: /View progress/ }),
+    ).toBeInTheDocument();
+
+    /* A healthy row promotes nothing. An action in a row MEANS something is
+       wrong with that row, which is the whole asymmetry. */
+    const healthy = rowFor("Circular 04/2026");
+    expect(within(healthy).getByText("Healthy")).toBeInTheDocument();
+    expect(
+      within(healthy).queryByRole("button", { name: /Review|Retry|View progress/ }),
+    ).toBeNull();
+  });
+
+  it("keeps Check and Re-ingest out of every row, in the overflow of the healthy ones", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    const table = await screen.findByRole("table", { name: "Knowledge sources" });
+
+    /* The pair of ghost buttons on all six rows is gone from the table. */
+    expect(within(table).queryByRole("button", { name: "Check" })).toBeNull();
+    expect(within(table).queryByRole("button", { name: "Re-ingest" })).toBeNull();
+
+    const healthy = rowFor("Circular 04/2026");
+    const overflow = within(healthy).getByRole("button", {
+      name: "More actions for Circular 04/2026",
+    });
+    /* Hidden until the row is hovered or the control is focused — present in
+       the DOM the whole time, so the keyboard can still reach it. */
+    expect(overflow.className).toContain("opacity-0");
+
+    fireEvent.keyDown(overflow, { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Check" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Re-ingest" })).toBeInTheDocument();
+  });
+
+  it("carries no overflow on a row that already promoted its action", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await screen.findByRole("table", { name: "Knowledge sources" });
+    expect(
+      within(rowFor("eTRIS submission help centre")).queryByRole("button", {
+        name: /More actions/,
+      }),
+    ).toBeNull();
+  });
+
+  it("dates the last check relatively, against the freshest check in the set", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await screen.findByRole("table", { name: "Knowledge sources" });
+    expect(within(rowFor("Circular 04/2026")).getByText("4 days ago")).toBeInTheDocument();
+    expect(
+      within(rowFor("eTRIS submission help centre")).getByText("last week"),
+    ).toBeInTheDocument();
+  });
+
+  it("splits the inventory into All and Needs attention, and narrows to the two", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    const tabs = await screen.findByRole("tablist", { name: "Sources" });
+    expect(within(tabs).getByRole("tab", { name: /All/ })).toHaveTextContent("6");
+    expect(within(tabs).getByRole("tab", { name: /Needs attention/ })).toHaveTextContent("2");
+
+    await userEvent.click(within(tabs).getByRole("tab", { name: /Needs attention/ }));
 
     const table = screen.getByRole("table", { name: "Knowledge sources" });
-    const row = within(table).getByText("Circular 09/2026").closest("tr") as HTMLElement;
-    expect(within(row).getByText("Changed · review pending")).toBeInTheDocument();
-    expect(
-      within(row).getByText("quarantined from rule extraction · still searchable"),
-    ).toBeInTheDocument();
+    expect(within(table).getByText("Circular 09/2026")).toBeInTheDocument();
+    expect(within(table).getByText("eTRIS submission help centre")).toBeInTheDocument();
+    expect(within(table).queryByText("Circular 04/2026")).toBeNull();
   });
 
-  it("shows the source whose embedding is still pending", async () => {
+  it("narrows by name and by what a source is read for, on the tab row", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    const table = await screen.findByRole("table", { name: "Knowledge sources" });
-    const row = within(table).getByText("HRD Corp trainer guidelines").closest("tr") as HTMLElement;
-    expect(within(row).getByText("Pending")).toBeInTheDocument();
-    /* Zero chunks is not zero-the-number; it is "not vectorised yet". */
-    expect(within(row).getByText("—")).toBeInTheDocument();
+    await screen.findByRole("table", { name: "Knowledge sources" });
+
+    await userEvent.selectOptions(screen.getByLabelText("Used for"), "Client answers");
+    const table = screen.getByRole("table", { name: "Knowledge sources" });
+    expect(within(table).getByText("Circular 09/2026")).toBeInTheDocument();
+    expect(within(table).queryByText("Akademi Perdana delivery SOP")).toBeNull();
   });
 
-  it("shows the source whose fetch has been failing, with the date it started", async () => {
+  it("states the change in one sentence and keeps the quarantine rule behind Why?", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    const table = await screen.findByRole("table", { name: "Knowledge sources" });
-    const row = within(table)
-      .getByText("eTRIS submission help centre")
-      .closest("tr") as HTMLElement;
-    expect(within(row).getByText("Failed · fetch")).toBeInTheDocument();
-    expect(within(row).getByText(/failing since/)).toHaveTextContent("07 Nov 2026");
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("Circular 09/2026 has changed");
+    expect(banner).toHaveTextContent(
+      "Existing answers remain available. Review the changes before new rules become active.",
+    );
+
+    const why = within(banner).getByRole("button", { name: "Why?" });
+    expect(why).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(why);
+    expect(why).toHaveAttribute("aria-expanded", "true");
+    const revealed = document.getElementById(why.getAttribute("aria-controls") ?? "");
+    expect(revealed).toHaveTextContent(/quarantined from rule extraction/);
+    expect(revealed).toHaveTextContent(/stays searchable/);
   });
 
-  it("states the retrieval policy and the monitoring rule on the screen", async () => {
+  it("is the page's only banner", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    expect(await screen.findByText("Retrieval policy")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Internal SOPs are retrievable for staff answers and excluded/),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Monitoring")).toBeInTheDocument();
-    expect(
-      screen.getByText(/A changed hash opens a rule-change review rather than updating anything/),
-    ).toBeInTheDocument();
-    /* The failing source is named in the monitoring copy, not left abstract. */
-    expect(
-      screen.getByText(/eTRIS submission help centre has been failing since/),
-    ).toBeInTheDocument();
+    await screen.findByRole("table", { name: "Knowledge sources" });
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
-  it("marks which sources may be cited in client-facing text and which may not", async () => {
+  it("holds every number that left the page in the row's drawer", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    const table = await screen.findByRole("table", { name: "Knowledge sources" });
-    const changed = within(table).getByText("Circular 09/2026").closest("tr") as HTMLElement;
-    expect(within(changed).getByText(/Compliance · Client-facing/)).toBeInTheDocument();
+    await screen.findByRole("table", { name: "Knowledge sources" });
 
-    const sop = within(table)
-      .getByText("Akademi Perdana delivery SOP")
-      .closest("tr") as HTMLElement;
-    expect(within(sop).getByText("excluded from client text")).toBeInTheDocument();
+    await userEvent.click(within(rowFor("Circular 04/2026")).getByText("Circular 04/2026"));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("HRD Corp circular · v2")).toBeInTheDocument();
+    /* Chunks, embedding state, monitor cadence, hash, version, retrieval
+       permissions, last ingestion — §18's list, in one place. */
+    expect(within(drawer).getByText("118")).toBeInTheDocument();
+    expect(within(drawer).getByText(/Indexed — retrieval uses the vectors/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/Weekly · content hash/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/^sha256:41b8e7c2/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/Excluded from client-facing generation/)).toBeInTheDocument();
+    expect(within(drawer).getByText("18 Jun 2026 · 08:00")).toBeInTheDocument();
+    /* Not a dead end: the row's own actions are reachable from inside it. */
+    expect(within(drawer).getByRole("button", { name: "Check" })).toBeInTheDocument();
+    expect(within(drawer).getByRole("button", { name: "Re-ingest" })).toBeInTheDocument();
   });
 
-  it("checks a source without rewriting the corpus", async () => {
+  it("says a pending embedding is not zero chunks", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    const table = await screen.findByRole("table", { name: "Knowledge sources" });
-    const row = within(table).getByText("Circular 04/2026").closest("tr") as HTMLElement;
-    await userEvent.click(within(row).getByRole("button", { name: "Check" }));
+    await screen.findByRole("table", { name: "Knowledge sources" });
 
-    expect(
-      await screen.findByText(/A check compares hashes and never rewrites the corpus/),
-    ).toBeInTheDocument();
+    await userEvent.click(
+      within(rowFor("HRD Corp trainer guidelines")).getByText("HRD Corp trainer guidelines"),
+    );
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("Not vectorised yet")).toBeInTheDocument();
+    expect(within(drawer).getByText(/answers from keyword matching/)).toBeInTheDocument();
   });
 
-  it("re-ingests a source and reports the new chunk count and embedding state", async () => {
+  it("moves the two explanatory cards behind a quiet link beside the title", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
-    const table = await screen.findByRole("table", { name: "Knowledge sources" });
-    const row = within(table).getByText("HRD Corp trainer guidelines").closest("tr") as HTMLElement;
-    await userEvent.click(within(row).getByRole("button", { name: "Re-ingest" }));
+    await screen.findByRole("table", { name: "Knowledge sources" });
 
-    expect(await screen.findByText(/^Re-ingested · \d+ chunks, embedding /)).toBeInTheDocument();
+    /* Off the page. */
+    expect(screen.queryByText("Retrieval policy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monitoring")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "How sources work" }));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(drawer).getByText(/excluded from client-facing generation/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/fetched weekly and hashed/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/never rewrites the corpus/)).toBeInTheDocument();
   });
+
   it("opens the add-source drawer and makes retrieval scope a decision, not a default", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
     await userEvent.click(await screen.findByRole("button", { name: "Add source" }));
@@ -102,8 +233,6 @@ describe("M16-S05 · knowledge sources", () => {
     const drawer = await screen.findByRole("dialog");
     expect(within(drawer).getByText("Compliance answers and rule extraction")).toBeInTheDocument();
     expect(within(drawer).getByText("Client-facing generation")).toBeInTheDocument();
-    /* Scope is the control the retrieval policy describes, so the drawer says
-       what it buys rather than offering it as a tag. */
     expect(within(drawer).getByText(/Scope is the control, not a tag/)).toBeInTheDocument();
     expect(within(drawer).getByText(/A new source is ingested unindexed/)).toBeInTheDocument();
   });

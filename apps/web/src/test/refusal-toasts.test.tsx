@@ -8,7 +8,7 @@ import { fixtureClient, forbidden, resetStore } from "@trainos/fixtures";
 import { ApiProvider, readableMessage, toApiError } from "@/shared/api";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { useDeadLetterRun } from "@/features/agents/api";
-import { useCreateSource, useReingestSource } from "@/features/knowledge/api";
+import { useCheckSource, useCreateSource, useReingestSource } from "@/features/knowledge/api";
 import { useExportAttendance } from "@/features/engagements/api";
 import { useReopenTna } from "@/features/tna/api";
 import { usePatchExtraction } from "@/features/enquiries/api";
@@ -75,7 +75,18 @@ const SITES = [
     },
   },
   {
-    name: "knowledge · re-ingest a source (KnowledgeSourcesScreen.tsx:197)",
+    /* Flagged when §18 took the screen's refusal banner away: the check now
+       fires from a row overflow, a drawer footer and "Check all", and nothing
+       on the page reads its error. */
+    name: "knowledge · check a source (KnowledgeSourcesScreen.tsx:137)",
+    method: "checkKnowledgeSource",
+    fire: () => {
+      const hook = renderHook(() => useCheckSource(), { wrapper });
+      hook.result.current.mutate("src_1");
+    },
+  },
+  {
+    name: "knowledge · re-ingest a source (KnowledgeSourcesScreen.tsx:153)",
     method: "reingestKnowledgeSource",
     fire: () => {
       const hook = renderHook(() => useReingestSource(), { wrapper });
@@ -83,7 +94,7 @@ const SITES = [
     },
   },
   {
-    name: "knowledge · add a source (KnowledgeSourcesScreen.tsx:262)",
+    name: "knowledge · add a source (AddSourceDrawer.tsx:52)",
     method: "createKnowledgeSource",
     fire: () => {
       const hook = renderHook(() => useCreateSource(), { wrapper });

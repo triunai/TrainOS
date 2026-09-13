@@ -40,6 +40,10 @@ export function useCheckSource() {
   return useMutation<KnowledgeSourceCheckResponse, ApiError, string>({
     mutationFn: (id) =>
       api.checkKnowledgeSource(id).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* Fired from a row overflow, a drawer footer and "Check all", none of which
+       awaits it, and the screen no longer stacks a refusal banner of its own —
+       §18 allows the page one banner and the changed source owns it. R11. */
+    meta: { toastOnError: true },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },

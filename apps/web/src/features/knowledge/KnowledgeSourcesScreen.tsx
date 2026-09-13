@@ -1,203 +1,285 @@
 import { useMemo, useState } from "react";
-import type {
-  KnowledgeSource,
-  KnowledgeSourceType,
-  MonitorStatus,
-  RetrievalScope,
-} from "@trainos/contract";
+import { useNavigate } from "react-router-dom";
+import type { KnowledgeSource } from "@trainos/contract";
 import {
-  ContentCard,
   DataTable,
   DateText,
-  EMBEDDING_TONE,
   EmptyState,
   ErrorState,
   ExceptionBanner,
+  FilterBar,
+  FilterSearch,
+  FilterSelect,
   GhostButton,
-  humanise,
+  ListToolbar,
   LoadingState,
-  MONITOR_TONE,
+  PillTabGroup,
   PrimaryButton,
   RecordHeader,
-  RefusalBanner,
+  RowActionMenu,
   SecondaryButton,
   StatusChip,
+  toast,
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
+import { navPath } from "@/shared/config/nav";
+import { HRDC_RULE_CHANGES_PATH } from "@/features/hrdc";
 import { AddSourceDrawer } from "./AddSourceDrawer";
+import { HowSourcesWorkDrawer, SourceDetailDrawer } from "./SourceDetailDrawer";
 import { useCheckSource, useKnowledgeSources, useReingestSource } from "./api";
+import {
+  HEALTH_LABEL,
+  HEALTH_TONE,
+  PROMOTED_ACTION,
+  TYPE_LABEL,
+  healthOf,
+  needsAttention,
+  usedForLabel,
+} from "./health";
 
 /**
  * M16-S05 · Knowledge sources.
  *
+ * The page answers one question and then shows the inventory: are my sources
+ * healthy, and is anything asking for me? Tightening brief §18, and what it
+ * replaced is worth naming, because the failure was not ugliness.
+ *
+ * The old screen knew a great deal and said all of it at once: a six-cell
+ * metric band, seven columns, two chips per row, a per-row Check and Re-ingest
+ * pair, a four-sentence banner and two explanatory cards. Every fact on it was
+ * true and most of them were somebody's answer. Together they meant the
+ * administrator who opened it to find out whether anything needed them had to
+ * read a control panel to find two rows.
+ *
+ * So the machinery did not go away — chunks, embedding state, monitor cadence,
+ * hash, version and retrieval permissions are all one click into the row —
+ * and what changed is who pays for it. The table pays for the reading; the
+ * drawer pays for the investigation. The one asymmetry that carries the design
+ * is in the Status column: a row with a problem promotes ONE action into the
+ * table, and a healthy row keeps its maintenance in the `⋯`. An action in a row
+ * therefore MEANS something is wrong with that row, which twelve identical
+ * ghost buttons could never mean.
+ *
  * Primary user: System Admin; Compliance follows the changed-source link.
- * Primary button: "Add source".
- *
- * The screen answers two questions and they are not the same one. WHAT are the
- * agents allowed to read — the retrieval scopes, which decide whether a source
- * can be cited in a compliance answer, in client-facing text, or in neither.
- * And HOW FRESH is it — the monitor and embedding states, which decide whether
- * what they read is still true.
- *
- * The interesting state is a CHANGED source, and the rule it demonstrates is
- * worth stating on the page rather than leaving in a runbook: a changed source
- * is quarantined from rule extraction until its diffs are reviewed, and it
- * stays searchable the whole time. Pulling it out of search too would take the
- * old, still-correct answers away to protect against a change nobody has read
- * yet — trading a known good for an unknown one.
  */
 
-const MONITOR_LABEL: Record<MonitorStatus, string> = {
-  WATCHING: "Watching weekly",
-  CHANGED_REVIEW_PENDING: "Changed · review pending",
-  FAILED: "Failed · fetch",
-  MANUAL: "Manual",
-};
+const AUTOMATION_RUNS_PATH = navPath("Automation", "Runs");
 
-/**
- * `humanise` turns `HRDC_CIRCULAR` into "Hrdc circular", which is a body the
- * reader has never heard of. The corpus is HRD Corp's, and its name is not a
- * casing accident.
- */
-const TYPE_LABEL: Record<KnowledgeSourceType, string> = {
-  HRDC_CIRCULAR: "HRD Corp circular",
-};
+const TABS = { all: "All", attention: "Needs attention" } as const;
+type TabId = keyof typeof TABS;
 
-const SCOPE_LABEL: Record<RetrievalScope, string> = {
-  COMPLIANCE: "Compliance",
-  CLIENT_FACING: "Client-facing",
-};
+const USED_FOR = [
+  { value: "any", label: "Any use" },
+  { value: "Client answers", label: "Client answers" },
+  { value: "Internal", label: "Internal" },
+];
 
 export function KnowledgeSourcesScreen() {
-  const sources = useKnowledgeSources();
-  useBreadcrumb([{ label: "Knowledge" }, { label: "Sources" }, { label: "Corpus" }]);
+  /* Knowledge › Sources, and no "Corpus" leaf. The contract has ONE corpus and
+     no object to switch between: `KnowledgeSource` carries no corpus id, and
+     there is no list endpoint above it. §18 makes the third crumb conditional
+     on corpora being "a real switchable object", and it is not one, so a crumb
+     naming it would be a control that does not exist. */
+  useBreadcrumb([{ label: "Knowledge" }, { label: "Sources" }]);
 
+  const navigate = useNavigate();
+  const sources = useKnowledgeSources();
   const check = useCheckSource();
   const reingest = useReingestSource();
-  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const [tab, setTab] = useState<TabId>("all");
+  const [query, setQuery] = useState("");
+  const [usedFor, setUsedFor] = useState("any");
   const [adding, setAdding] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const rows = useMemo(() => sources.data?.data ?? [], [sources.data]);
 
-  const columns = useMemo<Column<KnowledgeSource>[]>(
-    () => [
-      {
-        key: "name",
-        label: "Source",
-        /* The version rides with the name. It is part of WHICH document this
-           is, not a fact about it, and nine columns did not fit 1440px beside
-           the 240px rail. */
-        accessor: (source) => (
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="truncate text-[13px] font-medium text-ink">{source.name}</span>
-            <span className="truncate text-[11px] text-ink-muted">
-              {TYPE_LABEL[source.type]} · {source.version}
-            </span>
-          </div>
-        ),
-      },
-      {
-        key: "ingested",
-        label: "Ingested",
-        accessor: (source) => <DateText value={source.ingestedAt} />,
-        width: "115px",
-      },
-      {
-        key: "chunks",
-        label: "Chunks",
-        align: "right",
-        accessor: (source) => (
-          <span className="font-mono tabular-nums">
-            {source.chunks === 0 ? "—" : source.chunks.toLocaleString("en-MY")}
-          </span>
-        ),
-        width: "80px",
-      },
-      {
-        key: "embedding",
-        label: "Embedding",
-        accessor: (source) => (
-          <StatusChip tone={EMBEDDING_TONE[source.embeddingStatus]} shape="square">
-            {humanise(source.embeddingStatus)}
-          </StatusChip>
-        ),
-        width: "105px",
-      },
-      {
-        key: "scopes",
-        label: "Retrievable for",
-        accessor: (source) => (
-          <span className="text-[12px] text-ink-secondary">
-            {source.retrievalScopes.map((scope) => SCOPE_LABEL[scope]).join(" · ")}
-            {source.retrievalScopes.includes("CLIENT_FACING") ? null : (
-              <span className="block text-[11px] text-ink-muted">excluded from client text</span>
-            )}
-          </span>
-        ),
-        width: "150px",
-      },
-      {
-        key: "monitor",
-        label: "Monitor",
-        accessor: (source) => (
-          <div className="flex flex-col items-start gap-1">
-            <StatusChip tone={MONITOR_TONE[source.monitorStatus]}>
-              {MONITOR_LABEL[source.monitorStatus]}
-            </StatusChip>
-            {source.monitorStatus === "CHANGED_REVIEW_PENDING" ? (
-              <span className="text-[11px] text-ink-muted">
-                quarantined from rule extraction · still searchable
-              </span>
-            ) : null}
-            {/* "Last checked" folded in here rather than taking a column of its
-                own: on a FAILED source the date is the whole point, and on a
-                watched one it is the same weekly sweep on every row. */}
-            <span className="text-[11px] text-ink-muted">
-              {source.lastCheckedAt ? (
-                <>
-                  {source.monitorStatus === "FAILED" ? "failing since " : "checked "}
-                  <DateText value={source.lastCheckedAt} withTime />
-                </>
-              ) : (
-                "never checked"
-              )}
-            </span>
-          </div>
-        ),
-        width: "215px",
-      },
-      {
-        key: "actions",
-        label: "Actions",
-        srOnlyLabel: true,
-        accessor: (source) => (
-          <div className="flex items-center gap-1.5">
-            <GhostButton
-              disabled={check.isPending && busyId === source.id}
-              onClick={() => {
-                setBusyId(source.id);
-                check.mutate(source.id);
-              }}
-            >
-              Check
-            </GhostButton>
-            <GhostButton
-              disabled={reingest.isPending && busyId === source.id}
-              onClick={() => {
-                setBusyId(source.id);
-                reingest.mutate(source.id);
-              }}
-            >
-              Re-ingest
-            </GhostButton>
-          </div>
-        ),
-        width: "160px",
-      },
-    ],
-    [busyId, check, reingest],
+  const attention = useMemo(() => rows.filter(needsAttention), [rows]);
+  const changed = rows.find((source) => healthOf(source) === "CHANGED");
+
+  /**
+   * What "now" is, for the relative dates in the Checked column.
+   *
+   * Normally the wall clock, and in production always: a source cannot be
+   * checked in the future. The fixture world is pinned to a single instant
+   * that is ahead of the machine's clock, and anchoring on the freshest check
+   * keeps the column relative there instead of degrading every row to a date.
+   * A no-op wherever the data is real.
+   */
+  const clock = useMemo(() => {
+    const latest = rows.reduce((newest, source) => {
+      const at = new Date(source.lastCheckedAt ?? source.ingestedAt).getTime();
+      return Number.isNaN(at) ? newest : Math.max(newest, at);
+    }, 0);
+    return Math.max(latest, Date.now());
+  }, [rows]);
+
+  const inTab = tab === "attention" ? attention : rows;
+  const visible = useMemo(
+    () =>
+      inTab.filter((source) => {
+        const matchesQuery =
+          query.trim() === "" || source.name.toLowerCase().includes(query.trim().toLowerCase());
+        const matchesUse = usedFor === "any" || usedForLabel(source) === usedFor;
+        return matchesQuery && matchesUse;
+      }),
+    [inTab, query, usedFor],
   );
+
+  const open = rows.find((source) => source.id === openId) ?? null;
+
+  function runCheck(source: KnowledgeSource) {
+    setBusyId(source.id);
+    check.mutate(source.id, {
+      onSuccess: (result) =>
+        toast.info(
+          result.changed
+            ? `${source.name} changed — a rule-change review has been opened`
+            : `${source.name} · no change`,
+          {
+            description:
+              "A check compares hashes and never rewrites the corpus. Only a re-ingest does that.",
+          },
+        ),
+    });
+  }
+
+  function runReingest(source: KnowledgeSource) {
+    setBusyId(source.id);
+    reingest.mutate(source.id, {
+      onSuccess: (result) =>
+        toast.success(`${source.name} re-ingested · ${result.chunks} chunks`, {
+          description:
+            "Retrieval uses the new chunks once the embedding finishes. Until then the source answers from keyword matching.",
+        }),
+    });
+  }
+
+  /** The one action a row in trouble promotes. Healthy rows promote nothing. */
+  function runPromoted(source: KnowledgeSource) {
+    const health = healthOf(source);
+    if (health === "CHANGED") {
+      if (source.ruleChangeSetId) navigate(`${HRDC_RULE_CHANGES_PATH}/${source.ruleChangeSetId}`);
+      else setOpenId(source.id);
+      return;
+    }
+    if (health === "FAILED") {
+      runCheck(source);
+      return;
+    }
+    /* PROCESSING — the embedding's state and its chunk count are in the drawer,
+       which is where "progress" actually is. */
+    setOpenId(source.id);
+  }
+
+  function checkAll() {
+    const watched = rows.filter((source) => source.monitorStatus !== "MANUAL");
+    if (watched.length === 0) return;
+    void toast.promise(Promise.allSettled(watched.map((source) => check.mutateAsync(source.id))), {
+      loading: `Checking ${watched.length} sources…`,
+      success: (results) => {
+        const changedNow = results.filter(
+          (result) => result.status === "fulfilled" && result.value.changed,
+        ).length;
+        return changedNow === 0
+          ? `Checked ${watched.length} sources · nothing changed`
+          : `Checked ${watched.length} sources · ${changedNow} changed`;
+      },
+      error: "The check could not be completed",
+    });
+  }
+
+  /* Not memoised. Six rows, and every accessor closes over the handlers
+     above — a dependency array here would either list them all or go
+     stale, and the kit's own tables pay the same nothing for rebuilding
+     five column objects per render. */
+  const columns: Column<KnowledgeSource>[] = [
+    {
+      key: "name",
+      label: "Source",
+      accessor: (source) => (
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="truncate text-[13px] font-medium text-ink">{source.name}</span>
+          <span className="truncate text-[11px] text-ink-muted">
+            {TYPE_LABEL[source.type]} · <span className="font-mono">{source.version}</span>
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "usedFor",
+      label: "Used for",
+      width: "140px",
+      accessor: (source) => (
+        <span className="text-[13px] text-ink-secondary">{usedForLabel(source)}</span>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: "178px",
+      accessor: (source) => {
+        const health = healthOf(source);
+        const promoted = PROMOTED_ACTION[health];
+        return (
+          <div className="flex flex-col items-start gap-1">
+            <StatusChip tone={HEALTH_TONE[health]}>{HEALTH_LABEL[health]}</StatusChip>
+            {promoted ? (
+              <GhostButton
+                disabled={busyId === source.id && check.isPending}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  runPromoted(source);
+                }}
+              >
+                {`${promoted} →`}
+              </GhostButton>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "checked",
+      label: "Checked",
+      width: "130px",
+      accessor: (source) =>
+        source.lastCheckedAt ? (
+          <DateText
+            value={source.lastCheckedAt}
+            relative
+            now={clock}
+            className="text-ink-secondary"
+          />
+        ) : (
+          <span className="text-[13px] text-ink-muted">Never</span>
+        ),
+    },
+    {
+      key: "overflow",
+      label: "Actions",
+      srOnlyLabel: true,
+      width: "52px",
+      align: "right",
+      accessor: (source) =>
+        /* Only on a healthy row. A row in trouble has its one action in the
+             Status cell, and offering a second menu beside it would put the
+             maintenance back on equal footing with the fix. */
+        healthOf(source) === "HEALTHY" ? (
+          <RowActionMenu
+            label={source.name}
+            actions={[
+              { label: "Check", onSelect: () => runCheck(source) },
+              { label: "Re-ingest", onSelect: () => runReingest(source) },
+            ]}
+          />
+        ) : null,
+    },
+  ];
 
   if (sources.isPending) return <LoadingState rows={8} label="Loading knowledge sources" />;
   if (sources.isError) {
@@ -210,155 +292,142 @@ export function KnowledgeSourcesScreen() {
     );
   }
 
-  const changed = rows.find((source) => source.monitorStatus === "CHANGED_REVIEW_PENDING");
-  const failing = rows.find((source) => source.monitorStatus === "FAILED");
-  const pending = rows.filter((source) => source.embeddingStatus === "PENDING").length;
-  const indexed = rows.filter((source) => source.embeddingStatus === "INDEXED").length;
-  const chunks = rows.reduce((total, source) => total + source.chunks, 0);
-  const lastCheck = rows
-    .map((source) => source.lastCheckedAt)
-    .filter((value): value is string => Boolean(value))
-    .sort()
-    .at(-1);
+  const healthy = rows.length - attention.length;
+
   return (
-    <div className="flex flex-col gap-4 pb-10">
+    <div className="flex flex-col">
       <RecordHeader
         withoutCondensed
-        title="Sources"
+        title="Knowledge sources"
         meta={[
-          `${rows.length} sources`,
-          changed ? "1 changed" : "none changed",
-          failing ? "1 failing" : null,
+          `${rows.length} ${rows.length === 1 ? "source" : "sources"}`,
+          `${healthy} healthy`,
+          attention.length > 0 ? `${attention.length} need attention` : null,
         ]}
+        chips={
+          /* The quiet link §18 asks for beside the title. A button, not a
+             chip — it opens something, and nothing about it is a status. */
+          <button
+            type="button"
+            onClick={() => setHowOpen(true)}
+            className="rounded-[4px] text-[12px] text-ink-muted underline underline-offset-2 hover:text-ink-secondary"
+          >
+            How sources work
+          </button>
+        }
         actions={
           <>
-            <SecondaryButton>Ingestion log</SecondaryButton>
-            <SecondaryButton
-              disabled={check.isPending}
-              onClick={() => {
-                const first = rows[0];
-                if (!first) return;
-                setBusyId(first.id);
-                check.mutate(first.id);
-              }}
-            >
-              Check now
+            <SecondaryButton disabled={check.isPending} onClick={checkAll}>
+              Check all
+            </SecondaryButton>
+            {/* An ingestion is an agent run, and the runs register is where its
+                history already lives. A second history of the same events would
+                be a second answer to one question. */}
+            <SecondaryButton onClick={() => navigate(AUTOMATION_RUNS_PATH)}>
+              History
             </SecondaryButton>
           </>
         }
+        /* "Add source", not "+ Add source". §18 writes the plus as shorthand
+           for the add affordance; rendered, it splits the button's children so
+           the kit's one-primary registry reads the label as unlabelled, and no
+           other primary in the app wears a glyph. */
         primaryAction={<PrimaryButton onClick={() => setAdding(true)}>Add source</PrimaryButton>}
-        metrics={[
-          { label: "Sources", value: rows.length },
-          { label: "Chunks", value: chunks.toLocaleString("en-MY") },
-          {
-            label: "Embedded",
-            value: `${indexed} of ${rows.length}`,
-            sub: pending > 0 ? `${pending} pending` : undefined,
-          },
-          { label: "Changed · review pending", value: changed ? 1 : 0 },
-          {
-            label: "Last full check",
-            value: lastCheck ? <DateText value={lastCheck} withTime /> : "—",
-          },
-          { label: "Monitor", value: "Weekly", sub: "hash comparison" },
-        ]}
       />
 
       {changed ? (
-        <div className="px-5">
+        <div className="px-5 pb-4">
           <ExceptionBanner
             severity="WARN"
-            title={`${changed.name} changed since its last ingest`}
-            subtitle={`Detected ${new Date(changed.lastCheckedAt ?? changed.ingestedAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}. It is quarantined from rule extraction until its diffs are reviewed, and it stays searchable meanwhile — the old answers it supports are still the best ones available until somebody has read the change.`}
+            title={`${changed.name} has changed`}
+            subtitle="Existing answers remain available. Review the changes before new rules become active."
             action={
-              changed.ruleChangeSetId ? <GhostButton>Open rule changes</GhostButton> : undefined
+              <GhostButton onClick={() => runPromoted(changed)}>Review changes →</GhostButton>
             }
+            why="A changed source is quarantined from rule extraction until its diffs are reviewed, and stays searchable the whole time. Pulling it out of search too would take the old, still-correct answers away to guard against a change nobody has read yet — trading a known good for an unknown one. Extraction proposes; a human activates."
           />
         </div>
       ) : null}
 
-      {check.isError ? (
-        <div className="px-5">
-          <RefusalBanner title="The source check failed" error={check.error} />
-        </div>
-      ) : null}
-      {check.isSuccess ? (
-        <div className="px-5">
-          <ExceptionBanner
-            severity="INFO"
-            title={
-              check.data.changed
-                ? "The source changed — a rule-change review has been opened"
-                : "No change · the hash matches the last ingest"
-            }
-            subtitle={`Checked ${new Date(check.data.lastCheckedAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}. A check compares hashes and never rewrites the corpus; only a re-ingest does that.`}
-          />
-        </div>
-      ) : null}
-      {reingest.isSuccess ? (
-        <div className="px-5">
-          <ExceptionBanner
-            severity="INFO"
-            title={`Re-ingested · ${reingest.data.chunks} chunks, embedding ${humanise(reingest.data.embeddingStatus).toLowerCase()}`}
-            subtitle="Retrieval uses the new chunks as soon as the embedding finishes. Until then the source answers from keyword matching."
-          />
-        </div>
-      ) : null}
-
-      <div className="px-5">
-        <ContentCard flush>
-          <DataTable
-            label="Knowledge sources"
-            columns={columns}
-            rows={rows}
-            rowKey={(source) => source.id}
-            stickyHeader
-            empty={
-              <EmptyState
-                title="No sources ingested"
-                description="Agents answer from the model alone until a source is added, which means they answer without citations."
-                action={
-                  <SecondaryButton onClick={() => setAdding(true)}>Add source</SecondaryButton>
-                }
+      <div className="border-b border-border px-5 pb-3">
+        <ListToolbar
+          tabs={
+            <PillTabGroup
+              label="Sources"
+              activeId={tab}
+              onSelect={(id) => setTab(id as TabId)}
+              tabs={[
+                { id: "all", label: TABS.all, count: rows.length },
+                { id: "attention", label: TABS.attention, count: attention.length },
+              ]}
+            />
+          }
+          filters={
+            <FilterBar
+              filters={[]}
+              shown={visible.length}
+              total={inTab.length}
+              onClearAll={() => {
+                setQuery("");
+                setUsedFor("any");
+              }}
+            >
+              <FilterSearch
+                label="Search sources"
+                labelHidden
+                value={query}
+                onChange={setQuery}
+                placeholder="Source name"
               />
-            }
-          />
-        </ContentCard>
+              <FilterSelect
+                label="Used for"
+                value={usedFor}
+                options={USED_FOR}
+                onChange={setUsedFor}
+              />
+            </FilterBar>
+          }
+        />
       </div>
 
-      {/* The two policies §4 asks to be stated on-screen. They are what makes
-          the table above readable: without them, "Compliance" in a scope column
-          and "Changed" in a monitor column are just words. */}
-      <div className="grid grid-cols-1 gap-4 px-5 lg:grid-cols-2">
-        <ContentCard title="Retrieval policy" eyebrow="What may be cited">
-          <p className="text-[13px] leading-relaxed text-ink-secondary">
-            Compliance answers may cite HRD Corp circulars, scheme guides and the Allowable Cost
-            Matrix. Internal SOPs are retrievable for staff answers and excluded from client-facing
-            generation, so an internal delivery note can inform an operations reply and can never
-            reach a proposal. A source in the{" "}
-            <strong className="font-medium text-ink">Changed</strong> state is quarantined from rule
-            extraction until its diffs are reviewed, and stays readable for search throughout.
-          </p>
-        </ContentCard>
+      <DataTable
+        label="Knowledge sources"
+        columns={columns}
+        rows={visible}
+        rowKey={(source) => source.id}
+        stickyHeader
+        onRowClick={(source) => setOpenId(source.id)}
+        empty={
+          rows.length === 0 ? (
+            <EmptyState
+              title="No sources ingested"
+              description="Agents answer from the model alone until a source is added, which means they answer without citations."
+              action={<SecondaryButton onClick={() => setAdding(true)}>Add source</SecondaryButton>}
+            />
+          ) : tab === "attention" && attention.length === 0 ? (
+            <EmptyState
+              title="Nothing needs you"
+              description="Every source is healthy: none has changed since its last ingest and none is failing to fetch."
+            />
+          ) : (
+            <EmptyState
+              title="No source matches this search"
+              description="Clear the search or the Used-for filter to widen the inventory."
+            />
+          )
+        }
+      />
 
-        <ContentCard title="Monitoring" eyebrow="How freshness is known">
-          <p className="text-[13px] leading-relaxed text-ink-secondary">
-            Watched sources are fetched weekly and hashed. A changed hash opens a rule-change review
-            rather than updating anything — extraction proposes, it never activates. A fetch failure
-            is retried three times and then flagged
-            {failing ? (
-              <>
-                {" "}
-                — {failing.name} has been failing since <DateText value={failing.lastCheckedAt} />,
-                so its answers are as old as that date and should be read that way.
-              </>
-            ) : (
-              "."
-            )}
-          </p>
-        </ContentCard>
-      </div>
+      <SourceDetailDrawer
+        source={open}
+        onClose={() => setOpenId(null)}
+        onPromotedAction={runPromoted}
+        onCheck={runCheck}
+        onReingest={runReingest}
+        busy={(check.isPending || reingest.isPending) && busyId === open?.id}
+      />
 
+      <HowSourcesWorkDrawer open={howOpen} onClose={() => setHowOpen(false)} />
       <AddSourceDrawer open={adding} onClose={() => setAdding(false)} />
     </div>
   );
