@@ -29,10 +29,10 @@ import {
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { isDomainError, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
-  errorCodeOf,
   errorMessageOf,
   floorBreachOf,
   useApplyQuotation,
@@ -83,12 +83,19 @@ export function CostingWorksheetPage() {
   if (quotationQuery.isPending) return <LoadingState label="Loading the costing worksheet" />;
 
   if (quotationQuery.isError || !quotation) {
-    const code = errorCodeOf(quotationQuery.error);
+    /* `ErrorState` withholds "Try again" on a domain refusal itself, now that
+       it is handed the error rather than a string flattened out of it. The
+       FORBIDDEN branch only has to change the title. */
+    const error = toApiError(quotationQuery.error);
     return (
       <ErrorState
-        title={code === "FORBIDDEN" ? "Pricing is not yours to see" : "Could not load this costing"}
-        description={errorMessageOf(quotationQuery.error)}
-        {...(code === "FORBIDDEN" ? {} : { onRetry: () => void quotationQuery.refetch() })}
+        title={
+          isDomainError(error) && error.code === "FORBIDDEN"
+            ? "Pricing is not yours to see"
+            : "Could not load this costing"
+        }
+        error={error}
+        onRetry={() => void quotationQuery.refetch()}
       />
     );
   }

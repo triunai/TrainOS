@@ -22,8 +22,8 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { readableMessage, useActor } from "@/shared/api";
-import { errorMessageOf, useEnquiryAction, useFollowUpDraft, useFollowUps } from "./api";
+import { readableMessage, toApiError, useActor } from "@/shared/api";
+import { useEnquiryAction, useFollowUpDraft, useFollowUps } from "./api";
 
 /**
  * M03-S06 · Follow-up queue (`M03 Leads.dc.html`).
@@ -189,7 +189,7 @@ export function FollowUpQueuePage() {
           ) : queue.isError ? (
             <ErrorState
               title="The queue did not load"
-              description={errorMessageOf(queue.error)}
+              error={toApiError(queue.error)}
               onRetry={() => void queue.refetch()}
             />
           ) : (
@@ -247,7 +247,7 @@ export function FollowUpQueuePage() {
               ) : draft.isError ? (
                 <ErrorState
                   title="The draft did not load"
-                  description={errorMessageOf(draft.error)}
+                  error={toApiError(draft.error)}
                   onRetry={() => void draft.refetch()}
                 />
               ) : draft.data ? (

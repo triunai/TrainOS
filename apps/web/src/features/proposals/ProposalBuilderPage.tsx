@@ -27,6 +27,7 @@ import {
   humanise,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
@@ -92,7 +93,7 @@ export function ProposalBuilderPage() {
     return (
       <ErrorState
         title="Could not load this proposal"
-        description={errorMessageOf(proposalQuery.error)}
+        error={toApiError(proposalQuery.error)}
         onRetry={() => void proposalQuery.refetch()}
       />
     );

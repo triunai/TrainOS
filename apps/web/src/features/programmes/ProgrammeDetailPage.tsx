@@ -22,6 +22,7 @@ import {
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   canEditCatalogue,
@@ -108,7 +109,7 @@ export function ProgrammeDetailPage() {
     return (
       <ErrorState
         title="Could not load this programme"
-        description={errorMessageOf(programmeQuery.error)}
+        error={toApiError(programmeQuery.error)}
         onRetry={() => void programmeQuery.refetch()}
       />
     );
@@ -357,7 +358,7 @@ function DeliveriesTable({
     return (
       <ErrorState
         title="Could not load past deliveries"
-        description={errorMessageOf(error)}
+        error={toApiError(error)}
         onRetry={onRetry}
       />
     );

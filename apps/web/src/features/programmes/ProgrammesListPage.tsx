@@ -17,7 +17,8 @@ import {
   type Density,
   type FilterChipModel,
 } from "@/shared/components/kit";
-import { errorMessageOf, useProgrammes } from "./api";
+import { toApiError } from "@/shared/api";
+import { useProgrammes } from "./api";
 import { hrdcSchemeLabel } from "./labels";
 import { PROGRAMME_DETAIL_PATH } from "./paths";
 
@@ -238,7 +239,7 @@ export function ProgrammesListPage() {
         {isError ? (
           <ErrorState
             title="Could not load the catalogue"
-            description={errorMessageOf(error)}
+            error={toApiError(error)}
             onRetry={() => void refetch()}
           />
         ) : null}

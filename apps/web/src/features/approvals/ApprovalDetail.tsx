@@ -148,15 +148,17 @@ export function ApprovalDetail() {
   if (approval.error || !detail) {
     /* TanStack hands back the EXCEPTION the query threw, not the `ApiError`
        inside it. Unwrapping is what keeps a NOT_FOUND classified as a refusal
-       — and a refusal, per CLAUDE.md R2, is never offered a retry button. */
+       — and a refusal, per CLAUDE.md R2, is never offered a retry button.
+       Deciding that here as well as inside `ErrorState` was two copies of one
+       rule; the component owns it, so this hands over the error and lets it. */
     const failure = approval.error ? toApiError(approval.error) : undefined;
 
     return (
       <div className="flex flex-col">
         <ErrorState
           title="That approval could not be opened"
-          {...(failure ? { error: failure } : {})}
-          {...(failure && isDomainError(failure) ? {} : { onRetry: () => void approval.refetch() })}
+          error={failure}
+          onRetry={() => void approval.refetch()}
           action={
             <SecondaryButton onClick={() => navigate(APPROVALS_PATH)}>
               Back to the inbox

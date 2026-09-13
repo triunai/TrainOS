@@ -31,9 +31,9 @@ import {
   type FilterChipModel,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { readableMessage, useActor } from "@/shared/api";
+import { readableMessage, toApiError, useActor } from "@/shared/api";
 import { cn } from "@/shared/lib/utils";
-import { errorMessageOf, useEnquiryAction, useEnquiries, useEnquiry, useEnquiryViews } from "./api";
+import { useEnquiryAction, useEnquiries, useEnquiry, useEnquiryViews } from "./api";
 
 /**
  * M03-S01 · Unified enquiry inbox (Kit.dc.html `proof-m03s01`).
@@ -201,7 +201,7 @@ export function EnquiryInboxPage() {
             ) : enquiries.isError ? (
               <ErrorState
                 title="The queue did not load"
-                description={errorMessageOf(enquiries.error)}
+                error={toApiError(enquiries.error)}
                 onRetry={() => void enquiries.refetch()}
               />
             ) : rows.length === 0 ? (
@@ -236,7 +236,7 @@ export function EnquiryInboxPage() {
           ) : detail.isError ? (
             <ErrorState
               title="The enquiry did not load"
-              description={errorMessageOf(detail.error)}
+              error={toApiError(detail.error)}
               onRetry={() => void detail.refetch()}
             />
           ) : !detail.data ? (

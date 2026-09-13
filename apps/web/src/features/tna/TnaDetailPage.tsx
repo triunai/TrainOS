@@ -31,15 +31,8 @@ import {
   type ActionError,
   type Column,
 } from "@/shared/components/kit";
-import { readableMessage, useActor } from "@/shared/api";
-import {
-  errorMessageOf,
-  useTnaAction,
-  useReopenTna,
-  useTna,
-  useTnaClient,
-  useTnaRecommendations,
-} from "./api";
+import { readableMessage, toApiError, useActor } from "@/shared/api";
+import { useTnaAction, useReopenTna, useTna, useTnaClient, useTnaRecommendations } from "./api";
 
 /**
  * M05-S02 · TNA detail (`M05 TNA.dc.html`).
@@ -89,7 +82,7 @@ export function TnaDetailPage() {
     return (
       <ErrorState
         title="The TNA did not load"
-        description={errorMessageOf(tna.error)}
+        error={toApiError(tna.error)}
         onRetry={() => void tna.refetch()}
       />
     );
@@ -285,7 +278,7 @@ export function TnaDetailPage() {
           ) : recommendations.isError ? (
             <ErrorState
               title="Recommendations did not load"
-              description={errorMessageOf(recommendations.error)}
+              error={toApiError(recommendations.error)}
               onRetry={() => void recommendations.refetch()}
             />
           ) : (

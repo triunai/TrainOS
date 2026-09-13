@@ -29,9 +29,9 @@ import {
   humanise,
   type Column,
 } from "@/shared/components/kit";
+import { toApiError } from "@/shared/api";
 import { useBreadcrumb } from "@/shared/components/layout";
 import {
-  errorMessageOf,
   useDealChainStages,
   useOrganisation,
   useOrganisationRelations,
@@ -97,7 +97,7 @@ export function Organisation360Page() {
     return (
       <ErrorState
         title="The organisation did not load"
-        description={errorMessageOf(organisation.error)}
+        error={toApiError(organisation.error)}
         onRetry={() => void organisation.refetch()}
       />
     );
@@ -164,7 +164,7 @@ export function Organisation360Page() {
           ) : relations.isError ? (
             <ErrorState
               title="Relationships did not load"
-              description={errorMessageOf(relations.error)}
+              error={toApiError(relations.error)}
               onRetry={() => void relations.refetch()}
             />
           ) : (

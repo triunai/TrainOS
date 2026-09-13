@@ -32,14 +32,8 @@ import {
   type ActionError,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { readableMessage, useActor } from "@/shared/api";
-import {
-  errorMessageOf,
-  useEnquiryAction,
-  useEnquiry,
-  useOrganisation,
-  usePatchExtraction,
-} from "./api";
+import { readableMessage, toApiError, useActor } from "@/shared/api";
+import { useEnquiryAction, useEnquiry, useOrganisation, usePatchExtraction } from "./api";
 
 /**
  * M03-S02 · Enquiry detail (`M03 Leads.dc.html`).
@@ -105,7 +99,7 @@ export function EnquiryDetailPage() {
     return (
       <ErrorState
         title="The enquiry did not load"
-        description={errorMessageOf(enquiry.error)}
+        error={toApiError(enquiry.error)}
         onRetry={() => void enquiry.refetch()}
       />
     );

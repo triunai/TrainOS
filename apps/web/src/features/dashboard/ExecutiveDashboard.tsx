@@ -36,7 +36,7 @@ import {
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, toApiError } from "@/shared/api";
+import { toApiError } from "@/shared/api";
 import { navPath } from "@/shared/config/nav";
 import { APPROVALS_PATH } from "@/features/approvals";
 import { useExecutiveDashboard, useProposalsVsWon } from "./api";
@@ -194,7 +194,9 @@ export function ExecutiveDashboard() {
 
   if (dashboard.error || !data) {
     /* The query throws an exception WRAPPING the ApiError; unwrap it or every
-       refusal reads as a transport failure and gets a retry button. */
+       refusal reads as a transport failure and gets a retry button. Whether the
+       retry is offered is `ErrorState`'s decision, not this screen's — one copy
+       of R2, in the component that renders the button. */
     const failure = dashboard.error ? toApiError(dashboard.error) : undefined;
 
     return (
@@ -202,10 +204,8 @@ export function ExecutiveDashboard() {
         {header}
         <ErrorState
           title="The dashboard could not be loaded"
-          {...(failure ? { error: failure } : {})}
-          {...(failure && isDomainError(failure)
-            ? {}
-            : { onRetry: () => void dashboard.refetch() })}
+          error={failure}
+          onRetry={() => void dashboard.refetch()}
         />
       </div>
     );
