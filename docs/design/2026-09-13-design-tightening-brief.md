@@ -81,3 +81,6 @@ Use the kit's own saved-view switcher form (Kit.dc.html "My open leads 48 · Una
 - Profile row (avatar · name · role) moves to the TOP of the sidebar under the wordmark, with a light/dark **toggle switch** beside it (theme is one click; not in a menu).
 - Clicking the profile opens the kit **Profile modal** exactly as drawn in Kit.dc.html ("PROFILE MODAL · 960").
 - Footer: Help & support · Shortcuts · Role drop-up (DEV) · version line.
+
+### 11a. Inline lifecycle steppers in tables (11:46, reference M04-S02 engagements table)
+Rows the artboards draw with the dot-progress stepper (done ●, current ◯ blue ring, blocked ● amber, lost ● red with red segment) render the kit `LifecycleStepper` inline variant from server steps; never text. Enumerate by grepping the artboards, not by memory. Cells: name + mono `ref · status` subline, dates, money right-aligned tabular. (Assigned to applier-2 as an immediate item; the fidelity pass re-checks.)
