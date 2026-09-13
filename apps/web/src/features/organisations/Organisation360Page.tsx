@@ -13,6 +13,7 @@ import {
   AIChip,
   CitationChip,
   DataTable,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   Fab,
@@ -362,6 +363,23 @@ export function Organisation360Page() {
               title="Suggestions did not load"
               error={toApiError(suggestions.error)}
               onRetry={() => void suggestions.refetch()}
+            />
+          ) : null}
+
+          {suggestions.isPending ? (
+            <LoadingState rows={3} label="Loading cross-sell suggestions" />
+          ) : null}
+
+          {/* The third branch the `?? []` collapsed. An organisation the
+              cross-sell agent has nothing to say about is an ordinary,
+              frequent state — a new account, or one already holding every
+              programme it is eligible for — and it deserves a sentence rather
+              than a rail that merely stops. */}
+          {suggestions.data && suggestions.data.data.length === 0 ? (
+            <EmptyState
+              className="px-0 py-8"
+              title="No suggestions for this organisation"
+              description="Cross-sell suggestions appear here when the agent finds a programme this account has not bought and is eligible for."
             />
           ) : null}
 
