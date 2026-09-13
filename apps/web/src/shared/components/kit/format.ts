@@ -258,3 +258,70 @@ export function stepLabel(step: LifecycleStep, stages?: PipelineStage[]): string
 export function describeSteps(steps: LifecycleStep[], stages?: PipelineStage[]): string {
   return steps.map((step) => `${stepLabel(step, stages)}: ${STATE_WORD[step.state]}`).join(" · ");
 }
+
+/* ------------------------------------------------------------------ *
+ * Relative dates
+ * ------------------------------------------------------------------ */
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** Both contract date shapes to an epoch millisecond, or null. */
+function toInstant(value: DateOnly | Timestamp | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+
+  const dateOnly = DATE_ONLY.exec(value);
+  if (dateOnly) {
+    const [, year, month, day] = dateOnly;
+    /* Local midnight, for the same reason `formatDate` splits the string: a
+       date-only value is a calendar date, and `new Date("2026-11-12")` is UTC
+       midnight, which is the 11th in half the world. */
+    return new Date(Number(year), Number(month) - 1, Number(day)).getTime();
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * How long ago something happened — `3 days ago`, `yesterday`, `just now`.
+ *
+ * Two deliberate fall-backs to the calendar date, both because "ago" stops
+ * being the more useful phrasing:
+ *
+ *  - A value in the FUTURE of the anchor. "in 2 months" is not an answer to
+ *    "when was this last checked", and a future timestamp on a past event is a
+ *    clock disagreement rather than a fact about the record.
+ *  - Anything older than about a month. "7 weeks ago" makes the reader do the
+ *    arithmetic the date would have saved them.
+ *
+ * `now` is a parameter rather than a call to `Date.now()` inside so that the
+ * anchor is a decision of the caller's — a screen reading a world whose clock
+ * is not the wall clock (the fixture world is pinned to a single instant) can
+ * say so, and a test can pin it without touching the global clock.
+ */
+export function formatRelativeDate(
+  value: DateOnly | Timestamp | null | undefined,
+  now: DateOnly | Timestamp | number = Date.now(),
+): string {
+  const then = toInstant(value);
+  if (then === null) return "—";
+
+  const anchor = toInstant(now) ?? Date.now();
+  const elapsed = anchor - then;
+  if (elapsed < 0) return formatDate(value);
+  if (elapsed < MINUTE) return "just now";
+
+  /* `numeric: "auto"` is what turns 1 day into "yesterday" rather than "1 day
+     ago", which is the phrasing every one of these columns wants. */
+  const relative = new Intl.RelativeTimeFormat("en-MY", { numeric: "auto" });
+  if (elapsed < HOUR) return relative.format(-Math.floor(elapsed / MINUTE), "minute");
+  if (elapsed < DAY) return relative.format(-Math.floor(elapsed / HOUR), "hour");
+
+  const days = Math.floor(elapsed / DAY);
+  if (days < 7) return relative.format(-days, "day");
+  if (days < 31) return relative.format(-Math.floor(days / 7), "week");
+  return formatDate(value);
+}

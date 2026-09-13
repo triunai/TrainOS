@@ -34,6 +34,7 @@ export {
   formatMoney,
   formatDate,
   formatDateRange,
+  formatRelativeDate,
   formatTime,
   formatPeriod,
   formatDuration,
@@ -239,6 +240,7 @@ export {
   type FilterSelectProps,
 } from "./FilterBar";
 export { PillTabGroup, type PillTabGroupProps } from "./PillTabGroup";
+export { RowActionMenu, type RowAction, type RowActionMenuProps } from "./RowActionMenu";
 export { ListToolbar, type ListToolbarProps } from "./ListToolbar";
 
 /* ---- Calendar (added 13 Sep 2026; no artboard draws one) ------------ */
