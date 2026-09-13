@@ -42,3 +42,6 @@ Source of truth for the target look: **the Collections page (M13-S05) compositio
 ## 13. Primary persona — Alex Selvarajah
 - Stakeholder and primary user: **Alex Selvarajah**, super-investor with multiple businesses (notably with Panasonic and Sunway), strong HRMS background. Signals: enterprise-grade polish, versioning visible, no amateur tells.
 - Fixtures: the default `/me` user for the MD role becomes Alex Selvarajah; the demo story (M22 index) is narrated to him; his organisations appear in the seed where the pack allows without breaking the Aurora story.
+
+### 12a. Sidebar footer (final spec, 13 Sep 11:32)
+Row 1: Help & support (drawer: docs, contact, Report an issue pre-filled with version + route) · Shortcuts (⌘K + list). Row 2: profile dropdown — avatar initials, name, role; menu: Theme radio, DEV role switcher, Sign out. Row 3: "TrainOS 0.1.0 · API v1 · contract 0.1.0" + status dot. Collapse-sidebar toggle at the footer edge (64px icon rail, localStorage). Topbar keeps only breadcrumb · search ⌘K · bell.
