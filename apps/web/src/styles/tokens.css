@@ -63,70 +63,70 @@
   --primary-hover: 24 73 214; /* #1849D6  hover, links, text-on-tint */
   --primary-border: 203 216 255; /* #CBD8FF  accent border */
   --on-primary: 255 255 255; /* #FFFFFF  label on a solid primary button */
-  /* The tenant banner's gradient, Kit.dc.html §07 "Profile modal · 960":
-     `linear-gradient(120deg, #123AC9 0%, #1F5BFF 52%, #4E82FF 100%)`. Two
-     stops of the SAME accent, not two more colours — the middle stop is
-     `--primary` itself.
-
-     DO NOT compose a banner out of these three by hand. They theme-swap, and
-     the ramp they describe cannot carry white text at either end:
-
-       white on the lift stop   light 3.52:1   dark 2.44:1
-       white at 60% on that end light 2.22:1   dark 1.75:1
-
-     Every label a tenant banner carries is white, so a hand-rolled
-     `linear-gradient(..., rgb(var(--primary-deep)) ..., rgb(var(--primary-lift)))`
-     fails AA in BOTH themes, worst at the lift end. Use
-     `--surface-accent-gradient` below instead: same three colours and the same
-     angle, pinned to literals so it does not theme-swap, with the lift stop
-     pushed past the visible end so the worst point on the ramp is 4.62:1.
-
-     These two exist only as the raw ingredients that token is derived from. If
-     the last hand-rolled consumer migrates to it, delete them. */
-  --primary-deep: 18 58 201; /* #123AC9 */
-  --primary-lift: 78 130 255; /* #4E82FF */
 
   /* ---- AI surfaces (6% tint + the glyph + a label; never a solid fill) - */
   --ai-tint: 244 247 255; /* #F4F7FF  AI surfaces */
   --ai-tint-2: 235 241 255; /* #EBF1FF  selected row, active nav, active pill */
 
-  /* The accent BAND — the one gradient in the system, for the metric card that
-     spans a RecordHeader (tightening brief §15a).
+  /* The accent BAND — the record header's blue card (tightening brief §15a).
+     Two candidates, both live, so the user can pick on screen; the card reads
+     `--surface-accent-gradient` and the dev toggle swaps in the `-alt`.
 
-     Kit.dc.html §07 "Profile modal · 960" draws the tenant banner as
-     `120deg, #123AC9 0%, #1F5BFF 52%, #4E82FF 100%`. This is that gradient with
-     two deliberate changes, neither of them a new colour.
+     RULES THIS OBEYS, from the 11:56 correction: blue family only, THREE colour
+     stops maximum, electric #1F5BFF as the anchor, one deeper stop for depth
+     and at most one lighter or violet-leaning stop at the far corner. The
+     interest comes from the angle, the stop positions and the hue pairing, not
+     from more colours.
 
-     1. It does NOT read `--primary-deep` / `--primary` / `--primary-lift`,
-        even though those tokens hold exactly these three values on light.
-        §15a requires the banner to be THE SAME IN BOTH THEMES, and those
-        tokens theme-swap: on dark they become #2E58C8 / #4C82FF / #7BA4FF, at
-        which white reads 6.28:1, 3.53:1 and 2.44:1 — two stops failing AA on a
-        band whose every label is white. A banner is a brand artefact, not a
-        surface that takes its lightness from what is behind it, so the channel
-        triplets are written out here and the dark block redefines nothing.
-     2. The lift stop is pushed to 180%, so the visible end of the ramp stops
-        at #2F68FF rather than reaching #4E82FF. Also accessibility, not taste:
-        white on the artboard's #4E82FF reads 3.52:1 and the 11px captions on
-        this band would fail. Sampling every percent of the published ramp, the
-        worst point is 3.52:1; with the stop moved it is 4.62:1. §15a's own
-        gradient rule allows exactly this ("creativity via angle / stop
-        positions"), so the band keeps the pack's three colours and its angle
-        and loses only the last few percent of lift nobody could read on. */
-  --surface-accent-gradient: linear-gradient(
-    120deg,
-    rgb(18 58 201) 0%,
-    rgb(31 91 255) 58%,
-    rgb(78 130 255) 180%
-  );
+     WHITE AA IS THE BINDING CONSTRAINT, and it is why neither candidate simply
+     quotes the artboard. Kit.dc.html §07 runs `120deg, #123AC9, #1F5BFF 52%,
+     #4E82FF` and white on that last stop reads 3.52:1 — every label on this
+     card is white at 11px, so the published ramp fails. Sampling white against
+     every percent of each candidate below, the worst point is 4.56:1 (A) and
+     5.25:1 (B).
 
-  /* The text that sits ON that band. The muted step cannot be an opacity here:
-     70% white over #1F5BFF reads 3.35:1 and fails AA at the 11px the captions
-     use. Both levels are full white and the hierarchy is carried by size,
-     weight and tracking instead, which is the stronger typographic move anyway.
-     Only the hairline is translucent, and a hairline carries no information the
-     grid does not already carry. */
+     No sheen layer. A white overlay would be the obvious way to make these
+     prettier, but it lightens the ramp and A has only 0.06 of headroom over the
+     4.5:1 floor — the sheen would spend the contrast the labels need.
+
+     OPAQUE and identical in both themes. This is a brand surface, not a tint:
+     it does not take its lightness from the card behind it, it does not read
+     `--primary*` (which theme-swap, and whose dark values put white at 3.53:1
+     and 2.44:1), and `[data-theme="dark"]` redefines neither. */
+
+  /* A · "indigo rise" — deep indigo lifting through electric to a brighter
+     blue at the far corner. The artboard's shape with real depth at the
+     origin. Worst white along the ramp 4.56:1. */
+  --surface-accent-gradient: linear-gradient(115deg, #0f2fa8 0%, #1f5bff 58%, #3a68ff 100%);
+
+  /* B · "violet edge" — the cooler one. Same anchor, steeper angle, and the far
+     corner leans violet rather than lighter, so the card gains depth without
+     gaining brightness. Worst white along the ramp 5.25:1, so it has the
+     headroom A does not. */
+  --surface-accent-gradient-alt: linear-gradient(128deg, #1a34c4 0%, #1f5bff 50%, #4a4fe6 100%);
+
+  /* Ink ON the band. Full white for both levels, and the hierarchy is size,
+     weight and tracking rather than opacity — 70% white over #1F5BFF reads
+     3.35:1 and fails AA at the 11px the captions use. Only the hairlines and
+     the ghost-button borders are translucent white; neither carries information
+     the layout does not already carry. */
   --on-accent: 255 255 255;
+
+  /* Ink for text on a WHITE surface inside the blue card — the label of the
+     solid primary, which on this card is a white button. Theme-stable for the
+     same reason the gradient is, and deliberately not `--primary`: #1F5BFF on
+     white is 5.25:1 and the dark `--primary` #4C82FF is 3.53:1, which fails.
+     This is the gradient's own deep stop, at 10.54:1 on white.
+
+     NOTE ON THE ARTBOARD'S REJECT. Kit.dc.html §11-13 draws Reject as a pale
+     red label directly on the blue. No red reaches 4.5:1 there — #FFDEDB, which
+     is already almost white, peaks at 3.63:1 on the lighter end of the ramp —
+     so there is no danger-on-accent token and there should not be one. On the
+     card the three actions escalate by WEIGHT, not by hue: Reject borderless,
+     Request changes white-outlined, Approve solid white. CLAUDE.md already says
+     status colour lives on chips, and Button's own contract already says the
+     red fill is earned in the confirm step rather than spent on the trigger. */
+  --accent-ink: 15 47 168; /* #0F2FA8 */
 
   /* ---- Status (chips ONLY — status colour never leaves a chip) -------- */
   --success: 43 113 83; /* #2B7153 */
@@ -215,10 +215,6 @@
   --primary: 76 130 255; /* #4C82FF  lifted to keep 4.5:1 on dark */
   --primary-hover: 157 187 255; /* #9DBBFF */
   --primary-border: 46 68 120; /* #2E4478 */
-  /* DERIVED — the pack draws no dark tenant banner. Same relationship to the
-     dark `--primary` that the light stops have to the light one. */
-  --primary-deep: 46 88 200; /* #2E58C8 */
-  --primary-lift: 123 164 255; /* #7BA4FF */
   --on-primary: 242 245 255; /* #F2F5FF  the accent never carries dark text */
 
   --ai-tint: 22 33 58; /* #16213A */
