@@ -242,8 +242,12 @@ export function RecordHeader({
         {chips}
         {actions || primaryAction || disclosable ? (
           <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
-            {/* The round chevron sits BEFORE the cluster, as the artboard draws
-                it — chrome ahead of the actions, never competing with them. */}
+            {actions}
+            {primaryAction}
+            {/* The card's far RIGHT edge, after the primary. It is chrome, not a
+                fourth action, and putting it past the cluster says so — inside
+                the cluster it read as a button competing with Reject / Request
+                changes / Approve for the same row. */}
             {disclosable ? (
               <DisclosureButton
                 open={expanded}
@@ -256,15 +260,13 @@ export function RecordHeader({
                    was easy to miss with a real pointer — which is exactly how
                    it was reported: "the click does not open it". */
                 className={cn(
-                  "h-9 w-9 rounded-pill border",
+                  "ml-1 h-9 w-9 rounded-pill border",
                   showCard
                     ? "border-[rgb(var(--on-accent)/0.45)]"
                     : "border-border text-ink-secondary",
                 )}
               />
             ) : null}
-            {actions}
-            {primaryAction}
           </div>
         ) : null}
       </div>

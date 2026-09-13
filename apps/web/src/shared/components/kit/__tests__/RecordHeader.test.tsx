@@ -211,6 +211,25 @@ describe("RecordHeader accent", () => {
     expect(chevron().className).toContain("h-9");
   });
 
+  it("puts the chevron at the card's far right, after the primary", () => {
+    render(
+      <RecordHeader
+        accent
+        collapsible
+        recordType="approval"
+        title="Send proposal"
+        actions={<DangerButton>Reject</DangerButton>}
+        primaryAction={<PrimaryButton>Approve</PrimaryButton>}
+        metrics={[{ label: "Value", value: "RM 18,500" }]}
+      />,
+    );
+
+    /* Chrome, not a fourth action: it sits PAST the cluster rather than inside
+       it, where it read as a button competing with the three decisions. */
+    const order = screen.getAllByRole("button").map((b) => b.textContent?.trim());
+    expect(order).toEqual(["Reject", "Approve", "Hide the record detail"]);
+  });
+
   it("sends the stepper out of the card, where its stage colours survive", () => {
     const { container } = render(
       <RecordHeader
