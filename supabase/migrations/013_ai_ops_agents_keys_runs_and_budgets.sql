@@ -2215,6 +2215,14 @@ BEGIN
     v_audit_id := NULL;
   END;
 
+  -- ⚠ THESE TWO KEEP 42501 WHILE THE THIRTEEN RPC REFUSALS MOVED TO 'TRNOS',
+  -- and the difference is deliberate rather than missed. Those thirteen are
+  -- answers to a caller — FORBIDDEN, MFA_REQUIRED — and 42501 is in the web
+  -- client's UNAUTHENTICATED_CODES set, so it rendered an authorization refusal
+  -- as "Your session has expired. Sign in again." These two are trigger integrity
+  -- guards on a direct table write that no RPC path can reach; they are not a
+  -- decision about a principal, they are a statement that the write is
+  -- structurally illegal, and insufficient_privilege is the honest code for it.
   IF v_audit_id IS NULL THEN
     RAISE EXCEPTION
       'core.ai_provider_keys.last_revealed_at may only be written by the '
@@ -2359,15 +2367,15 @@ DECLARE
   v_row    core.ai_provider_keys;
 BEGIN
   IF app.is_agent() THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','reason','AGENT')::text;
   END IF;
   IF NOT app.has_permission('ai:provider:write') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   IF app.aal() <> 'aal2' THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
 
@@ -2413,7 +2421,7 @@ DECLARE
   v_row    core.ai_provider_keys;
 BEGIN
   IF app.is_agent() OR NOT app.has_permission('ai:provider:test') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
 
@@ -2468,11 +2476,11 @@ DECLARE
   v_row     core.ai_provider_keys;
 BEGIN
   IF app.is_agent() OR NOT app.has_permission('ai:provider:rotate') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   IF app.aal() <> 'aal2' THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
 
@@ -2533,11 +2541,11 @@ DECLARE
   v_orphan  text;
 BEGIN
   IF app.is_agent() OR NOT app.has_permission('ai:provider:delete') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   IF app.aal() <> 'aal2' THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
 
@@ -2613,17 +2621,17 @@ DECLARE
   v_bumped   uuid;
 BEGIN
   IF app.is_agent() THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','reason','AGENT')::text;
   END IF;
   IF NOT app.has_permission('ai:provider:reveal') THEN
-    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'FORBIDDEN' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
   END IF;
   -- M-10(2). app.aal2_verified(), not app.aal(): a forged token can claim any
   -- session_id it likes but cannot conjure a matching auth.sessions row at aal2.
   IF NOT app.aal2_verified() THEN
-    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'insufficient_privilege',
+    RAISE EXCEPTION 'MFA_REQUIRED' USING ERRCODE = 'TRNOS',
       DETAIL = pg_catalog.jsonb_build_object('code','MFA_REQUIRED')::text;
   END IF;
   IF COALESCE(pg_catalog.length(pg_catalog.btrim(COALESCE(p_reason, ''))), 0) < 10 THEN
@@ -3055,8 +3063,27 @@ BEGIN
              'ai_provider_key_set','ai_provider_key_test','ai_provider_key_rotate',
              'ai_provider_key_delete','ai_provider_key_reveal']))
   LOOP
+    -- ⚠ `service_role` IS IN THIS LIST, AND IT WAS NOT.
+    --
+    -- The comment beside this block says the intent is that NOBODY holds EXECUTE
+    -- on the five `public.ai_provider_key_*` definers — they are reached through
+    -- the Edge Function's own credential, not through PostgREST. The revoke named
+    -- PUBLIC, anon and authenticated and stopped, which is the whole set on a
+    -- vanilla Postgres and NOT the whole set on Supabase: the platform bootstrap
+    -- grants `service_role` EXECUTE on functions in `public` by default unless
+    -- something explicitly takes it away. So on hosted — and only on hosted — the
+    -- five key RPCs were callable by the one role every server-side integration
+    -- already holds.
+    --
+    -- ⚠ THIS CANNOT BE PROVED ON THIS HARNESS, and saying so is the point. The
+    -- shim is vanilla Postgres with no Supabase ALTER DEFAULT PRIVILEGES
+    -- bootstrap, so `service_role` has no EXECUTE here either way and the pin
+    -- below passes identically before and after this line. The revoke is correct
+    -- regardless — revoking a privilege nobody holds costs nothing — but the
+    -- CONFIRMATION is owed against a real project. Recorded in the catalog as
+    -- such rather than reported as verified.
     EXECUTE pg_catalog.format(
-      'REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated', v_function);
+      'REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role', v_function);
   END LOOP;
 END;
 $revoke$;

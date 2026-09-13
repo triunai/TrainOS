@@ -2141,6 +2141,28 @@ BEGIN
       USING ERRCODE = 'no_data_found';
   END IF;
 
+  -- ⚠ REOPEN THE EFFECT BEFORE QUEUEING THE REPLAY.
+  --
+  -- Dead-lettering already moved this job's effect to DEAD_LETTERED, and
+  -- `app.report_effect_result` (011) returns early — silently — on an effect that
+  -- is already SETTLED or DEAD_LETTERED. So when the replay SUCCEEDED and
+  -- `complete_job` reported it, the report was a no-op: an invoice that really
+  -- was pushed stayed recorded as permanently failed in the effect ledger. And
+  -- nothing could correct it later, because the PARTIALLY_FAILED reconciliation
+  -- is guarded `AND status = 'EXECUTING'`, which the action had already left.
+  --
+  -- The replacement job carries the SAME effect_id on purpose — that is what
+  -- makes the replay a second attempt at one effect rather than a second effect —
+  -- so the effect has to be put back in a state a worker report can move. DISPATCHED
+  -- is where `apply_effects` leaves an effect it has handed to the queue, which is
+  -- exactly what this row now is again.
+  UPDATE app.action_effects
+     SET status     = 'DISPATCHED',
+         last_error = NULL,
+         updated_at = pg_catalog.now()
+   WHERE id = v_job.effect_id
+     AND status = 'DEAD_LETTERED';
+
   INSERT INTO app.outbox (
     tenant_id, job_type, priority, payload,
     event_id, run_id, action_request_id, correlation_id, effect_id,

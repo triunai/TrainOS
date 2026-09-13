@@ -68,6 +68,15 @@
 -- look thorough - checked against pg_trigger, not assumed.
 -- ============================================================================
 
+--
+-- ⚠ WHICH DATABASE THIS RUNS AGAINST: 001-014, NOT 001-012.
+-- Some assertions below require migration 014's client grants to be present —
+-- T11c asserts that `app` holds no client privilege, which is a statement about grants 014 makes elsewhere — so running this pin against a 001-012-only database fails for a reason
+-- that is about the harness, not about this pack. Confirmed by execution: run at
+-- 001-012 alone it fails there; apply 014 and it passes. The catalog says the
+-- same. This is a real ordering dependency of the PIN, not of the MIGRATION: 0012
+-- itself applies and verifies cleanly with nothing after it.
+
 BEGIN;
 
 SET LOCAL plpgsql.check_asserts = on;

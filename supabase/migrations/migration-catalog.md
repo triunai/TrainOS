@@ -731,7 +731,7 @@ against the branch before being acted on; none was wrong. Current state, finding
 | 8 | MED | Grant checks filtered `information_schema.table_privileges` by grantee and were blind to PUBLIC. | **FIXED** — `has_table_privilege` throughout, migration and pin. | `test_014` **T14**, which creates the PUBLIC grant and measures both spellings |
 | — | MED | `test_014` T7 seeded no rows, so the definer read proved nothing. | **FIXED** — one approval per tenant seeded; T7a1 requires exactly one back. | `test_014` **T7** |
 | — | MED | The rollback selected policies to drop by naming convention, which would take a later migration's policies. | **FIXED** — 014 stamps every policy it creates with `migration:014` in the policy COMMENT, written by the caller and not inside the shared function, and the rollback drops by that stamp against a count derived from the catalogue. | the rollback's own manifest assertion; `test_014` **T12l** |
-| — | MED | `test_013`'s `run_node_io` isolation pin deletes its only row before asserting a read returns zero. | **DEFERRED** — `test_013` is outside this change's mandate (no changes to 001-013). Real defect, still open. **Owner: whoever next touches 013.** | none |
+| — | MED | `test_013`'s `run_node_io` isolation pin deletes its only row before asserting a read returns zero. | **STILL OPEN.** 001-013 came into scope later and `test_013` gained a new pin (T14, the rotation path), but this assertion was not rewritten: it would still pass under `USING (true)`. Narrower than it was — `run_node_io` is now role-gated as well as tenant-scoped, so a hole there is caught by test_014 T12 from the other side. **Owner: whoever next touches 013.** | `test_014` T12 covers the same table from the policy side |
 | — | MED | 018 may define a four-argument `core.decide_approval` against 014's five. | **OUT OF SCOPE** — not a defect in this PR. **Owner: 018.** | `014` verify (6) asserts one overload today |
 | — | LOW | `check:grants` T1 fired on `test_014`'s `pg_temp` definer helper. | **FIXED** — `scripts/check-grants.mjs` excepts `pg_temp` only, with the reasoning in the file. A `public.` definer in a test still fires, verified both ways. | the guard itself; `npm run check:grants` is 0 findings |
 
@@ -1074,7 +1074,7 @@ into `core.runs` per historical distinct run id, `ref` set to that string, and n
 
 ### Pin — `tests/test_013_ai_ops_agents_keys_runs_and_budgets.sql`
 
-Thirteen checks, all executed, all PASS, against the FULL applied set 001–013. The ones that
+Thirteen checks, all executed, all PASS, against the FULL applied set **001–014, not 001–013**. ⚠ Corrected 13 Sep 2026: this pin's T11b2 requires 014's client grants to be present, so it cannot pass at 001–013 — confirmed by executing it there, where it fails, and again with 014 applied, where it passes. `test_012` has the same dependency and both pin headers now say so. The ones that
 earn their place: the reveal ceiling proved by moving `last_revealed_at` BACKWARDS rather than
 forwards, because `now()` is `transaction_timestamp()` and a forward bump inside the same
 transaction writes the same value and passes vacuously; the audit-first ordering proved by

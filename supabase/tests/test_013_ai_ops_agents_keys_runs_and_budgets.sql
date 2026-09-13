@@ -73,6 +73,15 @@
 -- warns about, met here for two new prefixes.
 -- ============================================================================
 
+--
+-- ⚠ WHICH DATABASE THIS RUNS AGAINST: 001-014, NOT 001-013.
+-- Some assertions below require migration 014's client grants to be present —
+-- T11b2 asserts `authenticated` cannot read core.budget_status or core.model_tier_status, which only means something once 014 has granted the rest of `core` — so running this pin against a 001-013-only database fails for a reason
+-- that is about the harness, not about this pack. Confirmed by execution: run at
+-- 001-013 alone it fails there; apply 014 and it passes. The catalog says the
+-- same. This is a real ordering dependency of the PIN, not of the MIGRATION: 0013
+-- itself applies and verifies cleanly with nothing after it.
+
 BEGIN;
 
 SET LOCAL plpgsql.check_asserts = on;
