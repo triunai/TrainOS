@@ -349,46 +349,52 @@ export function KnowledgeSourcesScreen() {
         </div>
       ) : null}
 
-      <div className="border-b border-border px-5 pb-3">
-        <ListToolbar
-          tabs={
-            <PillTabGroup
-              label="Sources"
-              activeId={tab}
-              onSelect={(id) => setTab(id as TabId)}
-              tabs={[
-                { id: "all", label: TABS.all, count: rows.length },
-                { id: "attention", label: TABS.attention, count: attention.length },
-              ]}
+      {/* No rule of its own. `ListToolbar` draws none and `DataTable`'s head
+          draws exactly one directly beneath, so a border here is the second
+          hairline §10b objects to — arriving from a different pair of elements
+          than the one the ruling was written about. CLAUDE.md: remove a border
+          whose removal leaves the relationship unambiguous. The gutter rides on
+          the toolbar, which is how seventeen of the twenty-three call sites do
+          it, CollectionsQueueScreen included. */}
+      <ListToolbar
+        className="px-5 pb-3"
+        tabs={
+          <PillTabGroup
+            label="Sources"
+            activeId={tab}
+            onSelect={(id) => setTab(id as TabId)}
+            tabs={[
+              { id: "all", label: TABS.all, count: rows.length },
+              { id: "attention", label: TABS.attention, count: attention.length },
+            ]}
+          />
+        }
+        filters={
+          <FilterBar
+            filters={[]}
+            shown={visible.length}
+            total={inTab.length}
+            onClearAll={() => {
+              setQuery("");
+              setUsedFor("any");
+            }}
+          >
+            <FilterSearch
+              label="Search sources"
+              labelHidden
+              value={query}
+              onChange={setQuery}
+              placeholder="Source name"
             />
-          }
-          filters={
-            <FilterBar
-              filters={[]}
-              shown={visible.length}
-              total={inTab.length}
-              onClearAll={() => {
-                setQuery("");
-                setUsedFor("any");
-              }}
-            >
-              <FilterSearch
-                label="Search sources"
-                labelHidden
-                value={query}
-                onChange={setQuery}
-                placeholder="Source name"
-              />
-              <FilterSelect
-                label="Used for"
-                value={usedFor}
-                options={USED_FOR}
-                onChange={setUsedFor}
-              />
-            </FilterBar>
-          }
-        />
-      </div>
+            <FilterSelect
+              label="Used for"
+              value={usedFor}
+              options={USED_FOR}
+              onChange={setUsedFor}
+            />
+          </FilterBar>
+        }
+      />
 
       <DataTable
         label="Knowledge sources"
