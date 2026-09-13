@@ -129,6 +129,9 @@ function TrainerRecord({
   return (
     <div className="flex flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="trainer"
         title={trainer.name}
         recordRef={trainer.ref}
         meta={[
