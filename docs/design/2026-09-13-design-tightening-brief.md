@@ -45,3 +45,4 @@ Source of truth for the target look: **the Collections page (M13-S05) compositio
 
 ### 12a. Sidebar footer (final spec, 13 Sep 11:32)
 Row 1: Help & support (drawer: docs, contact, Report an issue pre-filled with version + route) · Shortcuts (⌘K + list). Row 2: profile dropdown — avatar initials, name, role; menu: Theme radio, DEV role switcher, Sign out. Row 3: "TrainOS 0.1.0 · API v1 · contract 0.1.0" + status dot. Collapse-sidebar toggle at the footer edge (64px icon rail, localStorage). Topbar keeps only breadcrumb · search ⌘K · bell.
+Amendment 11:34: role switcher is its own full-width DROP-UP row (not in the profile menu); Help & support is its own full-width item. Footer order: Help & support · Shortcuts · Role (drop-up) · Profile (menu: Theme, Sign out) · version line.
