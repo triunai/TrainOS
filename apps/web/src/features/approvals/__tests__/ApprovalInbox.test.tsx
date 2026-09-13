@@ -7,9 +7,12 @@
  * plus the pack's primary-button rule and the server-driven grouping.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { focusManager } from "@tanstack/react-query";
+import { APPROVAL_ATTENDANCE, APPROVAL_RULE_CHANGE } from "@trainos/fixtures";
+import { fixtureClient } from "@/shared/api";
 import { ApprovalInbox } from "../ApprovalInbox";
 import { APPROVALS_PATH } from "../paths";
 import { renderScreen, resetFixtures } from "./harness";
@@ -17,6 +20,11 @@ import { renderScreen, resetFixtures } from "./harness";
 describe("M02-S01 approval inbox", () => {
   beforeEach(() => {
     resetFixtures();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    focusManager.setFocused(undefined);
   });
 
   const renderInbox = () =>
@@ -133,6 +141,77 @@ describe("M02-S01 approval inbox", () => {
 
     expect(await screen.findByRole("button", { name: "Bulk approve" })).toBeInTheDocument();
     expect(screen.getByText("Bulk approve is unavailable for money actions")).toBeInTheDocument();
+  });
+
+  /**
+   * PR #30 review H1. The value toggle is the same kind of narrowing as a view
+   * switch, and the view switch already starts a fresh selection. Without the
+   * same reset, rows ticked before the toggle stayed selected while hidden, and
+   * "1 selected" pointed at nothing on the screen.
+   */
+  it("starts a fresh selection when the value filter narrows the queue", async () => {
+    const user = userEvent.setup();
+    renderInbox();
+
+    const bulkable = (await screen.findByText(/Approve 1 rule change/)).closest(
+      "tr",
+    ) as HTMLElement;
+    await user.click(within(bulkable).getByRole("checkbox"));
+    expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Value ≥ RM 5,000" }));
+    await screen.findByRole("button", { name: "Clear value filter" });
+    await waitFor(() => expect(screen.queryByText(/Approve 1 rule change/)).toBeNull());
+
+    expect(screen.queryByText("1 selected")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Bulk approve" })).toBeNull();
+  });
+
+  /**
+   * PR #30 review H1, the half no reset can reach: a selected row leaves the
+   * queue underneath the selection because someone decided it elsewhere and
+   * the list refetched. 011's bulk decide refuses a partial batch because the
+   * approver cannot tell which half went through, so the screen refuses it
+   * too, before the request, and names what is gone.
+   */
+  it("refuses a bulk approve whose selection has left the queue, and names what left", async () => {
+    const user = userEvent.setup();
+    const bulkDecide = vi.spyOn(fixtureClient, "bulkDecideApprovals");
+    renderInbox();
+
+    for (const subject of [/Approve 1 rule change/, /Lock attendance · ENG-0231/]) {
+      const row = (await screen.findByText(subject)).closest("tr") as HTMLElement;
+      await user.click(within(row).getByRole("checkbox"));
+    }
+    expect(await screen.findByText("2 selected")).toBeInTheDocument();
+
+    /* Decided by someone else; "Awaiting me" filters on PENDING, so the next
+       read drops the row. */
+    const ruleChange = await fixtureClient.getApproval(APPROVAL_RULE_CHANGE);
+    await fixtureClient.decideApproval(APPROVAL_RULE_CHANGE, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: ruleChange.diffHash,
+    });
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(screen.queryByText(/Approve 1 rule change/)).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "Bulk approve" }));
+
+    expect(
+      await screen.findByText(
+        "Nothing was approved: 1 selected approval is no longer in this queue",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`^${APPROVAL_RULE_CHANGE}\\.`))).toBeInTheDocument();
+    expect(bulkDecide).not.toHaveBeenCalled();
+    /* The selection now holds only what is still on screen, so the next press
+       approves exactly what the bar counts. */
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect((await fixtureClient.getApproval(APPROVAL_ATTENDANCE)).status).toBe("PENDING");
   });
 
   it("reports the median decision time the server measured", async () => {
