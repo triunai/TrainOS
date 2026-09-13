@@ -53,7 +53,8 @@ import type {
   TrainOsClient,
 } from "./client";
 import { fail, ok, transportError, type ApiError, type DomainError, type Result } from "./errors";
-import { getSupabase } from "./supabase";
+import { getTransport } from "./supabase";
+import type { TransportFailure, TransportResponse } from "./transport";
 
 /**
  * The Supabase implementation of `TrainOsClient` — the ONLY place in the app
@@ -73,20 +74,6 @@ import { getSupabase } from "./supabase";
 /* ------------------------------------------------------------------ *
  * Transport shapes
  * ------------------------------------------------------------------ */
-
-/** What supabase-js hands back. Structural, so a mock satisfies it too. */
-export interface TransportResponse {
-  data: unknown;
-  error: TransportFailure | null;
-}
-
-/** The PostgrestError fields this module reads. */
-export interface TransportFailure {
-  message: string;
-  code?: string | null;
-  details?: string | null;
-  hint?: string | null;
-}
 
 /**
  * The SQLSTATE the database raises for every deliberate domain refusal.
@@ -398,7 +385,7 @@ export class SupabaseRpcClient implements TrainOsClient {
   private async call<T>(name: string, args: Record<string, unknown> = {}): Promise<Result<T>> {
     let response: TransportResponse;
     try {
-      response = await getSupabase().schema("core").rpc(name, args);
+      response = await getTransport().rpc(name, args);
     } catch (thrown) {
       const message = thrown instanceof Error ? thrown.message : "Request failed";
       return fail(transportError("NETWORK", message, { cause: thrown }));
@@ -424,7 +411,7 @@ export class SupabaseRpcClient implements TrainOsClient {
   ): Promise<Result<ListResponse<T>>> {
     let response: TransportResponse;
     try {
-      const query = getSupabase().schema("core").from(name).select("*");
+      const query = getTransport().from(name).select("*");
       response = await (match === undefined ? query : query.match(match));
     } catch (thrown) {
       const message = thrown instanceof Error ? thrown.message : "Request failed";
@@ -562,8 +549,8 @@ export class SupabaseRpcClient implements TrainOsClient {
     return liftPolicyOutcome(result);
   }
 
-  listTemplates(type: TemplateType): Promise<Result<ListResponse<Template>>> {
-    return this.view<Template>(VIEW_READS.templates, { type });
+  listTemplates(type?: TemplateType): Promise<Result<ListResponse<Template>>> {
+    return this.view<Template>(VIEW_READS.templates, type === undefined ? undefined : { type });
   }
 
   listPolicies(): Promise<Result<ListResponse<Policy>>> {

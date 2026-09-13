@@ -1,5 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import type { RpcTransport } from "./transport";
+
 /**
  * The one supabase-js client, created lazily.
  *
@@ -75,14 +77,43 @@ export function getSupabase(): SupabaseClient {
   return cached;
 }
 
+let override: RpcTransport | null = null;
+
 /**
- * Replace the singleton. Tests only.
+ * The `core`-scoped PostgREST surface the RPC client calls.
+ *
+ * `.schema("core")` because PostgREST's default is `public` and every
+ * client-callable function lives in `core`. `app` is deliberately NOT an
+ * exposed schema, which is what keeps the policy gate's internals unreachable
+ * from a browser.
+ */
+export function getTransport(): RpcTransport {
+  if (override) return override;
+  const client = getSupabase();
+  const scoped = client.schema("core");
+  return {
+    rpc: (name, args) => scoped.rpc(name, args),
+    from: (table) => ({
+      select: (columns) => {
+        const query = scoped.from(table).select(columns);
+        return Object.assign(query, {
+          match: (filter: Record<string, string>) =>
+            scoped.from(table).select(columns).match(filter),
+        });
+      },
+    }),
+  };
+}
+
+/**
+ * Install a test double. Tests only.
  *
  * The conformance suite drives the RPC client against a mocked transport, and
- * a mock has to be installed before the first call rather than injected at
+ * the mock has to be installed BEFORE the first call rather than injected at
  * every call site — otherwise the production path and the tested path are two
  * different code paths and the suite proves nothing about the first.
  */
-export function __setSupabaseForTests(client: SupabaseClient | null): void {
-  cached = client;
+export function __setTransportForTests(transport: RpcTransport | null): void {
+  override = transport;
+  if (transport !== null) cached = null;
 }

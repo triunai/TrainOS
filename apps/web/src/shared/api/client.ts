@@ -130,7 +130,7 @@ export interface TrainOsClient {
   decideApproval(id: string, input: DecideInput): Promise<Result<ApprovalDecideResponse>>;
   bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>>;
   performAction(input: ActionInput): Promise<Result<ActionResponse>>;
-  listTemplates(type: TemplateType): Promise<Result<ListResponse<Template>>>;
+  listTemplates(type?: TemplateType): Promise<Result<ListResponse<Template>>>;
   listPolicies(): Promise<Result<ListResponse<Policy>>>;
   getPolicy(id: string): Promise<Result<Policy>>;
   getPipelineConfig(object: PipelineObject): Promise<Result<PipelineConfig>>;

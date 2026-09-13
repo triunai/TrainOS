@@ -11,6 +11,7 @@
 export {
   ACTOR_FOR_ROLE,
   ApiProvider,
+  defaultClient,
   derivedIdempotencyKey,
   newIdempotencyKey,
   stableIdempotencyKey,
@@ -22,8 +23,29 @@ export {
   type UseActionOptions,
 } from "./useApi";
 
-/** The client's own type, re-exported so no module reaches past this barrel. */
+/**
+ * The seam's type: the fixture client's public surface with the class brand
+ * removed, so the fixture client and the Supabase client both satisfy it.
+ * `useApi()` returns this — annotate against it, not against `FixtureClient`.
+ */
+export type { ApiClient } from "./apiClient";
+export { createRpcApiClient } from "./apiClient";
+
+/** The oracle's own type, re-exported so no module reaches past this barrel. */
 export type { FixtureClient } from "@trainos/fixtures";
+
+/** The typed RPC surface and its Supabase implementation. */
+export type {
+  ActionInput,
+  BulkDecideInput,
+  DecideInput,
+  Idempotent,
+  ProposalInput,
+  QuotationInput,
+  TrainOsClient,
+} from "./client";
+export { SupabaseRpcClient, createRpcClient, unwrapEnvelope } from "./rpcClient";
+export { apiMode, isSupabaseConfigured } from "./supabase";
 
 export {
   ApiErrorException,
