@@ -39,11 +39,32 @@ not a pin.**
 
 ## Security rules (MANDATORY)
 
-1. Every function is `SECURITY DEFINER` with
-   `SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'` — pg_catalog first,
-   pg_temp last. Never the bare two-schema form.
-2. RLS is **enabled and FORCED** on every table in `public` and `app`. No exceptions, including
-   config and reference tables.
+1. Every function is `SET search_path = ''` — the EMPTY path, one spelling across the whole
+   pack — and every reference in every body is schema-qualified, which is what makes the empty
+   path safe. `test_001` T3 asserts the exact stored string `search_path=""` as one element of
+   `proconfig`. Never `proconfig IS NOT NULL`: that passes all three spellings, including the
+   broken `SET search_path = 'a, b'` — one quoted string containing a comma, which names a single
+   schema and is not a path at all.
+   *(Changed 2026-09-13. This rule used to prescribe the four-part
+   `'pg_catalog', 'public', 'extensions', 'pg_temp'` form. Both forms are equally safe in effect
+   and were never equally checkable: the four-part form stores a different `proconfig` string from
+   the one doc 02 §8.7's sweep asserts, so all forty functions in the pack failed their own guard.
+   One spelling, then one assertion.)*
+
+   `SECURITY DEFINER` is the default for anything that must read past a caller's RLS, with two
+   named exceptions: `app.custom_access_token_hook` and `app.principal_claims` are
+   `SECURITY INVOKER`, so they genuinely run as `supabase_auth_admin` and the grants and policies
+   002 creates for that role are load-bearing rather than dead code.
+2. RLS is **enabled and FORCED** on every table in `public`, `app` and `core`. No exceptions,
+   including config and reference tables.
+
+   **FORCE removes the OWNER's exemption, so a `SECURITY DEFINER` function that reads a forced
+   table needs a policy admitting that read, or it silently returns zero rows.** Measured, not
+   reasoned: with the table and its reader owned by a role created `NOSUPERUSER NOBYPASSRLS`,
+   `app.has_permission()` returns `false` for every permission under forced-with-no-policy, and
+   `true` once one `SELECT` policy exists. Every table a definer function must read therefore
+   carries one. Where that policy is `USING (true)`, the guard is the GRANT layer — no client role
+   holds `SELECT` and `app` is not an exposed schema — and the file says so at the DDL.
 3. Every policy predicate resolves the caller's tenant through `app.current_tenant_id()`, never
    by reading a membership table inline — an inline read re-triggers RLS on that table and
    recurses.

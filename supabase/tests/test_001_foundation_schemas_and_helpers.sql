@@ -101,36 +101,77 @@ BEGIN
 END;
 $t1$;
 
--- === T2 · the four extensions are installed, and in `extensions` ============
+-- === T2 · the seven extensions are installed, each in the right schema ======
+--     The SCHEMA is asserted, not just presence. pg_cron installed under the
+--     wrong namespace still answers `extname = 'pg_cron'` while cron.schedule
+--     does not resolve, and that is the failure worth catching.
 DO $t2$
 DECLARE v_missing text;
 BEGIN
-  SELECT string_agg(want, ', ') INTO v_missing
-  FROM unnest(ARRAY['pgcrypto','citext','btree_gist','pg_trgm']) AS want
+  SELECT string_agg(want || ' (expected in ' || where_ || ')', ', ') INTO v_missing
+  FROM (VALUES ('pgcrypto','extensions'), ('citext','extensions'),
+               ('btree_gist','extensions'), ('pg_trgm','extensions'),
+               ('pg_net','extensions'), ('vector','extensions'),
+               ('pg_cron','pg_catalog')) AS t(want, where_)
   WHERE NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_extension e
     JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
-    WHERE e.extname = want AND n.nspname = 'extensions'
+    WHERE e.extname = t.want AND n.nspname = t.where_
   );
   ASSERT v_missing IS NULL,
-    format('T2 FAIL: extension(s) absent from schema extensions: %s', v_missing);
-  RAISE NOTICE 'T2 PASS - pgcrypto, citext, btree_gist, pg_trgm in schema extensions.';
+    format('T2 FAIL: extension(s) absent or in the wrong schema: %s', v_missing);
+  RAISE NOTICE 'T2 PASS - 7 extensions, each in its declared schema.';
 END;
 $t2$;
 
--- === T3 · every helper pins its search_path, pg_catalog first, pg_temp last ==
-DO $t3$
-DECLARE v_bad text;
+-- === T2b · the CALLABLE surface, not the catalog row ========================
+--     Ruling R-EXT exists because nine scheduled behaviours had no scheduler.
+--     A row in pg_extension does not schedule anything; cron.schedule does.
+DO $t2b$
 BEGIN
-  SELECT string_agg(p.proname, ', ') INTO v_bad
+  ASSERT to_regclass('cron.job') IS NOT NULL,
+    'T2b FAIL: pg_cron installed but cron.job does not exist - nothing in 015 can schedule';
+  ASSERT to_regclass('cron.job_run_details') IS NOT NULL,
+    'T2b FAIL: cron.job_run_details missing - 015 reaps it (critic C-07) and cannot';
+  ASSERT to_regproc('net.http_post') IS NOT NULL,
+    'T2b FAIL: pg_net installed but net.http_post does not exist - the outbox cannot reach an Edge Function';
+  ASSERT to_regtype('extensions.vector') IS NOT NULL,
+    'T2b FAIL: vector installed but extensions.vector is not a type';
+  ASSERT to_regtype('extensions.vector') IS NOT NULL
+     AND to_regproc('extensions.vector_cosine_ops') IS NULL,
+    'T2b FAIL: unexpected - vector_cosine_ops is an operator class, not a function';
+  RAISE NOTICE 'T2b PASS - cron.job, cron.job_run_details, net.http_post, extensions.vector all resolve.';
+END;
+$t2b$;
+
+-- === T3 · every function pins search_path to the EMPTY string ===============
+--     This is doc 02 §8.7's sweep, and deviation D1 is closed in its favour:
+--     `search_path = ''` is the ONE spelling in the pack. Three properties of
+--     this assertion are deliberate and each was got wrong somewhere first:
+--
+--       * It asserts the EXACT stored string as ONE ELEMENT of proconfig.
+--         `proconfig IS NOT NULL` passes all three spellings including the
+--         broken `SET search_path = 'a, b'` - one quoted string containing a
+--         comma, which is a single schema named "a, b" and not a path at all.
+--       * It covers `app`, `core` AND `public`, not just `app`. The version this
+--         replaces looked only at `app` and would have missed all sixteen
+--         functions in `core`.
+--       * It skips extension-owned functions, which are not ours to pin.
+DO $t3$
+DECLARE v_bad text; v_n int;
+BEGIN
+  SELECT string_agg(n.nspname || '.' || p.proname, ', '), count(*)
+    INTO v_bad, v_n
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'app'
-    AND NOT ('search_path=pg_catalog, public, extensions, pg_temp'
-             = ANY (COALESCE(p.proconfig, ARRAY[]::text[])));
+  WHERE n.nspname IN ('app','core','public')
+    AND p.prokind IN ('f','p')
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d
+                    WHERE d.objid = p.oid AND d.deptype = 'e')
+    AND NOT ('search_path=""' = ANY (COALESCE(p.proconfig, ARRAY[]::text[])));
   ASSERT v_bad IS NULL,
-    format('T3 FAIL: app function(s) without the pinned search_path: %s', v_bad);
-  RAISE NOTICE 'T3 PASS - all app helpers pin search_path.';
+    format('T3 FAIL: %s function(s) not pinned to search_path="": %s', v_n, v_bad);
+  RAISE NOTICE 'T3 PASS - every function in app, core and public pins search_path = %.', '''''';
 END;
 $t3$;
 

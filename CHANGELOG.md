@@ -12,6 +12,55 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-13 — the database can now schedule, send and remember, and one rule that would have locked everybody out
+
+Nothing in this release is applied to any hosted database. These are amendments to migrations
+001–009, which are authored and executed against a scratch PostgreSQL 17.11 cluster and applied
+nowhere. Engineering detail is in `supabase/migrations/migration-catalog.md`; the reasoning is in
+`docs/architecture/01`–`05`.
+
+### Added
+
+- **The scheduler, outbound HTTP, and semantic search now exist.** Nine behaviours the design
+  depends on happening on a schedule — clearing out old records, retrying failed sends, warning
+  when a training grant balance has gone stale — had nothing to run them. Sixteen places that send
+  a request to an external service had no way to send one. The knowledge corpus had no way to
+  store what it had learned. Three database extensions close all three gaps at the floor of the
+  schema, where every later migration can rely on them, rather than each one assuming.
+- **Every compliance rule vocabulary now records where it came from.** Thirteen categories of rule
+  grammar carried no note saying whether they were generated from the shared contract or written by
+  hand. Seven of them were written by hand, which is legitimate and is now stated. "Where did this
+  list of values come from" is the first question anyone asks when one of them looks wrong.
+
+### Fixed
+
+- **The permission system would have denied everything to everyone.** A security rule requiring
+  every table to enforce its access policy even against the database's own owner is correct, and
+  applying it to the table that stores who may do what would have made every permission check
+  answer "no" — silently, with no error, on the first day. Measured on a database configured the
+  way the hosted one is, not reasoned about. The tables that back permissions and the action
+  catalogue now carry an explicit internal-read rule, and no customer-facing account can reach
+  either of them.
+- **A table holding part of the data model was reachable from a browser.** It held no customer
+  data — it is a list of nine table names — but it sat in the schema the API exposes with no access
+  rule at all. It now has one, and it is the last such table in the set.
+- **The sign-in step that stamps a user's company onto their session was running as the wrong
+  identity.** It worked, but only by accident: the permissions and access rules written for it were
+  never being consulted. It now genuinely runs as the sign-in service, which is what makes those
+  rules real. Correcting it immediately revealed a missing permission that the accident had been
+  hiding.
+- **The only check on what an automated action is allowed to submit could be switched off by a
+  typo.** A single misspelled key in configuration made the check silently accept everything, while
+  the configuration still looked complete. A misspelling is now rejected when it is saved.
+- **The knowledge corpus quietly shipped without the column it exists for.** Where the extension
+  that stores machine-readable meaning was unavailable, the migration skipped the column, logged a
+  note and carried on — so the database built successfully and then failed later, far from the
+  cause. It is no longer optional.
+- **Three checks in the test suite had only ever been run at the moment that flattered them.**
+  Run against the complete database rather than immediately after their own step, they failed. All
+  three failures were real: two were defects in the checks, one was the missing access rule above.
+  Every check now runs against the whole set.
+
 ## 2026-09-12 — twenty-seven screens, and a rule that is checkable rather than read
 
 ### Added

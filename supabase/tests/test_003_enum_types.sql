@@ -135,6 +135,23 @@ $t1$;
 
 -- === T2 · no EXTRA enum type crept into core ================================
 --     A type nobody expected is a type nobody generated, i.e. a hand edit.
+--
+--     ⚠ CORRECTED 2026-09-13. This pin used to fail outright, and it failed for
+--     a reason worth recording rather than patching away: it was only ever run
+--     immediately after 003, against a database where 003 was the last
+--     migration applied. Run against the FULL pack it reported seven
+--     "unexpected" enums - rate_card_status, rule_side, rule_kind, rule_op,
+--     rule_reference_kind, rule_offset_unit and delivery_mode - every one of
+--     them a legitimate type created by 006 or 009.
+--
+--     That is the pin being wrong, not the schema, and it is exactly the class
+--     of defect the harness change caught: pins are now executed against the
+--     whole applied set, not at the point in the sequence that flatters them.
+--
+--     The allowance is an EXPLICIT list with an owning migration against each
+--     name, not a predicate like "or created after 003". A later migration that
+--     adds an enum must add its name here, and that is the feature: this pin's
+--     entire job is to notice a type nobody declared.
 DO $t2$
 DECLARE v_extra text;
 BEGIN
@@ -142,9 +159,16 @@ BEGIN
   FROM pg_catalog.pg_type t
   JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
   WHERE n.nspname = 'core' AND t.typtype = 'e'
-    AND t.typname NOT IN (SELECT type_name FROM t003_expected);
+    AND t.typname NOT IN (SELECT type_name FROM t003_expected)
+    AND t.typname NOT IN (
+      -- owned by 006_catalogue_programmes_and_trainers
+      'rate_card_status',
+      -- owned by 009_compliance_rules_checks_hrdc
+      'rule_side', 'rule_kind', 'rule_op', 'rule_reference_kind',
+      'rule_offset_unit', 'delivery_mode'
+    );
   ASSERT v_extra IS NULL, format('T2 FAIL: unexpected enum type(s) in core: %s', v_extra);
-  RAISE NOTICE 'T2 PASS - no unexpected enum types in core.';
+  RAISE NOTICE 'T2 PASS - no unexpected enum types in core (7 later-migration enums allowed by name).';
 END;
 $t2$;
 

@@ -21,18 +21,30 @@
 --             the resolver out of an exposed schema means a client cannot call
 --             it directly to probe what tenants exist.
 --
---   `core`    The domain. Doc 03 §1 states it outright — "Schema `app` holds the
---             gate. Schema `core` holds the domain (sb-erd)" — and then uses
---             `core.proposals`, `core.quotations`, `core.invoices`,
---             `core.engagements` and `core.hrdc_packets` in twenty places of its
---             own executable SQL, including index DDL it prescribes. Doc 02
---             writes the same tables as `public.*` throughout its RLS catalogue.
---             That is a real conflict and 03 outranks 02, so the domain is
---             `core` and doc 02's policies are re-targeted onto it. Recorded as
---             conflict C1; the catalog carries the full list.
---             ⚠ `core` MUST be added to PostgREST's exposed schemas or the whole
---             domain is invisible to the API. config.toml carries that and says
---             why.
+--   `core`    The domain. ⚠ CITATION CORRECTED 2026-09-13, before any apply.
+--             This header used to justify `core` by quoting doc 03 §1 — "Schema
+--             `app` holds the gate. Schema `core` holds the domain (sb-erd)".
+--             That sentence was in an EARLY DRAFT of 03. The committed 03 §1
+--             said the opposite for a while (the critic's C-01), so citing it
+--             made the floor of the database rest on a line that moved. The
+--             real, checkable reason is two facts that do not move:
+--
+--               1. `supabase/config.toml` sets
+--                    schemas = ["public", "core", "graphql_public"]
+--                  PostgREST exposes exactly those. `core` is exposed; `app` is
+--                  deliberately not. Verified by reading config.toml on
+--                  2026-09-13 — the critic's Part 2 §2.8 recorded that nobody
+--                  had, and now somebody has.
+--               2. Three lanes then wrote ~250 `core.<table>` references against
+--                  that file (03, 04 and 05 in their executable SQL, and 002's
+--                  policies). The schema name is load-bearing in committed work,
+--                  not a preference.
+--
+--             Doc 02 originally wrote the same tables as `public.*` and its
+--             policies are re-targeted onto `core`. Recorded as conflict C1;
+--             the catalog carries the full list.
+--             ⚠ `core` MUST stay in PostgREST's exposed schemas or the whole
+--             domain is invisible to the API, with no error to explain it.
 --
 --   `public`  Identity and tenancy only — doc 02's own four tables (`tenants`,
 --             `teams`, `team_members`, `memberships`) plus `user_profiles`.
@@ -59,6 +71,29 @@
 --                                   overlapping date ranges (008).
 --                       pg_trgm   — GIN trigram indexes for the ⌘K search over
 --                                   organisation and contact names (contract §2).
+--                       pg_cron   — the scheduler. Ruling R-EXT. Nine scheduled
+--                                   behaviours in the design (retention reaper,
+--                                   outbox drain, job reaper, levy staleness
+--                                   sweep, embedding refresh and the rest) are
+--                                   scheduled with cron.schedule in 015. Without
+--                                   this extension every one of them is dead
+--                                   code that no error reports — the critic's
+--                                   N-01/C-06, the last CRITICAL in the pack.
+--                       pg_net    — async HTTP from SQL. The outbox drain and
+--                                   the webhook dispatcher in 012/015 call
+--                                   net.http_post to reach an Edge Function;
+--                                   docs 03 and 05 name it sixteen times.
+--                                   Asynchronous matters: this is called from
+--                                   inside a trigger, and the `http` extension
+--                                   would block the writing transaction on a
+--                                   third party's latency.
+--                       vector    — pgvector, for core.knowledge_chunks.embedding
+--                                   vector(1536) and its HNSW index (doc 01
+--                                   §"Knowledge", Q23). 013 creates that column;
+--                                   an unavailable `vector` type is a migration
+--                                   that fails at apply time, which is why it is
+--                                   enabled here at the floor and asserted below
+--                                   rather than assumed in 013.
 --
 --   app.set_updated_at()            The shared BEFORE UPDATE trigger named in
 --                                   doc 01's universal-columns table.
@@ -208,6 +243,39 @@ CREATE EXTENSION IF NOT EXISTS citext     WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_trgm    WITH SCHEMA extensions;
 
+-- Ruling R-EXT. The target schema for each of these three is NOT a preference —
+-- it is what Supabase's own install instructions specify, and getting it wrong
+-- produces an extension that exists under a name nothing references.
+--
+--   pg_cron is NOT relocatable and its control file pins `schema = pg_catalog`.
+--   `WITH SCHEMA pg_catalog` is therefore the only spelling that works, and it
+--   is the one Supabase documents (supabase.com/docs/guides/cron/install). The
+--   extension creates its own `cron` schema for cron.job / cron.schedule; the
+--   two grants below are the other half of Supabase's documented install and
+--   are what lets the migration role read and manage the job table afterwards.
+--
+--   pg_net creates its own `net` schema for net.http_post regardless of this
+--   clause; `WITH SCHEMA extensions` is Supabase's documented form and is what
+--   keeps the extension itself out of `public`.
+--
+--   vector IS relocatable, so `WITH SCHEMA extensions` genuinely places the
+--   type there. 013's column is written `extensions.vector(1536)` to match; an
+--   unqualified `vector(1536)` resolves only while `extensions` happens to be
+--   on the search path, which is exactly the assumption that breaks inside a
+--   function pinned to `search_path = ''`.
+CREATE EXTENSION IF NOT EXISTS pg_cron    WITH SCHEMA pg_catalog;
+CREATE EXTENSION IF NOT EXISTS pg_net     WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS vector     WITH SCHEMA extensions;
+
+GRANT USAGE ON SCHEMA cron TO postgres;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
+
+COMMENT ON SCHEMA cron IS
+  'pg_cron''s own schema. Created by the extension, not by TrainOS. Every TrainOS '
+  'job is scheduled in 015 and named there; cron.job is the inventory. '
+  'cron.job_run_details is reaped by 015 - Postgres does not clean it up and it '
+  'grows without bound (critic C-07).';
+
 -- ─── 3 · Shared trigger functions ───────────────────────────────────────────
 
 -- Every table in this model carries `updated_at timestamptz NOT NULL DEFAULT
@@ -215,7 +283,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm    WITH SCHEMA extensions;
 CREATE OR REPLACE FUNCTION app.set_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   NEW.updated_at := now();
@@ -245,7 +313,7 @@ COMMENT ON FUNCTION app.set_updated_at() IS
 CREATE OR REPLACE FUNCTION app.enforce_immutable_columns()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE
   v_col   text;
@@ -307,7 +375,7 @@ LANGUAGE sql
 IMMUTABLE
 STRICT
 PARALLEL SAFE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT round(p_amount)::bigint;
 $fn$;
@@ -326,7 +394,7 @@ RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT jsonb_build_object('success', true, 'data', COALESCE(p_data, '{}'::jsonb));
 $fn$;
@@ -342,7 +410,7 @@ RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT jsonb_build_object(
     'success', false,
@@ -384,30 +452,63 @@ DECLARE
   v_missing text;
   v_cnt     int;
 BEGIN
-  -- Extensions actually installed, and in `extensions` rather than `public`.
-  SELECT string_agg(want, ', ')
+  -- Extensions actually installed, and each in the schema it was asked for.
+  -- The schema is asserted, not just the presence: pg_cron under the wrong
+  -- namespace still answers `extname = 'pg_cron'` while `cron.schedule` does not
+  -- resolve, which is the failure this check exists to catch.
+  SELECT string_agg(want || ' (expected in ' || where_ || ')', ', ')
     INTO v_missing
-  FROM unnest(ARRAY['pgcrypto','citext','btree_gist','pg_trgm']) AS want
+  FROM (VALUES ('pgcrypto','extensions'), ('citext','extensions'),
+               ('btree_gist','extensions'), ('pg_trgm','extensions'),
+               ('pg_net','extensions'), ('vector','extensions'),
+               ('pg_cron','pg_catalog')) AS t(want, where_)
   WHERE NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_extension e
     JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
-    WHERE e.extname = want AND n.nspname = 'extensions'
+    WHERE e.extname = t.want AND n.nspname = t.where_
   );
   IF v_missing IS NOT NULL THEN
-    RAISE EXCEPTION '001 verify: extension(s) missing from schema extensions: %', v_missing;
+    RAISE EXCEPTION '001 verify: extension(s) missing or in the wrong schema: %', v_missing;
   END IF;
 
-  -- All five helpers exist, with the pinned search_path.
+  -- pg_cron and pg_net are not types on a page; the objects the design calls
+  -- must resolve. A present-but-broken extension is the thing that reaches
+  -- production, so this asserts the callable surface rather than the catalog row.
+  IF to_regclass('cron.job') IS NULL THEN
+    RAISE EXCEPTION '001 verify: pg_cron is installed but cron.job does not exist';
+  END IF;
+  IF to_regproc('net.http_post') IS NULL THEN
+    RAISE EXCEPTION '001 verify: pg_net is installed but net.http_post does not exist';
+  END IF;
+  IF to_regtype('extensions.vector') IS NULL THEN
+    RAISE EXCEPTION '001 verify: vector is installed but extensions.vector is not a type';
+  END IF;
+
+  -- All five helpers exist with search_path pinned to the EMPTY string.
+  --
+  -- ⚠ DEVIATION D1 IS RESOLVED HERE, 2026-09-13, and the resolution is the
+  -- reason this assertion is spelled the way it is. 001-009 originally wrote
+  -- `SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'`, which
+  -- stores proconfig as `search_path=pg_catalog, public, extensions, pg_temp`.
+  -- Doc 02 §8.7's sweep asserts the exact string `search_path=""` and every one
+  -- of those forty functions failed it (critic N-05). One spelling, then one
+  -- assertion: the empty path is now the only form in the pack, and every body
+  -- is schema-qualified because with `''` nothing else resolves.
+  --
+  -- The assertion is `= ANY (proconfig)`, an EXACT string match against one
+  -- element. `proconfig IS NOT NULL` would pass all three spellings including
+  -- the broken single-quoted-comma form, which is the trap doc 02 §8.7 measured.
   SELECT count(*) INTO v_cnt
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'app'
     AND p.proname IN ('set_updated_at','enforce_immutable_columns',
                       'round_half_up_sen','ok','err')
-    AND 'search_path=pg_catalog, public, extensions, pg_temp' = ANY (p.proconfig);
+    AND 'search_path=""' = ANY (p.proconfig);
   IF v_cnt <> 5 THEN
     RAISE EXCEPTION
-      '001 verify: expected 5 app helpers with a pinned search_path, found %', v_cnt;
+      '001 verify: expected 5 app helpers with search_path pinned to the empty '
+      'string, found %', v_cnt;
   END IF;
 
   -- No client role holds EXECUTE on anything in `app`.
@@ -441,7 +542,8 @@ BEGIN
   END IF;
 
   RAISE NOTICE
-    '001 verify: OK - 3 schemas, 4 extensions, 5 helpers, 0 client EXECUTE grants.';
+    '001 verify: OK - 3 schemas, 7 extensions (cron/net/vector callable), '
+    '5 helpers at search_path="", 0 client EXECUTE grants.';
 END;
 $verify$;
 

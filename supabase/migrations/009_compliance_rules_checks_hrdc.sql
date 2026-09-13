@@ -75,19 +75,52 @@ SET LOCAL statement_timeout = '180s';
 
 -- ═══ 1 · Rule grammar types ═════════════════════════════════════════════════
 
+-- Every one of these six is DECLARED BY 009 and is deliberately NOT generated
+-- from packages/contract/src/enums.ts: the contract has no rule grammar, because
+-- the grammar is how the database stores a compliance rule and never crosses the
+-- API. test_003 T5 asserts that every enum in `core` carries a provenance
+-- comment, precisely so that "where did this vocabulary come from" is answerable
+-- for a type nobody can trace back to a generator.
 DO $$ BEGIN CREATE TYPE core.rule_side AS ENUM ('GRANT','CLAIM');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+COMMENT ON TYPE core.rule_side IS
+  'Declared by 009 from doc 04 §3. Which side of the HRD Corp transaction a rule '
+  'governs: GRANT (applying for the levy) or CLAIM (claiming it back).';
+
 DO $$ BEGIN CREATE TYPE core.rule_kind AS ENUM ('BINDING','ADVISORY');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+COMMENT ON TYPE core.rule_kind IS
+  'Declared by 009 from doc 04 §3. BINDING blocks a packet reaching READY; '
+  'ADVISORY warns and does not block. The distinction is the difference between '
+  'a compliance check that stops a filing and one that annotates it.';
+
 DO $$ BEGIN CREATE TYPE core.rule_op AS ENUM ('GTE','LTE','GT','LT','EQ','NEQ','COMPLETE');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+COMMENT ON TYPE core.rule_op IS
+  'Declared by 009 from doc 04 §3''s typed rule grammar. COMPLETE is not a '
+  'comparison: it asserts a document set is whole, and is why this is an enum '
+  'rather than a comparison operator stored as text.';
+
 DO $$ BEGIN CREATE TYPE core.rule_reference_kind AS ENUM
   ('FIELD','LITERAL_BOOL','RATE_CARD','DOCUMENT_SET');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+COMMENT ON TYPE core.rule_reference_kind IS
+  'Declared by 009 from doc 04 §3. What the right-hand side of a rule points at. '
+  'Typed here rather than left as jsonb because doc 04 measured the alternative: '
+  'an unconstrained expression column accepts a legacy shape silently (critic N-06).';
+
 DO $$ BEGIN CREATE TYPE core.rule_offset_unit AS ENUM ('DAY','MONTH');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+COMMENT ON TYPE core.rule_offset_unit IS
+  'Declared by 009 from doc 04 §3. The unit of a date offset in a rule, e.g. '
+  '"at least 7 DAY before the session starts". Consumed by core.apply_rule_offset().';
+
 DO $$ BEGIN CREATE TYPE core.delivery_mode AS ENUM ('ANY','PUBLIC','IN_HOUSE');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+COMMENT ON TYPE core.delivery_mode IS
+  'Declared by 009. Which delivery mode a rule applies to. ANY is a real member '
+  'rather than NULL so that the rule-resolution join has no null case and the '
+  'EXCLUDE constraint on overlapping rules can actually constrain.';
 
 -- ═══ 2 · Knowledge corpus ═══════════════════════════════════════════════════
 
@@ -143,23 +176,35 @@ CREATE TABLE IF NOT EXISTS core.knowledge_chunks (
 CREATE INDEX IF NOT EXISTS kc_source_idx ON core.knowledge_chunks (tenant_id, knowledge_source_id);
 SELECT app.finalise_table('core','knowledge_chunks',false,NULL,ARRAY['knowledge_source_id','seq']);
 
--- The embedding column and its index, only where pgvector exists.
-DO $vec$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = 'vector') THEN
-    EXECUTE 'ALTER TABLE core.knowledge_chunks ADD COLUMN IF NOT EXISTS embedding vector(1536)';
-    EXECUTE 'CREATE INDEX IF NOT EXISTS kc_embedding_hnsw ON core.knowledge_chunks '
-            'USING hnsw (embedding vector_cosine_ops)';
-    RAISE NOTICE '009: pgvector present - knowledge_chunks.embedding and its HNSW index created.';
-  ELSE
-    RAISE NOTICE
-      '009: ⚠ pgvector NOT INSTALLED. knowledge_chunks.embedding and its HNSW index '
-      'were SKIPPED. Retrieval over the corpus will not work until the extension is '
-      'enabled and this column is added. This is the ONE object in the migration set '
-      'that has not been executed in its intended form - see "What I could NOT verify".';
-  END IF;
-END;
-$vec$;
+-- The embedding column and its HNSW index.
+--
+-- ⚠ UNCONDITIONAL SINCE 2026-09-13, and that is the point of the change. This
+-- block used to be wrapped in `IF EXISTS (... extname = 'vector')` with an ELSE
+-- that raised a NOTICE and moved on, because 001 did not enable pgvector. A
+-- migration that silently omits a column when an extension is absent produces a
+-- database that applies cleanly and then fails at query time with "column
+-- embedding does not exist" — the failure arrives far from its cause, and the
+-- catalog had to carry it as the one object never executed in its intended
+-- form. Ruling R-EXT put `vector` in 001, 001 asserts the type resolves, so the
+-- guard's ELSE branch is now unreachable-by-construction and is gone. If
+-- pgvector is ever missing, this migration stops here, loudly, which is correct.
+--
+-- `extensions.vector(1536)` is schema-qualified deliberately. 001 installs the
+-- extension `WITH SCHEMA extensions`; a bare `vector(1536)` resolves only while
+-- `extensions` is on the session search_path, which is true for a psql session
+-- and false inside any function pinned to `search_path = ''`. The operator class
+-- in the index is qualified for the same reason.
+ALTER TABLE core.knowledge_chunks
+  ADD COLUMN IF NOT EXISTS embedding extensions.vector(1536);
+
+CREATE INDEX IF NOT EXISTS kc_embedding_hnsw
+  ON core.knowledge_chunks
+  USING hnsw (embedding extensions.vector_cosine_ops);
+
+COMMENT ON COLUMN core.knowledge_chunks.embedding IS
+  '1536 dimensions (doc 01 Q23, assumed against text-embedding-3-small). Cosine '
+  'distance: the HNSW index is built with vector_cosine_ops, so every retrieval '
+  'query must use <=> or it will not use this index.';
 
 -- ═══ 3 · The bitemporal rule registry ═══════════════════════════════════════
 
@@ -306,7 +351,7 @@ REVOKE ALL ON TABLE core.compliance_rules FROM PUBLIC, anon, authenticated;
 CREATE OR REPLACE FUNCTION core.sync_rule_scheme_key()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   NEW.scheme_key := COALESCE(NEW.scheme::text, '*');
@@ -354,7 +399,7 @@ CREATE OR REPLACE FUNCTION core.resolve_rules(
 RETURNS SETOF core.compliance_rules
 LANGUAGE sql
 STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT DISTINCT ON (r.family_key) r.*
   FROM core.compliance_rules r
@@ -379,7 +424,7 @@ CREATE OR REPLACE FUNCTION core.apply_rule_offset(
   p_base date, p_amount integer, p_unit core.rule_offset_unit)
 RETURNS date
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT CASE p_unit
            WHEN 'DAY'   THEN p_base + p_amount

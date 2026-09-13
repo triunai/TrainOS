@@ -189,6 +189,11 @@ BEGIN
       REVOKE SELECT ON public.tenants FROM supabase_auth_admin;
     END IF;
     REVOKE USAGE ON SCHEMA app FROM supabase_auth_admin;
+    -- 002 grants this because the hook is SECURITY INVOKER and therefore reads
+    -- public.memberships as supabase_auth_admin itself. Reversed here for the
+    -- same reason it was granted: leaving it behind would mean this file does
+    -- not restore the prior state.
+    REVOKE USAGE ON SCHEMA public FROM supabase_auth_admin;
   END IF;
 END;
 $ungrant$;

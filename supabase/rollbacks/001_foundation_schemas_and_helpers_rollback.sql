@@ -37,11 +37,26 @@
 -- point: it aborted on `cannot drop extension pgcrypto because other objects
 -- depend on it`. The guard is the reasoning, not the error message.
 --
--- The other three — citext, btree_gist, pg_trgm — are NOT Supabase defaults;
--- 001 genuinely created them, so this file drops them, WITHOUT CASCADE. G3 has
--- already proved `public` is empty, so nothing should depend on them; if
--- something does, Postgres refuses and names it, which is a better outcome than
--- a cascade that silently drops an email column.
+-- The other six — citext, btree_gist, pg_trgm, pg_cron, pg_net and vector — are
+-- NOT Supabase defaults; 001 genuinely created them, so this file drops them,
+-- WITHOUT CASCADE. G3 has already proved `public` and `core` are empty, so
+-- nothing should depend on them; if something does, Postgres refuses and names
+-- it, which is a better outcome than a cascade that silently drops an email
+-- column or an embedding.
+--
+-- ⚠ DROPPING pg_cron DESTROYS EVERY SCHEDULED JOB, and that is stated here
+-- rather than discovered. `DROP EXTENSION pg_cron` deletes cron.job outright —
+-- Supabase's own uninstall note says so. That is the correct behaviour for this
+-- file (G1–G3 have already proved 015 is not applied, so there are no TrainOS
+-- jobs to lose) and it would be catastrophic if those guards were removed. A
+-- fourth guard, G4, refuses if cron.job holds anything at all, so the
+-- destruction cannot happen silently.
+--
+-- `net` and `cron` SCHEMAS: created by their extensions, so they drop with them.
+-- The guarded DROP SCHEMA lines afterwards exist because the REAL pg_net leaves
+-- `net` standing on some versions (Supabase's uninstall instructions say
+-- `drop extension if exists pg_net; drop schema net;`), and a rollback that
+-- leaves a stray schema behind has not restored the prior state.
 --
 -- `extensions` SCHEMA IS NOT DROPPED, for the same reason as pgcrypto: on
 -- Supabase it is platform-provided, and 001's `CREATE SCHEMA IF NOT EXISTS
@@ -61,6 +76,7 @@ DECLARE
   v_extra   text;
   v_trig    text;
   v_rel     text;
+  v_jobs    bigint := 0;
 BEGIN
   -- ── G1 · nothing else lives in `app` ──────────────────────────────────────
   SELECT string_agg(p.proname || '(' ||
@@ -94,6 +110,20 @@ BEGIN
       'rollback 001 ABORTED: trigger(s) still bound to app helpers: %. '
       'Roll back the migration that created those tables first.', v_trig
       USING ERRCODE = 'dependent_objects_still_exist';
+  END IF;
+
+  -- ── G4 · no scheduled job would be destroyed ──────────────────────────────
+  -- Dropping pg_cron deletes cron.job. If anything is scheduled, 015 is applied
+  -- (or somebody scheduled by hand) and this file must not be the thing that
+  -- finds out.
+  IF to_regclass('cron.job') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM cron.job' INTO v_jobs;
+    IF v_jobs > 0 THEN
+      RAISE EXCEPTION
+        'rollback 001 ABORTED: cron.job holds % scheduled job(s). Dropping pg_cron '
+        'would delete every one of them. Roll back 015 first.', v_jobs
+        USING ERRCODE = 'dependent_objects_still_exist';
+    END IF;
   END IF;
 
   -- ── G3 · `public` is empty of business objects ────────────────────────────
@@ -142,9 +172,17 @@ DROP FUNCTION IF EXISTS app.set_updated_at();
 
 -- ─── Reverse of forward step 2 · extensions (no CASCADE, on purpose) ────────
 -- pgcrypto is deliberately absent from this list; see the header.
+DROP EXTENSION IF EXISTS vector;
+DROP EXTENSION IF EXISTS pg_net;
+DROP EXTENSION IF EXISTS pg_cron;
 DROP EXTENSION IF EXISTS pg_trgm;
 DROP EXTENSION IF EXISTS btree_gist;
 DROP EXTENSION IF EXISTS citext;
+
+-- Reverse of the two grants Supabase's documented pg_cron install carries. The
+-- extension is already gone, so these are guarded rather than unconditional.
+DROP SCHEMA IF EXISTS cron RESTRICT;
+DROP SCHEMA IF EXISTS net  RESTRICT;
 
 -- ─── Reverse of forward step 1 · schema ─────────────────────────────────────
 -- RESTRICT (the default) rather than CASCADE: G1 already proved the schema is
@@ -160,12 +198,19 @@ BEGIN
     RAISE EXCEPTION 'rollback 001: schema app or core survived the drop';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_extension
-             WHERE extname IN ('citext','btree_gist','pg_trgm')) THEN
+             WHERE extname IN ('citext','btree_gist','pg_trgm',
+                               'pg_cron','pg_net','vector')) THEN
     RAISE EXCEPTION 'rollback 001: one or more extensions survived the drop';
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname IN ('cron','net')) THEN
+    RAISE EXCEPTION
+      'rollback 001: schema cron or net survived - the extension dropped but left '
+      'its schema, so the prior state is not restored';
+  END IF;
   RAISE NOTICE
-    'rollback 001: complete - app and core schemas and 3 extensions removed, '
-    'public default privileges restored; pgcrypto left standing '
+    'rollback 001: complete - app and core schemas and 6 extensions removed '
+    '(citext, btree_gist, pg_trgm, pg_cron, pg_net, vector), cron and net schemas '
+    'gone, public default privileges restored; pgcrypto left standing '
     '(platform-provided, not 001''s to drop).';
 END;
 $verify$;

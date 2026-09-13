@@ -344,7 +344,7 @@ CREATE OR REPLACE FUNCTION core.sync_trainer_availability()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE
   r        record;

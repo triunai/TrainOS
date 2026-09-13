@@ -107,7 +107,7 @@ CREATE OR REPLACE FUNCTION app.finalise_table(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE
   v_rel      regclass;
@@ -285,7 +285,7 @@ CREATE OR REPLACE FUNCTION core.next_ref(p_tenant_id uuid, p_prefix text)
 RETURNS text
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE
   v_fmt    record;
@@ -338,7 +338,7 @@ CREATE OR REPLACE FUNCTION core.assign_ref()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   IF TG_NARGS <> 1 THEN
@@ -374,7 +374,24 @@ CREATE TABLE IF NOT EXISTS app.action_types (
   ceiling_reason      text
                       CHECK (ceiling_reason IN ('MONEY_MOVING','CLIENT_COMMITMENT','HRDC_STATE','SAFETY','NONE')),
   target_entity       text NOT NULL,
-  payload_schema      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- ⚠ THE DEFAULT AND THE CHECK ARE ONE CHANGE. Critic N-03: this column was
+  -- `jsonb NOT NULL DEFAULT '{}'` with no constraint on its own shape, and 011's
+  -- payload validator reads it as
+  --     jsonb_array_elements_text(coalesce(payload_schema->'required','[]'))
+  -- A seed row spelling the key `requires`, or `required_keys`, or nesting it one
+  -- level deeper, yields NULL; the coalesce substitutes an empty array; the loop
+  -- runs zero times; and EVERY payload for that action type validates. The only
+  -- guard on the gate's input fails OPEN on a typo, and the typo is invisible
+  -- because the table still looks populated.
+  --
+  -- Ruling R-JSONB: every jsonb CHECK asserts key presence. `? 'required'` is
+  -- that assertion; `jsonb_typeof(...) = 'array'` is the second half, because
+  -- `{"required": "ref"}` satisfies key presence and still makes
+  -- jsonb_array_elements_text raise at runtime instead of at insert.
+  payload_schema      jsonb NOT NULL DEFAULT '{"required": []}'::jsonb
+                      CONSTRAINT action_types_payload_schema_shape
+                      CHECK (payload_schema ? 'required'
+                             AND jsonb_typeof(payload_schema -> 'required') = 'array'),
   value_source        text
                       CHECK (value_source IN ('QUOTATION','INVOICE','HRDC_CLAIM','PAYMENT','BUDGET_CAP','NONE')),
   max_effect_attempts int NOT NULL DEFAULT 5,
@@ -394,6 +411,20 @@ COMMENT ON TABLE app.action_types IS
   'also hold when a GRANT is raised rather than when the catalogue is seeded.';
 
 REVOKE ALL ON TABLE app.action_types FROM PUBLIC, anon, authenticated;
+
+-- RLS enabled AND FORCED (CLAUDE.md rule 2), with one permissive SELECT policy
+-- for the same measured reason as app.role_permissions in 002: the policy gate
+-- in 011 reads this catalogue from a SECURITY DEFINER function, and FORCE with
+-- no policy makes that read return zero rows on any platform whose owner lacks
+-- BYPASSRLS - which means every action type resolves as "unknown" and the whole
+-- product's primary buttons stop. The GRANT layer is the guard: no client role
+-- holds SELECT and `app` is not an exposed schema. The catalogue is global and
+-- identical for every tenant, so there is nothing tenant-scoped here to leak.
+ALTER TABLE app.action_types ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.action_types FORCE  ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS action_types_definer_read ON app.action_types;
+CREATE POLICY action_types_definer_read ON app.action_types
+  FOR SELECT USING (true);
 
 -- ═══ 4 · Tenant-scoped reference tables ═════════════════════════════════════
 -- These replace the open sets 003 deliberately did not make enums.

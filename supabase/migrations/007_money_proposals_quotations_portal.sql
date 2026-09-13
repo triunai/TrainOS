@@ -106,6 +106,22 @@ CREATE TABLE IF NOT EXISTS core.provenance_subjects (
 );
 REVOKE ALL ON TABLE core.provenance_subjects FROM PUBLIC, anon, authenticated;
 
+-- RLS enabled AND FORCED. This was the third and last table in the pack with
+-- neither, and it is in `core`, which config.toml EXPOSES to PostgREST - so an
+-- unguarded table here is reachable from a browser, not merely untidy. It is not
+-- put through app.finalise_table because it is deliberately global: an allowlist
+-- of nine table names, no tenant_id, no id, no ref, and finalise_table's whole
+-- contract is a tenant-scoped table.
+--
+-- NO POLICY, and unlike app.role_permissions that costs nothing here, which is
+-- worth stating so the next author does not "fix" it by adding one. Nothing in
+-- SQL reads this table: its only consumer is the foreign key on
+-- core.provenance.subject_table, and PostgreSQL performs referential integrity
+-- checks with row security bypassed by design. Deny-all is therefore the correct
+-- terminal state, not a gap for 014 to fill.
+ALTER TABLE core.provenance_subjects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.provenance_subjects FORCE  ROW LEVEL SECURITY;
+
 INSERT INTO core.provenance_subjects (subject_table, note) VALUES
   ('enquiries',                 'classification'),
   ('enquiry_extraction_fields', 'one row per extracted field'),
@@ -194,6 +210,10 @@ SELECT app.finalise_table('core','provenance',false,NULL,ARRAY['subject_table','
 
 DO $$ BEGIN
   CREATE TYPE core.rate_card_status AS ENUM ('PLACEHOLDER','DRAFT','ACTIVE','RETIRED');
+  COMMENT ON TYPE core.rate_card_status IS
+    'Declared by 007, NOT generated from packages/contract/src/enums.ts - the '
+    'contract has no rate-card lifecycle. PLACEHOLDER is 007''s own value and is '
+    'what core.quotation_block_placeholder() refuses to price against.';
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS core.rate_cards (
@@ -448,7 +468,7 @@ SELECT app.finalise_table('core','proposal_sections',false,NULL,ARRAY['proposal_
 CREATE OR REPLACE FUNCTION core.freeze_sent_proposal_sections()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE v_status core.proposal_status;
 BEGIN
@@ -747,7 +767,7 @@ CREATE OR REPLACE FUNCTION core.quotation_recalc()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE
   v_tenant uuid := COALESCE(NEW.tenant_id, OLD.tenant_id);
@@ -781,7 +801,7 @@ CREATE TRIGGER trg_quotation_lines_recalc
 CREATE OR REPLACE FUNCTION core.quotation_assert_reconciled()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE v_sell bigint; v_cost bigint; v_row record;
 BEGIN
@@ -829,7 +849,7 @@ CREATE CONSTRAINT TRIGGER trg_quotation_reconciled
 CREATE OR REPLACE FUNCTION core.freeze_applied_quotation()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   IF OLD.status = 'APPLIED' AND NEW.status = 'APPLIED'
@@ -852,7 +872,7 @@ CREATE TRIGGER trg_quotations_freeze_applied
 CREATE OR REPLACE FUNCTION core.quotation_block_placeholder()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE v_placeholder boolean;
 BEGIN
@@ -876,7 +896,7 @@ $fn$;
 CREATE OR REPLACE FUNCTION core.quotation_assert_floor()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE v_row record;
 BEGIN

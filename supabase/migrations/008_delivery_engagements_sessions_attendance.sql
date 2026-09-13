@@ -362,7 +362,7 @@ SELECT app.finalise_table('core','attendance_entries',false,NULL,
 CREATE OR REPLACE FUNCTION core.enforce_attendance_day_lock()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   -- LOCKED -> LOCKED: the approval facts freeze. Only updated_at may move.
@@ -423,7 +423,7 @@ CREATE TRIGGER trg_attendance_days_lock
 CREATE OR REPLACE FUNCTION core.enforce_attendance_entry_lock()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE v_status core.attendance_status; v_day smallint; v_eng uuid;
 BEGIN
@@ -602,7 +602,7 @@ CREATE OR REPLACE FUNCTION core.sync_engagement_trainers()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   IF TG_OP <> 'DELETE' AND NEW.trainer_id IS NOT NULL THEN
@@ -641,7 +641,7 @@ CREATE OR REPLACE FUNCTION core.sync_programme_deliveries()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 BEGIN
   IF NEW.status = 'DELIVERED' AND OLD.status IS DISTINCT FROM 'DELIVERED' THEN

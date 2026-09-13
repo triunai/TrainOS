@@ -254,11 +254,37 @@ CREATE TABLE IF NOT EXISTS app.role_permissions (
 
 COMMENT ON TABLE app.role_permissions IS
   'The role-to-permission matrix, as DATA so an MD can move discount:approve '
-  'between roles without a migration. No RLS and no grants: `app` is not exposed '
-  'to PostgREST and no role holds SELECT. It is reached only through '
-  'app.has_permission(), which is SECURITY DEFINER.';
+  'between roles without a migration. Global, not tenant-scoped. No grants: `app` '
+  'is not exposed to PostgREST and no client role holds SELECT. Reached only '
+  'through app.has_permission(), which is SECURITY DEFINER. RLS is enabled AND '
+  'FORCED with one permissive SELECT policy - see the DDL for why the policy is '
+  'required rather than sloppy.';
 
 REVOKE ALL ON TABLE app.role_permissions FROM PUBLIC, anon, authenticated;
+
+-- RLS enabled AND FORCED, per CLAUDE.md rule 2: "every table in `public` and
+-- `app`. No exceptions, including config and reference tables." This table was
+-- one of three in the pack that had neither.
+--
+-- The permissive SELECT policy is NOT a shortcut around the rule, it is the
+-- measured cost of obeying it. app.has_permission() is SECURITY DEFINER and
+-- reads this table; FORCE removes the owner's exemption, and with no policy the
+-- function returns FALSE for every permission on a platform whose owner lacks
+-- BYPASSRLS. Probe C above measured exactly that: the entire authorisation
+-- system fails closed and every MD silently loses every right.
+--
+-- USING (true) leaks nothing, and that is checkable rather than asserted. The
+-- guard on this table is the GRANT layer, not RLS: anon and authenticated hold
+-- no SELECT (measured alongside the probe - both false), and `app` is absent
+-- from config.toml's exposed schemas, so no client can reach the table to have
+-- a policy evaluated for them at all. The policy is reachable only by a role
+-- that already owns the table. There is also nothing tenant-scoped here to
+-- leak: the table is (role, permission) pairs, identical for every customer.
+ALTER TABLE app.role_permissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.role_permissions FORCE  ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS role_permissions_definer_read ON app.role_permissions;
+CREATE POLICY role_permissions_definer_read ON app.role_permissions
+  FOR SELECT USING (true);
 
 -- ─── 6 · Claim readers ──────────────────────────────────────────────────────
 --
@@ -266,24 +292,40 @@ REVOKE ALL ON TABLE app.role_permissions FROM PUBLIC, anon, authenticated;
 -- because there is nothing to define away — they tell the caller about the
 -- caller.
 --
--- ⚠ DEVIATION D1, recorded. Doc 02 writes `set search_path = ''` on these.
--- This set uses the four-element form the conventions doc calls canonical
--- (`pg_catalog` first, `pg_temp` last) on EVERY function in EVERY migration, so
--- that one assertion can check the whole set — test_001 T3 and test_014 both
--- rely on a single spelling. Every reference below is fully schema-qualified
--- anyway, which is what makes `''` safe in the first place, so the two forms
--- are equivalent in effect here.
+-- ✅ DEVIATION D1 IS CLOSED, 2026-09-13, before any apply. It used to read:
+-- "this set uses the four-element form … the two forms are equivalent in effect
+-- here". They are equivalent in EFFECT and were never equivalent in EVIDENCE,
+-- which is the whole of the problem. The four-element form stores proconfig as
+--   search_path=pg_catalog, public, extensions, pg_temp
+-- and doc 02 §8.7's sweep asserts the exact string `search_path=""`. All forty
+-- functions in 001–009 failed it (critic N-05). A test that fails on every
+-- object it governs is not a guard, it is noise that gets switched off.
+--
+-- Resolved in the direction the critic recommended: ONE spelling, `''`, on every
+-- function in every migration, because that is what three of the five design
+-- docs already write and what the sweep already asserts. The alternative —
+-- teaching the sweep to accept both spellings — weakens the sweep, and the
+-- sweep's exactness is the only reason it catches the single-quoted-comma trap
+-- (`SET search_path = 'a, b'`, one string, silently NOT a two-schema path).
+--
+-- This was safe to change because every body below was ALREADY fully
+-- schema-qualified. That was verified, not assumed: all forty bodies were read
+-- out of pg_proc and swept for bare references to any object in app, core,
+-- public or extensions. Two hits, both the column `trainer_id` colliding with
+-- the function name `app.trainer_id()`, both false. plpgsql does not resolve a
+-- relation name until the statement first executes, so a clean apply proves
+-- nothing here and the static sweep is the load-bearing check.
 
 CREATE OR REPLACE FUNCTION app.jwt() RETURNS jsonb
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), ''), '{}')::jsonb;
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.current_tenant_id() RETURNS uuid
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT NULLIF(app.jwt() ->> 'tenant_id', '')::uuid;
 $fn$;
@@ -295,28 +337,28 @@ COMMENT ON FUNCTION app.current_tenant_id() IS
 
 CREATE OR REPLACE FUNCTION app.role() RETURNS app.app_role
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT NULLIF(app.jwt() ->> 'app_role', '')::app.app_role;
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.actor_kind() RETURNS app.actor_kind
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(NULLIF(app.jwt() ->> 'actor_kind', ''), 'HUMAN')::app.actor_kind;
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.client_scope() RETURNS app.data_scope
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(NULLIF(app.jwt() ->> 'client_scope', ''), 'MY_ACCOUNTS')::app.data_scope;
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.team_scope() RETURNS app.data_scope
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(NULLIF(app.jwt() ->> 'team_scope', ''), 'MY_TEAM')::app.data_scope;
 $fn$;
@@ -324,28 +366,28 @@ $fn$;
 -- Authenticator Assurance Level. `aal2` means the caller completed MFA.
 CREATE OR REPLACE FUNCTION app.aal() RETURNS text
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(app.jwt() ->> 'aal', 'aal1');
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.is_agent() RETURNS boolean
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(app.jwt() ->> 'actor_kind', 'HUMAN') = 'AGENT';
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.agent_id() RETURNS text
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT NULLIF(app.jwt() ->> 'agent_id', '');
 $fn$;
 
 CREATE OR REPLACE FUNCTION app.trainer_id() RETURNS uuid
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT NULLIF(app.jwt() ->> 'trainer_id', '')::uuid;
 $fn$;
@@ -356,7 +398,7 @@ $fn$;
 -- existence oracle.
 CREATE OR REPLACE FUNCTION app.require_tenant_id() RETURNS uuid
 LANGUAGE plpgsql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
 DECLARE v_tenant uuid := app.current_tenant_id();
 BEGIN
@@ -369,7 +411,7 @@ $fn$;
 
 CREATE OR REPLACE FUNCTION app.has_role(p_role text) RETURNS boolean
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT app.role() = p_role::app.app_role;
 $fn$;
@@ -386,7 +428,7 @@ COMMENT ON FUNCTION app.has_role(text) IS
 CREATE OR REPLACE FUNCTION app.has_permission(p_permission text) RETURNS boolean
 LANGUAGE sql STABLE
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT EXISTS (
     SELECT 1 FROM app.role_permissions rp
@@ -400,7 +442,7 @@ $fn$;
 CREATE OR REPLACE FUNCTION app.my_team_user_ids() RETURNS uuid[]
 LANGUAGE sql STABLE
 SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT COALESCE(array_agg(DISTINCT peer.user_id), ARRAY[]::uuid[])
   FROM public.team_members peer
@@ -415,7 +457,7 @@ $fn$;
 
 CREATE OR REPLACE FUNCTION app.can_see_owner(p_owner uuid) RETURNS boolean
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   -- ⚠ CORRECTION to doc 02 §4.1, found by executing it. The doc writes
   --     p_owner = any ((select app.my_team_user_ids()))
@@ -439,7 +481,7 @@ $fn$;
 CREATE OR REPLACE FUNCTION app.current_actor()
 RETURNS TABLE (actor_id text, actor_kind text, role text)
 LANGUAGE sql STABLE
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SET search_path = ''
 AS $fn$
   SELECT
     CASE WHEN app.is_agent() THEN app.agent_id() ELSE (SELECT auth.uid())::text END,
@@ -454,10 +496,43 @@ $fn$;
 -- the single body. The hook below is one caller; the agent-token minter (an
 -- Edge Function, outside this migration set) is the other.
 
+-- ⚠ SECURITY INVOKER, NOT DEFINER, AND THAT IS THE POINT. Changed 2026-09-13
+-- under the lead's ruling, together with its only caller below.
+--
+-- Doc 02 §4.1 left this open and said so: the hook was SECURITY DEFINER *and*
+-- 002 granted supabase_auth_admin SELECT on the two tables *and* created
+-- supabase_auth_admin policies for them — "which means one of the two is dead
+-- code and nobody knows which". Under DEFINER the body runs as the function's
+-- OWNER, so the grants and the policies are inert; under INVOKER it runs as
+-- supabase_auth_admin, which is GoTrue's own role, and they are load-bearing.
+--
+-- The failure mode INVOKER removes is not hypothetical. public.memberships is
+-- FORCE ROW LEVEL SECURITY (§9 below). FORCE strips the owner's exemption, so a
+-- DEFINER body owned by a role without BYPASSRLS matches no policy on that table
+-- — every policy there is written TO authenticated or TO supabase_auth_admin —
+-- reads zero rows, and returns the tenant_id-NULL claim set below. That is not a
+-- visible error. It is every user signing in successfully and then seeing an
+-- empty product.
+--
+-- MEASURED, on PostgreSQL 17.11, because this cluster's `postgres` is a
+-- superuser with BYPASSRLS and therefore cannot answer the hosted question by
+-- being asked. The probe reassigns a table and its DEFINER reader to a role
+-- created NOSUPERUSER NOBYPASSRLS — the hosted worst case — and measures the
+-- mechanism:
+--     A  RLS off                       -> true
+--     B  RLS enabled, not forced       -> true   (owner keeps its exemption)
+--     C  RLS FORCED, no policy         -> FALSE  (the silent failure)
+--     D  RLS FORCED, one SELECT policy -> true
+-- Supabase's own RLS guide states that a function created by `postgres` "will
+-- have bypassrls privileges", which implies C never fires on the platform. That
+-- is an inference from prose about a role attribute nobody here can read, and
+-- §4.1 already says doc-reading cannot settle it. So the pack is built to be
+-- correct EITHER WAY: INVOKER here, and an explicit owner-admitting policy on
+-- every table a DEFINER function must read. Then the attribute does not matter.
 CREATE OR REPLACE FUNCTION app.principal_claims(p_user_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
-SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SECURITY INVOKER
+SET search_path = ''
 AS $fn$
 DECLARE m record;
 BEGIN
@@ -494,10 +569,14 @@ BEGIN
 END;
 $fn$;
 
+-- SECURITY INVOKER for the reason given on app.principal_claims above. The two
+-- must change together: the hook is a two-line wrapper, so leaving
+-- principal_claims as DEFINER would move the body back to the owner's context
+-- and restore the exact failure INVOKER was chosen to remove.
 CREATE OR REPLACE FUNCTION app.custom_access_token_hook(event jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE
-SECURITY DEFINER
-SET search_path TO 'pg_catalog', 'public', 'extensions', 'pg_temp'
+SECURITY INVOKER
+SET search_path = ''
 AS $fn$
 DECLARE
   v_claims jsonb := COALESCE(event -> 'claims', '{}'::jsonb);
@@ -510,10 +589,11 @@ $fn$;
 COMMENT ON FUNCTION app.custom_access_token_hook(jsonb) IS
   'GoTrue custom access token hook. Enable with '
   'auth.hook.custom_access_token.enabled = true and '
-  'uri = "pg-functions://postgres/app/custom_access_token_hook". Runs as '
-  'supabase_auth_admin, which is NOT BYPASSRLS - it needs both the SELECT grants '
-  'and the two policies created below, or every token issues with tenant_id null '
-  'and nobody can see anything.';
+  'uri = "pg-functions://postgres/app/custom_access_token_hook". SECURITY INVOKER, '
+  'so it genuinely runs as supabase_auth_admin, which is NOT BYPASSRLS: the SELECT '
+  'grants and the two supabase_auth_admin policies below are what make it work, '
+  'not decoration beside a DEFINER that ignored them. Remove either and every '
+  'token issues with tenant_id null and nobody can see anything.';
 
 -- ─── 8 · Function grants ────────────────────────────────────────────────────
 --
@@ -570,6 +650,16 @@ DO $gotrue$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'supabase_auth_admin') THEN
     GRANT USAGE ON SCHEMA app TO supabase_auth_admin;
+    -- ⚠ LOAD-BEARING SINCE THE HOOK BECAME SECURITY INVOKER, and it was NOT
+    -- needed before, which is why it was missing. 001 revokes the Postgres
+    -- default `GRANT USAGE ON SCHEMA public TO PUBLIC` and grants USAGE back to
+    -- exactly anon, authenticated and service_role. supabase_auth_admin was not
+    -- on that list. Under SECURITY DEFINER the hook ran as its owner and never
+    -- noticed; under INVOKER it runs as supabase_auth_admin and dies on
+    -- "permission denied for schema public" before it reads a single row.
+    -- Found by test_002 T9, which had been passing vacuously until the mode
+    -- changed and only then tested what its name claims.
+    GRANT USAGE ON SCHEMA public TO supabase_auth_admin;
     GRANT EXECUTE ON FUNCTION app.custom_access_token_hook(jsonb) TO supabase_auth_admin;
     GRANT EXECUTE ON FUNCTION app.principal_claims(uuid)          TO supabase_auth_admin;
     GRANT SELECT ON public.memberships, public.tenants            TO supabase_auth_admin;
