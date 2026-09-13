@@ -273,6 +273,26 @@ describe("M13-S05 · collections queue", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps three bands, so the one escalated row is findable", async () => {
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+    await userEvent.click(screen.getByRole("tab", { name: /^All/ }));
+
+    const table = await screen.findByRole("table", { name: "Overdue receivables" });
+
+    /* The fixture ladder: reminders 1 and 2 are ACT_WITH_APPROVAL, reminder 3
+       at day 45 is the first OBSERVE, and the day-75 trading hold needs the MD.
+       So the column reads in three bands and not one. */
+    expect(within(table).getByText("78 days").className).toContain("danger");
+    expect(within(table).getByText("48 days").className).toContain("warning");
+    /* Late, but the agent is still working it with approval. Colouring this the
+       same as the 48-day row flattens the column and hides the escalation. */
+    const inHand = within(table).getByText("34 days").className;
+    expect(inHand).not.toContain("danger");
+    expect(inHand).not.toContain("warning");
+  });
+
   it("does not invent an urgency while the ladder is still loading or has failed", async () => {
     /* Neutral, not a tone derived from the day count. `registers.ts` records
        Organisation360Page deriving urgency from a day count and getting it

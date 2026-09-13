@@ -114,11 +114,20 @@ function rungsFor(rules: CollectionRule[], stage: string | undefined): LadderRun
  * Change the ladder to chase at 20 and 45 days and the chips went on answering
  * for 30 and 60.
  *
- * So the rungs grade it. Past a rung that needs a named role's approval — the
- * trading hold at day 75 is the one the fixture draws — is DANGER, because the
- * ladder itself says a human with authority now owns the account. Past any
- * other rung is WARNING. Short of every rung is NEUTRAL: the invoice is late
- * but the agent's cadence has not escalated it yet.
+ * So the rungs grade it, on the two signals a rung actually carries:
+ *
+ *  - past a rung with `requiresApprovalFromRole` is DANGER. The ladder itself
+ *    says a named role now has to authorise what happens next; the fixture's
+ *    day-75 trading hold needs the MD.
+ *  - past a rung whose `autonomy` is OBSERVE is WARNING. That is the point the
+ *    agent stops acting and hands the account to a human, which is the real
+ *    escalation and is why it reads differently from the rungs below it.
+ *  - anything else is NEUTRAL, including rungs the agent is still working. An
+ *    invoice on reminder 2 with ACT_WITH_APPROVAL is late and in hand, and
+ *    colouring it the same as one nobody is acting on flattens the column to a
+ *    single band — which is what a first pass at this did, and the capture
+ *    showed four amber chips where the reader needs to find the one row that
+ *    has escalated.
  *
  * Neutral is also the answer while the rules are still loading or have failed,
  * which is deliberate. A tone invented from a day count during a failed read is
@@ -127,8 +136,9 @@ function rungsFor(rules: CollectionRule[], stage: string | undefined): LadderRun
  */
 function overdueTone(daysOverdue: number, rules: CollectionRule[]): StatusTone {
   const passed = rules.filter((rule) => daysOverdue >= rule.afterDays);
-  if (passed.length === 0) return "neutral";
-  return passed.some((rule) => rule.requiresApprovalFromRole) ? "danger" : "warning";
+  if (passed.some((rule) => rule.requiresApprovalFromRole)) return "danger";
+  if (passed.some((rule) => rule.autonomy === "OBSERVE")) return "warning";
+  return "neutral";
 }
 
 export function CollectionsQueueScreen() {
