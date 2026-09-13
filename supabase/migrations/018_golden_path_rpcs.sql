@@ -8,10 +8,18 @@
 -- failure (`PGRST202` / `42883`) and the product runs on fixtures. This is the
 -- pack that makes the golden path real.
 --
--- CHANGE. 23 `SECURITY DEFINER` functions in `core`, plus one
--- `security_invoker` view, plus seven internal `app._*` helpers. No existing
--- table, function, view, policy or grant is modified. Nothing in 001–013 is
--- touched. The three gate wrappers call 011 and add nothing.
+-- CHANGE, COUNTED. 30 `SECURITY DEFINER` RPCs in `core`, three
+-- `security_invoker` views, fourteen internal `app._*` helpers, three seed
+-- functions (`seed_pipelines`, `seed_pipelines_all`, `seed_pipelines_on_tenant`),
+-- one trigger on `public.tenants` and one `app.event_subscriptions` routing
+-- row. 51 objects. (This paragraph said "23 / one / seven" while the file
+-- shipped 30 / 3 / 11; the numbers are now derived from the `$verify$` block's
+-- own lists rather than maintained beside them.)
+--
+-- No existing table, function, view, policy or grant is modified. Nothing in
+-- 001–017 is touched. The three gate wrappers call 011 and add nothing.
+-- ⚠ Existing DATA is modified: §10e seeds pipelines and steps across every
+-- tenant, and the rollback keeps those rows deliberately.
 --
 -- WHAT THIS PACK IS NOT. It does not add RLS policies — those are 014's, and
 -- §"THE 014 ORDERING HAZARD" below is the load-bearing note about that. It
@@ -173,9 +181,28 @@
 -- `app.perform_action`. No branch is bolted into the gate. Pipeline stage
 -- names and order render from `core.pipelines` / `core.pipeline_steps` in both
 -- `core.navigation` and `core.get_pipeline_config`; no stage list is inlined.
+--
+-- ── WHY THIS FILE IS WRAPPED IN ONE TRANSACTION ────────────────────────────
+--
+-- 014, 015, 016 and 017 all wrap, forward and rollback. 018 did not, and it is
+-- the file where it matters most, because 018 is NOT PURE DDL: §10e writes
+-- `core.pipelines` and `core.pipeline_steps` rows across EVERY TENANT. Without
+-- a wrapper a failure two thirds of the way down leaves some helpers created,
+-- some RPCs created, some not, and some tenants seeded — a state no rollback
+-- file describes, because the rollback describes the finished migration.
+--
+-- It also disarms the rollback's own guard. That file raises "this rollback
+-- DESTROYED objects it does not own" — but with no transaction, the drops it is
+-- complaining about have already committed one by one. A guard whose failure
+-- cannot undo what it detects is a report, not a gate.
+--
+-- Nothing here needs to run outside a transaction: there is no
+-- `CREATE INDEX CONCURRENTLY` and no `ALTER TYPE … ADD VALUE` in this file.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-SET client_min_messages = warning;
+BEGIN;
+
+SET LOCAL client_min_messages = warning;
 
 -- ═══ 1 · Internal projection helpers ═══════════════════════════════════════
 --
@@ -2054,7 +2081,17 @@ BEGIN
     IF v_key.request_hash IS DISTINCT FROM v_hash THEN
       RAISE EXCEPTION 'idempotency key reused with a different body'
         USING ERRCODE = 'TRNOS',
-              DETAIL = pg_catalog.jsonb_build_object('code','IDEMPOTENT_REPLAY')::text;
+              -- `reason` SEPARATES THE TWO MEANINGS THIS CODE CARRIED. This one
+              -- is PERMANENT: the key is spent on a different body and retrying
+              -- will never succeed. The IN_FLIGHT case below is TRANSIENT and
+              -- the client should retry shortly. Both raised
+              -- `{'code':'IDEMPOTENT_REPLAY'}` and nothing told them apart, so a
+              -- client could only guess between "your request conflicts" and
+              -- "wait a moment".
+              DETAIL = pg_catalog.jsonb_build_object(
+                         'code','IDEMPOTENT_REPLAY',
+                         'reason','KEY_REUSED_WITH_DIFFERENT_BODY',
+                         'retryable', false)::text;
     END IF;
     v_replayed := NULLIF(v_key.response ->> 'id','')::uuid;
     IF v_replayed IS NOT NULL THEN
@@ -2065,7 +2102,11 @@ BEGIN
     -- not finished. Refusing is correct; inventing a second proposal is not.
     RAISE EXCEPTION 'a request with this idempotency key is still in flight'
       USING ERRCODE = 'TRNOS',
-            DETAIL = pg_catalog.jsonb_build_object('code','IDEMPOTENT_REPLAY')::text;
+            -- TRANSIENT, and now distinguishable from the permanent case above.
+            DETAIL = pg_catalog.jsonb_build_object(
+                       'code','IDEMPOTENT_REPLAY',
+                       'reason','IN_FLIGHT',
+                       'retryable', true)::text;
   END IF;
 
   SELECT opportunity.* INTO v_opportunity FROM core.opportunities AS opportunity
@@ -2265,7 +2306,7 @@ DECLARE
   v_actor    record;
   v_row      core.quotations%ROWTYPE;
   v_line     jsonb;
-  v_n        smallint := 0;
+  v_n        smallint := 0;   -- capped below; see LINE_CAP
   v_qty      numeric;
   v_unit     bigint;
   v_claimed  bigint;
@@ -2312,7 +2353,11 @@ BEGIN
       IF v_key.request_hash IS DISTINCT FROM v_hash THEN
         RAISE EXCEPTION 'idempotency key reused with a different body'
           USING ERRCODE = 'TRNOS',
-                DETAIL = pg_catalog.jsonb_build_object('code','IDEMPOTENT_REPLAY')::text;
+                -- PERMANENT; see the note in core.create_proposal.
+                DETAIL = pg_catalog.jsonb_build_object(
+                           'code','IDEMPOTENT_REPLAY',
+                           'reason','KEY_REUSED_WITH_DIFFERENT_BODY',
+                           'retryable', false)::text;
       END IF;
       -- A PUT is idempotent by definition, so a same-body replay returns the
       -- current record rather than rewriting identical lines.
@@ -2337,7 +2382,20 @@ BEGIN
     FOR v_line IN SELECT element.value
                     FROM pg_catalog.jsonb_array_elements(p_body -> 'lines') AS element(value)
     LOOP
-      v_n := v_n + 1;
+      -- LINE_CAP. `v_n` is `smallint`, so a body with more than 32,767 lines used
+    -- to raise a raw numeric overflow — a 500 rather than a refusal. The cap is
+    -- well below that and is a product statement: a quotation is a document
+    -- somebody reads.
+    IF v_n >= 500 THEN
+      RAISE EXCEPTION 'too many quotation lines'
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                         'code','VALIDATION_FAILED',
+                         'fields', pg_catalog.jsonb_build_array(
+                           pg_catalog.jsonb_build_object(
+                             'field','lines','reason','TOO_MANY_LINES','max',500)))::text;
+    END IF;
+    v_n := v_n + 1;
       IF pg_catalog.jsonb_typeof(v_line -> 'qty') <> 'number' THEN
         RAISE EXCEPTION 'line qty must be a number'
           USING ERRCODE = 'TRNOS',
@@ -2435,6 +2493,50 @@ BEGIN
   -- The resolver RAISES `no_data_found` rather than returning nothing. That is
   -- deliberate on 017's side and is translated here rather than swallowed: a
   -- quotation that cannot be taxed is a refusal, not a zero.
+  -- ⚠ H4 · THIS BLOCK USED TO RUN ON EVERY CALL, INCLUDING AN EMPTY BODY.
+  -- `p_body` is coalesced to `'{}'` above, so `core.put_quotation(id, '{}')` —
+  -- no lines, no price, nothing — performed a tax rewrite and nothing else. Two
+  -- consequences, one latent and one immediate:
+  --
+  --   * The category is hardcoded `CORPORATE_TRAINING`, so any quotation ever
+  --     set to `TRAINING_EXEMPT` by another path was silently reset to
+  --     `STANDARD_RATED` at 8% on the next save — and `sst_sen` and
+  --     `gross_price_sen` are GENERATED from `sell_price_sen * sst_rate`, so
+  --     the CUSTOMER-FACING GROSS changed. Latent only because no other writer
+  --     sets the exempt policy today.
+  --   * A no-op PUT was a write: it bumped `updated_at` and fired 007's
+  --     triggers on a request that changed nothing.
+  --
+  -- It now runs only when the tax treatment is ABSENT or the PRICE MOVED —
+  -- and only when THE TABLE DOES NOT ALREADY OWN THE RULE.
+  --
+  -- ⚠ THE OTHER HALF OF DOC 09 §14.8 HAS SINCE BEEN BUILT, BY THE 017 LANE.
+  -- §14.8 offered a disjunction: "a trigger on `core.quotations`, or the same
+  -- resolution in every writer." `origin/cloud/migrations` now carries
+  -- `core.resolve_quotation_sst()` on `trg_quotations_resolve_sst`, BEFORE
+  -- INSERT OR UPDATE, which fills all three columns when the caller supplies
+  -- neither and keeps the caller's position when it supplies both. That is the
+  -- better half, and where it exists this RPC must not also write — two writers
+  -- for one rule is the divergence the project's consolidation rule forbids,
+  -- and the loser would be the exemption, which only the trigger can preserve.
+  --
+  -- The check is on the TRIGGER'S EXISTENCE rather than on a version number,
+  -- because 018 has to apply correctly against both 017s that exist while this
+  -- branch is unrebased: the one on `lane/rpc-018`'s base, where `sst_rate`
+  -- defaults to 0 and nothing fills it, and the one on `cloud/migrations`,
+  -- where the trigger does. Against the first this block is the only thing
+  -- standing between a quotation and a zero rate; against the second it is a
+  -- second writer, and it stands down.
+  SELECT quotation.sell_price_sen INTO v_sell FROM core.quotations AS quotation
+   WHERE quotation.tenant_id = v_tenant AND quotation.id = v_row.id;
+
+  IF NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_trigger AS trg
+        WHERE trg.tgrelid = 'core.quotations'::regclass
+          AND trg.tgname  = 'trg_quotations_resolve_sst'
+          AND NOT trg.tgisinternal)
+     AND (v_row.sst_policy_id IS NULL
+          OR v_row.sell_price_sen IS DISTINCT FROM v_sell) THEN
   BEGIN
     SELECT resolved.* INTO STRICT v_tax
       FROM app.resolve_tax_policy(v_tenant, 'CORPORATE_TRAINING') AS resolved;
@@ -2460,6 +2562,7 @@ BEGIN
                   || ' (' || v_tax.scope || ')'
            ELSE NULL END
    WHERE quotation.tenant_id = v_tenant AND quotation.id = v_row.id;
+  END IF;
 
   -- ── TRANSLATING 007'S TWO ASSERTIONS INTO CONTRACT ERROR CODES ──────────
   --
@@ -3988,7 +4091,17 @@ BEGIN
     IF v_key.request_hash IS DISTINCT FROM v_hash THEN
       RAISE EXCEPTION 'idempotency key reused with a different body'
         USING ERRCODE = 'TRNOS',
-              DETAIL = pg_catalog.jsonb_build_object('code','IDEMPOTENT_REPLAY')::text;
+              -- `reason` SEPARATES THE TWO MEANINGS THIS CODE CARRIED. This one
+              -- is PERMANENT: the key is spent on a different body and retrying
+              -- will never succeed. The IN_FLIGHT case below is TRANSIENT and
+              -- the client should retry shortly. Both raised
+              -- `{'code':'IDEMPOTENT_REPLAY'}` and nothing told them apart, so a
+              -- client could only guess between "your request conflicts" and
+              -- "wait a moment".
+              DETAIL = pg_catalog.jsonb_build_object(
+                         'code','IDEMPOTENT_REPLAY',
+                         'reason','KEY_REUSED_WITH_DIFFERENT_BODY',
+                         'retryable', false)::text;
     END IF;
     -- Same key, same body: the section was already added. Return the proposal
     -- as it stands rather than adding a second identical section, which is the
@@ -4844,7 +4957,9 @@ REVOKE ALL ON FUNCTION app.seed_pipelines_on_tenant() FROM PUBLIC, anon, authent
 -- written; an assertion about `app.seed_pipelines_all()` can, and T35 writes
 -- it. Raised to NOTICE here rather than at the verify block, because the
 -- backfill's own count is the thing an operator needs to see while applying.
-SET client_min_messages = notice;
+-- SET LOCAL, not SET: a plain SET here leaked `notice` to whatever ran next on
+-- a pooled connection. Scoped to this transaction (L1).
+SET LOCAL client_min_messages = notice;
 
 CREATE OR REPLACE FUNCTION app.seed_pipelines_all()
 RETURNS integer
@@ -4943,6 +5058,13 @@ BEGIN
       FROM pg_catalog.pg_proc AS p
       JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
      WHERE n.nspname = 'core'
+       -- ⚠ MATCHES ON NAME, NOT SIGNATURE, and that is a deliberate,
+       -- bounded risk rather than an oversight. Every name below is 018's and
+       -- `$verify$` V1 refuses if any of them has more than one definition, so
+       -- a future same-named overload added for another purpose fails the
+       -- verify block in the SAME migration that would have been granted here.
+       -- The alternative — 30 hand-written signatures — is 30 more places for
+       -- an argument list to drift from the CREATE above it.
        AND p.proname IN (
          'me','navigation','badge_counts',
          'list_enquiries','get_enquiry','patch_enquiry_extraction',
@@ -4980,7 +5102,9 @@ COMMENT ON VIEW core.v_organisation_relations IS
 -- Raised back to NOTICE so the closing line of this block is VISIBLE to whoever
 -- runs the migration. A verify block whose success message nobody sees is a
 -- verify block nobody knows ran.
-SET client_min_messages = notice;
+-- SET LOCAL, not SET: a plain SET here leaked `notice` to whatever ran next on
+-- a pooled connection. Scoped to this transaction (L1).
+SET LOCAL client_min_messages = notice;
 
 DO $verify$
 DECLARE
@@ -5333,3 +5457,9 @@ BEGIN
                'grant, envelope, money, pipeline and spine pins PASS.';
 END
 $verify$;
+
+-- PostgREST caches the schema; without this the 30 new functions are 404 until
+-- the cache expires. Inside the transaction, like 014-017's.
+NOTIFY pgrst, 'reload schema';
+
+COMMIT;
