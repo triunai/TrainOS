@@ -17,6 +17,7 @@ export {
   FOCUS_RING,
   MONO_LABEL,
   PEAK_BG,
+  SPLIT_HEADER_HEIGHT,
   WARNING_ACCENT_BG,
 } from "./tokens";
 export {
@@ -141,6 +142,7 @@ export {
   PACKET_TONE,
   PROPOSAL_TONE,
   PROVIDER_KEY_TONE,
+  QUOTATION_TONE,
   RULE_TONE,
   RUN_TONE,
   SYNC_TONE,
@@ -167,6 +169,11 @@ export { EscalationLadder, type EscalationLadderProps, type LadderRung } from ".
 export { ApprovalBanner, type ApprovalBannerProps } from "./ApprovalBanner";
 export { ActionOutcome, type ActionOutcomeProps } from "./ActionOutcome";
 export { ExceptionBanner, type ExceptionBannerProps } from "./ExceptionBanner";
+export {
+  PartialDataBanner,
+  type PartialDataBannerProps,
+  type PartialRead,
+} from "./PartialDataBanner";
 export { RefusalBanner, type RefusalBannerProps } from "./RefusalBanner";
 export { DiffBlock, type DiffBlockProps } from "./DiffBlock";
 export {
@@ -221,11 +228,39 @@ export {
 export {
   FilterBar,
   DensityToggle,
+  FilterSearch,
+  FilterSelect,
   type Density,
   type DensityToggleProps,
   type FilterBarProps,
+  type FilterSearchProps,
+  type FilterSelectOption,
+  type FilterSelectProps,
 } from "./FilterBar";
 export { PillTabGroup, type PillTabGroupProps } from "./PillTabGroup";
+
+/* ---- Calendar (added 13 Sep 2026; no artboard draws one) ------------ */
+export {
+  CalendarGrid,
+  CalendarList,
+  type CalendarEntry,
+  type CalendarGridProps,
+  type CalendarListProps,
+} from "./CalendarGrid";
+export {
+  WEEKDAY_LABELS,
+  addDays,
+  calendarDays,
+  dayKeyOf,
+  dayOfMonth,
+  daysCovered,
+  isSameMonth,
+  periodLabel,
+  shiftPeriod,
+  startOfMonth,
+  startOfWeek,
+  type CalendarView,
+} from "./calendar";
 
 /* ---- RecordHeader & MetricStrip (Kit §09) --------------------------- */
 export {
