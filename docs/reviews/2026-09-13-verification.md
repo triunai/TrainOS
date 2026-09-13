@@ -255,6 +255,18 @@ Fixing the two sidebar tokens in the dark map closes 34 of the 40 routes.
 `shell-fix` owns `Sidebar.tsx`, `index.css` and `tokens.css`, so this is routed
 rather than applied here.
 
+> **Correction (tokens-fix, same day).** The first row above is a
+> misattribution, and the dark token map is not what fails. Resolving each pair
+> out of `tokens.css` and measuring it: `--ink-secondary` on the dark rail is
+> **8.33:1**, the `--ink-muted` caption **5.67:1**, the idle dot **4.55:1** on
+> the tint — all clear. The one failing pair is `PARENT_LIT`, which puts
+> `text-primary` on `bg-ai-tint-2` at **4.05:1** where the kit's five other
+> consumers of that tint use `text-primary-hover` at **7.48:1**. Fixed as a
+> class name in `Sidebar.tsx:104`; no dark token value changed. Two further
+> gaps the sweep did not separate are rows 1b and 1c of §7. Every pair is now
+> asserted in `apps/web/src/styles/__tests__/tokens.contrast.test.ts`, which
+> parses the real stylesheet rather than a copy of its values.
+
 ## 5 · Artboard comparison — the 26 screens with a twin
 
 Anatomy deviations only; fixture-value differences ignored. Full per-screen
@@ -363,7 +375,9 @@ Ranked by readers affected × rule severity. "Lane" names who owns the file.
 
 | # | Fix | Files | Rule | Lane |
 |---|---|---|---|---|
-| 1 | Dark-theme contrast on the sidebar idle label and the AI tint panel; closes 34 of 40 a11y routes | `Sidebar.tsx:83–84`, `tokens.css` dark map | non-text 3:1 / text 4.5:1 | shell-fix |
+| 1 | ~~Dark-theme contrast on the sidebar idle label and the AI tint panel~~ **DONE, and it was not the token map.** Measured per pair: the dark idle label is 8.33:1, the caption 5.67:1 and the dots 4.55:1, so `PARENT_IDLE` was misattributed. The single failure was `PARENT_LIT` pairing `bg-ai-tint-2` with `text-primary` (4.05:1 dark) where PillTabGroup, FilterBar, CommandPalette, LifecycleStepper and RelationPicker all pair that tint with `text-primary-hover` (7.48:1). One class name, no dark token changed | `Sidebar.tsx:104` | text 4.5:1 | tokens-fix |
+| 1b | **NEW, light mode.** `--ai-tint-2` is also the selected DATA ROW, and `--ink-muted` on it measures **4.36:1** — under AA, and unrelated to the dark map. Lightening the tint is not the fix: it would land 0.9 L\* from `--ai-tint` and the two AI surfaces would collapse into one. A selected row should raise its muted cells to `--ink-secondary` (6.6:1) | `DataTable.tsx:338` | text 4.5:1 | kit |
+| 1c | `--on-primary` on a solid `bg-primary` button measures **3.24:1** in dark. `--primary` is asked to be a fill carrying near-white text AND text sitting on tints; clearing the first needs it darker, the second lighter, and no single value does both. Needs splitting into a fill blue and a text blue | `tokens.css` dark map, `Button`, every `text-primary` call site | text 4.5:1 | kit |
 | 2 | Mono down 70–80% and kill the tracked uppercase eyebrow, at kit level | kit section-caption component, `tokens.css` `--font-ui`/`--font-code` | §1, §9 | kit |
 | 3 | §16 on the enquiry inbox row: channel loses its capsule, money becomes a right column in tabular numerals, `AIChip` only below threshold | `EnquiryInboxPage.tsx:468, :485–490, :493–497` | §16 | screens |
 | 4 | `ListToolbar` on the three M03 screens and the agent registry | `EnquiryInboxPage.tsx:185/:203`, `FollowUpQueuePage.tsx:183/:206`, `AgentRegistryScreen.tsx:338` | §10b | screens |

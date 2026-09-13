@@ -145,6 +145,12 @@ describe("sidebar text clears AA on both of its backdrops", () => {
      there instead, which is the gap recorded at the bottom of this file.) */
   it.each(themes)("%s: --primary-hover on the lit parent's tint", (theme) => {
     expect(contrast(theme, "primary-hover", "ai-tint-2")).toBeGreaterThanOrEqual(AA_TEXT);
+    /* And it is the pairing with the headroom, which is why the rail follows
+       the kit here rather than reaching for `--primary`: on the dark map that
+       one measures 4.05:1 against this same tint. */
+    expect(contrast(theme, "primary-hover", "ai-tint-2")).toBeGreaterThan(
+      contrast(theme, "primary", "ai-tint-2"),
+    );
   });
 
   it.each(themes)("%s: --ink and --ink-secondary on the lit parent's tint", (theme) => {
@@ -232,18 +238,15 @@ describe("KNOWN GAPS — recorded here so they cannot go quiet", () => {
    * the call sites pair them wrongly.
    */
 
-  /* 1 — `Sidebar.tsx` `PARENT_LIT` is `bg-ai-tint-2 text-primary`, where every
-     other consumer of that tint uses `text-primary-hover`. On the dark map the
-     outlier measures 4.05:1; the kit's own pairing measures 7.48:1. This is the
-     dark-theme contrast failure the route sweep attributed to the rail, and the
-     fix is one token name in the component, not a value in here. */
-  it("the dark accent as text on its own tint is still below AA", () => {
-    expect(contrast("dark", "primary", "ai-tint-2")).toBeLessThan(AA_TEXT);
-    /* ...and the token the kit already standardised on is not the problem. */
-    expect(contrast("dark", "primary-hover", "ai-tint-2")).toBeGreaterThanOrEqual(AA_TEXT);
-  });
+  /* 1 — CLOSED. `Sidebar.tsx` `PARENT_LIT` read `text-primary` on this tint
+     where the other five consumers read `text-primary-hover`, and on the dark
+     map that outlier measured 4.05:1. It now reads `text-primary-hover` like
+     the rest, so the pair the rail actually composes is asserted as PASSING in
+     "sidebar text clears AA on both of its backdrops" above. Nothing is
+     asserted about `--primary` on this tint any more: the value is fine, it is
+     simply not the token that belongs here.
 
-  /* 2 — the solid primary button in dark. `--primary` is asked to be a fill
+     2 — the solid primary button in dark. `--primary` is asked to be a fill
      that carries near-white text AND text that sits on tints; clearing the
      first needs it darker, clearing the second needs it lighter, and no single
      value does both. Splitting it into a fill blue and a text blue is the fix,

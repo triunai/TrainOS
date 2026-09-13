@@ -63,7 +63,8 @@ import { useSidebarState } from "./useSidebarState";
  * geometry that is only in CSS drifts on the next person to touch the file:
  *
  *   x12 → x228   parent row, 36px, radius 8, `--ai-tint-2` when it holds the
- *                active child; the label and the glyph go primary with it
+ *                active child; the label and the glyph take `--primary-hover`
+ *                with it, which is the kit's pairing for text on that tint
  *   x20 → x38    icon box, 18px glyph, centre x29
  *   x29          the tree line, 1px `--connector`, from the parent row's
  *                bottom to the CENTRE of the last child's dot, continuous
@@ -100,8 +101,17 @@ const CAPTION_KEY: Readonly<Record<string, MessageKey>> = {
     puts the label at x48. */
 const PARENT_ROW =
   "flex h-9 w-full items-center gap-2.5 rounded-control px-2 text-left text-[13px] transition-colors";
-/** The parent that holds the active child — or a leaf parent that IS it. */
-const PARENT_LIT = "bg-ai-tint-2 font-medium text-primary";
+/** The parent that holds the active child — or a leaf parent that IS it.
+ *
+ * `text-primary-hover`, not `text-primary`. Every other component that puts
+ * text on this tint — PillTabGroup, FilterBar, CommandPalette,
+ * LifecycleStepper, RelationPicker — already pairs it with `--primary-hover`,
+ * and this row was the one call site reading `--primary` there instead. On the
+ * dark map that outlier measured 4.05:1 and was the dark-theme contrast
+ * failure the route sweep blamed on the rail's idle label; the kit's own
+ * pairing measures 7.48:1 dark and 6.26:1 light. The pair is asserted in
+ * `styles/__tests__/tokens.contrast.test.ts`. */
+const PARENT_LIT = "bg-ai-tint-2 font-medium text-primary-hover";
 const PARENT_IDLE = "text-ink-secondary hover:bg-surface-hover";
 
 /** x42 → x228 — the `li` carries the 30px offset so the row itself can stay

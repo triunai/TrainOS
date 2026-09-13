@@ -352,7 +352,12 @@ describe("Sidebar", () => {
       /* The pack's tinted row samples #EBF1FE, which is --ai-tint-2 exactly —
          the token whose own note reads "selected row, active nav". */
       expect(training.className).toMatch(/\bbg-ai-tint-2\b/);
-      expect(training.className).toMatch(/\btext-primary\b/);
+      /* `text-primary-hover`, and matched to the END of the class rather than
+         with a trailing `\b`: `/\btext-primary\b/` matches BOTH names, because
+         the hyphen it stops at is a word boundary. That is how the row sat on
+         `text-primary` at 4.05:1 on the dark map with a green test over it.
+         Every other consumer of this tint pairs it with `--primary-hover`. */
+      expect(training.className).toMatch(/\btext-primary-hover(?:\s|$)/);
       expect(training).toHaveAttribute("data-lit", "true");
 
       const others = screen
