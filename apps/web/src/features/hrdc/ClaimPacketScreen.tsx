@@ -99,6 +99,9 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
   return (
     <div className="flex flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="claim"
         title={`Claim packet · ${data.engagementRef}`}
         recordRef={data.employerCode}
         meta={[
