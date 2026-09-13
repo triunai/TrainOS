@@ -157,6 +157,8 @@ export function messageForCode(code: ErrorCode): string {
       return "That agent is paused.";
     case "SLA_BREACHED":
       return "This approval is past its SLA.";
+    case "DIFF_CHANGED":
+      return "The rendered diff is no longer current. Refresh and decide again.";
     default:
       return "That key was already used with a different request.";
   }
@@ -620,6 +622,10 @@ export class SupabaseRpcClient implements TrainOsClient {
       p_approval_id: id,
       p_decision: input.decision,
       p_note: input.note,
+      /* 011:2598,2781-2787 — the optimistic-concurrency guard this call must
+         not silently defeat. See finding #6,
+         docs/reviews/2026-09-13-codex-retrofit-014-017.md. */
+      p_expected_diff_hash: input.diffHash,
       p_idempotency_key: input.idempotencyKey,
     });
   }

@@ -208,6 +208,7 @@ const APPROVAL: ApprovalRequest = {
   slaRemainingMinutes: 96,
   slaBreached: false,
   status: "PENDING",
+  diffHash: "diff_0771_v1",
   bulkApprovable: false,
   urgencyGroup: "TODAY",
 };

@@ -39,7 +39,11 @@ const FUNCTIONS: RpcHandlers = {
   decide_approval: (args, oracle) =>
     oracle.decideApproval(
       String(args.p_approval_id),
-      { decision: args.p_decision, note: args.p_note } as ApprovalDecideRequest,
+      {
+        decision: args.p_decision,
+        note: args.p_note,
+        diffHash: args.p_expected_diff_hash,
+      } as ApprovalDecideRequest,
       { idempotencyKey: String(args.p_idempotency_key) },
     ),
   bulk_decide_approvals: (args, oracle) =>
@@ -58,7 +62,17 @@ const VIEWS: ViewHandlers = {
   v_saved_views: async (oracle) => (await oracle.listViews()).data,
 };
 
-const APPROVE: ApprovalDecideRequest = { decision: "APPROVE", note: "Within the revised cap." };
+/**
+ * `diffHash` here must match `APPROVAL_AURORA`'s fixture row
+ * (`packages/fixtures/src/data/approvals.ts`) exactly, or every decide call
+ * in this suite would refuse with `DIFF_CHANGED` before it exercised
+ * anything else.
+ */
+const APPROVE: ApprovalDecideRequest = {
+  decision: "APPROVE",
+  note: "Within the revised cap.",
+  diffHash: "diff_0771_v1",
+};
 
 describe("M02 · the two clients answer the approval screens the same", () => {
   let oracle: Oracle;
@@ -134,6 +148,44 @@ describe("M02 · the two clients answer the approval screens the same", () => {
       return;
     }
     expect(fromRpc).toEqual(fromFixtures);
+  });
+
+  /**
+   * §7 finding #6 (docs/reviews/2026-09-13-codex-retrofit-014-017.md): the
+   * client must send the diff hash it rendered, and BOTH clients must refuse
+   * a decision made against a hash that no longer matches — the fixture
+   * oracle (`FixtureClient.decideApproval`) and `core.decide_approval`'s own
+   * guard (`011:2781-2787`) alike. A hash that fails on only one client is
+   * exactly the silent no-op the finding is about.
+   */
+  it("a stale diff hash refuses identically on both clients, a fresh one does not", async () => {
+    const stale: ApprovalDecideRequest = { ...APPROVE, diffHash: "stale-hash" };
+    const fromFixtures = await fixtures
+      .decideApproval(APPROVAL_AURORA, stale, { idempotencyKey: "approval-decide:stale" })
+      .catch((error: unknown) => error);
+    const fromRpc = await rpc
+      .decideApproval(APPROVAL_AURORA, stale, { idempotencyKey: "approval-decide:stale" })
+      .catch((error: unknown) => error);
+
+    expect(isContractError(fromFixtures)).toBe(true);
+    expect(isContractError(fromRpc)).toBe(true);
+    expect(isContractError(fromRpc) && fromRpc.code).toBe(
+      isContractError(fromFixtures) && fromFixtures.code,
+    );
+    expect(isContractError(fromRpc) && fromRpc.code).toBe("DIFF_CHANGED");
+    expect(isContractError(fromRpc) && fromRpc.details).toEqual(
+      isContractError(fromFixtures) && fromFixtures.details,
+    );
+
+    /* The fresh hash `APPROVE` carries is accepted on both — the negative
+       case above is only meaningful next to a positive one. */
+    const freshFromFixtures = await fixtures.decideApproval(APPROVAL_AURORA, APPROVE, {
+      idempotencyKey: "approval-decide:fresh",
+    });
+    const freshFromRpc = await rpc.decideApproval(APPROVAL_AURORA, APPROVE, {
+      idempotencyKey: "approval-decide:fresh",
+    });
+    expect(freshFromRpc).toEqual(freshFromFixtures);
   });
 
   /**
