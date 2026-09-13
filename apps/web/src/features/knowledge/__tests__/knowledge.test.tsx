@@ -141,6 +141,17 @@ describe("M16-S05 · knowledge sources", () => {
     expect(within(table).queryByText("Circular 04/2026")).toBeNull();
   });
 
+  it("puts the tabs and the filters on ONE row, per §10b", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    const tabs = await screen.findByRole("tablist", { name: "Sources" });
+    const filters = screen.getByRole("group", { name: "Filters" });
+    /* The assertion every migrated list screen shares: both halves resolve to
+       the same ListToolbar, so the tab band and the filter band cannot drift
+       back into two rows with two rules between the heading and the data. */
+    expect(tabs.closest("[data-list-toolbar]")).toBe(filters.closest("[data-list-toolbar]"));
+    expect(tabs.closest("[data-list-toolbar]")).not.toBeNull();
+  });
+
   it("narrows by name and by what a source is read for, on the tab row", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
     await screen.findByRole("table", { name: "Knowledge sources" });
