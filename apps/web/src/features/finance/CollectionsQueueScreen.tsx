@@ -15,24 +15,34 @@ import {
   ContentCard,
   DataTable,
   DateText,
+  DensityToggle,
   describeActionError,
   EmptyState,
   ErrorState,
   EscalationLadder,
   ExceptionBanner,
+  FilterBar,
+  FilterSearch,
+  ListToolbar,
   LoadingState,
   MoneyText,
   PillTabGroup,
   PrimaryButton,
+  RecordHeader,
   SecondaryButton,
   StatusChip,
   WhatsAppCostStrip,
+  formatMoney,
   humanise,
   type Column,
+  type Density,
+  type StatusTone,
+  type FilterChipModel,
   type LadderRung,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
+import { INVOICES_PATH } from "./paths";
 import {
   useCollectionDraft,
   useCollectionRules,
@@ -93,8 +103,48 @@ function rungsFor(rules: CollectionRule[], stage: string | undefined): LadderRun
   }));
 }
 
+/**
+ * How overdue an invoice is, as a chip tone, FROM THE LADDER.
+ *
+ * `Receivable` carries no severity — the contract sends `daysOverdue` and the
+ * stage, and nothing that grades them — so this screen has to decide. It used
+ * to decide with `daysOverdue >= 60 ? danger : >= 30 ? warning : neutral`,
+ * which is two thresholds invented here for a cadence the business configures
+ * in Settings and this screen ALREADY READS through `GET /v1/collections/rules`.
+ * Change the ladder to chase at 20 and 45 days and the chips went on answering
+ * for 30 and 60.
+ *
+ * So the rungs grade it, on the two signals a rung actually carries:
+ *
+ *  - past a rung with `requiresApprovalFromRole` is DANGER. The ladder itself
+ *    says a named role now has to authorise what happens next; the fixture's
+ *    day-75 trading hold needs the MD.
+ *  - past a rung whose `autonomy` is OBSERVE is WARNING. That is the point the
+ *    agent stops acting and hands the account to a human, which is the real
+ *    escalation and is why it reads differently from the rungs below it.
+ *  - anything else is NEUTRAL, including rungs the agent is still working. An
+ *    invoice on reminder 2 with ACT_WITH_APPROVAL is late and in hand, and
+ *    colouring it the same as one nobody is acting on flattens the column to a
+ *    single band — which is what a first pass at this did, and the capture
+ *    showed four amber chips where the reader needs to find the one row that
+ *    has escalated.
+ *
+ * Neutral is also the answer while the rules are still loading or have failed,
+ * which is deliberate. A tone invented from a day count during a failed read is
+ * the `Organisation360Page` defect `registers.ts` records, arriving by a
+ * different door.
+ */
+function overdueTone(daysOverdue: number, rules: CollectionRule[]): StatusTone {
+  const passed = rules.filter((rule) => daysOverdue >= rule.afterDays);
+  if (passed.some((rule) => rule.requiresApprovalFromRole)) return "danger";
+  if (passed.some((rule) => rule.autonomy === "OBSERVE")) return "warning";
+  return "neutral";
+}
+
 export function CollectionsQueueScreen() {
-  useBreadcrumb([{ label: "Finance" }, { label: "Collections" }, { label: "Overdue" }]);
+  /* The crumb is the PATH. "Overdue" was a third crumb naming the default tab,
+     which is a filter this screen owns and not a route anyone can navigate to. */
+  useBreadcrumb([{ label: "Finance" }, { label: "Collections" }]);
 
   const navigate = useNavigate();
   const queue = useCollectionsQueue();
@@ -102,11 +152,17 @@ export function CollectionsQueueScreen() {
   const rules = useCollectionRules();
 
   const [tab, setTab] = useState<TabId>("approval");
+  const [query, setQuery] = useState("");
+  const [density, setDensity] = useState<Density>("comfortable");
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
   const [channel, setChannel] = useState<MessageChannel | null>(null);
   const [outcome, setOutcome] = useState<ActionResponse | undefined>(undefined);
 
   const rows = useMemo(() => queue.data?.data ?? [], [queue.data]);
+
+  /* The configured cadence, read once. Empty while the rules load or fail,
+     which `overdueTone` reads as "nothing has escalated yet". */
+  const ladder = useMemo(() => rules.data?.data ?? [], [rules.data]);
 
   const selected = useMemo(() => {
     const explicit = rows.find((row) => row.invoiceRef === selectedRef);
@@ -118,13 +174,29 @@ export function CollectionsQueueScreen() {
   const draft = useCollectionDraft(hasDraft ? (selected?.invoiceRef ?? null) : null);
   const send = useSendReminder(selected?.invoiceRef ?? null);
 
+  /* Narrowed FIRST, then tabbed, so a tab count answers "how many of the rows I
+     can currently see" rather than "how many exist" — the same order the other
+     list screens use. */
+  const narrowed = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return rows;
+    return rows.filter(
+      (row) =>
+        row.invoiceRef.toLowerCase().includes(needle) ||
+        row.organisation.name.toLowerCase().includes(needle),
+    );
+  }, [rows, query]);
+
   const visible = useMemo(
-    () => (tab === "all" ? rows : rows.filter((row) => tabOf(row) === tab)),
-    [rows, tab],
+    () => (tab === "all" ? narrowed : narrowed.filter((row) => tabOf(row) === tab)),
+    [narrowed, tab],
   );
 
   const countOf = (id: TabId) =>
-    id === "all" ? rows.length : rows.filter((row) => tabOf(row) === id).length;
+    id === "all" ? narrowed.length : narrowed.filter((row) => tabOf(row) === id).length;
+
+  const chips: FilterChipModel[] =
+    query.trim().length > 0 ? [{ id: "query", label: "Search", value: query.trim() }] : [];
 
   const columns: Column<Receivable>[] = [
     {
@@ -143,9 +215,7 @@ export function CollectionsQueueScreen() {
       width: "88px",
       sortable: true,
       accessor: (row) => (
-        <StatusChip
-          tone={row.daysOverdue >= 60 ? "danger" : row.daysOverdue >= 30 ? "warning" : "neutral"}
-        >
+        <StatusChip tone={overdueTone(row.daysOverdue, ladder)}>
           {`${row.daysOverdue} days`}
         </StatusChip>
       ),
@@ -193,15 +263,22 @@ export function CollectionsQueueScreen() {
 
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-3 px-6 pb-4 pt-3">
-        <h1 className="text-[20px] font-semibold text-ink">Collections</h1>
-        {arTotal ? (
-          <span className="font-mono text-[12px] text-ink-muted">
-            AR <MoneyText value={arTotal} compact />
-          </span>
-        ) : null}
-        <div className="ml-auto flex items-center gap-2">
-          <SecondaryButton onClick={() => navigate("/finance/invoices")}>Invoices</SecondaryButton>
+      {/* The kit owns the page's identity. This was a hand-rolled `h1` with an
+          `ml-auto` action cluster beside it — the one composition §10b names as
+          the REFERENCE for every other list screen, which made the divergence
+          something other screens were being judged against. */}
+      <RecordHeader
+        title="Collections"
+        withoutCondensed
+        meta={[
+          `${rows.length} overdue ${rows.length === 1 ? "invoice" : "invoices"}`,
+          arTotal ? `${formatMoney(arTotal)} receivable` : null,
+          aging.data ? `DSO ${aging.data.dsoDays} days` : null,
+        ]}
+        actions={
+          <SecondaryButton onClick={() => navigate(INVOICES_PATH)}>Invoices</SecondaryButton>
+        }
+        primaryAction={
           <PrimaryButton
             disabled={!hasDraft || !draft.data || send.isPending}
             onClick={() => {
@@ -219,8 +296,8 @@ export function CollectionsQueueScreen() {
           >
             Approve &amp; send
           </PrimaryButton>
-        </div>
-      </div>
+        }
+      />
 
       <div className="px-6">
         {aging.isPending ? <LoadingState rows={1} label="Loading the ageing buckets" /> : null}
@@ -234,16 +311,41 @@ export function CollectionsQueueScreen() {
         {aging.data ? <AgingStrip aging={aging.data} /> : null}
       </div>
 
+      {/* §10b: the tabs and the narrowing are ONE row. The tab group used to own
+          a row of its own with nothing on its right half and no filters or
+          count anywhere on the screen. */}
       <div className="px-6 pt-4">
-        <PillTabGroup
-          label="Collections queue"
-          activeId={tab}
-          onSelect={(id) => setTab(id as TabId)}
-          tabs={(Object.keys(TABS) as TabId[]).map((id) => ({
-            id,
-            label: TABS[id],
-            count: countOf(id),
-          }))}
+        <ListToolbar
+          tabs={
+            <PillTabGroup
+              label="Collections queue"
+              activeId={tab}
+              onSelect={(id) => setTab(id as TabId)}
+              tabs={(Object.keys(TABS) as TabId[]).map((id) => ({
+                id,
+                label: TABS[id],
+                count: countOf(id),
+              }))}
+            />
+          }
+          filters={
+            <FilterBar
+              filters={chips}
+              shown={visible.length}
+              total={rows.length}
+              onRemove={() => setQuery("")}
+              onClearAll={() => setQuery("")}
+            >
+              <FilterSearch
+                label="Search receivables"
+                labelHidden
+                value={query}
+                onChange={setQuery}
+                placeholder="Client or invoice"
+              />
+            </FilterBar>
+          }
+          actions={<DensityToggle value={density} onChange={setDensity} />}
         />
       </div>
 
@@ -263,15 +365,26 @@ export function CollectionsQueueScreen() {
               columns={columns}
               rows={visible}
               rowKey={(row) => row.invoiceRef}
+              density={density}
               onRowClick={(row) => {
                 setSelectedRef(row.invoiceRef);
                 setChannel(null);
               }}
               empty={
-                <EmptyState
-                  title="Nothing in this bucket"
-                  description="Every invoice in this state has been paid or has moved to another rung of the ladder."
-                />
+                narrowed.length === 0 && query.trim().length > 0 ? (
+                  /* The SEARCH is empty, not the bucket. Telling a reader every
+                     invoice here has been paid, when they have just typed a
+                     client name, is a sentence about the wrong control. */
+                  <EmptyState
+                    title="No receivable matches this search"
+                    description="Clear the search to see every overdue invoice on the ladder."
+                  />
+                ) : (
+                  <EmptyState
+                    title="Nothing in this bucket"
+                    description="Every invoice in this state has been paid or has moved to another rung of the ladder."
+                  />
+                )
               }
             />
           ) : null}
@@ -294,8 +407,9 @@ export function CollectionsQueueScreen() {
               draft={hasDraft ? draft.data : undefined}
               loading={hasDraft && draft.isPending}
               channel={channel ?? draft.data?.channel ?? "EMAIL"}
+              ladder={ladder}
               onChannel={setChannel}
-              onOpenInvoice={() => navigate(`/finance/invoices/${selected.invoiceRef}`)}
+              onOpenInvoice={() => navigate(`${INVOICES_PATH}/${selected.invoiceRef}`)}
             />
           ) : null}
 
@@ -335,6 +449,7 @@ function DraftPanel({
   draft,
   loading,
   channel,
+  ladder,
   onChannel,
   onOpenInvoice,
 }: {
@@ -342,6 +457,8 @@ function DraftPanel({
   draft: MessageDraft | undefined;
   loading: boolean;
   channel: MessageChannel;
+  /** The configured rungs, so the panel's chip grades the same way the row does. */
+  ladder: CollectionRule[];
   onChannel: (channel: MessageChannel) => void;
   onOpenInvoice: () => void;
 }) {
@@ -351,7 +468,7 @@ function DraftPanel({
       title={row.invoiceRef}
       actions={
         <div className="flex items-center gap-2">
-          <StatusChip tone={row.daysOverdue >= 60 ? "danger" : "warning"}>
+          <StatusChip tone={overdueTone(row.daysOverdue, ladder)}>
             {`${row.daysOverdue} days overdue`}
           </StatusChip>
           <SecondaryButton onClick={onOpenInvoice}>Open invoice</SecondaryButton>

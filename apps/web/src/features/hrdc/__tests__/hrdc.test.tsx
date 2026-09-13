@@ -14,6 +14,27 @@ import { renderScreen } from "@/test/renderScreen";
  */
 
 describe("M12-S02 · claim packet", () => {
+  /**
+   * NO TEST FOR THE CLAIM-WINDOW CHIP'S TONE, and that is a finding rather than
+   * an omission.
+   *
+   * The chip took `deadlineSeverity === "INFO" ? "neutral" : "warning"`, a
+   * two-branch ternary over a FOUR-member `Severity`, so DANGER and ALERT both
+   * asked for "warning". It now asks the kit's `SEVERITY_TONE`, which is right
+   * and which the kit tests on its own values.
+   *
+   * But the tone never reaches the screen. This header is `accent` and does not
+   * pass `plainWhenCollapsed`, so `RecordHeader`'s `showCard` is permanently
+   * true, and `StatusChip` on the accent card renders `ACCENT_TONE` and ignores
+   * `tone` entirely (`StatusChip.tsx:118`). An urgent claim window and a routine
+   * one are the same pixels today. A DOM assertion here would therefore pass
+   * against the ternary, against the map, and against a tone of "success" —
+   * which is a test that proves nothing.
+   *
+   * Raised for a ruling instead: either the severity belongs somewhere it can
+   * be seen, or the chip should not carry a tone at all.
+   */
+
   it("renders two missing documents, the completeness bar and the six-month deadline", async () => {
     renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />, {
       role: "FINANCE",

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ActionResponse, Invoice, Money, SyncEvent } from "@trainos/contract";
+import type { ActionResponse, Invoice, InvoiceLine, Money, SyncEvent } from "@trainos/contract";
 import {
   ActionOutcome,
   ContentCard,
@@ -46,6 +46,58 @@ import { INVOICES_PATH } from "./paths";
  * and the per-pax figure stays a caption because RM 616.67 × 30 is not
  * RM 18,500.
  */
+
+/**
+ * The line-item columns.
+ *
+ * NO `variant: "code"` on any of them. Mono is for machine-ish values — a ref,
+ * a version, a checksum — and a quantity or an amount is neither; the kit's own
+ * note says mono makes an amount read as a serial number. Right-aligned with
+ * tabular numerals is what makes a money column line up.
+ */
+const LINE_COLUMNS: Column<InvoiceLine>[] = [
+  {
+    key: "description",
+    label: "Description",
+    accessor: (line) => (
+      <div className="min-w-0">
+        <p className="text-ink">{line.description}</p>
+        {line.detail ? <p className="pt-0.5 text-[12px] text-ink-muted">{line.detail}</p> : null}
+      </div>
+    ),
+  },
+  {
+    key: "qty",
+    label: "Qty",
+    width: "84px",
+    align: "right",
+    accessor: (line) => <span className="tabular-nums text-ink-secondary">{line.qty}</span>,
+  },
+  {
+    key: "unit",
+    label: "Unit",
+    width: "124px",
+    align: "right",
+    accessor: (line) => <MoneyText value={line.unit} className="text-ink-secondary" />,
+  },
+  {
+    key: "amount",
+    label: "Amount",
+    width: "132px",
+    align: "right",
+    accessor: (line) => <MoneyText value={line.amount} />,
+  },
+];
+
+/** One of the three sums beneath the lines. */
+function SumLine({ term, value, strong }: { term: string; value: ReactNode; strong?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <dt className={strong ? "font-semibold text-ink" : "text-ink-secondary"}>{term}</dt>
+      <dd className="text-right text-ink">{value}</dd>
+    </div>
+  );
+}
 
 /** Sum the rounded line amounts. The subtotal the reader can check. */
 function sumLines(invoice: Invoice): Money {
@@ -182,70 +234,39 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
           />
 
           <ContentCard title="Line items" flush>
-            <table className="w-full border-collapse text-[13px]">
-              <caption className="sr-only">{`Line items on invoice ${data.ref}`}</caption>
-              <thead>
-                <tr className="border-b border-divider">
-                  <th className="px-4 py-2.5 text-left font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                    Description
-                  </th>
-                  <th className="px-4 py-2.5 text-right font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                    Qty
-                  </th>
-                  <th className="px-4 py-2.5 text-right font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                    Unit
-                  </th>
-                  <th className="px-4 py-2.5 text-right font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                    Amount
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.lines.map((line) => (
-                  <tr key={line.description} className="border-b border-divider align-top">
-                    <td className="px-4 py-2.5">
-                      <p className="text-ink">{line.description}</p>
-                      {line.detail ? (
-                        <p className="pt-0.5 text-[12px] text-ink-muted">{line.detail}</p>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-ink-secondary">
-                      {line.qty}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-ink-secondary">
-                      <MoneyText value={line.unit} />
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-ink">
-                      <MoneyText value={line.amount} />
-                    </td>
-                  </tr>
-                ))}
-                <tr className="border-b border-divider">
-                  <td className="px-4 py-2.5 text-ink-secondary" colSpan={3}>
-                    {`Subtotal · sum of ${data.lines.length} line${data.lines.length === 1 ? "" : "s"}`}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-ink">
-                    <MoneyText value={computedSubtotal} />
-                  </td>
-                </tr>
-                <tr className="border-b border-divider">
-                  <td className="px-4 py-2.5 text-ink-secondary" colSpan={3}>
-                    {`SST on net${data.sstReason ? ` · ${humanise(data.sstReason).toLowerCase()}` : ""}`}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-ink">
-                    <MoneyText value={data.sst} />
-                  </td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-2.5 font-semibold text-ink" colSpan={3}>
-                    Total
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-ink">
-                    <MoneyText value={data.total} />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            {/* The kit's table, not a hand-rolled one. This screen drew its own
+                `<table>` with four mono-caps `<th>`, which cost it the zebra
+                stripe every other list has and put a machine font on money —
+                the brief reserves mono for refs and versions, and a
+                right-aligned column in the UI font with tabular numerals is
+                what makes an amount column align. */}
+            <DataTable
+              label={`Line items on invoice ${data.ref}`}
+              columns={LINE_COLUMNS}
+              rows={data.lines}
+              rowKey={(line) => line.description}
+              stickyHeader={false}
+            />
+
+            {/* DECISIONS §7: lines are truth and totals are sums. The three
+                sums sit UNDER the table rather than inside it as colSpan rows —
+                the kit's table has no footer, and a summary that is not a line
+                item should not be striped as though it were one. */}
+            <dl className="flex flex-col gap-2 border-t border-divider px-4 py-3 text-[13px]">
+              <SumLine
+                term={`Subtotal · sum of ${data.lines.length} line${data.lines.length === 1 ? "" : "s"}`}
+                value={<MoneyText value={computedSubtotal} />}
+              />
+              <SumLine
+                term={`SST on net${data.sstReason ? ` · ${humanise(data.sstReason).toLowerCase()}` : ""}`}
+                value={<MoneyText value={data.sst} />}
+              />
+              <SumLine
+                term="Total"
+                value={<MoneyText value={data.total} className="font-semibold" />}
+                strong
+              />
+            </dl>
 
             <div className="border-t border-divider px-4 py-2.5">
               {reconciles ? (

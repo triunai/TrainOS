@@ -8,10 +8,18 @@ import { DOCUMENT_CIRCULAR_09, ENGAGEMENT_AURORA } from "@trainos/contract";
  * own, so they are written out beside the leaves they hang from.
  *
  * The pack draws M12-S02 and M12-S08 as record screens and the nav tree has no
- * list above either — "HRD Corp" and "Rule changes" are leaves. Rather than
- * invent a list the pack never specified, a leaf opens the record the pack
- * itself is drawn from, and `/:ref` opens any other. Naming the default here
- * keeps a route, a link and a test from disagreeing about which record that is.
+ * list above either — "HRD Corp" and "Rule changes" are leaves.
+ *
+ * `HRDC_PACKET_PATH` was that leaf mounting M12-S02 directly, which put a
+ * record on a list route: the rail's "HRD Corp" entry opened ENG-0231 and the
+ * breadcrumb ended at a reference. It now mounts the claim-packets register
+ * from `features/compliance` and `/:engagementRef` opens one packet. The
+ * default below is what a `/:engagementRef` route falls back to when the
+ * parameter is absent, and naming it here keeps a route, a link and a test from
+ * disagreeing about which record that is.
+ *
+ * `HRDC_RULE_CHANGES_PATH` still opens the record the pack is drawn from. It
+ * has the same shape of defect and is NOT this pass's — see the verification.
  */
 
 export const HRDC_PACKET_PATH = "/compliance/hrd-corp";

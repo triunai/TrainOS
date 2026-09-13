@@ -6,6 +6,7 @@
  * are the feature's own business and are deliberately not exported.
  */
 
+export { InvoicesListScreen } from "./InvoicesListScreen";
 export { InvoiceDetailScreen } from "./InvoiceDetailScreen";
 export { CollectionsQueueScreen } from "./CollectionsQueueScreen";
 export { CommissionsScreen } from "./CommissionsScreen";
