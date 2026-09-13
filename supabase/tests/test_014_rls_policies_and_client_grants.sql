@@ -205,11 +205,15 @@ BEGIN
      AND (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
            WHERE p.polrelid=c.oid
              AND p.polname IN (c.relname||'_tenant_select', c.relname||'_tenant_isolation'))=2;
-  ASSERT v_pairs = 113,
-    pg_catalog.format('T1a FAIL: expected 113 core tables with a complete tenant '
-      'policy pair, found %s. A table finalised by 004 and missed by 014 is '
-      'deny-all with a live grant, which reads as an empty screen rather than as '
-      'a defect.', v_pairs);
+  -- 113 at 014, plus the three tenant-scoped tables 017 adds (core.tax_policies,
+  -- core.data_retention_policies, core.data_breach_register), which 017 policies
+  -- by CALLING app.apply_tenant_policies rather than hand-writing a policy beside
+  -- 113 generated ones. That is the number this asserts: a later pack that adds a
+  -- table and forgets the call leaves it deny-all with a live grant, which reads
+  -- as an empty screen rather than as a defect.
+  ASSERT v_pairs = 116,
+    pg_catalog.format('T1a FAIL: expected 116 core tables with a complete tenant '
+      'policy pair (113 from 014 + 3 from 017), found %s.', v_pairs);
 
   ASSERT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p
                   JOIN pg_catalog.pg_class c ON c.oid=p.polrelid
@@ -222,13 +226,14 @@ BEGIN
   SELECT pg_catalog.count(*) INTO v_grants
     FROM information_schema.table_privileges
    WHERE table_schema='core' AND grantee='authenticated' AND privilege_type='SELECT';
-  ASSERT v_grants = 116,
-    pg_catalog.format('T1c FAIL: expected 116 SELECT grants in core to '
-      'authenticated — 114 tables plus core.audit_entries and '
-      'core.v_contact_consent_current. Three views are deliberately excluded: '
-      'v_approval_requests (doc 09 §12) and budget_status / model_tier_status '
-      '(security_invoker over app.usage_rollup, so a grant cannot work). '
-      'Found %s.', v_grants);
+  ASSERT v_grants = 121,
+    pg_catalog.format('T1c FAIL: expected 121 SELECT grants in core to '
+      'authenticated — 117 tables (114 from 014 + 3 from 017) plus four views: '
+      'core.audit_entries, core.v_contact_consent_current, and 017''s '
+      'v_tax_policy_unverified and v_trainer_accreditation. Three views are '
+      'deliberately excluded: v_approval_requests (doc 09 §12) and budget_status '
+      '/ model_tier_status (security_invoker over app.usage_rollup, so a grant '
+      'cannot work). Found %s.', v_grants);
 
   SELECT pg_catalog.count(*) INTO v_writes
     FROM information_schema.table_privileges

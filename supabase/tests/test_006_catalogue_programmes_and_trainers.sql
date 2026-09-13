@@ -131,11 +131,17 @@ VALUES ('00000006-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000006-1111-1111-1111-11111111
         'Leading Through Change','LEADERSHIP',2, 1850000, 30, 1390000, 0.3500,
         true,'SBL_KHAS','ACTIVE');
 
-INSERT INTO core.trainers (id, tenant_id, name, band, ttt_certified, ttt_ref, hrd_tdf)
+-- ⚠ hrd_tdf_valid_to added by 017: an HRD-TDF accreditation runs 3 years and a
+-- trainer flagged accredited with no expiry date is the row that quietly keeps
+-- being scheduled after it lapses, so 017 refuses one. The fixture supplies a
+-- date rather than dropping the flag, because these two trainers being
+-- accredited is what the rest of this pin is about.
+INSERT INTO core.trainers (id, tenant_id, name, band, ttt_certified, ttt_ref,
+                           hrd_tdf, hrd_tdf_valid_to)
 VALUES ('00000006-7a11-7a11-7a11-7a1100000001','00000006-1111-1111-1111-111111111111',
-        'Farah Aziz','A',true,'TTT-2019-4471',true),
+        'Farah Aziz','A',true,'TTT-2019-4471',true, CURRENT_DATE + 400),
        ('00000006-7a11-7a11-7a11-7a1100000002','00000006-1111-1111-1111-111111111111',
-        'Daniel Wong','B',true,'TTT-2020-1102',true);
+        'Daniel Wong','B',true,'TTT-2020-1102',true, CURRENT_DATE + 400);
 INSERT INTO core.trainers (id, tenant_id, name, ttt_certified)
 VALUES ('00000006-7a11-7a11-7a11-7a1100000003','00000006-2222-2222-2222-222222222222',
         'Beta Trainer',false);
