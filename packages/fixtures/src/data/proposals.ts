@@ -409,8 +409,13 @@ export const quotations: Quotation[] = [
     sellPrice: myr(1850000),
     directCost: myr(1140000),
     marginRate: 0.41,
-    floorPrice: myr(1390000),
+    floorPrice: myr(1753846),
     floorMarginRate: 0.35,
+    /* Ruling R6: both floors recorded, the higher binds — 1,140.00 direct cost at a 0.35 floor margin needs RM 17,538.46, above the
+       RM 13,900 catalogue floor, so margin binds. */
+    absoluteFloorPrice: myr(1390000),
+    marginFloorPrice: myr(1753846),
+    bindingFloorBasis: "MARGIN",
     commissionRate: 0.08,
     commission: myr(148000),
     commissionPayableOn: "COLLECTION",
@@ -438,6 +443,11 @@ export const quotations: Quotation[] = [
      */
     floorPrice: myr(735000),
     floorMarginRate: 0.35,
+    /* Ruling R6: both floors recorded, the higher binds — the margin floor lands at RM 5,876.92, below the RM 7,350 catalogue floor,
+       so the catalogue binds. */
+    absoluteFloorPrice: myr(735000),
+    marginFloorPrice: myr(587692),
+    bindingFloorBasis: "ABSOLUTE",
     commissionRate: 0.08,
     commission: myr(78400),
     commissionPayableOn: "COLLECTION",
@@ -457,8 +467,13 @@ export const quotations: Quotation[] = [
     sellPrice: myr(1920000),
     directCost: myr(991000),
     marginRate: 0.48,
-    floorPrice: myr(1440000),
+    floorPrice: myr(1524615),
     floorMarginRate: 0.35,
+    /* Ruling R6: both floors recorded, the higher binds — RM 15,246.15 from the margin floor clears the RM 14,400 catalogue floor, so
+       margin binds. */
+    absoluteFloorPrice: myr(1440000),
+    marginFloorPrice: myr(1524615),
+    bindingFloorBasis: "MARGIN",
     commissionRate: 0.08,
     commission: myr(153600),
     commissionPayableOn: "COLLECTION",
@@ -478,6 +493,8 @@ export const quotations: Quotation[] = [
 export const portalProposals: Record<string, PortalProposal> = {
   [PORTAL_TOKEN_AURORA]: {
     ref: PROPOSAL_AURORA,
+    /** Ruling R8: the page's own heading. `organisationName` names the client. */
+    title: "Leading Through Change — Aurora Manufacturing",
     organisationName: "Aurora Manufacturing Sdn Bhd",
     issuedAt: "2026-09-11",
     sections: [
@@ -530,9 +547,21 @@ export const portalProposals: Record<string, PortalProposal> = {
         body: "Yes — 12 and 13 November are held for you until Friday.",
       },
     ],
-  },
+      /**
+     * Ruling R8. No source names a portal contact, so this is the proposal's
+     * own owner on the Akademi Perdana side, on the tenant's domain — the
+     * person a client replying to this page would actually reach.
+     */
+    vendorContact: {
+      name: "Amirah Yusof",
+      role: "Client Partner",
+      email: "amirah.yusof@akademiperdana.com.my",
+      phone: "+60 3 7955 2088",
+    },
+},
   [PORTAL_TOKEN_MERIDIAN]: {
     ref: PROPOSAL_MERIDIAN,
+    title: "Data Literacy for Managers — Meridian Logistics",
     organisationName: "Meridian Logistics Sdn Bhd",
     issuedAt: "2026-10-21",
     sections: [
@@ -543,7 +572,18 @@ export const portalProposals: Record<string, PortalProposal> = {
     status: "VIEWED",
     acceptance: null,
     comments: [],
-  },
+      /**
+     * Ruling R8. No source names a portal contact, so this is the proposal's
+     * own owner on the Akademi Perdana side, on the tenant's domain — the
+     * person a client replying to this page would actually reach.
+     */
+    vendorContact: {
+      name: "Amirah Yusof",
+      role: "Client Partner",
+      email: "amirah.yusof@akademiperdana.com.my",
+      phone: "+60 3 7955 2088",
+    },
+},
 };
 
 /** §11 which organisation a portal token belongs to, for the accept path. */

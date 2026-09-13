@@ -159,6 +159,7 @@ import {
 import {
   evaluateFloors,
   floorPriceBreach,
+  marginFloorPrice,
   reconcileInvoice,
   resultingMarginRate,
   withFloors,
@@ -2142,6 +2143,11 @@ export class FixtureClient {
       marginRate: resultingMarginRate(sellPrice, directCost),
       floorPrice: programme.floorPrice,
       floorMarginRate: programme.floorMarginRate,
+      /* Seeded from the catalogue so the draft satisfies R6; `evaluateFloors`
+         below recomputes all three and the returned quotation carries those. */
+      absoluteFloorPrice: programme.floorPrice,
+      marginFloorPrice: marginFloorPrice(directCost, programme.floorMarginRate),
+      bindingFloorBasis: "ABSOLUTE",
       commissionRate: 0.08,
       commission: myr(roundHalfUpSen(sellPrice.amount * 0.08)),
       commissionPayableOn: "COLLECTION",
