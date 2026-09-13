@@ -97,11 +97,11 @@ describe("PillTabGroup", () => {
     const track = container.firstElementChild as HTMLElement;
 
     expect(track.className).toContain("border-border");
-    expect(track.className).toContain("rounded-[var(--radius-panel)]");
+    expect(track.className).toContain("rounded-panel");
     expect(track.className).not.toContain("rounded-pill");
 
     const selected = screen.getByRole("tab", { name: /Mine/ });
-    expect(selected.className).toContain("rounded-[var(--radius-control)]");
+    expect(selected.className).toContain("rounded-control");
     expect(selected.className).toContain("bg-ai-tint-2");
     expect(selected.className).toContain("border-primary-border");
   });

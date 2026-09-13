@@ -53,7 +53,7 @@ export interface PillTabGroupProps {
 
 /** One segment's own geometry, shared by the tabs and by the "+". */
 const SEGMENT =
-  "relative flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--radius-control)] px-3 text-[13px] font-medium transition-colors";
+  "relative flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-control px-3 text-[13px] font-medium transition-colors";
 
 export function PillTabGroup({
   tabs,
@@ -110,7 +110,7 @@ export function PillTabGroup({
         /* No `overflow-hidden`: the kit's focus ring carries a 2px offset and a
            clipped focus ring is an accessibility defect. The selected segment's
            radius is a step below the track's, so nothing spills anyway. */
-        "inline-flex w-fit max-w-full items-center rounded-[var(--radius-panel)] border border-border bg-surface p-0.5",
+        "inline-flex w-fit max-w-full items-center rounded-panel border border-border bg-surface p-0.5",
         className,
       )}
     >

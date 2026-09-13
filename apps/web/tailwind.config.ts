@@ -139,6 +139,11 @@ export default {
       },
       borderRadius: {
         control: "var(--radius-control)",
+        /* §6's middle step. It was the one radius token with no class, so every
+           call site reached for `rounded-[var(--radius-panel)]` — an escape
+           hatch that says how the value is plumbed rather than what it means,
+           and the one shape of arbitrary value the kit still carried. */
+        panel: "var(--radius-panel)",
         card: "var(--radius-card)",
         "card-lg": "var(--radius-card-lg)",
         modal: "var(--radius-modal)",
