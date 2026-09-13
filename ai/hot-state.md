@@ -155,8 +155,27 @@
 > fix AND the 015-017 review clean; PR #11 (018) needs its own review
 > separately. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 20:5x — "015-017 don't exist" was itself
-> wrong (stale reviewer checkout); 014's CRITICAL findings still stand.
+> **BLAST 13 Sep 21:0x +08** — PR #14 confirmed MERGED (was "open" in an
+> earlier report); `npm audit` genuinely passes on main now, but main is
+> red on exactly one job, Grant Hygiene — confirmed live — because 014's
+> test file (which lives on `main` via PR #12, deliberately kept there)
+> still has the `SECURITY DEFINER` finding; `fix-014` carries the fix. New
+> lane `fix-approval-hash` (branch `fix/approval-diff-hash`, not yet
+> pushed) does the client half of 014's HIGH-4. `fix-014` hit a real port
+> collision on its shim and now asserts `data_directory` before every run
+> — logged as a thing worth telling future-me. New rule for review lanes:
+> a review branch is cut from `main` with one doc file, never from the PR
+> under review — exactly what caused the earlier stale-checkout error. PR
+> #16 (`lane/seeds`) confirmed open: fixture world for tenant
+> akademi-perdana, 5 commits/17 files/9920 additions (4560 of them SQL),
+> idempotence proven via `pg_stat_xact_all_tables` (0/0/0 across 98
+> tables), 22 schema gaps enumerated in the PR body. PR #13
+> (`ui/knowledge-tone-rename`) confirmed open but failing Grant Hygiene and
+> npm audit — both inherited main-red, not its own defects. PR #15 stays
+> DRAFT, not for merge. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 21:0x — PR #14 merged, main red on Grant
+> Hygiene only; PR #16 (seeds) and PR #13 both open; new fix-approval-hash lane.
 
 ### Focus
 

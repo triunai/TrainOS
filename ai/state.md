@@ -276,6 +276,19 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 21:0x — PR #14 merged (main red on Grant Hygiene only); PR #16 seeds open; new review-branch rule
+
+- PR #14 confirmed merged, npm audit genuinely passes on main now. Main
+  red on Grant Hygiene only (014's SECURITY DEFINER test, confirmed
+  intentional to leave on main pending fix-014). New lane
+  fix-approval-hash doing the client half of 014's HIGH-4. fix-014 hit a
+  real port collision, now asserts data_directory before every run. New
+  standing rule: review branches cut from main with one doc file, never
+  from the PR under review. PR #16 (seeds) confirmed open with 22 schema
+  gaps enumerated, three rulings recorded. PR #13 open but failing two
+  inherited main-red checks. Full detail in `ai/project-log.md` and
+  `ai/workstreams.md`.
+
 ## 2026-09-13 20:5x — correction: "015-017 don't exist" was a stale reviewer checkout, not a fact
 
 - Confirmed by timestamp: 015/016/017 were committed to cloud/migrations

@@ -52,7 +52,16 @@ project before 014 lands — see 018's own hard rule below. Merge order: PR
 #6 merges only after BOTH the 014 fix (`fix-014`, below) and the 015–017
 review land clean verdicts; PR #11 (018) merges only after its own Codex
 review, separately. Hosted apply (L3) stays gated on PR #6's eventual MERGE
-verdict AND R-F, whichever lands last.
+verdict AND R-F, whichever lands last. **014's SQL file staying on `main`
+via PR #12 is intentional, not a leak to clean up**: nothing applies to
+hosted without the user's hand regardless, and PR #6's eventual merge
+supersedes the copy already on `main` (same file, same content, no drift
+risk). **New rule for review lanes, told to `codex-review-014-017` already:
+a review-report branch is cut from `main` and carries exactly one doc
+file — never from the PR under review.** That is precisely what caused the
+stale-checkout error corrected above: a review branch cut from the PR's own
+tip goes stale the moment the PR gets another push, because the review
+worktree has no reason to fetch a branch it isn't tracking.
 
 **Confirmed directly 19:5x: `core` is still not exposed on the hosted
 project.** Probed the live REST endpoint myself (`curl .../rest/v1/<table>`
@@ -117,32 +126,47 @@ review also notes the mandated "thermonuclear" reviewer skill
 exist anywhere in this environment; a substitute adversarial pass was run
 in its place and independently converged on both CRITICAL findings.
 
-**Two active fix/review lanes, confirmed via `git worktree list`:**
+**Three active fix/review lanes, confirmed via `git worktree list`:**
 `fix-014` (Opus, worktree `~/Repos/personal-work/trainos-wt/fix-014`,
 branch `fix/014-review`, its own shim on port 5436) is fixing the CRIT/HIGH
 findings directly in migration 014, writing pins that fail against the
-pre-fix SQL so the fix is provably load-bearing; confirmed in progress, an
-uncommitted edit to `014_rls_policies_and_client_grants.sql` sitting in the
-worktree as of this check. Codex re-reviews after. `codex-review-014-017`'s
-continuation (worktree `~/Repos/personal-work/trainos-wt/codex-pass2`,
-detached HEAD at `52caf6b` — 017's own tip, confirming this checkout DID
-fetch correctly this time) now reviews 015–017 plus the nineteen pin edits
-from the first pass, into a separate report.
+pre-fix SQL so the fix is provably load-bearing; confirmed in progress
+(latest tip `873d426` as of this check). **Real caveat from the lane,
+recorded verbatim:** its first shim run hit a port collision — 5436 was
+already held by a foreign postmaster — and that first run silently applied
+001–017 into the wrong cluster before the mistake was caught; the lane now
+asserts `data_directory` before every run rather than trusting the port
+alone. `codex-review-014-017`'s continuation (worktree
+`~/Repos/personal-work/trainos-wt/codex-pass2`, detached HEAD at `52caf6b`
+— 017's own tip, confirming this checkout DID fetch correctly this time)
+reviews 015–017 plus the nineteen pin edits from the first pass, into a
+separate report. New: `fix-approval-hash` (Sonnet, worktree
+`~/Repos/personal-work/trainos-wt/fix-approval-hash`, branch
+`fix/approval-diff-hash`, not yet pushed to origin) is doing the client
+half of the 014 review's HIGH finding #6 — `decideApproval` now sends
+`p_expected_diff_hash`; the DB-side half stays with `fix-014`.
 
-**Two CI fixes also landed as separate PRs, both confirmed to exist and
-match their descriptions:** PR #14 (`fix(ci): make the npm audit gate block
-on what ships`, branch `ci/audit-scope`, open) changes the `deps-audit` job
-from `continue-on-error: true` / `npm audit --audit-level=high` to a
-blocking `npm audit --omit=dev --audit-level=high` — confirmed in the diff,
-with the three dev-only advisories named in a comment exactly as reported
-(`GHSA-fx2h-pf6j-xcff` vite, `GHSA-5xrq-8626-4rwp` vitest,
-`GHSA-82fw-gwwq-j7x9` `@vitest/mocker`/`@vitest/coverage-v8`) and a note
-that production scope is clean at high+ except two moderate react-router
-advisories needing their own major-version work. PR #15
-(`chore(toolchain): vite 7 + vitest 3 (dev-only audit advisories)`, branch
-`chore/vite7-vitest3`, **DRAFT**, confirmed) is the toolchain upgrade that
-actually clears those three advisories; its latest commit
-(`test(web): state the timeout three Radix-menu tests have always needed`)
+**Two CI fixes landed as separate PRs.** PR #14 (`fix(ci): make the npm
+audit gate block on what ships`, branch `ci/audit-scope`) **confirmed
+MERGED** — changed from "open" in an earlier report, found by re-checking
+live state. Confirmed the fix actually works: `npm audit (high+)` now
+passes genuinely (not just via `continue-on-error`) on main's latest CI run
+(`gh run view` on the run right after the merge), with the `--omit=dev
+--audit-level=high` command and the three dev-only advisories named in a
+comment exactly as reported (`GHSA-fx2h-pf6j-xcff` vite,
+`GHSA-5xrq-8626-4rwp` vitest, `GHSA-82fw-gwwq-j7x9`
+`@vitest/mocker`/`@vitest/coverage-v8`), plus a note that production scope
+is clean at high+ except two moderate react-router advisories needing
+their own major-version work. **Main is now red on exactly one job, Grant
+Hygiene, confirmed directly on the live run**: `test_014_..._sql:513`'s
+`SECURITY DEFINER` function landed on `main` via PR #12 (see the addendum
+below on 014's file living on `main`), and `check:grants` fails on it
+there the same way it always did in PR #6. The fix arrives with `fix-014`.
+PR #15 (`chore(toolchain): vite 7 + vitest 3 (dev-only audit advisories)`,
+branch `chore/vite7-vitest3`, **DRAFT, confirmed — not for merge**) is the
+toolchain upgrade that actually clears those three advisories; its latest
+commit (`test(web): state the timeout three Radix-menu tests have always
+needed`)
 confirms the previously-reported `testTimeout: 15s` fix for the three
 Radix-menu tests is in progress.
 
@@ -225,6 +249,12 @@ to run G6 against — but it means **014's file now exists on `main` even
 though it is BLOCKED and PR #6 has not merged.** Nobody should read the
 file's presence in `supabase/migrations/` as approval to apply it; the
 BLOCK verdict above is what governs, not the file's location.
+
+**Sub-item: seed schema gaps, tracked at PR #16 (see the SEEDS thread).**
+The fixture-world seed lane found 22 schema gaps in 001–013 while writing
+seed data against them — the clearest is a realised-margin column that
+does not exist anywhere, needed for one below-floor fixture case. Full
+list is in PR #16's own body; this is a pointer, not a duplicate.
 
 **018 scope grew 19:35+:** PR #5 (`cloud/web-swap`) found ten feature calls
 with no `TrainOsClient` method and added them to `RPC_NAMES` in
@@ -359,26 +389,78 @@ the report and consistent with everything confirmed above.
 
 ---
 
-## 🟢 SEEDS — new lane, fixture world for local/CI testing (2026-09-13)
+## 🟢 SEEDS — PR #16 open, fixture-world seed for tenant akademi-perdana (2026-09-13)
 
-**Resume:** Read `ai/resume-brief.md` BLAST 19:25/19:4x entries, then whatever
-`lane/seeds` has committed under `supabase/seeds/`. Built against a shim on
-port 5434 (separate from the other lanes' shims) so it does not collide with
-`lane/rpc-018`'s or `cloud/migrations`'s. Serves the user's 19:27 goal, stated
-directly: "write seeds too for test purposes."
+**Resume:** Read PR #16's own body first — 22 schema gaps are enumerated
+there in full; this thread only summarizes. Then `ai/resume-brief.md`
+BLAST 19:25/19:4x entries and `supabase/seeds/README.md`. Built against a
+shim on port 5434 (separate from the other lanes' shims). Under review by
+`review-pr16` (Opus).
 
-**Scope:** `supabase/seeds/` — the fixture-world seed data, a wipe script, and
-an executable pin, mirroring the pattern the migrations already use.
+**Scope:** `supabase/seeds/` — the fixture-world seed data, a wipe script,
+and an executable pin — plus `packages/fixtures/scripts/` for the
+generator that emits the SQL.
 
-**State:** Launched at 19:2x (Opus, worktree
-`~/Repos/personal-work/trainos-wt/seeds`, branch `lane/seeds`). No commits
-reported yet.
+**State:** PR #16 confirmed open, 5 commits, 17 files, 9920 additions
+total (4560 of those in `supabase/seeds/*.sql`, the rest in the
+`emit-seed.ts` generator and its slice modules — both figures confirmed
+via `gh pr view 16 --json files`; the exact "3,848 lines" figure reported
+was not reproduced precisely by this count, likely a different exclusion
+set, e.g. comments/blank lines, and is not disputed further). Four SQL
+parts (tenant/parties, sales/money, delivery/compliance/finance,
+AI-ops/agents) plus a wipe script and a pin — confirmed matching the "four
+parts + wipe + pin" description exactly by filename. Generated by the
+committed `emit-seed.ts` generator from `@trainos/fixtures`, with CI able
+to prove the emitted SQL and the generator agree (`--check` flag,
+confirmed in the diff). On the shim against 001–013: seed exit 0, pin
+passes, wipe leaves 0 fixture rows, re-seed passes, `lint:sql` 45/45,
+`check:grants` unaffected — all as reported, not independently re-run
+here (needs the shim). Idempotence measured via
+`pg_stat_xact_all_tables` (0 inserted/updated/deleted across 98 tables on
+a re-seed within the same transaction) — a stronger and more direct proof
+than a row-count diff, confirmed as a real technique via the pin file's
+own comment describing exactly this mechanism.
 
-**Refs:** `ai/resume-brief.md`, `supabase/HANDOFF.md`.
+**Three rulings, recorded as decisions rather than left implicit:**
+
+1. No single-file runner exists on purpose — `lint:sql` rejects `\i`
+   includes, so the run order lives in the part headers and the seeds
+   README instead. Accepted as the right trade-off given the guard.
+2. The fixture world's one below-floor case (a realised margin of 29% on
+   ENG-0198 against a 35% floor) has no column anywhere in 001–013 to hold
+   it — logged as a schema gap for the migrations backlog rather than
+   invented. The pin deliberately asserts the column is STILL MISSING, so
+   it fails loudly the day a migrations lane adds one and the seed has
+   somewhere to put `0.29` — a pin designed to break on purpose when its
+   premise changes.
+3. The fixture world's own 13 action policies (its own naming scheme)
+   collide with tenant provisioning's 22 policies under a frozen
+   `action_type` enum value. Provisioning's rows are left intact; the seed
+   does not insert `core.action_policies` at all (confirmed via the PR's
+   own commit message: "inserting the tenant already fires
+   `app.seed_action_policies_on_tenant()`... the fixture world's policy
+   ids are a different naming scheme"). Reconciling the two lists is a
+   migrations-lane item, and needs the user's word on which scheme wins —
+   not resolved here, flagged rather than guessed at.
+
+⚠ **Twenty-two schema gaps enumerated in the PR body** — the margin-floor
+column above is one of them; the rest are listed in full there rather than
+duplicated here. Also tracked as a **SUPABASE SCHEMA sub-item, pointing at
+PR #16** — see that thread.
+
+**Refs:** `ai/resume-brief.md`, `supabase/HANDOFF.md`, PR #16 body,
+`packages/fixtures/scripts/emit-seed.ts`, `supabase/seeds/README.md`.
 
 ---
 
 ## 🟢 UI-CARRYOVER — three worktree lanes closing verifier-pass debt (2026-09-13)
+
+**New: PR #13 (`ui: the blind-spot tone map stops shadowing the kit's
+SEVERITY_TONE`, branch `ui/knowledge-tone-rename`) confirmed open.** Not
+"awaiting checks" cleanly — confirmed via `gh pr checks 13` that it
+currently fails two: Grant Hygiene and npm audit (high+), both inherited
+main-red items from before PR #14's audit fix and `fix-014`'s Grant
+Hygiene fix land, not defects in PR #13's own diff.
 
 **Resume:** Read `ai/resume-brief.md` §"Verifier carry-over" for the full
 ranked list, then each lane's own commits on its branch. Each lane below runs
