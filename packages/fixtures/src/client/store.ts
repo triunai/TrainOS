@@ -31,6 +31,7 @@ import type {
   Invoice,
   KnowledgeSource,
   Me,
+  MeProfile,
   MessageDraft,
   MetricResponse,
   ModelTier,
@@ -81,6 +82,8 @@ export interface IdempotencyRecord {
 export interface FixtureStore {
   tenant: FixtureTenant;
   users: Me[];
+  /** Ruled R14 — `GET /v1/me/profile`, keyed by principal id. */
+  profiles: Record<string, MeProfile>;
   pipelines: PipelineConfig[];
 
   organisations: Organisation[];
@@ -167,6 +170,7 @@ export interface FixtureStore {
 export const createStore = (): FixtureStore => ({
   tenant: clone(data.tenant),
   users: clone(data.users),
+  profiles: clone(data.profiles),
   pipelines: clone(data.pipelines),
 
   organisations: clone(data.organisations),

@@ -47,6 +47,82 @@ export interface Me {
   theme: Theme;
 }
 
+/* ------------------------------------------------------------------ *
+ * §2 · GET /v1/me/profile — ruled R14
+ * ------------------------------------------------------------------ */
+
+/**
+ * §2 ruled R14 · the signed-in principal's own record, for the profile modal.
+ *
+ * Kit.dc.html §07 "Profile modal · 960" draws eleven fields `Me` does not
+ * carry. They are published here rather than added to `Me`, and the reason is
+ * in §2's own description of that endpoint: `GET /v1/me` is "who is looking ·
+ * all roles · **every screen**". It is the shell bootstrap — nav filtering and
+ * permission checks read it on every page.
+ *
+ * Widening it would put a personal mobile number, a staff number, a last
+ * sign-in and the account's two-factor state into every screen's query cache,
+ * on every page load, to serve a modal most sessions never open. A field that
+ * is only ever read on demand should be fetched on demand, and the narrower
+ * payload is also the one a `403` can refuse without breaking the shell.
+ *
+ * The fields are three different records wearing one panel, which is the
+ * second reason they are not `Me`: the tenant is not the user, the HR record
+ * is not the session, and the session security block changes on a cadence
+ * neither of the others does.
+ *
+ * Display formatting is NOT in here. The artboard prints "Chrome · Shah Alam,
+ * GMT+8" and "11-09-2026 08:04:22 AM"; those are one sentence and one locale
+ * decision assembled by the screen, and a contract that shipped them
+ * pre-joined would have put the app's date format on the server.
+ *
+ * `apps/web/src/shared/config/profileDetails.ts` is what this deletes; it is
+ * gap 14 in the fixtures README.
+ */
+export interface MeProfile {
+  /** Matches `Me.id`. The endpoint is always the caller's own record. */
+  id: string;
+  /** The employing tenant, as the modal's identity line names it. */
+  tenant: TenantIdentity;
+  /** Where the holder works, e.g. `Klang Valley`. Not the session's place. */
+  location: string;
+  jobTitle: string;
+  department: string;
+  email: string;
+  /** E.164 with the pack's spacing, e.g. `+60 12-448 9021`. */
+  mobile?: string;
+  staffNumber: string;
+  /** Modules the principal is entitled to — the modal's first chip. */
+  moduleCount: number;
+  session: ProfileSession;
+}
+
+/** §2 ruled R14 · the tenant as the profile panel names it. */
+export interface TenantIdentity {
+  /** Trading name, e.g. `Akademi Perdana`. Not the registered name. */
+  name: string;
+  /** The tenant's short code, e.g. `APSB`. */
+  code: string;
+}
+
+/**
+ * §2 ruled R14 · the security half of the panel.
+ *
+ * `browser` and `place` are separate because the artboard's "Chrome · Shah
+ * Alam, GMT+8" is a sentence the screen builds, and because a place is the
+ * thing a person scans for when checking whether a session is theirs.
+ */
+export interface ProfileSession {
+  lastSignInAt: Timestamp;
+  /** e.g. `Chrome`. */
+  browser: string;
+  /** e.g. `Shah Alam`. */
+  place: string;
+  /** Sessions open right now, this one included. */
+  activeSessions: number;
+  twoFactorEnabled: boolean;
+}
+
 /**
  * §2 permission strings for the quotation object (ruling R2).
  *

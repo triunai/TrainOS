@@ -50,6 +50,12 @@ const ALL_ROLES = [
 export const ENDPOINTS = [
   /* §2 · Session and shell — every screen */
   { method: 'GET', path: '/v1/me', screenIds: [], roles: ALL_ROLES, gated: false, idempotent: true },
+  /* Ruled R14. Not a §13 row: the profile modal is a kit component (Kit.dc.html
+     §07) rather than a screen, and it draws eleven fields `Me` does not carry.
+     Its own endpoint rather than a wider `/v1/me`, because §2 calls that one
+     "every screen" and a modal most sessions never open should not put a mobile
+     number in every page's cache. */
+  { method: 'GET', path: '/v1/me/profile', screenIds: [], roles: ALL_ROLES, gated: false, idempotent: true },
   { method: 'GET', path: '/v1/navigation', screenIds: [], roles: ALL_ROLES, gated: false, idempotent: true },
   { method: 'GET', path: '/v1/search', screenIds: [], roles: ALL_ROLES, gated: false, idempotent: true },
   { method: 'GET', path: '/v1/{resourceType}/{id}/audit', screenIds: ['M04-S02'], roles: ALL_ROLES, gated: false, idempotent: true },

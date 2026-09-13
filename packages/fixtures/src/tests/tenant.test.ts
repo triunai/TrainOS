@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createFixtureClient } from "../index";
-import { tenant } from "../data/tenant";
+import { tenant, users } from "../data/tenant";
 
 const api = createFixtureClient({ latencyMs: 0 });
 
@@ -50,5 +50,64 @@ describe("getTenant", () => {
     const first = await api.getTenant();
     const second = await api.getTenant();
     expect(second).toBe(first);
+  });
+});
+
+/**
+ * §2 ruled R14 · `GET /v1/me/profile`, the record behind the Kit §07 modal.
+ *
+ * The eleven fields were parked in the web app because `Me` does not carry
+ * them. They are contract surface now, on their own endpoint rather than a
+ * wider `/v1/me` — §2 calls that one "every screen", and a mobile number and
+ * an account's two-factor state do not belong in every page's cache to serve
+ * a modal most sessions never open.
+ */
+describe("getMeProfile", () => {
+  it("answers for every principal the role switch offers", async () => {
+    for (const user of users) {
+      const api = createFixtureClient({ latencyMs: 0, actorId: user.id });
+      const profile = await api.getMeProfile();
+      expect(profile.id, `${user.name} has no profile`).toBe(user.id);
+    }
+  });
+
+  it("returns the caller's own record and nobody else's", async () => {
+    const amirah = await createFixtureClient({ latencyMs: 0, actorId: "u_amirah" }).getMeProfile();
+    const alex = await createFixtureClient({ latencyMs: 0, actorId: "u_lim" }).getMeProfile();
+
+    expect(amirah.jobTitle).toBe("Senior Sales Consultant");
+    expect(alex.jobTitle).toBe("Managing Director");
+    expect(alex.email).toBe("alex.selvarajah@akademiperdana.my");
+    expect(alex.mobile).not.toBe(amirah.mobile);
+  });
+
+  it("refuses a principal it has no record for, rather than serving someone else's", async () => {
+    const api = createFixtureClient({ latencyMs: 0, actorId: "u_nobody" });
+    await expect(api.getMeProfile()).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  /* The panel's identity line is the tenant's, so it has to be the same tenant
+     the rest of the console is configuring — one trading name, one code. */
+  it("names one tenant across every principal", async () => {
+    const names = new Set<string>();
+    const codes = new Set<string>();
+    for (const user of users) {
+      const profile = await createFixtureClient({ latencyMs: 0, actorId: user.id }).getMeProfile();
+      names.add(profile.tenant.name);
+      codes.add(profile.tenant.code);
+    }
+    expect(names.size).toBe(1);
+    expect(codes.size).toBe(1);
+  });
+
+  /* Two-factor is on for every principal who can approve money. DECISIONS §1
+     routes discounts, trading holds and budget caps through the MD, and a demo
+     that showed 2FA off on the account signing them would teach the wrong
+     thing. */
+  it("has two-factor on for every principal who approves money", async () => {
+    for (const id of ["u_lim", "u_kelvin", "u_jason"]) {
+      const profile = await createFixtureClient({ latencyMs: 0, actorId: id }).getMeProfile();
+      expect(profile.session.twoFactorEnabled, `${id} approves money`).toBe(true);
+    }
   });
 });

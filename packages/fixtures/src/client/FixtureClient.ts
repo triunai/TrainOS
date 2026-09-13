@@ -75,6 +75,7 @@ import type {
   KnowledgeSourceReingestResponse,
   ListResponse,
   Me,
+  MeProfile,
   MessageDraft,
   MetricResponse,
   ModelTier,
@@ -388,6 +389,20 @@ export class FixtureClient {
     const me = this.#store.users.find((user) => user.id === this.#actorId);
     if (!me) throw notFound("User", this.#actorId);
     return this.#read(me);
+  }
+
+  /**
+   * §2 ruled R14 · the caller's own profile record, for the Kit §07 modal.
+   *
+   * Always the caller's. There is no `{id}` form and there should not be: the
+   * eleven fields include a mobile number, a staff number and the account's
+   * two-factor state, and an endpoint that would hand one principal another's
+   * is a different feature with a different policy gate.
+   */
+  async getMeProfile(): Promise<MeProfile> {
+    const profile = this.#store.profiles[this.#actorId];
+    if (!profile) throw notFound("Profile for user", this.#actorId);
+    return this.#read(profile);
   }
 
   /**

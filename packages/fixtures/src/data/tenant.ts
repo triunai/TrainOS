@@ -8,7 +8,7 @@
  * never appears in a path or a body and exists here only to stamp events.
  */
 
-import type { Actor, AnyActor, Me, PipelineConfig, Role } from "@trainos/contract";
+import type { Actor, AnyActor, Me, MeProfile, PipelineConfig, Role } from "@trainos/contract";
 import { QUOTATION_PERMISSIONS } from "@trainos/contract";
 import {
   CLIENT_NURUL,
@@ -202,6 +202,172 @@ export const roleFor = (id: string): Role | undefined =>
 
 /** Every user holding a given role — the approval assignment pool (§3 step 5). */
 export const usersWithRole = (role: Role): Me[] => users.filter((user) => user.role === role);
+
+/**
+ * §2 ruled R14 · `GET /v1/me/profile`, keyed by principal.
+ *
+ * Kit.dc.html §07 draws this panel with Amirah's values, and those are kept
+ * verbatim so the artboard and the built modal can still be compared side by
+ * side. Alex Selvarajah is the MD the demo is narrated to, so his record is
+ * seeded too and the role switch shows the right person rather than Amirah's
+ * mobile number under someone else's name.
+ *
+ * The two differ in the ways the panel is meant to show: an MD's data scope is
+ * the whole book, so he carries every module rather than seven, and the
+ * commercial floor and the executive floor are different departments and
+ * different places. Both have two-factor on, because DECISIONS §1 puts every
+ * money-moving approval through the MD and a demo that showed it off on the
+ * account that signs them would be teaching the wrong thing.
+ *
+ * All seven principals carry one, not just the two the demo narrates. The role
+ * switch offers every one of them, and a profile keyed by principal that only
+ * answers for two turns the modal into a 404 for five of them — worse than the
+ * single hardcoded record it replaces. `every-principal-has-a-profile` in the
+ * tenant test keeps that true when a user is added.
+ *
+ * INVENTED, all of it, except two addresses: the persona note above already
+ * settled `alex.selvarajah@akademiperdana.my`, and `farah.aziz@` follows the
+ * trainer addresses in `programmes.ts`. The contract publishes the shape; no
+ * endpoint has ever returned these values. Marked here the same way every
+ * other unsourced fixture is.
+ */
+export const profiles: Record<string, MeProfile> = {
+  [USER_AMIRAH]: {
+    id: USER_AMIRAH,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Klang Valley",
+    jobTitle: "Senior Sales Consultant",
+    department: "Commercial",
+    email: "amirah.yusof@akademiperdana.my",
+    mobile: "+60 12-448 9021",
+    staffNumber: "APSB-0142",
+    moduleCount: 7,
+    session: {
+      lastSignInAt: "2026-09-11T08:04:22+08:00",
+      browser: "Chrome",
+      place: "Shah Alam",
+      activeSessions: 2,
+      twoFactorEnabled: true,
+    },
+  },
+  [USER_LIM]: {
+    id: USER_LIM,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Kuala Lumpur",
+    jobTitle: "Managing Director",
+    department: "Executive",
+    email: "alex.selvarajah@akademiperdana.my",
+    mobile: "+60 12-301 7755",
+    staffNumber: "APSB-0001",
+    /* Every module. An MD whose data scope is ALL and who is the approver of
+       last resort for discounts, trading holds and budget caps cannot be
+       entitled to a subset of the product. */
+    moduleCount: 12,
+    session: {
+      lastSignInAt: "2026-09-13T07:41:09+08:00",
+      browser: "Safari",
+      place: "Kuala Lumpur",
+      activeSessions: 1,
+      twoFactorEnabled: true,
+    },
+  },
+  [USER_KELVIN]: {
+    id: USER_KELVIN,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Klang Valley",
+    jobTitle: "Sales Manager",
+    department: "Commercial",
+    email: "kelvin.tan@akademiperdana.my",
+    mobile: "+60 12-778 3140",
+    staffNumber: "APSB-0088",
+    moduleCount: 9,
+    session: {
+      lastSignInAt: "2026-09-11T11:19:44+08:00",
+      browser: "Chrome",
+      place: "Petaling Jaya",
+      activeSessions: 1,
+      twoFactorEnabled: true,
+    },
+  },
+  [USER_SITI]: {
+    id: USER_SITI,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Klang Valley",
+    jobTitle: "Operations Executive",
+    department: "Delivery",
+    email: "siti.nordin@akademiperdana.my",
+    mobile: "+60 13-204 6612",
+    staffNumber: "APSB-0211",
+    /* Tenancy CD-1 withholds quotation:read from OPS, so the margin modules
+       are not hers and the count says so. */
+    moduleCount: 6,
+    session: {
+      lastSignInAt: "2026-09-12T08:52:03+08:00",
+      browser: "Edge",
+      place: "Shah Alam",
+      activeSessions: 2,
+      twoFactorEnabled: false,
+    },
+  },
+  [USER_JASON]: {
+    id: USER_JASON,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Klang Valley",
+    jobTitle: "Finance Executive",
+    department: "Finance",
+    email: "jason.lee@akademiperdana.my",
+    mobile: "+60 16-559 0287",
+    staffNumber: "APSB-0134",
+    moduleCount: 8,
+    session: {
+      lastSignInAt: "2026-09-12T16:30:51+08:00",
+      browser: "Chrome",
+      place: "Kuala Lumpur",
+      activeSessions: 1,
+      twoFactorEnabled: true,
+    },
+  },
+  [USER_KHAIRUL]: {
+    id: USER_KHAIRUL,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Klang Valley",
+    jobTitle: "Systems Administrator",
+    department: "Technology",
+    email: "khairul.anwar@akademiperdana.my",
+    mobile: "+60 11-2380 4419",
+    staffNumber: "APSB-0007",
+    moduleCount: 12,
+    session: {
+      lastSignInAt: "2026-09-13T06:58:17+08:00",
+      browser: "Firefox",
+      place: "Cyberjaya",
+      /* The one account with a session open somewhere it should be checked —
+         the panel's active-session count is there to be read, not decoration. */
+      activeSessions: 3,
+      twoFactorEnabled: true,
+    },
+  },
+  [TRAINER_FARAH]: {
+    id: TRAINER_FARAH,
+    tenant: { name: "Akademi Perdana", code: "APSB" },
+    location: "Klang Valley",
+    jobTitle: "Lead Trainer",
+    department: "Delivery",
+    /* The style programmes.ts already uses for trainer addresses. */
+    email: "farah.aziz@akademiperdana.my",
+    mobile: "+60 19-662 5508",
+    staffNumber: "APSB-0163",
+    /* A trainer reaches engagements and attendance and nothing else. */
+    moduleCount: 3,
+    session: {
+      lastSignInAt: "2026-09-13T07:12:35+08:00",
+      browser: "Safari",
+      place: "Shah Alam",
+      activeSessions: 1,
+      twoFactorEnabled: false,
+    },
+  },
+};
 
 /** §2 permissions come from `/me`, and a gated call also returns the role it needs. */
 export const permissionsFor = (id: string): string[] =>
