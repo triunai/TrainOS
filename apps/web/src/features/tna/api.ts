@@ -17,6 +17,22 @@ import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
  * `shared/api`. This file holds only what is specific to the TNA.
  */
 
+/**
+ * Every TNA, for the list half of M05-S02.
+ *
+ * `listTnas` is the collection §13 never published and the client now carries;
+ * nothing here filters, because the facets M05's list needs — gap priority,
+ * status — are not server filter fields and the page is small. The moment it
+ * paginates this becomes a `FilterClause[]`.
+ */
+export function useTnas() {
+  const client = useApi();
+  return useQuery({
+    queryKey: queryKeys.tnas.lists(),
+    queryFn: () => client.listTnas(),
+  });
+}
+
 export function useTna(id: string | undefined) {
   const client = useApi();
   return useQuery({
