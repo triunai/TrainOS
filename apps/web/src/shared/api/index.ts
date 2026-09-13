@@ -11,7 +11,9 @@
 export {
   ACTOR_FOR_ROLE,
   ApiProvider,
+  derivedIdempotencyKey,
   newIdempotencyKey,
+  stableIdempotencyKey,
   useAction,
   useActor,
   useApi,

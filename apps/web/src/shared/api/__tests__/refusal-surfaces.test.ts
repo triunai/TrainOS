@@ -36,10 +36,6 @@ const EXEMPT = new Map<string, string>([
     "ApprovalInbox.tsx:265 awaits mutateAsync and renders the failure inline; queryClient.ts:149 names this the model exemption",
   ],
   [
-    "useAction",
-    "organisations/api.ts only — dead code with no caller and no barrel export; deleted in the W-02 idempotency pass",
-  ],
-  [
     "useMarkPacketSubmitted",
     "ClaimPacketScreen.tsx:87 awaits mutateAsync and renders the returned outcome",
   ],

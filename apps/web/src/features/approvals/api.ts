@@ -30,7 +30,13 @@ import type {
   PageRequest,
   SavedView,
 } from "@trainos/contract";
-import { ApiErrorException, queryKeys, toApiError, useApi } from "@/shared/api";
+import {
+  ApiErrorException,
+  derivedIdempotencyKey,
+  queryKeys,
+  toApiError,
+  useApi,
+} from "@/shared/api";
 
 /** `listApprovals` takes the §7 urgency grouping alongside the §1 page request. */
 export type ApprovalPageRequest = PageRequest & { group?: "URGENCY" };
@@ -52,11 +58,19 @@ const call = async <T>(work: () => Promise<T>): Promise<T> => {
   }
 };
 
-/** Every write carries a key, so a double-click cannot decide an approval twice. */
-const idempotencyKey = (): string =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+/**
+ * Every write carries a key, so a double-click cannot decide an approval twice.
+ *
+ * The key has to come from the DECISION, not the attempt. This helper used to
+ * return a fresh `randomUUID()` per call, which made the sentence above false:
+ * §3 recognises a repeat by the key, so two clicks produced two keys, two
+ * decisions and two audit entries for one human judgement. Deriving it from the
+ * approval and the body means the second click replays the first response,
+ * while a genuinely different decision — an approve after a reject, a changed
+ * note — still gets its own key rather than a spurious 409.
+ */
+const idempotencyKey = (id: string, body: unknown): string =>
+  derivedIdempotencyKey("approval-decide", id, body);
 
 /* ------------------------------------------------------------------ *
  * Reads
@@ -133,7 +147,7 @@ export function useDecideApproval(id: string) {
 
   return useMutation<ApprovalDecideResponse, ApiErrorException, ApprovalDecideRequest>({
     mutationFn: (body) =>
-      call(() => api.decideApproval(id, body, { idempotencyKey: idempotencyKey() })),
+      call(() => api.decideApproval(id, body, { idempotencyKey: idempotencyKey(id, body) })),
     meta: { toastOnError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
@@ -155,7 +169,13 @@ export function useBulkDecideApprovals() {
 
   return useMutation<ApprovalBulkDecideResponse, ApiErrorException, ApprovalBulkDecideRequest>({
     mutationFn: (body) =>
-      call(() => api.bulkDecideApprovals(body, { idempotencyKey: idempotencyKey() })),
+      call(() =>
+        api.bulkDecideApprovals(body, {
+          /* The selection IS the subject here — there is no single record — so
+             the ids ride in the body half of the derivation. */
+          idempotencyKey: idempotencyKey("bulk", body),
+        }),
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.badges });

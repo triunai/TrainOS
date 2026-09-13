@@ -1,15 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ActionRequest, ActionResponse, Actor, Role } from "@trainos/contract";
-import {
-  TRAINER_FARAH,
-  USER_AMIRAH,
-  USER_JASON,
-  USER_KELVIN,
-  USER_KHAIRUL,
-  USER_SITI,
-} from "@trainos/contract";
+import { useQuery } from "@tanstack/react-query";
 import { isContractError } from "@trainos/fixtures";
-import { queryKeys, useActor, useApi } from "@/shared/api";
+import { queryKeys, useApi } from "@/shared/api";
 
 /**
  * The organisations data layer — M04-S02.
@@ -67,21 +58,5 @@ export function useDealChainStages() {
   return useQuery({
     queryKey: [...queryKeys.pipelineConfig, "DEAL_CHAIN"] as const,
     queryFn: () => client.getPipelineConfig("DEAL_CHAIN"),
-  });
-}
-
-export function useAction() {
-  const client = useApi();
-  const queryClient = useQueryClient();
-
-  return useMutation<ActionResponse, unknown, ActionRequest>({
-    mutationFn: (request) =>
-      client.performAction(request, {
-        idempotencyKey: `${request.type}:${request.targetRef}:${Date.now()}`,
-      }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.organisations.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.opportunities.all });
-    },
   });
 }

@@ -17,7 +17,7 @@ import {
   TRAINER_FARAH,
 } from "@trainos/contract";
 import { isContractError } from "@trainos/fixtures";
-import { newIdempotencyKey, queryKeys, useApi } from "@/shared/api";
+import { queryKeys, stableIdempotencyKey, useApi } from "@/shared/api";
 
 /**
  * The proposals and quotations data layer.
@@ -166,8 +166,11 @@ export function useSendProposal(id: string | undefined) {
   return useMutation<ActionResponse, unknown, ActionRequest>({
     /* §3 replays a key with the same body and refuses it with a different
        one, so a key is what stops a double-clicked send from queueing two
-       approvals. These two writes were sending none at all. */
-    mutationFn: (request) => client.performAction(request, { idempotencyKey: newIdempotencyKey() }),
+       approvals. These two writes were sending none at all, then sent a fresh
+       `randomUUID()` per attempt — which is no key at all wearing one, since a
+       value that never repeats can never be recognised as a repeat. */
+    mutationFn: (request) =>
+      client.performAction(request, { idempotencyKey: stableIdempotencyKey(request) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.detail(id ?? "") });
       void queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
@@ -227,8 +230,11 @@ export function useApplyQuotation(id: string | undefined) {
   return useMutation<ActionResponse, unknown, ActionRequest>({
     /* §3 replays a key with the same body and refuses it with a different
        one, so a key is what stops a double-clicked send from queueing two
-       approvals. These two writes were sending none at all. */
-    mutationFn: (request) => client.performAction(request, { idempotencyKey: newIdempotencyKey() }),
+       approvals. These two writes were sending none at all, then sent a fresh
+       `randomUUID()` per attempt — which is no key at all wearing one, since a
+       value that never repeats can never be recognised as a repeat. */
+    mutationFn: (request) =>
+      client.performAction(request, { idempotencyKey: stableIdempotencyKey(request) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.quotations.detail(id ?? "") });
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.all });

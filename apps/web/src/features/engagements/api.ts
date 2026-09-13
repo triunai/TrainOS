@@ -21,6 +21,7 @@ import type {
 import { isContractError, type EngagementProjection } from "@trainos/fixtures";
 import {
   domainErrorFromEnvelope,
+  stableIdempotencyKey,
   transportError,
   useActor,
   useApi,
@@ -209,11 +210,15 @@ export function usePerformAction() {
   const requestedBy: Actor = useActor();
 
   return useMutation<ActionResponse, unknown, Omit<ActionRequest, "requestedBy">>({
-    mutationFn: (request) =>
-      api.performAction(
-        { ...request, requestedBy },
-        { idempotencyKey: `${request.type}:${request.targetRef}:${Date.now()}` },
-      ),
+    mutationFn: (request) => {
+      /* The key is derived from the INTENT, not the attempt. It used to end in
+         `Date.now()`, which made it unique per try and therefore incapable of
+         deduplicating anything: §3 recognises a repeat by the key, so a
+         double-click or a retry after a dropped connection arrived as two
+         unrelated governed actions on a screen whose writes lock attendance. */
+      const governed: ActionRequest = { ...request, requestedBy };
+      return api.performAction(governed, { idempotencyKey: stableIdempotencyKey(governed) });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: engagementKeys.all });
     },
