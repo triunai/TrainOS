@@ -3,9 +3,9 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 13 · **Applied:** 0 · **Authored, not applied:** 13
+**Migrations:** 14 · **Applied:** 0 · **Authored, not applied:** 14
 **Last snapshot of `tables/`:** never
-**Amendment passes:** 1 (2026-09-13, rulings R-EXT / search_path / FORCE RLS — see the entry below)
+**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place)
 
 ---
 
@@ -13,6 +13,24 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-13 — **014: the database stops being deny-all, and three defects were found by granting rather than by reading.**
+014 lands 228 policies over 115 `core` relations, SELECT-only client grants on 114 tables and two views, the `public.*` grants that put 002's twelve `authenticated` policies into service for the first time, and the three `core` wrappers that make the 011 envelope reachable from a browser. One function, no table, no type, no trigger. **Applied nowhere.**
+
+**The shape of the pack is one function, not 114 blocks.** `app.apply_tenant_policies()` stamps two policies per table — a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy carrying the same predicate in USING *and* WITH CHECK — and the §2 loop is driven from `pg_class`, not from a list of names. This is 004's `finalise_table` argument applied to the policy layer, and it is stronger here: a policy typo does not fail to apply, it applies and admits the wrong rows. The pin follows 004's precedent too and exercises the FUNCTION on throwaway tables rather than the 114 it happened to be run over, because testing those 114 proves nothing about the 115th.
+
+**`authenticated` receives SELECT and nothing else, on any core table.** Not INSERT, not UPDATE, not DELETE. That is the spine rule moved down to the privilege layer: a browser holding UPDATE on `core.proposals` can move a proposal with no `action_request`, no policy evaluation, no `action_effect` and no audit row, which is the one thing the envelope exists to prevent. T9 proves the refusal is `42501` from the privilege layer rather than a policy matching zero rows — the distinction matters because a DELETE refused only by a policy reports success on zero rows and the caller cannot tell.
+
+**Three defects, each found by executing this migration and none findable by reading it.**
+(1) **`app.require_tenant_id()` was not executable by `authenticated`**, so the first probe of the finished policy layer did not return zero rows, it returned `ERROR: permission denied for function require_tenant_id`. A policy predicate is evaluated AS THE QUERYING ROLE; a function named in one must be executable by that role or the policy does not deny, it errors — and deny and error look equally secure in a smoke test. 002 had already granted the other four claim readers (`current_tenant_id`, `role`, `has_permission`, `is_agent`) for exactly this reason and missed the fifth, correctly, because no policy used it until now. This is **not** the grant doc 09 §0 rule 3 forbids: that rule is about `app.ok` and `app.perform_action`, which read past the caller's RLS. `require_tenant_id` reads one claim out of the caller's own token.
+(2) **`core.rule_set_versions` has no tenant index.** 009 hand-rolled that table instead of passing it through `app.finalise_table` — 009's own T1 comment says the two nullable-tenant tables "skip finalise_table" — and the copy preserved the RLS enable, the FORCE, the revoke and both triggers while dropping the tenant index and the composite `UNIQUE (tenant_id, id)`. 014's verify check (10) was written as a *regression test on 004* and fired on the first run, on exactly one relation out of 114. The index is added here because 014 creates the policy that needs it; the missing composite unique is a shape change to a table with rows and is left for 017.
+(3) **`core.budget_status` and `core.model_tier_status` cannot be granted at all.** Both are `security_invoker=true` and `budget_status` reads `app.usage_rollup`; an invoker view runs as the caller, and no client role holds SELECT anywhere in `app` by design. An earlier draft granted them, test_013's amended T11b2 then failed with `authenticated` *still* unable to read them, and the grant turned out to be useless rather than missing. 014 revokes both and says why: a grant that looks like access and delivers a permission error is worse than none, because the screen breaks identically either way and the grant hides the cause. **The AI budget and model-tier screens have no data path until 018 reads them from a definer RPC or the rollup moves into `core`.** Carried, not closed.
+
+**⚠ `core.v_approval_requests` is deliberately NOT granted, against the letter of the task brief.** The brief asked for a pin that "the approval view is readable"; doc 09 §12 says of this exact relation, "Do not grant the view to `authenticated` to shortcut" the approval RPCs. 014 honours the mechanism and pins the property: T7 proves the view IS readable through a `SECURITY DEFINER` path for the caller's own tenant, AND that a direct `authenticated` SELECT is refused. For a security-invoker view that is what "readable" has to mean.
+
+**Six earlier pins were amended, and the amendment is the honest half of this pack.** test_004, test_009, test_010, test_011, test_012 and test_013 each asserted the pre-014 deny-all state — several in so many words ("before 014 grants it", "Grants and policies land together in 014", "The tenant PREDICATE arrives in 014"). 014 is that arrival, so those assertions were inverted rather than deleted, each marked `⚠ AMENDED BY 014` in place with the reason, and each converted from "nothing is granted" to a property that can still be false: every permissive and restrictive policy in `core` is one 014 stamped **by name**; `anon` still holds nothing; no client role can write the envelope's ledger, the event log, the finance tables or a run trace; and the only client grant in the catalogue is SELECT to `authenticated` on a `core` relation. One amendment was a genuine regression in 014 and was reverted rather than accommodated: an earlier draft revoked `anon`'s USAGE on schema `app` as obvious hardening, and test_011 T13b caught it — 011's `M-04` records that USAGE as load-bearing. Schema USAGE conveys no object access on its own, and `anon` holds SELECT and EXECUTE on nothing in `app`, which this pack's own T4 measures by impersonation.
+
+**Spine untouched**, in the strongest sense the pack allows: 014 adds no action type, no handler and no branch to the envelope, and it is the migration that makes bypassing the envelope impossible rather than merely discouraged. No stage name appears in the file.
 
 **Last updated:** 2026-09-13 — **013: AI operations, and the `run_id` divergence settled by reconciliation rather than by picking a side.**
 013 lands the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree, and evals. Nineteen tables, two security-invoker views, twenty-nine functions, four triggers, **zero policies and zero new types**. **Applied nowhere.**
@@ -134,6 +152,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 014 | `014_rls_policies_and_client_grants.sql` | **The database stops being deny-all: 228 RLS policies, the client grant layer, and the three `core` wrappers over the 011 envelope (2026-09-13).** One function, 115 policied relations, zero tables, zero types, zero triggers. **The pack is `app.apply_tenant_policies()` plus a catalogue-driven loop**, not 114 hand-written blocks — 004's `finalise_table` argument applied to the policy layer, where it is stronger, because a policy typo applies successfully and admits the wrong rows. Two policies per table: a PERMISSIVE `FOR SELECT TO authenticated` and a RESTRICTIVE `FOR ALL` isolation policy with the predicate in USING *and* WITH CHECK, so tenant isolation cannot be widened by adding a policy beside it and is already correct on the day somebody grants a write. **`authenticated` gets SELECT and nothing else on `core`** — the spine rule enforced at the privilege layer, since a browser with UPDATE on `core.proposals` can move it with no action_request, no policy evaluation and no audit row; T9 proves the refusal is `42501` and not a policy matching zero rows, which would report success. **The global-row fallback is DERIVED from `attnotnull`, never listed**, so 009's national rules stay visible to every tenant and a NOT NULL table cannot accidentally get the permissive form. **Three defects found by granting rather than by reading:** `app.require_tenant_id` was not executable by `authenticated`, so every finished policy ERRORED instead of denying (a policy predicate runs as the querying role; 002 had granted the other four claim readers and missed this one because nothing used it yet); `core.rule_set_versions` has no tenant index because 009 hand-rolled it past `finalise_table`, caught by a check written as a regression test on 004 and fired on 1 relation in 114; and `core.budget_status`/`core.model_tier_status` are security-invoker views over `app.usage_rollup` and therefore **cannot be granted at all** — both are revoked with the reason, and the AI budget screens have no data path until 018. `core.v_approval_requests` stays ungranted per doc 09 §12 and T7 pins that it is readable through a definer and refused directly. Six earlier pins amended in place from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014; one draft change (revoking `anon`'s `app` USAGE) was caught by test_011 T13b as a regression against 011's M-04 and reverted. Spine untouched — and this is the migration that makes bypassing the spine impossible rather than discouraged. |
 | 013 | `013_ai_ops_agents_keys_runs_and_budgets.sql` | **AI operations: the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree and evals (2026-09-13).** Nineteen tables, two security-invoker views, twenty-nine functions, zero policies, zero new types. **`core.runs` settles the `run_id` divergence by reconciliation rather than by retyping**: the run has a `uuid` id AND a `ref`, so 012's text run ids resolve through `UNIQUE (tenant_id, ref)` and 007/009's uuid columns finally get the foreign keys their own comments said 013 would add. Neither side is altered and no row is rewritten. **Secrets are handled by mechanism, not by assertion**: no RPC takes a raw BYOK key at all, so it never reaches a request body, `log_min_duration_statement` or `pg_stat_activity`; the once-per-24-hours reveal ceiling is the PREDICATE of an UPDATE so two concurrent reveals cannot both pass; the audit row is written first and a trigger re-derives that it exists, so a reveal whose audit fails takes the transaction with it. The agent key is minted in the database from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach it through `select=*` or an embed, which is what `H-09` asked for and is stronger than omitting a column from a grant. Every security path is shaped to FAIL CLOSED under the carried FORCE-with-no-policy residue: a `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" where a definer function reads zero rows, and these degrade to "always refuse". Run I/O masking is honest about its limits — the pin asserts that a person's NAME survives it, so the day masking improves, the pin says the header is out of date. Spine untouched. |
 | 012 | `012_events_outbox_and_jobs.sql` | **Domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhooks and the retention reapers doc 05 promised and never wrote (2026-09-13).** Ten tables, one security-invoker view, thirty functions. `core.events` is the business record and is append-only by revoke, by a row trigger AND by a statement-level `BEFORE TRUNCATE` trigger — a row trigger does not fire for `TRUNCATE`, so before that the guarantee was defeated by one statement. `C-09` is answered by exactly one narrow exemption: `app.redact_event_actor` writes its own audit row and the append-only trigger re-derives from the row that the change was a redaction and nothing else, so PDPA erasure has a path and only that path. `C-08`, the poison pill, is closed on both lanes — `claim_jobs` will not hand out a job at `max_attempts` and `reap_jobs` dead-letters it instead of returning the lease — which is what stops a handler that OOMs the isolate re-pushing the same invoice to the accounting package forever. `H-12` and `M-14`: `fail_job` and `heartbeat_job` now check tenant, state AND owner, so worker A cannot dead-letter or extend a job worker B is running; the race is pinned end to end, not asserted. `H-16` gives the claim per-tenant fairness by `row_number() OVER (PARTITION BY tenant_id)`, proved by flooding fifty jobs from one tenant and watching the other's single interactive job still come back. `M-20`: a provider idempotency key is `<subject>#<attempt>` from a stored counter, never the job id, so replaying a dead-lettered push cannot submit the same invoice twice. **The seam with 011 is one enum and one raising function**: `app.effect_status` is reused by oid, the outbox's own state vocabulary is deliberately different, and `app.effect_status_for_job_state` raises on anything but SUCCEEDED and DEAD (R14). Spine untouched — 012 wires the envelope's external effects to a queue without changing the envelope. |
 | 011 | `011_action_envelope_and_policy_gate.sql` | **The write spine: the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry (2026-09-13).** Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions. Every primary button and every agent proposal in the product passes through `app.perform_action`, which is evaluated once, logged once, and dispatched to exactly one of EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED; the policy input is derived from stored rows and never trusted from the payload. New capability ships as a new action *type* plus a handler registered in data, never as a branch inside the envelope. **Second spine, and the one this migration makes real: `core.state_transitions`.** A status is no longer something a caller types into a column — 124 registry rows say which edges exist and which action authorises each, and `app.enforce_state_transition` is attached to every gated column that exists. That is what invalidated six committed pins, and repairing them is what found a defect in 008 and three missing edges in doc 01 §5.3. Seven critic findings are closed with an assertion each: `H-02` the agent cannot grant itself autonomy (the one RLS policy deliberately landing before 014, `AS RESTRICTIVE FOR ALL` in both clauses so INSERT and DELETE are covered); `H-03` self-approval, including the NULL requester, because `NULL IS DISTINCT FROM <uuid>` is TRUE and that is the fraud; `H-04` a NULL role raises before the authorisation disjunction instead of falling through it; `H-05` money-moving actions check `app.aal2_verified()`, grounded in an `auth.sessions` row GoTrue wrote rather than a claim the caller presents; `H-07` all three holes; `M-12` a NULL ceiling raises instead of permitting; `M-21` an idempotent replay returns the original body with 200. Nothing is granted to `anon` or `authenticated` — the `C-04` grant-sequencing residue is carried to 014, where policies and grants land together. Spine: this IS the spine, and it is pinned hardest. |
@@ -324,6 +343,148 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 014 (`014_rls_policies_and_client_grants.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.**
+**⚠ Codex (gpt-5.6-sol xhigh) review PENDING** — the standing ruling is that Claude drafts and
+Codex reviews; every assertion here has been executed and passes, none has been adversarially
+reviewed. Sources: `docs/architecture/09-golden-path-rpc-specs.md` §0, §1, §2 and §12 (the
+wrapper posture, the envelope, and the approval-view prohibition); `docs/architecture/02` §4.1
+(the RLS baseline and the claim readers); `supabase/CLAUDE.md` security rules 1–7;
+`docs/research/2026-09-13-supabase-current-docs.md` §2 (RLS performance: InitPlan wrapping,
+policy-column indexing, `TO authenticated`, and the UPDATE-without-SELECT trap); the `C-04`
+residue carried by 010, 011, 012 and 013.
+
+### What it does
+
+- **`app.apply_tenant_policies(schema, table)`** — one function, N attachments. Stamps a
+  PERMISSIVE `<table>_tenant_select` (`FOR SELECT TO authenticated`) and a RESTRICTIVE
+  `<table>_tenant_isolation` (`FOR ALL`, predicate in USING **and** WITH CHECK). Refuses a
+  table with no `tenant_id` and a table that is not RLS-forced. Idempotent by DROP-then-CREATE,
+  because a presence check would leave a WRONG predicate standing, which is the failure that
+  matters.
+- **228 policies over 115 `core` relations** — 113 tenant-scoped tables × 2, plus
+  `provenance_subjects_read` (the one core table with no tenant dimension, granted by name with
+  its reason), plus 011's `autonomy_grants_agents_cannot_write`, untouched.
+- **The client grant layer.** `REVOKE ALL … FROM PUBLIC, anon` across `core`, `app` and
+  `public` first; then `GRANT SELECT` — and only SELECT — on 114 `core` tables and two views.
+  `GRANT USAGE ON SCHEMA core TO authenticated`.
+- **`public.*` grants**, which put 002's twelve `authenticated` policies into service. Measured
+  before this migration: `relacl` on all five identity tables was `{postgres=arwdDxtm/postgres}`
+  and nothing else, so those policies had never once been consulted. Here the write grants are
+  real, because 002's `_write_admin` policies are ADMIN- and aal2-gated inside the predicate —
+  the envelope does not own team membership, 002 does.
+- **`core.perform_action`, `core.decide_approval`, `core.bulk_decide_approvals`** —
+  `SECURITY DEFINER`, `SET search_path = ''`, `SET statement_timeout = '10s'`, one line each.
+- **Spine untouched.** No action type, no handler, no branch in the envelope.
+
+### The naming decision on the third wrapper, settled against the consumer
+
+The task brief calls it `core.bulk_decide`. Doc 09 §1 and §12 call it
+`core.bulk_decide_approvals`, and so does the only thing that will ever call it:
+`apps/web/src/shared/api/rpcClient.ts:335` declares
+`wraps011: ["perform_action", "decide_approval", "bulk_decide_approvals"]` and line 533 issues
+`this.call("bulk_decide_approvals", …)`. A wrapper named something no client calls is dead code
+with a live-looking grant. The spelling follows the consumer and the document; the `app`
+function keeps its own name, `app.bulk_decide`, which is why the brief's shorthand is
+understandable and is recorded rather than silently overridden.
+
+### `current_tenant_id()` above the claim, `require_tenant_id()` below it
+
+Two spellings survive this migration on purpose, and the rule is one line. `public.tenants`,
+`teams`, `team_members`, `memberships` and `user_profiles` are read DURING principal assembly —
+`app.principal_claims()` and the GoTrue hook run as `supabase_auth_admin` at a moment when there
+is no tenant claim yet, because the claim is what that read is computing. A predicate that
+raised there would break login. Empty is the right answer to "which tenant is this" asked before
+the answer exists, and 002's `current_tenant_id()` gives it. Every `core` table is business data
+reached only by an assembled principal, where a missing tenant is a forged or broken token, and
+answering it with an empty list dressed as success is how a tenant-isolation defect hides for a
+month. It raises.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — all three wrappers return `app.ok(app.<fn>(…))` and nothing else. T10 asserts
+   the composition on the whitespace-stripped `pg_get_functiondef`, which is doc 09 §2's own
+   pin: a later edit that inlined a second policy evaluation would still return an envelope and
+   would pass every other check in the file.
+2. **Unwrap** — T2d counts the top-level keys and requires exactly two. `app.ok` guarantees
+   `data` is the sole non-`success` key, and a third key flips every caller in the app from
+   auto-unwrap to pass-through at once.
+3. **RpcMap** — the three names are already in `rpcClient.ts`'s `wraps011`. 014 adds no shape
+   the contract does not carry.
+4. **Call sites** — every primary button in the product, through `useAction`.
+5. **Casts** — none. The argument list is `app.perform_action`'s verbatim and in order, so a
+   rename on either side is a break a reader can see.
+6. **Reload/restore** — `NOTIFY pgrst, 'reload schema'` closes the file. New functions and
+   grants are invisible to PostgREST until it reloads, and the symptom is `PGRST202` against a
+   database where the function plainly exists.
+7. **Public routes** — none. `anon` receives no grant, and T4 measures four separate refusals by
+   impersonation.
+
+### Pin — `tests/test_014_rls_policies_and_client_grants.sql`
+
+Ten checks, 51 assertions, all executed, all PASS against the full applied set 001–014. The ones
+that earn their place: **T2 runs as `authenticated` itself**, not as `service_role` wearing its
+claims — 011, 012 and 013 all had to use the service_role probe because before 014
+`authenticated` held no EXECUTE, and a 014 pin that kept that shape would be testing 011 again
+and asserting nothing about 014. **T3 tests both directions of cross-tenant refusal and requires
+them to differ**: the write must RAISE, and the read must return zero rows rather than error,
+because a caller who can tell "refused" from "not there" can enumerate another tenant's refs one
+request at a time. **T5 compares row SETS, not counts**, since two tenants owning one row each
+have the same count under a policy that is true for everybody. **T8 exercises the function on
+four throwaway tables** — NOT NULL, nullable, no-tenant and unforced — and the last of its
+assertions deliberately installs a `USING (true)` policy under the right name and re-runs, to
+prove the function REPLACES a wrong predicate rather than skipping a name that already exists.
+**T9 requires sqlstate `42501`**, because a write refused only by a policy reports success on
+zero rows.
+
+### Rollback — `rollbacks/014_rls_policies_and_client_grants_rollback.sql`
+
+Round-tripped four times, plus a full-set reverse round trip: `relations in app+core: before=0
+after=0`. Drop order is wrappers → grants → policies → index and function, and **grants come
+down before policies on purpose**: the other order leaves a window in which `authenticated`
+holds SELECT on 114 tables with no predicate. It would be a window inside one transaction and
+therefore invisible, and it would still be wrong, because a rollback that is only safe because
+it commits atomically stops being safe the first time somebody runs half of it by hand.
+Nothing uses a wildcard `DROP POLICY`: 011's `H-02` kill switch, 002's fourteen `public.*`
+policies and the three `app.*` definer-read policies are all asserted present at the end, and
+the core count is asserted back to exactly 1.
+
+### Deliberately NOT built
+
+Write grants of any kind on `core` — the write path is the envelope and 014 is the migration
+that makes that structural. `core.list_approvals` / `core.get_approval` and the other 21 doc 09
+functions — 018's, gated on the user's go. A grant on `app.usage_rollup` to rescue
+`budget_status` — that would trade a broken screen for a hole in the `app` boundary that
+013's `H-09` answer rests on. Re-writing 011's fifteen gated-column revokes to look thorough:
+they are vacuous (a column-level UPDATE revoke does nothing when no role holds UPDATE on the
+table, and `pg_attribute.attacl` is NULL for all fifteen), and 014 asserts the stronger property
+— no client role holds UPDATE anywhere in `core` — instead of restating them.
+
+### ⚠ Carried risk and standing conditions
+
+- **`core.budget_status` and `core.model_tier_status` have no client data path.** Security-invoker
+  views over `app.usage_rollup`, which no client role can read by design. Both are explicitly
+  revoked and test_013 T11b3 asserts they stay that way. The AI budget and model-tier screens
+  are blocked until 018 reads them from a definer RPC in `core`, or the rollup moves into
+  `core`. **Owner: 018.** This is a product gap, not a test exclusion.
+- **`core.rule_set_versions` still has no composite `UNIQUE (tenant_id, id)`.** 014 added the
+  missing tenant index because it created the policy that needed it; the unique is a shape
+  change to a table that may hold rows. **Owner: 017.**
+- **The pack is unreviewed.** Codex has not run against it. Six earlier pins were amended by
+  this lane, which is exactly the kind of change an adversarial reviewer should look at hardest:
+  each amendment is a security assertion that was loosened in one direction and tightened in
+  another, and the tightening is the part that has not been independently checked.
+- **The shim's `postgres` role is SUPERUSER and BYPASSRLS.** Every policy here was therefore
+  proved by IMPERSONATION (`SET LOCAL ROLE authenticated` / `anon`) rather than by running as
+  the migration role, which is the only way these results mean anything on this harness. On
+  hosted Supabase `postgres` is `NOSUPERUSER` with `BYPASSRLS`; the definer wrappers rely on
+  that bypass to read past the caller's RLS, and if a future hardening pass removes it, every
+  `SECURITY DEFINER` function in the pack needs a definer-read policy on each table it touches.
+  Named here because `supabase/CLAUDE.md` rule 2 records the measurement that motivates it.
 
 ---
 

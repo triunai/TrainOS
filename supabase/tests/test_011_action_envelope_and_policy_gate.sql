@@ -843,8 +843,30 @@ BEGIN
         ('core.state_transitions'),('core.v_approval_requests')
       ) AS relation(name)
     LOOP
-      ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
-        pg_catalog.format('T14a FAIL: %s has SELECT on %s',v_role,v_relation);
+      -- ⚠ AMENDED BY 014 (2026-09-13). This loop asserted the C-04 residue: that
+      -- NOTHING 011 created was reachable by a client role, because policies and
+      -- grants were to land together in 014. They have. `authenticated` now holds
+      -- SELECT on the core relations, tenant-scoped by 014's policies; `anon`
+      -- still holds nothing, and core.v_approval_requests is still granted to
+      -- neither (doc 09 §12). The invariant that survives is the one that was
+      -- always the point: no client role may WRITE any of these, because every
+      -- one of them is the envelope's own bookkeeping.
+      IF v_role = 'anon' THEN
+        ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
+          pg_catalog.format('T14a FAIL: %s has SELECT on %s',v_role,v_relation);
+      ELSIF v_relation = 'core.v_approval_requests'::regclass
+         OR v_relation::text LIKE 'app.%' THEN
+        ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
+          pg_catalog.format('T14a FAIL: %s has SELECT on %s, which 014 '
+            'deliberately leaves ungranted',v_role,v_relation);
+      END IF;
+      ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'INSERT')
+         AND NOT pg_catalog.has_table_privilege(v_role,v_relation,'UPDATE')
+         AND NOT pg_catalog.has_table_privilege(v_role,v_relation,'DELETE'),
+        pg_catalog.format('T14a2 FAIL: %s can WRITE %s. These relations are the '
+          'action envelope''s own ledger; a client that writes them directly has '
+          'gone around the gate that this entire migration exists to be.',
+          v_role,v_relation);
     END LOOP;
     FOR v_function IN
       SELECT procedure.oid::regprocedure

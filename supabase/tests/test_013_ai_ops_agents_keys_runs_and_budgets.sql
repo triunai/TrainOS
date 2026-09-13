@@ -292,8 +292,23 @@ BEGIN
     FROM pg_catalog.pg_policy AS policy
    WHERE policy.polrelid IN (
      SELECT expected.name::regclass FROM pg_catalog.unnest(v_tables) AS expected(name));
+  -- ⚠ AMENDED BY 014 (2026-09-13). H-08 asked that 013 ship no policy of its
+  -- own, and it did not: every policy now on these tables was stamped by
+  -- app.apply_tenant_policies in 014. The count is therefore two per
+  -- tenant-scoped core table in the set rather than zero, and the H-08 property
+  -- is re-expressed as "every policy here is a 014 policy, by name" — which is
+  -- strictly stronger than a count, because a hand-written policy added beside
+  -- them would keep any count you chose just as easily as it would break it.
+  SELECT pg_catalog.count(*)::integer INTO v_count
+    FROM pg_catalog.pg_policy AS policy
+    JOIN pg_catalog.pg_class AS class ON class.oid = policy.polrelid
+   WHERE policy.polrelid IN (
+     SELECT expected.name::regclass FROM pg_catalog.unnest(v_tables) AS expected(name))
+     AND policy.polname NOT IN (class.relname || '_tenant_select',
+                                class.relname || '_tenant_isolation');
   ASSERT v_count = 0,
-    pg_catalog.format('T1d FAIL (H-08): expected 0 policies on the 013 set, found %s',
+    pg_catalog.format('T1d FAIL (H-08): policy/policies on the 013 set that 014 '
+      'did not stamp, found %s',
       v_count);
 
   -- H-09(a). Checked, not re-derived: 007 created core.public_share_tokens
@@ -1212,19 +1227,43 @@ DECLARE
   v_probe   jsonb := pg_catalog.current_setting('t013.agent_io_probe', true)::jsonb;
   v_refused boolean;
 BEGIN
-  -- TODAY'S CONTROL, stated honestly. 013 grants nothing and writes no policy
-  -- (C-04 residue), so an agent principal cannot reach core.run_node_io AT ALL -
-  -- its own tenant's rows included. The tenant PREDICATE arrives in 014; what is
-  -- provable now is that the table is closed, and that is what this asserts
-  -- rather than a cross-tenant read test that would pass for the wrong reason.
+  -- ⚠ AMENDED BY 014 (2026-09-13). The original text of this block said it
+  -- plainly: "The tenant PREDICATE arrives in 014; what is provable now is that
+  -- the table is closed." 014 has arrived. The table is deliberately no longer
+  -- closed — a run trace screen has to render its own tenant's prompts — so
+  -- asserting the refusal would now be asserting that the product is broken.
+  --
+  -- What replaces it is the property H-08 actually wanted: the read SUCCEEDS and
+  -- returns NOTHING, because the principal's tenant is not the one that owns the
+  -- rows. Both halves matter. An error would leak existence; a non-zero count
+  -- would be the cross-tenant read of full prompt and completion text that H-08
+  -- is about.
+  --
+  -- The positive half — that a principal DOES see its own tenant's rows, so this
+  -- zero is a predicate and not an empty table — needs two populated tenants in
+  -- one transaction and lives in test_014 T5, which does exactly that on
+  -- core.organisations. Named here rather than faked here.
   ASSERT v_probe IS NOT NULL, 'T10a FAIL: the impersonation probe did not run';
-  ASSERT NOT (v_probe ->> 'ok')::boolean,
+  ASSERT (v_probe ->> 'ok')::boolean AND (v_probe ->> 'rows')::integer = 0,
     pg_catalog.format(
       'T10b FAIL (H-08): an authenticated principal read core.run_node_io, which '
       'holds full prompt and completion text. Probe: %s', v_probe::text);
-  ASSERT (v_probe ->> 'sqlstate') = '42501',
-    pg_catalog.format('T10c FAIL: the refusal is %s, not a privilege refusal',
-      v_probe ->> 'sqlstate');
+  -- ⚠ AMENDED BY 014. Was: the refusal must carry sqlstate 42501, i.e. it must be
+  -- the PRIVILEGE layer refusing rather than a policy. After 014 there is no
+  -- refusal to classify — the read succeeds and returns nothing — so the two
+  -- halves that remain are catalogue facts, and they are the ones that would
+  -- actually have to break for H-08 to reopen:
+  --   `anon` still cannot read the prompts at all, and
+  --   NOBODY can write them from a client, so a run trace cannot be edited after
+  --   the fact by the principal it incriminates.
+  ASSERT NOT pg_catalog.has_table_privilege('anon','core.run_node_io','SELECT'),
+    'T10c FAIL (H-08): anon can read core.run_node_io, which holds full prompt '
+    'and completion text. 014 grants authenticated only.';
+  ASSERT NOT pg_catalog.has_table_privilege('authenticated','core.run_node_io','INSERT')
+     AND NOT pg_catalog.has_table_privilege('authenticated','core.run_node_io','UPDATE')
+     AND NOT pg_catalog.has_table_privilege('authenticated','core.run_node_io','DELETE'),
+    'T10c2 FAIL (H-08): a client role can WRITE core.run_node_io. A run trace a '
+    'principal can edit is not a trace of anything.';
 
   -- AND the structural half, which does not depend on a grant at all: a run I/O
   -- row in one tenant cannot point at a node in another. Every FK in this pack
@@ -1318,13 +1357,58 @@ BEGIN
   ASSERT v_rel IS NOT NULL AND v_fn IS NOT NULL AND v_anon IS NOT NULL,
     'T11a FAIL: an impersonation probe did not run, so this test proves nothing';
 
+  -- ⚠ AMENDED BY 014 (2026-09-13). The C-04 residue is what this block was
+  -- named for and 014 is where it was always going to be closed: "Grants and
+  -- policies land together in 014." They have. The set therefore splits in two
+  -- rather than collapsing to nothing.
+  --
+  --   `core.*` — readable by authenticated, tenant-scoped by 014's policies. The
+  --   AI ops screens are these tables. `core.ai_provider_keys` is in this half on
+  --   purpose: it holds a masked prefix and a locator, never key material, which
+  --   is the property 013 built rather than asserted.
+  --
+  --   `app.*` and `public.agent_api_keys` — still unreachable, and this is the
+  --   half that must never move. `app.agent_api_key_secrets` holds the salted
+  --   digest and `app` is not an exposed schema, which is what H-09 asked for and
+  --   is stronger than omitting a column from a grant.
   SELECT pg_catalog.string_agg(probe.key, ', ') INTO v_bad
     FROM pg_catalog.jsonb_each(v_rel) AS probe
-   WHERE (probe.value ->> 'ok')::boolean;
+   WHERE (probe.value ->> 'ok')::boolean
+     AND (probe.key LIKE 'app.%' OR probe.key = 'public.agent_api_keys'
+          OR probe.key = 'agent_api_keys');
   ASSERT v_bad IS NULL,
     pg_catalog.format(
-      'T11b FAIL (C-04 residue): authenticated can SELECT from %s. Grants and '
-      'policies land together in 014.', v_bad);
+      'T11b FAIL (H-09): authenticated can SELECT from %s. 014 grants core only; '
+      'the key digests live in app precisely so that PostgREST cannot reach them '
+      'through select=* or an embed.', v_bad);
+
+  SELECT pg_catalog.string_agg(probe.key, ', ') INTO v_bad
+    FROM pg_catalog.jsonb_each(v_rel) AS probe
+   WHERE NOT (probe.value ->> 'ok')::boolean
+     AND probe.key LIKE 'core.%'
+     -- ⚠ CARRIED DEFECT, found by 014 and recorded rather than hidden.
+     -- core.budget_status is security_invoker and reads app.usage_rollup;
+     -- core.model_tier_status reads budget_status. A security-invoker view runs
+     -- as the caller, and no client role holds SELECT in `app` — by design, and
+     -- T11e below is one of the assertions that keeps it that way. So these two
+     -- views are unreadable by `authenticated` whatever is granted ON them, and
+     -- 014 deliberately grants neither. The fix is to move app.usage_rollup into
+     -- core, or to read both from a SECURITY DEFINER RPC in core the way doc 09
+     -- does for v_approval_requests. Owner: 018. Until then the AI budget and
+     -- model-tier screens have no data path, and that is a product gap, not a
+     -- test exclusion.
+     AND probe.key NOT IN ('core.budget_status','core.model_tier_status');
+  ASSERT v_bad IS NULL,
+    pg_catalog.format(
+      'T11b2 FAIL: authenticated CANNOT read %s after 014. Every AI ops screen in '
+      'the product reads these; a refusal here is an empty page, not a defence.',
+      v_bad);
+
+  ASSERT NOT pg_catalog.has_table_privilege('authenticated','core.budget_status','SELECT')
+     AND NOT pg_catalog.has_table_privilege('authenticated','core.model_tier_status','SELECT'),
+    'T11b3 FAIL: one of the two unreadable views has been granted. A grant on a '
+    'security_invoker view over app.usage_rollup delivers a permission error '
+    'rather than a row, so granting it hides the cause without fixing anything.';
 
   SELECT pg_catalog.string_agg(probe.key, ', ') INTO v_bad
     FROM pg_catalog.jsonb_each(v_fn) AS probe
@@ -1356,16 +1440,25 @@ BEGIN
      'core.run_nodes','core.run_node_io','core.run_events','core.run_state_cards',
      'core.run_checkpoints','core.run_snapshots','core.evals',
      'app.key_access_audit','core.budget_status','core.model_tier_status'])
-     AND acl.grantee IN ('anon'::regrole, 'authenticated'::regrole, 0::oid::regrole);
+     AND acl.grantee IN ('anon'::regrole, 'authenticated'::regrole, 0::oid::regrole)
+     -- ⚠ AMENDED BY 014. The catalogue half of the same split: after 014 the one
+     -- client grant allowed on this set is SELECT, to authenticated, on a `core`
+     -- relation. Everything else is still a defect — a write grant anywhere here,
+     -- any grant to anon or PUBLIC, and any grant at all on the two app relations
+     -- or on public.agent_api_keys.
+     AND NOT (class.relnamespace = 'core'::regnamespace
+              AND acl.grantee = 'authenticated'::regrole
+              AND acl.privilege_type = 'SELECT');
   ASSERT v_bad IS NULL,
-    pg_catalog.format('T11e FAIL (C-04 residue): relation(s) %s carry a client grant',
-      v_bad);
+    pg_catalog.format('T11e FAIL: relation(s) %s carry a client grant that is not '
+      'authenticated SELECT on a core relation', v_bad);
 
   RAISE NOTICE
-    'T11 PASS (C-04 residue) - 21 relations unreadable by authenticated and 8 by '
-    'anon, all 11 probed functions refused with 42501 rather than running far '
-    'enough to fail on their arguments, and the catalogue carries no client '
-    'grant on anything 013 creates.';
+    'T11 PASS - after 014 the core relations are readable by authenticated and '
+    'the app relations plus public.agent_api_keys are not, 8 relations remain '
+    'unreadable by anon, all 11 probed functions are still refused with 42501 '
+    'rather than running far enough to fail on their arguments, and the only '
+    'client grant in the catalogue is SELECT to authenticated on core.';
 END;
 $t11$;
 

@@ -88,14 +88,31 @@ BEGIN
   -- The exception is pinned by NAME and by TABLE, as exact values rather than as
   -- a count, because a second restrictive policy appearing quietly is precisely
   -- what this check exists to catch.
+  -- ⚠ AMENDED BY 014 (2026-09-13). This check used to assert that NO core table
+  -- carried a permissive policy at all, on the ground that "a permissive policy
+  -- grants a read and belongs in 014". 014 has now landed and that is exactly
+  -- where those policies came from, so the original form asserts a state the
+  -- database is no longer required to be in.
+  --
+  -- The property worth keeping is not "none" — it is that every permissive policy
+  -- in `core` is one 014 put there, under the name 014 gives it. A permissive
+  -- policy appearing under any OTHER name is still the thing this check exists to
+  -- catch: it grants a read, it was not stamped by app.apply_tenant_policies, and
+  -- nobody reviewed its predicate. So the check is inverted rather than deleted,
+  -- and it is still by NAME rather than by count.
   SELECT string_agg(c.relname || '.' || pol.polname, ', ') INTO v_bad
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   JOIN pg_catalog.pg_policy pol ON pol.polrelid = c.oid
-  WHERE n.nspname = 'core' AND c.relkind = 'r' AND pol.polpermissive;
+  WHERE n.nspname = 'core' AND c.relkind = 'r' AND pol.polpermissive
+    AND pol.polname <> c.relname || '_tenant_select'
+    AND pol.polname <> 'provenance_subjects_read';
   ASSERT v_bad IS NULL,
-    format('T1b FAIL: core table(s) carry a PERMISSIVE policy: %s. '
-           'A permissive policy grants a read and belongs in 014.', v_bad);
+    format('T1b FAIL: core table(s) carry a PERMISSIVE policy that 014 did not '
+           'create: %s. Every permissive policy in core must be the '
+           '<table>_tenant_select stamped by app.apply_tenant_policies, or the '
+           'one named exception on the tenant-less lookup table. Anything else '
+           'grants a read whose predicate nobody reviewed.', v_bad);
 
   SELECT coalesce(string_agg(c.relname || '.' || pol.polname, ', '
                              ORDER BY c.relname, pol.polname), '(none)')
@@ -103,13 +120,24 @@ BEGIN
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   JOIN pg_catalog.pg_policy pol ON pol.polrelid = c.oid
-  WHERE n.nspname = 'core' AND c.relkind = 'r' AND NOT pol.polpermissive;
+  -- ⚠ AMENDED BY 014 (2026-09-13). Was: the restrictive set must be exactly
+  -- H-02's one policy, because 011 landing a single restrictive guard early was
+  -- the whole point of the check. 014 now stamps a <table>_tenant_isolation
+  -- RESTRICTIVE policy on every tenant-scoped core table, so an exact-set match
+  -- is no longer the right shape. H-02's guard is still asserted by name, and the
+  -- new question — is there a restrictive policy nobody stamped? — is asked
+  -- alongside it.
+  WHERE n.nspname = 'core' AND c.relkind = 'r' AND NOT pol.polpermissive
+    AND pol.polname <> c.relname || '_tenant_isolation';
   ASSERT v_bad = 'autonomy_grants.autonomy_grants_agents_cannot_write',
-    format('T1b FAIL: the restrictive-policy set before 014 is %s, expected '
-           'exactly autonomy_grants.autonomy_grants_agents_cannot_write (H-02).',
+    format('T1c FAIL: setting aside 014''s <table>_tenant_isolation policies, the '
+           'restrictive set is %s, expected exactly '
+           'autonomy_grants.autonomy_grants_agents_cannot_write (H-02). That '
+           'policy is the agent kill switch and nothing else belongs beside it.',
            v_bad);
-  RAISE NOTICE 'T1 PASS - every core table is RLS-forced, no permissive policy '
-               'before 014, and the H-02 restrictive guard is the only exception.';
+  RAISE NOTICE 'T1 PASS - every core table is RLS-forced, every permissive and '
+               'restrictive policy in core is one 014 stamped, and the H-02 '
+               'restrictive guard still stands alone beside them.';
 END;
 $t1$;
 

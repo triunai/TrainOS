@@ -139,8 +139,27 @@ BEGIN
   ASSERT v_bad IS NULL,
     format('T1a FAIL: nullable-tenant table(s) not RLS-forced: %s. These two skip '
            'finalise_table and are the ones most likely to be missed.', v_bad);
-  ASSERT NOT has_table_privilege('authenticated','core.compliance_rules','SELECT'),
-    'T1b FAIL: authenticated can read compliance_rules before 014 grants it';
+  -- ⚠ AMENDED BY 014 (2026-09-13). Was: authenticated must NOT hold SELECT
+  -- "before 014 grants it". 014 has granted it, so the assertion is inverted to
+  -- the property that actually protects the registry — the grant exists AND the
+  -- policy admits the national row (tenant_id IS NULL) as well as the tenant's
+  -- own. A grant with a tenant-only predicate would hide the entire national HRD
+  -- Corp registry from every tenant while looking perfectly correct.
+  ASSERT has_table_privilege('authenticated','core.compliance_rules','SELECT'),
+    'T1b FAIL: authenticated cannot read compliance_rules. 014 grants it; without '
+    'the grant every compliance screen in the product is empty.';
+  ASSERT NOT has_table_privilege('authenticated','core.compliance_rules','UPDATE')
+     AND NOT has_table_privilege('authenticated','core.compliance_rules','INSERT')
+     AND NOT has_table_privilege('authenticated','core.compliance_rules','DELETE'),
+    'T1b2 FAIL: authenticated holds a WRITE privilege on compliance_rules. A rule '
+    'is changed through the action envelope and a review, never by a client.';
+  ASSERT (SELECT pg_catalog.pg_get_expr(pol.polqual, pol.polrelid)
+            FROM pg_catalog.pg_policy pol
+           WHERE pol.polrelid = 'core.compliance_rules'::regclass
+             AND pol.polname = 'compliance_rules_tenant_select') LIKE '%IS NULL%',
+    'T1b3 FAIL: the compliance_rules read policy does not admit tenant_id IS NULL, '
+    'so every national rule is invisible to every tenant — which is the whole '
+    'registry, silently.';
   RAISE NOTICE 'T1 PASS - both nullable-tenant tables are RLS-forced and ungranted.';
 END;
 $t1$;
