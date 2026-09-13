@@ -10,11 +10,12 @@ import type {
   AttendanceExport,
   AttendanceSheet,
   ComplianceChecksResponse,
-  ListResponse,
   Engagement,
+  ListResponse,
   Organisation,
   Participant,
   PipelineConfig,
+  PipelineObject,
 } from "@trainos/contract";
 import { useAction, useActor, useApi } from "@/shared/api";
 
@@ -58,7 +59,7 @@ export const engagementKeys = {
 };
 
 /** Stage labels and order. Never hardcoded — CLAUDE.md's standing rule. */
-export function usePipelineConfig(object: string): UseQueryResult<PipelineConfig> {
+export function usePipelineConfig(object: PipelineObject): UseQueryResult<PipelineConfig> {
   const api = useApi();
   return useQuery({
     queryKey: engagementKeys.pipeline(object),

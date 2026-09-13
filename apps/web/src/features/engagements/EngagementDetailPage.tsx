@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { EngagementSession } from "@trainos/contract";
+import type { EngagementSession, EngagementStageKey } from "@trainos/contract";
 import {
   ActionOutcome,
   ChecklistRow,
@@ -64,8 +64,14 @@ type TabId = (typeof TAB_IDS)[number];
 /**
  * The one stage this screen refers to by name, and it refers to it through the
  * pipeline rather than to the record directly. See the note at its use.
+ *
+ * W-15 remainder: typed as `EngagementStageKey` rather than left as a bare
+ * literal. The contract publishes the §8 stage vocabulary now, so a rename
+ * there is a compile error here instead of a match that silently stops
+ * matching, and `pipeline-stage-keys.test.ts` in the fixture package fails if
+ * the served configuration drifts from that vocabulary.
  */
-const ATTENDANCE_LOCKED_STAGE = "ATTENDANCE_LOCKED";
+const ATTENDANCE_LOCKED_STAGE: EngagementStageKey = "ATTENDANCE_LOCKED";
 
 export function EngagementDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -109,9 +115,10 @@ export function EngagementDetailPage() {
      printed is the configured LABEL: rename the stage and the screen follows;
      remove it and the sub-line disappears rather than silently never matching,
      which is what a raw `find(key === "ATTENDANCE_LOCKED")` against the record
-     did. The key itself is still a literal because `LifecycleStep.key` is typed
-     `string` in the contract — a named constant is as close as this file can
-     get until that enum exists. */
+     did. `LifecycleStep.key` stays `string` — the stepper is a kit component
+     and the policy ladder draws its own steps through it — but the constant
+     above is typed with the §8 pipeline's own key union, so the literal is
+     checked in both directions. */
   const lockedStage = pipeline.data?.stages.find((stage) => stage.key === ATTENDANCE_LOCKED_STAGE);
   const lockedAt = lockedStage
     ? record.lifecycle.find((step) => step.key === lockedStage.key)?.at

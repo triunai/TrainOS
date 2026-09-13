@@ -90,6 +90,7 @@ import type {
   Participant,
   PaymentRecordRequest,
   PipelineConfig,
+  PipelineObject,
   Policy,
   PortalAcceptRequest,
   PortalAcceptResponse,
@@ -478,7 +479,11 @@ export class FixtureClient {
     return this.#read(policy);
   }
 
-  async getPipelineConfig(object: string): Promise<PipelineConfig> {
+  /**
+   * §5 / §8 the stage definitions. `object` is typed, so asking for a pipeline
+   * the contract does not name is a compile error rather than a 404 at runtime.
+   */
+  async getPipelineConfig(object: PipelineObject): Promise<PipelineConfig> {
     const pipeline = this.#store.pipelines.find((candidate) => candidate.object === object);
     if (!pipeline) throw notFound("Pipeline", object);
     return this.#read(pipeline);

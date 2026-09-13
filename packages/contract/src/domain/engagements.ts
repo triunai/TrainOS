@@ -20,6 +20,7 @@ import type {
   CaptureMethod,
   EngagementStatus,
   LifecycleState,
+  PipelineObject,
   SyncState,
 } from '../enums';
 
@@ -36,6 +37,19 @@ import type {
  * rather than from a document count.
  */
 export interface LifecycleStep {
+  /**
+   * Deliberately `string`, not an enum over the pipeline vocabularies.
+   *
+   * `LifecycleStepper` is a kit component and its rows are not always a
+   * server pipeline: the automation-policies ladder and the kit showcase draw
+   * their own steps through it. Closing this union would make the stepper
+   * refuse every caller that is not an engagement.
+   *
+   * The vocabulary that IS closed is per pipeline — `ENGAGEMENT_STAGE_KEYS`
+   * for §8, `DEAL_CHAIN_STAGE_KEYS` for §5 — and a screen that names a stage
+   * declares its constant with that type, so a rename is a compile error at
+   * the screen and a test failure at the seam (W-15 remainder).
+   */
   key: string;
   label?: string;
   state: LifecycleState;
@@ -46,11 +60,17 @@ export interface LifecycleStep {
 
 /** §5 / §13 `GET /v1/config/pipelines?object=` — the stage definitions. */
 export interface PipelineConfig {
-  object: string;
+  object: PipelineObject;
   stages: PipelineStage[];
 }
 
-/** §5 one configured stage. */
+/**
+ * §5 one configured stage.
+ *
+ * `label` and `order` are the configuration: a screen renders the word this
+ * carries, in the sequence this gives, and never its own. `key` is only the
+ * identity the two sides agree on.
+ */
 export interface PipelineStage {
   key: string;
   label: string;

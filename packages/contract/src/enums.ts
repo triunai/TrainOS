@@ -155,6 +155,75 @@ export type QuotationStatus = (typeof QUOTATION_STATUSES)[number];
 export const PROGRAMME_STATUSES = ['DRAFT', 'ACTIVE', 'RETIRED'] as const;
 export type ProgrammeStatus = (typeof PROGRAMME_STATUSES)[number];
 
+/* ------------------------------------------------------------------ *
+ * §5 / §8 · Pipeline stage keys
+ *
+ * CLAUDE.md: stage names and order render from pipeline configuration, never
+ * hardcoded. That rule is about the printed WORD and the sequence, and it
+ * stands — both still come from `GET /v1/config/pipelines`. What the rule
+ * cannot do is stop a screen naming a stage it needs to find, and
+ * `LifecycleStep.key` was `string`, so `EngagementDetailPage` matched
+ * `"ATTENDANCE_LOCKED"` against a vocabulary nothing checked. Rename the stage
+ * server-side and the match quietly stops matching — the sub-line just
+ * disappears and no build, test or reviewer notices (W-15 remainder).
+ *
+ * R14 names the fix: pin the seam as a table duplicated verbatim on both
+ * sides. These are the keys the contract's own §5 and §8 examples carry; the
+ * labels and the order stay where they belong, in the configuration. A screen
+ * that must name a stage types its constant with the pipeline's key union, so
+ * a rename in the contract is a compile error rather than a match that stops
+ * matching, and a fixtures test pins the served configuration to these arrays
+ * so a rename on the server side fails too.
+ * ------------------------------------------------------------------ */
+
+/** §5 / §8 the objects that own a pipeline. `GET /v1/config/pipelines?object=`. */
+export const PIPELINE_OBJECTS = ['ENGAGEMENT', 'DEAL_CHAIN', 'OPPORTUNITY'] as const;
+export type PipelineObject = (typeof PIPELINE_OBJECTS)[number];
+
+/**
+ * §8 the ENGAGEMENT delivery lifecycle, verbatim from the §8
+ * `GET /v1/engagements/{id}` example. §17 also names `HRDC_CLAIM`
+ * normatively: any failing compliance check sets that step to `BLOCKED`.
+ */
+export const ENGAGEMENT_STAGE_KEYS = [
+  'WON',
+  'TRAINER_CONFIRMED',
+  'SCHEDULED',
+  'REGISTERED',
+  'DELIVERED',
+  'ATTENDANCE_LOCKED',
+  'HRDC_CLAIM',
+  'INVOICED',
+  'PAID',
+] as const;
+export type EngagementStageKey = (typeof ENGAGEMENT_STAGE_KEYS)[number];
+
+/**
+ * §5 the compact deal chain the organisation relations panel draws on each
+ * engagement row, verbatim from the §5 example. A different set of keys from
+ * the ENGAGEMENT lifecycle, in the same `LifecycleStep` shape.
+ */
+export const DEAL_CHAIN_STAGE_KEYS = [
+  'ENQUIRY',
+  'TNA',
+  'PROPOSAL',
+  'APPROVAL',
+  'SENT',
+  'DELIVERY',
+] as const;
+export type DealChainStageKey = (typeof DEAL_CHAIN_STAGE_KEYS)[number];
+
+/**
+ * The OPPORTUNITY pipeline's stages are `OpportunityStage`, which §12 already
+ * catalogues, so there is no third array here.
+ *
+ * There is deliberately no union of all three either. `LifecycleStep.key`
+ * stays `string`, because `LifecycleStepper` is a kit component and its rows
+ * are not always a server pipeline — the automation-policies ladder draws its
+ * own steps through it. The closed vocabulary belongs to each pipeline, and a
+ * screen that names a stage declares its constant with that pipeline's type.
+ */
+
 /** §12 `ApprovalDecision`. `note` required for the latter two (§7). */
 export const APPROVAL_DECISIONS = ['APPROVE', 'REQUEST_CHANGES', 'REJECT'] as const;
 export type ApprovalDecision = (typeof APPROVAL_DECISIONS)[number];

@@ -37,3 +37,6 @@ amendment pass plus the column change in the pack named on the row.
 |---|---|---|
 | `core.quotation_status` | `DRAFT · PENDING_DISCOUNT_APPROVAL · APPLIED · SUPERSEDED` | 003 (type) + 007 money/proposals/quotations — new `status` column on the quotation table, `Quotation.status` is required in the contract |
 | `core.programme_status` | `DRAFT · ACTIVE · RETIRED` | 003 (type) + 006 catalogue/programmes — `core.programmes.status` is already `text NOT NULL DEFAULT 'DRAFT'` with a CHECK over exactly these three values (006:78). The contract now agrees with it; the only change is text + CHECK becoming the enum type |
+| `core.engagement_stage_key` | `WON · TRAINER_CONFIRMED · SCHEDULED · REGISTERED · DELIVERED · ATTENDANCE_LOCKED · HRDC_CLAIM · INVOICED · PAID` | 003 (type) + 009 compliance — `core.compliance_checks.stage_key` at 009:537 is bare `text`. Also the 121-edge transition registry in 011 (`core.state_transitions`) if its engagement edges use these keys |
+| `core.deal_chain_stage_key` | `ENQUIRY · TNA · PROPOSAL · APPROVAL · SENT · DELIVERY` | 003 (type) + wherever the §5 relations-panel chain is stored. Distinct from the engagement lifecycle: six keys, not nine |
+| `core.pipeline_object` | `ENGAGEMENT · DEAL_CHAIN · OPPORTUNITY` | 003 (type) + 004 shell config, which serves `GET /v1/config/pipelines?object=` |
