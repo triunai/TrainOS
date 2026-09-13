@@ -14,7 +14,6 @@ import {
   ListToolbar,
   LoadingState,
   PillTabGroup,
-  PrimaryButton,
   RecordHeader,
   RowActionMenu,
   SecondaryButton,
@@ -331,8 +330,22 @@ export function KnowledgeSourcesScreen() {
         /* "Add source", not "+ Add source". §18 writes the plus as shorthand
            for the add affordance; rendered, it splits the button's children so
            the kit's one-primary registry reads the label as unlabelled, and no
-           other primary in the app wears a glyph. */
-        primaryAction={<PrimaryButton onClick={() => setAdding(true)}>Add source</PrimaryButton>}
+           other primary in the app wears a glyph.
+
+           SECONDARY, not primary. `AddSourceDrawer`'s footer holds the solid
+           "Add source", and this one only opens the drawer — which is the
+           kit's own wording for the case: a button that only OPENS a drawer is
+           not the view's action. Both were solid until now, and
+           `useSinglePrimary` warned on every render of this screen. Two
+           readings of that warning were on the table: demote the opener, or
+           give `Drawer` a primary scope of its own in the kit so a modal
+           counts as a second view. `ProviderKeysScreen` already took the first
+           one, comment and all, so taking it here is CLAUDE.md's rule that the
+           newer variant wins and the older is migrated rather than a third
+           answer to the same question. */
+        primaryAction={
+          <SecondaryButton onClick={() => setAdding(true)}>Add source</SecondaryButton>
+        }
       />
 
       {changed ? (

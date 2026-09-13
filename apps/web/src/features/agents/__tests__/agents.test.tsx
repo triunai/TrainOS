@@ -19,6 +19,34 @@ describe("M18-S01 · agent registry", () => {
     expect(await screen.findByRole("button", { name: "Register agent" })).toBeInTheDocument();
   });
 
+  it("puts the tab group and the narrowing on ONE row, with the count on the right", async () => {
+    const { container } = renderScreen(<AgentRegistryScreen />);
+    await screen.findByRole("table", { name: "Agent registry" });
+
+    /* §10b. The tab group used to own a row with nothing beside it and no
+       count beneath it — the stacked pair the ruling outlaws, reached by
+       leaving the second band empty. */
+    const toolbar = container.querySelector("[data-list-toolbar]");
+    expect(toolbar).not.toBeNull();
+
+    const bar = within(toolbar as HTMLElement);
+    expect(bar.getByRole("tablist", { name: "Agent filters" })).toBeInTheDocument();
+    expect(bar.getByLabelText("Search agents")).toBeInTheDocument();
+    /* The count is the RESULT of both halves and sits on the right edge. */
+    expect(bar.getByText(/^\d+ of \d+ shown$/)).toBeInTheDocument();
+  });
+
+  it("narrows on scope as well as name, and says so when nothing matches", async () => {
+    renderScreen(<AgentRegistryScreen />);
+    const table = await screen.findByRole("table", { name: "Agent registry" });
+    const before = within(table).getAllByRole("row").length;
+
+    await userEvent.type(screen.getByLabelText("Search agents"), "zzzz");
+
+    expect(await screen.findByText("No agent matches")).toBeInTheDocument();
+    expect(before).toBeGreaterThan(1);
+  });
+
   it("states why the Knowledge Agent is paused AND what would let it resume", async () => {
     renderScreen(<AgentRegistryScreen />);
     const banner = await screen.findByRole("alert");

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { currentPrimaries } from "@/shared/components/kit";
 import { KnowledgeSourcesScreen } from "../KnowledgeSourcesScreen";
 import { renderScreen } from "@/test/renderScreen";
 
@@ -28,9 +29,25 @@ describe("M16-S05 · knowledge sources", () => {
     expect(screen.getByText(/6 sources · 4 healthy · 2 need attention/)).toBeInTheDocument();
   });
 
-  it("offers Add source as its one solid primary", async () => {
+  it("keeps Add source reachable from the header without making it the view's primary", async () => {
     renderScreen(<KnowledgeSourcesScreen />);
     expect(await screen.findByRole("button", { name: "Add source" })).toBeInTheDocument();
+    /* The header button only OPENS the drawer, which the kit's own warning
+       names as not being the view's action. With the page closed, nothing on
+       the screen claims the single primary — the claim belongs to the drawer's
+       submit, and is asserted below. ProviderKeysScreen reads the same way. */
+    expect(currentPrimaries()).toEqual([]);
+  });
+
+  it("gives the one solid primary to the drawer's submit, not to the button that opens it", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add source" }));
+
+    await screen.findByRole("dialog");
+    /* Exactly one claim, and it is the drawer's. Two solid "Add source" buttons
+       used to render at once here and useSinglePrimary warned on every render
+       of this screen. */
+    expect(currentPrimaries()).toEqual(["Add source"]);
   });
 
   it("has no metric band — the six numbers moved into the row drawer", async () => {

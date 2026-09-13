@@ -10,10 +10,13 @@ import {
   EmptyState,
   ErrorState,
   ExceptionBanner,
+  FilterBar,
+  FilterSearch,
   formatMoney,
   GhostButton,
   humanise,
   JuryChip,
+  ListToolbar,
   LoadingState,
   MoneyText,
   PillTabGroup,
@@ -127,6 +130,7 @@ export function AgentRegistryScreen() {
   const registry = useAgentRegistry();
   const pause = usePauseAgent();
   const [tab, setTab] = useState<string>(TAB_ALL);
+  const [query, setQuery] = useState("");
 
   const agents = useMemo(() => registry.data?.data ?? [], [registry.data]);
 
@@ -148,12 +152,26 @@ export function AgentRegistryScreen() {
     [agents],
   );
 
-  const rows = useMemo(() => {
+  const inTab = useMemo(() => {
     if (tab === TAB_ATTENTION) return agents.filter(needsAttention);
     if (tab === TAB_AUTONOMOUS) return agents.filter(hasAutonomous);
     if (tab === TAB_PAUSED) return agents.filter((agent) => agent.status === "PAUSED");
     return agents;
   }, [agents, tab]);
+
+  /* The narrowing that the toolbar's count is the result of. Name AND scopes,
+     because the scopes are what an administrator actually remembers an agent
+     by once there are more than a dozen of them, and they already render in
+     the same cell as the name. */
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return inTab;
+    return inTab.filter(
+      (agent) =>
+        agent.name.toLowerCase().includes(needle) ||
+        agent.scopes.some((scope) => scope.toLowerCase().includes(needle)),
+    );
+  }, [inTab, query]);
 
   /* The paused agent drives the page banner. One banner, at the top, outside
      any scroll pane — three of these teach a reader to ignore all of them. */
@@ -334,9 +352,32 @@ export function AgentRegistryScreen() {
         </div>
       ) : null}
 
-      <div className="px-5">
-        <PillTabGroup tabs={tabs} activeId={tab} onSelect={setTab} label="Agent filters" />
-      </div>
+      {/* §10b: ONE row. The tab group used to sit on a row of its own with no
+          FilterBar, no narrowing and no count beneath it — the stacked band the
+          ruling outlaws, arrived at by leaving the second band empty rather
+          than by filling it. The gutter and the bottom spacing ride on the
+          toolbar and it draws no rule of its own, because the table head
+          directly beneath already draws one. */}
+      <ListToolbar
+        className="px-5"
+        tabs={<PillTabGroup tabs={tabs} activeId={tab} onSelect={setTab} label="Agent filters" />}
+        filters={
+          <FilterBar
+            filters={[]}
+            shown={rows.length}
+            total={inTab.length}
+            onClearAll={() => setQuery("")}
+          >
+            <FilterSearch
+              label="Search agents"
+              labelHidden
+              value={query}
+              onChange={setQuery}
+              placeholder="Agent or scope"
+            />
+          </FilterBar>
+        }
+      />
 
       <div className="px-5">
         <ContentCard flush>
@@ -348,8 +389,12 @@ export function AgentRegistryScreen() {
             stickyHeader
             empty={
               <EmptyState
-                title="No agents in this view"
-                description="Every registered agent is outside the filter you have selected."
+                title={query.trim() === "" ? "No agents in this view" : "No agent matches"}
+                description={
+                  query.trim() === ""
+                    ? "Every registered agent is outside the filter you have selected."
+                    : "No agent in this view has that name or scope. Clearing the search brings the view's agents back."
+                }
               />
             }
           />
