@@ -9,6 +9,9 @@
 --     -f supabase/seeds/fixture_world_03_delivery_compliance_finance.sql \
 --     -f supabase/seeds/fixture_world_04_ai_ops_and_agents.sql
 --
+-- Targets migrations 001-017 (and 018 when it merges). It provisions through
+-- 016's own seeders, so it does NOT run against a database at 013 or earlier.
+--
 -- Idempotent: every statement is an upsert guarded by an IS DISTINCT FROM
 -- comparison, so a second run of an unchanged seed performs zero updates and
 -- leaves every updated_at where it was. Iterating a fixture never needs a wipe.
@@ -52,19 +55,47 @@
 
 -- Tenant ──────────────────────────────────────────────────────────────────
 
--- Akademi Perdana Sdn Bhd — the single tenant the whole fixture world belongs to.
-INSERT INTO public.tenants AS target
-  (id, slug, name, status, timezone, locale, created_at)
-VALUES
-  ('acade111-0000-4000-8000-000000000001', 'akademi-perdana', 'Akademi Perdana Sdn Bhd', 'ACTIVE', 'Asia/Kuala_Lumpur', 'en-MY', '2022-01-04T09:00:00+08:00')
-ON CONFLICT (id) DO UPDATE SET
-  slug = EXCLUDED.slug,
-  name = EXCLUDED.name,
-  status = EXCLUDED.status,
-  timezone = EXCLUDED.timezone,
-  locale = EXCLUDED.locale
-WHERE (target.slug, target.name, target.status, target.timezone, target.locale)
-   IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.name, EXCLUDED.status, EXCLUDED.timezone, EXCLUDED.locale);
+-- Tenant, provisioned through 016's own seeders.
+DO $provision$
+DECLARE
+  v_tenant   CONSTANT uuid := 'acade111-0000-4000-8000-000000000001';
+  v_formats  integer;
+  v_policies integer;
+BEGIN
+  INSERT INTO public.tenants (id, slug, name, status, timezone, locale, created_at)
+  VALUES (v_tenant, 'akademi-perdana', 'Akademi Perdana Sdn Bhd', 'ACTIVE',
+          'Asia/Kuala_Lumpur', 'en-MY', '2022-01-04T09:00:00+08:00')
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Re-runnable in the same sense as every other statement in this pack: an
+  -- unchanged fixture updates nothing.
+  UPDATE public.tenants
+     SET name = 'Akademi Perdana Sdn Bhd',
+         status = 'ACTIVE',
+         timezone = 'Asia/Kuala_Lumpur',
+         locale = 'en-MY'
+   WHERE id = v_tenant
+     AND (name, status, timezone, locale)
+         IS DISTINCT FROM ('Akademi Perdana Sdn Bhd', 'ACTIVE', 'Asia/Kuala_Lumpur', 'en-MY');
+
+  PERFORM app.seed_ref_formats(v_tenant);
+  PERFORM app.seed_action_policies(v_tenant);
+  PERFORM app.seed_compliance_check_keys(v_tenant);
+
+  SELECT count(*) INTO v_formats FROM core.ref_formats WHERE tenant_id = v_tenant;
+  IF v_formats = 0 THEN
+    RAISE EXCEPTION
+      'fixture_world: tenant % has no ref_formats, so every ref''d table is unwritable', v_tenant;
+  END IF;
+
+  SELECT count(*) INTO v_policies FROM core.action_policies WHERE tenant_id = v_tenant;
+  IF v_policies = 0 THEN
+    RAISE EXCEPTION
+      'fixture_world: tenant % has no action_policies, so every action would fall '
+      'through the policy gate with nothing to evaluate', v_tenant;
+  END IF;
+END
+$provision$;
 
 -- Principals ──────────────────────────────────────────────────────────────
 
@@ -146,14 +177,21 @@ ON CONFLICT (id) DO UPDATE SET
 WHERE (target.tenant_id, target.name, target.manager_user_id)
    IS DISTINCT FROM (EXCLUDED.tenant_id, EXCLUDED.name, EXCLUDED.manager_user_id);
 
--- Four trainers. `TRN-0007` is Farah Aziz, who also holds a TRAINER membership.
+-- Four trainers. TRN-0007 is Farah Aziz, who also holds a TRAINER membership.
+--
+-- hrd_tdf is written FALSE on all four, and three of them are TDF-accredited in
+-- the fixture world. 017's trainers_hrd_tdf_needs_expiry refuses `hrd_tdf = true`
+-- without hrd_tdf_valid_to, and the fixture carries no TDF expiry and no TDF
+-- reference -- tttRef and tttValidTo are a different accreditation and using them
+-- here would be inventing a date an auditor could act on. A wrong boolean that
+-- the pin asserts and the PR names beats a fabricated expiry. See T2h.
 INSERT INTO core.trainers AS target
-  (id, tenant_id, ref, name, email, phone, user_id, band, day_rate_override_sen, ttt_certified, ttt_ref, ttt_valid_to, hrd_tdf, rating, status, created_at, created_by_kind, created_by_id, created_by_name)
+  (id, tenant_id, ref, name, email, phone, user_id, band, day_rate_override_sen, ttt_certified, ttt_ref, ttt_valid_to, hrd_tdf, hrd_tdf_valid_to, hrd_tdf_ref, rating, status, created_at, created_by_kind, created_by_id, created_by_name)
 VALUES
-  ('0b54f9a4-0d8c-59d9-b39a-1ada4dea58db', 'acade111-0000-4000-8000-000000000001', 'TRN-0007', 'Farah Aziz', 'farah.aziz@akademiperdana.my', NULL, 'acade111-0001-4000-8000-000000000007', 'A', NULL, TRUE, 'TTT-2019-4471', '2027-06-30', TRUE, 4.7, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
-  ('1baefe97-f97b-50a1-ba80-55ecfc180eb7', 'acade111-0000-4000-8000-000000000001', 'TRN-0012', 'Daniel Wong', 'daniel.wong@akademiperdana.my', NULL, NULL, 'A', NULL, TRUE, 'TTT-2021-8830', '2028-01-31', TRUE, 4.4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
-  ('ad2d1197-0023-5fe3-a16b-cac09ad90f95', 'acade111-0000-4000-8000-000000000001', 'TRN-0019', 'Lee Chin Hoe', 'lee.chinhoe@akademiperdana.my', NULL, NULL, 'B', NULL, TRUE, 'TTT-2022-1174', '2027-11-30', TRUE, 4.2, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
-  ('31bd1a52-678b-57a4-bdde-aefb0db000fc', 'acade111-0000-4000-8000-000000000001', 'TRN-0024', 'Noora Idris', 'noora.idris@akademiperdana.my', NULL, NULL, 'C', NULL, FALSE, NULL, NULL, FALSE, 4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar')
+  ('0b54f9a4-0d8c-59d9-b39a-1ada4dea58db', 'acade111-0000-4000-8000-000000000001', 'TRN-0007', 'Farah Aziz', 'farah.aziz@akademiperdana.my', NULL, 'acade111-0001-4000-8000-000000000007', 'A', NULL, TRUE, 'TTT-2019-4471', '2027-06-30', FALSE, NULL, NULL, 4.7, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('1baefe97-f97b-50a1-ba80-55ecfc180eb7', 'acade111-0000-4000-8000-000000000001', 'TRN-0012', 'Daniel Wong', 'daniel.wong@akademiperdana.my', NULL, NULL, 'A', NULL, TRUE, 'TTT-2021-8830', '2028-01-31', FALSE, NULL, NULL, 4.4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('ad2d1197-0023-5fe3-a16b-cac09ad90f95', 'acade111-0000-4000-8000-000000000001', 'TRN-0019', 'Lee Chin Hoe', 'lee.chinhoe@akademiperdana.my', NULL, NULL, 'B', NULL, TRUE, 'TTT-2022-1174', '2027-11-30', FALSE, NULL, NULL, 4.2, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('31bd1a52-678b-57a4-bdde-aefb0db000fc', 'acade111-0000-4000-8000-000000000001', 'TRN-0024', 'Noora Idris', 'noora.idris@akademiperdana.my', NULL, NULL, 'C', NULL, FALSE, NULL, NULL, FALSE, NULL, NULL, 4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar')
 ON CONFLICT (id) DO UPDATE SET
   tenant_id = EXCLUDED.tenant_id,
   name = EXCLUDED.name,
@@ -166,13 +204,15 @@ ON CONFLICT (id) DO UPDATE SET
   ttt_ref = EXCLUDED.ttt_ref,
   ttt_valid_to = EXCLUDED.ttt_valid_to,
   hrd_tdf = EXCLUDED.hrd_tdf,
+  hrd_tdf_valid_to = EXCLUDED.hrd_tdf_valid_to,
+  hrd_tdf_ref = EXCLUDED.hrd_tdf_ref,
   rating = EXCLUDED.rating,
   status = EXCLUDED.status,
   created_by_kind = EXCLUDED.created_by_kind,
   created_by_id = EXCLUDED.created_by_id,
   created_by_name = EXCLUDED.created_by_name
-WHERE (target.tenant_id, target.name, target.email, target.phone, target.user_id, target.band, target.day_rate_override_sen, target.ttt_certified, target.ttt_ref, target.ttt_valid_to, target.hrd_tdf, target.rating, target.status, target.created_by_kind, target.created_by_id, target.created_by_name)
-   IS DISTINCT FROM (EXCLUDED.tenant_id, EXCLUDED.name, EXCLUDED.email, EXCLUDED.phone, EXCLUDED.user_id, EXCLUDED.band, EXCLUDED.day_rate_override_sen, EXCLUDED.ttt_certified, EXCLUDED.ttt_ref, EXCLUDED.ttt_valid_to, EXCLUDED.hrd_tdf, EXCLUDED.rating, EXCLUDED.status, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
+WHERE (target.tenant_id, target.name, target.email, target.phone, target.user_id, target.band, target.day_rate_override_sen, target.ttt_certified, target.ttt_ref, target.ttt_valid_to, target.hrd_tdf, target.hrd_tdf_valid_to, target.hrd_tdf_ref, target.rating, target.status, target.created_by_kind, target.created_by_id, target.created_by_name)
+   IS DISTINCT FROM (EXCLUDED.tenant_id, EXCLUDED.name, EXCLUDED.email, EXCLUDED.phone, EXCLUDED.user_id, EXCLUDED.band, EXCLUDED.day_rate_override_sen, EXCLUDED.ttt_certified, EXCLUDED.ttt_ref, EXCLUDED.ttt_valid_to, EXCLUDED.hrd_tdf, EXCLUDED.hrd_tdf_valid_to, EXCLUDED.hrd_tdf_ref, EXCLUDED.rating, EXCLUDED.status, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
 
 -- Roles and data scopes, straight off `users[].role` and `users[].dataScope`.
 INSERT INTO public.memberships AS target
@@ -213,52 +253,7 @@ ON CONFLICT (team_id, user_id) DO UPDATE SET
   tenant_id = EXCLUDED.tenant_id
 WHERE target.tenant_id IS DISTINCT FROM EXCLUDED.tenant_id;
 
--- Reference formats and pipeline configuration ────────────────────────────
-
--- Every prefix `core.assign_ref` can be handed. A missing row raises on the first insert without an explicit ref.
-INSERT INTO core.ref_formats AS target
-  (id, tenant_id, prefix, entity, dated, width, gapless, created_at)
-VALUES
-  ('6f918566-5fce-5046-a54f-9d5024352709', 'acade111-0000-4000-8000-000000000001', 'ACT', 'action_request', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('763b5938-850b-5856-be47-3e2278cac03f', 'acade111-0000-4000-8000-000000000001', 'AGT', 'agent', FALSE, 3, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('5d00c013-c041-51ba-8363-0b94c3331e0e', 'acade111-0000-4000-8000-000000000001', 'APV', 'approval_request', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('096ca788-006e-5e45-9de7-3140eb900b51', 'acade111-0000-4000-8000-000000000001', 'ATT', 'attachment', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('ed3c3aeb-45f1-5dd2-a5ae-14ba4dcac439', 'acade111-0000-4000-8000-000000000001', 'COL', 'collections_case', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('a74e21b7-2207-5bb8-a32e-e5362ee18852', 'acade111-0000-4000-8000-000000000001', 'CON', 'contact', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('40bc5bc3-5189-5554-8bc7-378e82c56a59', 'acade111-0000-4000-8000-000000000001', 'CRN', 'credit_note', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('5772af26-808a-533b-bd91-6f60e5c902f2', 'acade111-0000-4000-8000-000000000001', 'CRT', 'certificate', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('24bd1eba-2687-5aca-a5c6-62e5d7087f4a', 'acade111-0000-4000-8000-000000000001', 'DRF', 'suggested_draft', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('5ca90484-7398-55c7-9011-67fd4d40efc1', 'acade111-0000-4000-8000-000000000001', 'ENG', 'engagement', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('9093e74b-ef4b-5efa-9ad3-b38fbbba253f', 'acade111-0000-4000-8000-000000000001', 'ENQ', 'enquiry', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('92b32c2c-c23d-5dad-a194-4e59c1a42ef1', 'acade111-0000-4000-8000-000000000001', 'FUP', 'follow_up', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('b1ffde84-674b-5bcb-9e51-9fb7f6fdbb8b', 'acade111-0000-4000-8000-000000000001', 'HPK', 'hrdc_packet', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('bf79d46d-0e61-5b93-9769-ab0832ef45af', 'acade111-0000-4000-8000-000000000001', 'INV', 'invoice', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('fe9bb066-a6c1-5700-b87f-6088479814f4', 'acade111-0000-4000-8000-000000000001', 'MSG', 'outbound_message', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('884cfefe-c62a-5dd2-8dbd-682ba9166e92', 'acade111-0000-4000-8000-000000000001', 'OPP', 'opportunity', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('9674c544-8bd2-57d6-9998-9e404bc255a2', 'acade111-0000-4000-8000-000000000001', 'ORG', 'organisation', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('8f24b5d3-26fc-54ad-8453-f2e9a8147c9b', 'acade111-0000-4000-8000-000000000001', 'PAR', 'participant', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('0f4ab239-3e3b-583d-8b63-e8f51712a6a3', 'acade111-0000-4000-8000-000000000001', 'PAY', 'payment', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('384d1a21-033d-535f-9922-7855a823fc7b', 'acade111-0000-4000-8000-000000000001', 'PIP', 'pipeline', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('1196b051-688a-571f-9bac-b410c8c023d2', 'acade111-0000-4000-8000-000000000001', 'PRG', 'programme', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('dbc9322d-a2b1-5217-843e-a280de9d1a1d', 'acade111-0000-4000-8000-000000000001', 'PRO', 'proposal', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('e310e812-a9fc-5552-b7cb-a21581fbeb0f', 'acade111-0000-4000-8000-000000000001', 'QUO', 'quotation', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('b449f2ea-f949-5565-874b-38c6d88a6403', 'acade111-0000-4000-8000-000000000001', 'RUN', 'run', TRUE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('d2090340-f9ed-584c-be43-f5d4c7829794', 'acade111-0000-4000-8000-000000000001', 'SES', 'session', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('a25e3f8e-f31c-5554-bed8-759a3c2822f8', 'acade111-0000-4000-8000-000000000001', 'SIG', 'signature', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('7bfc78c3-015b-5744-ae58-816a088a805a', 'acade111-0000-4000-8000-000000000001', 'SRC', 'knowledge_source', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('dc6cd276-db44-563b-b35e-d8a986ca4b41', 'acade111-0000-4000-8000-000000000001', 'SVW', 'saved_view', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('a4ea37a2-c0fd-5b36-bde2-497a95f90cc3', 'acade111-0000-4000-8000-000000000001', 'TBK', 'trainer_booking', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('0bcbb013-801c-5d76-9986-b22a1240d3b0', 'acade111-0000-4000-8000-000000000001', 'TNA', 'tna', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('df17d589-a372-527b-ab79-80ad65752165', 'acade111-0000-4000-8000-000000000001', 'TPL', 'template', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00'),
-  ('4e9e3887-0c9f-5eac-9291-2548bfa6ba1a', 'acade111-0000-4000-8000-000000000001', 'TRN', 'trainer', FALSE, 4, FALSE, '2022-01-04T09:00:00+08:00')
-ON CONFLICT (tenant_id, prefix) DO UPDATE SET
-  id = EXCLUDED.id,
-  entity = EXCLUDED.entity,
-  dated = EXCLUDED.dated,
-  width = EXCLUDED.width,
-  gapless = EXCLUDED.gapless
-WHERE (target.id, target.entity, target.dated, target.width, target.gapless)
-   IS DISTINCT FROM (EXCLUDED.id, EXCLUDED.entity, EXCLUDED.dated, EXCLUDED.width, EXCLUDED.gapless);
+-- Pipeline configuration ──────────────────────────────────────────────────
 
 -- Stage names and order are configuration, never hardcoded — this is the row the UI renders from.
 INSERT INTO core.pipelines AS target
@@ -497,26 +492,28 @@ WHERE (target.tenant_id, target.organisation_id, target.name, target.job_title, 
 
 -- PDPA consent, one row per channel a contact was actually asked about.
 INSERT INTO core.contact_consents AS target
-  (id, tenant_id, contact_id, channel, granted, recorded_at, source, withdrawn_at, created_at, created_by_kind, created_by_id, created_by_name)
+  (id, tenant_id, contact_id, channel, granted, recorded_at, purpose, notice_version, source, withdrawn_at, created_at, created_by_kind, created_by_id, created_by_name)
 VALUES
-  ('8883055a-bdaa-5084-92c3-e04bd20c937c', 'acade111-0000-4000-8000-000000000001', 'eab22cf4-2961-5919-b158-75e055bc6a30', 'EMAIL', TRUE, '2024-03-04T10:12:00+08:00', 'fixture', NULL, '2024-03-04T10:12:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('1636f80e-cf09-5006-9ff7-9b20e7c59a66', 'acade111-0000-4000-8000-000000000001', 'eab22cf4-2961-5919-b158-75e055bc6a30', 'WHATSAPP', TRUE, '2024-03-04T10:12:00+08:00', 'fixture', NULL, '2024-03-04T10:12:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('ab176b58-ffdf-5a16-8704-0dcaaa087151', 'acade111-0000-4000-8000-000000000001', '6cfeb215-c79f-5338-939e-40d7531b4f4f', 'EMAIL', TRUE, '2023-07-11T09:20:00+08:00', 'fixture', NULL, '2023-07-11T09:20:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('4ecba6cf-3594-5ea8-acaa-9130cdfcfae8', 'acade111-0000-4000-8000-000000000001', '92b57985-0ea6-5de6-9b09-b1cdd832512f', 'EMAIL', TRUE, '2024-11-02T09:30:00+08:00', 'fixture', NULL, '2024-11-02T09:30:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('c9a0ab6c-8557-5af5-862a-d8318ea2ebfa', 'acade111-0000-4000-8000-000000000001', '92b57985-0ea6-5de6-9b09-b1cdd832512f', 'WHATSAPP', TRUE, '2024-11-02T09:30:00+08:00', 'fixture', NULL, '2024-11-02T09:30:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('eb097823-eb28-5815-a905-0b3229f37c31', 'acade111-0000-4000-8000-000000000001', '9bbed7be-2325-5a10-a1e6-18e56fb9b071', 'EMAIL', TRUE, '2022-05-18T09:40:00+08:00', 'fixture', NULL, '2022-05-18T09:40:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('8afab56a-06d0-5689-a6fb-69c358e375de', 'acade111-0000-4000-8000-000000000001', 'f181430e-87dd-5977-9974-48e41ab3ffff', 'EMAIL', TRUE, '2026-05-21T09:15:00+08:00', 'fixture', NULL, '2026-05-21T09:15:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('c3d5c919-9afe-5d77-9320-47d2debc3dd0', 'acade111-0000-4000-8000-000000000001', 'f181430e-87dd-5977-9974-48e41ab3ffff', 'WHATSAPP', TRUE, '2026-05-21T09:15:00+08:00', 'fixture', NULL, '2026-05-21T09:15:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof')
+  ('8883055a-bdaa-5084-92c3-e04bd20c937c', 'acade111-0000-4000-8000-000000000001', 'eab22cf4-2961-5919-b158-75e055bc6a30', 'EMAIL', TRUE, '2024-03-04T10:12:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2024-03-04T10:12:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('1636f80e-cf09-5006-9ff7-9b20e7c59a66', 'acade111-0000-4000-8000-000000000001', 'eab22cf4-2961-5919-b158-75e055bc6a30', 'WHATSAPP', TRUE, '2024-03-04T10:12:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2024-03-04T10:12:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('ab176b58-ffdf-5a16-8704-0dcaaa087151', 'acade111-0000-4000-8000-000000000001', '6cfeb215-c79f-5338-939e-40d7531b4f4f', 'EMAIL', TRUE, '2023-07-11T09:20:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2023-07-11T09:20:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('4ecba6cf-3594-5ea8-acaa-9130cdfcfae8', 'acade111-0000-4000-8000-000000000001', '92b57985-0ea6-5de6-9b09-b1cdd832512f', 'EMAIL', TRUE, '2024-11-02T09:30:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2024-11-02T09:30:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('c9a0ab6c-8557-5af5-862a-d8318ea2ebfa', 'acade111-0000-4000-8000-000000000001', '92b57985-0ea6-5de6-9b09-b1cdd832512f', 'WHATSAPP', TRUE, '2024-11-02T09:30:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2024-11-02T09:30:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('eb097823-eb28-5815-a905-0b3229f37c31', 'acade111-0000-4000-8000-000000000001', '9bbed7be-2325-5a10-a1e6-18e56fb9b071', 'EMAIL', TRUE, '2022-05-18T09:40:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2022-05-18T09:40:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('8afab56a-06d0-5689-a6fb-69c358e375de', 'acade111-0000-4000-8000-000000000001', 'f181430e-87dd-5977-9974-48e41ab3ffff', 'EMAIL', TRUE, '2026-05-21T09:15:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2026-05-21T09:15:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('c3d5c919-9afe-5d77-9320-47d2debc3dd0', 'acade111-0000-4000-8000-000000000001', 'f181430e-87dd-5977-9974-48e41ab3ffff', 'WHATSAPP', TRUE, '2026-05-21T09:15:00+08:00', 'UNSPECIFIED_PRE_017', NULL, 'fixture', NULL, '2026-05-21T09:15:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof')
 ON CONFLICT (tenant_id, contact_id, channel, recorded_at) DO UPDATE SET
   id = EXCLUDED.id,
   granted = EXCLUDED.granted,
+  purpose = EXCLUDED.purpose,
+  notice_version = EXCLUDED.notice_version,
   source = EXCLUDED.source,
   withdrawn_at = EXCLUDED.withdrawn_at,
   created_by_kind = EXCLUDED.created_by_kind,
   created_by_id = EXCLUDED.created_by_id,
   created_by_name = EXCLUDED.created_by_name
-WHERE (target.id, target.granted, target.source, target.withdrawn_at, target.created_by_kind, target.created_by_id, target.created_by_name)
-   IS DISTINCT FROM (EXCLUDED.id, EXCLUDED.granted, EXCLUDED.source, EXCLUDED.withdrawn_at, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
+WHERE (target.id, target.granted, target.purpose, target.notice_version, target.source, target.withdrawn_at, target.created_by_kind, target.created_by_id, target.created_by_name)
+   IS DISTINCT FROM (EXCLUDED.id, EXCLUDED.granted, EXCLUDED.purpose, EXCLUDED.notice_version, EXCLUDED.source, EXCLUDED.withdrawn_at, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
 
 -- Agent-proposed next programmes on the account screen.
 INSERT INTO core.organisation_suggestions AS target

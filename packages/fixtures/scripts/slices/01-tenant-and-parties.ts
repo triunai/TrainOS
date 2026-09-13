@@ -10,10 +10,20 @@ import * as fx from "../../src/data/index.ts";
 import { TENANT_UUID, childKey, uuidFor } from "../lib/ids.ts";
 import { refUuid } from "../lib/refs.ts";
 import type { Slice } from "../lib/slice.ts";
-import { arr, banner, block, j, upsert } from "../lib/sql.ts";
+import { arr, banner, block, j, lit, upsert } from "../lib/sql.ts";
 
 /** The tenant slug. Every anchor id and every `ref` in the seed belongs to it. */
 export const TENANT_SLUG = "akademi-perdana";
+
+/**
+ * When the tenant and its staff came into existence.
+ *
+ * The fixture world dates its organisations and programmes but says nothing
+ * about the training provider itself, and `created_at` is NOT NULL everywhere.
+ * One instant, comfortably before the oldest organisation (ORG-0133, May 2022),
+ * so nobody's account predates the company that owns it.
+ */
+const TENANT_CREATED_AT = "2022-01-04T09:00:00+08:00";
 
 /** `Farah Aziz` → `farah.aziz@akademiperdana.my`, the pattern tenant.ts names. */
 const staffEmail = (name: string): string =>
@@ -34,67 +44,73 @@ export const actorColumns = (
 });
 
 /**
- * The reference prefixes `core.assign_ref` triggers hand to `core.next_ref`.
+ * Provisioning the fixture tenant.
  *
- * A prefix with no `core.ref_formats` row raises `foreign_key_violation` the
- * first time anything inserts without an explicit `ref`, so every prefix the
- * schema has a trigger for gets a row here even where the fixture world has no
- * example of it. `dated` and `width` are read off the refs the fixture world
- * actually uses — `ENQ-2026-0912` is dated and four wide, `ORG-0114` is neither.
+ * 016 owns what a new tenant gets: `app.seed_ref_formats()` derives one
+ * `core.ref_formats` row per `core.assign_ref` trigger, `app.seed_action_policies()`
+ * writes the policy gate's twenty-two rows, and `app.seed_compliance_check_keys()`
+ * writes the three HRD Corp check keys. All three run as AFTER INSERT triggers on
+ * `public.tenants`, and all three are idempotent.
+ *
+ * The seed does NOT call `app.provision_tenant()`, and the reason is one line of
+ * 016: that function allocates the id itself (`INSERT INTO public.tenants (slug,
+ * name, timezone) ... RETURNING id`). The fixture world needs a FIXED tenant id —
+ * seeds/README.md requires it, and the RPC tests and every screenshot quote it —
+ * and there is no way to hand one in. Re-pointing the row afterwards is not an
+ * option either: `core.ref_formats`, `core.action_policies` and `core.check_keys`
+ * already reference it by then and none of those foreign keys is ON UPDATE CASCADE.
+ *
+ * So the row is inserted with its id, which fires exactly the three triggers
+ * provisioning relies on; then the three seeders are called by name, so a disabled
+ * or dropped trigger cannot produce a tenant that looks provisioned; then
+ * `app.provision_tenant()`'s own two refusals are reproduced here. Everything 016
+ * does, in other words, except choosing the id.
+ *
+ * The migrations lane has been asked for `p_id uuid DEFAULT NULL` on
+ * `app.provision_tenant()`. When it lands this whole block becomes one PERFORM.
  */
-const REF_FORMATS: readonly [prefix: string, entity: string, dated: boolean, width: number][] = [
-  ["ACT", "action_request", true, 4],
-  ["AGT", "agent", false, 3],
-  ["APV", "approval_request", true, 4],
-  ["ATT", "attachment", false, 4],
-  ["COL", "collections_case", false, 4],
-  ["CON", "contact", false, 4],
-  ["CRN", "credit_note", true, 4],
-  ["CRT", "certificate", true, 4],
-  ["DRF", "suggested_draft", false, 4],
-  ["ENG", "engagement", false, 4],
-  ["ENQ", "enquiry", true, 4],
-  ["FUP", "follow_up", false, 4],
-  ["HPK", "hrdc_packet", true, 4],
-  ["INV", "invoice", true, 4],
-  ["MSG", "outbound_message", true, 4],
-  ["OPP", "opportunity", false, 4],
-  ["ORG", "organisation", false, 4],
-  ["PAR", "participant", false, 4],
-  ["PAY", "payment", true, 4],
-  ["PIP", "pipeline", false, 4],
-  ["PRG", "programme", false, 4],
-  ["PRO", "proposal", true, 4],
-  ["QUO", "quotation", true, 4],
-  ["RUN", "run", true, 4],
-  ["SES", "session", false, 4],
-  ["SIG", "signature", false, 4],
-  ["SRC", "knowledge_source", false, 4],
-  ["SVW", "saved_view", false, 4],
-  ["TBK", "trainer_booking", false, 4],
-  ["TNA", "tna", false, 4],
-  ["TPL", "template", false, 4],
-  ["TRN", "trainer", false, 4],
-];
+const provisionSql = (): string =>
+  `-- Tenant, provisioned through 016's own seeders.
+DO $provision$
+DECLARE
+  v_tenant   CONSTANT uuid := '${TENANT_UUID}';
+  v_formats  integer;
+  v_policies integer;
+BEGIN
+  INSERT INTO public.tenants (id, slug, name, status, timezone, locale, created_at)
+  VALUES (v_tenant, '${TENANT_SLUG}', ${lit(fx.tenant.name)}, 'ACTIVE',
+          ${lit(fx.tenant.timezone)}, ${lit(fx.tenant.locale)}, ${lit(TENANT_CREATED_AT)})
+  ON CONFLICT (id) DO NOTHING;
 
-const tenantsSql = (): string =>
-  upsert({
-    table: "public.tenants",
-    conflict: ["id"],
-    frozen: ["created_at"],
-    note: "Akademi Perdana Sdn Bhd — the single tenant the whole fixture world belongs to.",
-    rows: [
-      {
-        id: TENANT_UUID,
-        slug: TENANT_SLUG,
-        name: fx.tenant.name,
-        status: "ACTIVE",
-        timezone: fx.tenant.timezone,
-        locale: fx.tenant.locale,
-        created_at: "2022-01-04T09:00:00+08:00",
-      },
-    ],
-  });
+  -- Re-runnable in the same sense as every other statement in this pack: an
+  -- unchanged fixture updates nothing.
+  UPDATE public.tenants
+     SET name = ${lit(fx.tenant.name)},
+         status = 'ACTIVE',
+         timezone = ${lit(fx.tenant.timezone)},
+         locale = ${lit(fx.tenant.locale)}
+   WHERE id = v_tenant
+     AND (name, status, timezone, locale)
+         IS DISTINCT FROM (${lit(fx.tenant.name)}, 'ACTIVE', ${lit(fx.tenant.timezone)}, ${lit(fx.tenant.locale)});
+
+  PERFORM app.seed_ref_formats(v_tenant);
+  PERFORM app.seed_action_policies(v_tenant);
+  PERFORM app.seed_compliance_check_keys(v_tenant);
+
+  SELECT count(*) INTO v_formats FROM core.ref_formats WHERE tenant_id = v_tenant;
+  IF v_formats = 0 THEN
+    RAISE EXCEPTION
+      'fixture_world: tenant % has no ref_formats, so every ref''d table is unwritable', v_tenant;
+  END IF;
+
+  SELECT count(*) INTO v_policies FROM core.action_policies WHERE tenant_id = v_tenant;
+  IF v_policies = 0 THEN
+    RAISE EXCEPTION
+      'fixture_world: tenant % has no action_policies, so every action would fall '
+      'through the policy gate with nothing to evaluate', v_tenant;
+  END IF;
+END
+$provision$;`;
 
 const authUsersSql = (): string =>
   upsert({
@@ -115,7 +131,7 @@ const authUsersSql = (): string =>
       email: staffEmail(user.name),
       raw_app_meta_data: j({ provider: "email", providers: ["email"] }),
       raw_user_meta_data: j({ full_name: user.name }),
-      created_at: "2022-01-04T09:00:00+08:00",
+      created_at: TENANT_CREATED_AT,
     })),
   });
 
@@ -158,7 +174,7 @@ const agentPrincipalsSql = (): string =>
       email: `${agent.id}@agents.akademiperdana.my`,
       raw_app_meta_data: j({ provider: "agent", providers: ["agent"], agentId: agent.id }),
       raw_user_meta_data: j({ full_name: agent.name }),
-      created_at: "2022-01-04T09:00:00+08:00",
+      created_at: TENANT_CREATED_AT,
     })),
   });
 
@@ -176,7 +192,7 @@ const userProfilesSql = (): string =>
       timezone: user.timezone,
       theme: user.theme,
       avatar_url: null,
-      created_at: "2022-01-04T09:00:00+08:00",
+      created_at: TENANT_CREATED_AT,
     })),
   });
 
@@ -195,7 +211,7 @@ const teamsSql = (): string =>
         tenant_id: TENANT_UUID,
         name: "Akademi Perdana",
         manager_user_id: uuidFor("u_kelvin"),
-        created_at: "2022-01-04T09:00:00+08:00",
+        created_at: TENANT_CREATED_AT,
       },
     ],
   });
@@ -205,7 +221,16 @@ const trainersSql = (): string =>
     table: "core.trainers",
     conflict: ["id"],
     frozen: ["ref", "created_at"],
-    note: "Four trainers. `TRN-0007` is Farah Aziz, who also holds a TRAINER membership.",
+    note: [
+      "Four trainers. TRN-0007 is Farah Aziz, who also holds a TRAINER membership.",
+      "--",
+      "-- hrd_tdf is written FALSE on all four, and three of them are TDF-accredited in",
+      "-- the fixture world. 017's trainers_hrd_tdf_needs_expiry refuses `hrd_tdf = true`",
+      "-- without hrd_tdf_valid_to, and the fixture carries no TDF expiry and no TDF",
+      "-- reference -- tttRef and tttValidTo are a different accreditation and using them",
+      "-- here would be inventing a date an auditor could act on. A wrong boolean that",
+      "-- the pin asserts and the PR names beats a fabricated expiry. See T2h.",
+    ].join("\n"),
     rows: fx.trainers.map((trainer) => ({
       id: uuidFor(trainer.id),
       tenant_id: TENANT_UUID,
@@ -219,10 +244,13 @@ const trainersSql = (): string =>
       ttt_certified: trainer.tttCertified,
       ttt_ref: trainer.tttRef,
       ttt_valid_to: trainer.tttValidTo,
-      hrd_tdf: trainer.hrdTdf,
+      // See the note above: the fixture says `trainer.hrdTdf` for three of these.
+      hrd_tdf: false,
+      hrd_tdf_valid_to: null,
+      hrd_tdf_ref: null,
       rating: trainer.rating,
       status: "ACTIVE",
-      created_at: "2022-01-04T09:00:00+08:00",
+      created_at: TENANT_CREATED_AT,
       ...actorColumns({ id: "u_khairul", name: "Khairul Anwar", kind: "HUMAN" }),
     })),
   });
@@ -247,7 +275,7 @@ const membershipsSql = (): string =>
       mfa_required: user.role === "MD" || user.role === "ADMIN",
       status: "ACTIVE",
       is_default: true,
-      created_at: "2022-01-04T09:00:00+08:00",
+      created_at: TENANT_CREATED_AT,
     })),
   });
 
@@ -259,24 +287,6 @@ const teamMembersSql = (): string =>
       tenant_id: TENANT_UUID,
       team_id: uuidFor(TEAM_KEY),
       user_id: uuidFor(user.id),
-    })),
-  });
-
-const refFormatsSql = (): string =>
-  upsert({
-    table: "core.ref_formats",
-    conflict: ["tenant_id", "prefix"],
-    frozen: ["created_at"],
-    note: "Every prefix `core.assign_ref` can be handed. A missing row raises on the first insert without an explicit ref.",
-    rows: REF_FORMATS.map(([prefix, entity, dated, width]) => ({
-      id: uuidFor(`ref_format:${prefix}`),
-      tenant_id: TENANT_UUID,
-      prefix,
-      entity,
-      dated,
-      width,
-      gapless: false,
-      created_at: "2022-01-04T09:00:00+08:00",
     })),
   });
 
@@ -308,7 +318,7 @@ const pipelinesSql = (): string =>
       is_default: true,
       version: 1,
       status: "ACTIVE",
-      created_at: "2022-01-04T09:00:00+08:00",
+      created_at: TENANT_CREATED_AT,
       ...actorColumns({ id: "u_khairul", name: "Khairul Anwar", kind: "HUMAN" }),
     })),
   });
@@ -329,7 +339,7 @@ const pipelineStepsSql = (): string =>
         position: stage.order,
         terminal: stage.terminal ?? false,
         blocking_check_keys: arr([]),
-        created_at: "2022-01-04T09:00:00+08:00",
+        created_at: TENANT_CREATED_AT,
       })),
     ),
   });
@@ -527,6 +537,13 @@ const consentsSql = (): string => {
         channel: consent.channel,
         granted: consent.granted,
         recorded_at: consent.recordedAt as string,
+        // 017 requires a purpose. The fixture records a channel and a date and
+        // never why consent was asked for, and UNSPECIFIED_PRE_017 is the member
+        // 017 added for exactly that: consent captured before the purpose was.
+        // contact_consents_no_new_unspecified admits it only below 2026-09-14,
+        // and every fixture consent is 2022-2024.
+        purpose: "UNSPECIFIED_PRE_017",
+        notice_version: null,
         source: "fixture",
         withdrawn_at: null,
         created_at: consent.recordedAt as string,
@@ -582,7 +599,11 @@ export const slice01: Slice = {
     "core.trainers",
     "public.memberships",
     "public.team_members",
+    // Written by 016's provisioning seeders, not by an upsert here; listed so the
+    // wipe removes them (their tenant FK is ON DELETE RESTRICT).
     "core.ref_formats",
+    "core.action_policies",
+    "core.check_keys",
     "core.pipelines",
     "core.pipeline_steps",
     "core.programmes",
@@ -598,7 +619,7 @@ export const slice01: Slice = {
   emit: () =>
     block(
       banner("Tenant"),
-      tenantsSql(),
+      provisionSql(),
       banner("Principals"),
       authUsersSql(),
       agentPrincipalsSql(),
@@ -607,8 +628,7 @@ export const slice01: Slice = {
       trainersSql(),
       membershipsSql(),
       teamMembersSql(),
-      banner("Reference formats and pipeline configuration"),
-      refFormatsSql(),
+      banner("Pipeline configuration"),
       pipelinesSql(),
       pipelineStepsSql(),
       banner("Catalogue"),

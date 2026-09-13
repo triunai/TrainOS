@@ -2,6 +2,9 @@
 -- PIN · fixture_world
 -- ============================================================================
 --
+-- Targets migrations 001-017 (and 018 when it merges). T10 needs 014's policies
+-- and the seed provisions through 016's seeders, so neither runs at 013.
+--
 -- Run only AFTER the four fixture_world parts have been applied AND COMMITTED,
 -- and re-apply them ahead of this file in the SAME transaction:
 --
@@ -22,7 +25,7 @@
 -- It ends in ROLLBACK. Nothing durable is written — including the second
 -- application, which by construction writes nothing anyway.
 --
--- WHAT THIS PIN IS FOR. A seed is a claim about a world. Six of those claims
+-- WHAT THIS PIN IS FOR. A seed is a claim about a world. Seven of those claims
 -- are load-bearing for the tests, the screens and the review that read it, and
 -- every one of them is the kind that looks true while being false:
 --
@@ -43,10 +46,15 @@
 --   T8  Every gate the seed suspended was restored. A seed that leaves a state
 --       transition gate disabled hands back a database where the product's
 --       central control is off, and nothing else would notice.
+--   T10 The world reads back THROUGH 014's policies as Alex Selvarajah, and is
+--       invisible to another tenant's member. Every other assertion here runs
+--       as the loader, which sees past RLS; this is the only one that measures
+--       what the product will actually be served.
 --
 -- RUNNABILITY NOTES
--- 1. Runs as the migration role. RLS is forced on all 135 tables; a role
---    without BYPASSRLS sees nothing and every count below reads zero.
+-- 1. Runs as the migration role. RLS is enabled and FORCED on every table in
+--    core, app and public; a role without BYPASSRLS sees nothing, which is why
+--    T10 impersonates rather than assuming.
 -- 2. No psql meta-commands: `npm run lint:sql` parses this file through the
 --    real Postgres grammar, and that gate is why there is no \i runner.
 -- 3. `BEGIN;` below warns "there is already a transaction in progress" under the
@@ -169,6 +177,9 @@ BEGIN
 
   -- Every prefix core.assign_ref can be handed. A missing one raises
   -- foreign_key_violation on the first insert that does not name its own ref.
+  -- These rows are 016's, not the seed's: app.seed_ref_formats() derives one per
+  -- trigger. The count is asserted here because the seed depends on provisioning
+  -- having run, not because the seed wrote them.
   SELECT count(*) INTO v_count FROM core.ref_formats WHERE tenant_id = v_tenant;
   IF v_count <> 32 THEN RAISE EXCEPTION 'T2f FAIL: expected 32 ref formats, found %', v_count; END IF;
 
@@ -180,7 +191,22 @@ BEGIN
     RAISE EXCEPTION 'T2g FAIL: the seed allocated % ref sequence(s); every ref must be explicit', v_count;
   END IF;
 
-  RAISE NOTICE 'T2 PASS - 6 organisations, 6 contacts, 5 programmes, 4 trainers, 9 pipeline steps, 0 refs burned.';
+  -- A gap pinned on purpose, like T5. 017's trainers_hrd_tdf_needs_expiry refuses
+  -- hrd_tdf = true without hrd_tdf_valid_to, and the fixture world carries the
+  -- accreditation with no expiry and no TDF reference. All four trainers are
+  -- therefore seeded as not accredited, which is wrong and deliberately visible:
+  -- when the fixture grows the dates, or the constraint learns to accept an
+  -- import, this assertion fails and the seed has to stop saying false.
+  SELECT count(*) INTO v_count
+    FROM core.trainers WHERE tenant_id = v_tenant AND hrd_tdf;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION
+      'T2h FAIL (good news): % trainer(s) now carry HRD Corp TDF accreditation. '
+      'The fixture world says three of four are accredited; if the expiry dates '
+      'now exist, seed the real value and replace this assertion.', v_count;
+  END IF;
+
+  RAISE NOTICE 'T2 PASS - 6 organisations, 6 contacts, 5 programmes, 4 trainers, 9 pipeline steps, 0 refs burned, 0 TDF claims.';
 END;
 $t2$;
 
@@ -473,9 +499,96 @@ BEGIN
 END;
 $t9$;
 
+-- ── T10 · the seed is visible THROUGH the policies, not only to the loader ──
+--
+-- Everything above this point reads as the migration role, which on the shim is
+-- a superuser and therefore sees past RLS. That proves rows exist. It does not
+-- prove the product can read them, and after 014 those are different claims:
+-- RLS is enabled and FORCED on all 137 tables, every policy resolves the
+-- caller's tenant through app.current_tenant_id(), and a seed that wrote rows
+-- no policy admits would look perfect here and serve an empty app.
+--
+-- So this becomes `authenticated` — the role itself, not the loader wearing its
+-- claims — with Alex Selvarajah's JWT, and counts the same landmarks back. The
+-- idiom is test_014's: probe outside a DO block, stash the verdicts in
+-- transaction-local settings, RESET ROLE, and assert afterwards, so a failing
+-- assertion cannot leave the session wearing a role it should not have.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"acade111-0001-4000-8000-000000000001","role":"authenticated",'
+  '"tenant_id":"acade111-0000-4000-8000-000000000001","app_role":"MD",'
+  '"actor_kind":"HUMAN","aal":"aal1"}', true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('pin.md_tenant',
+  COALESCE(app.current_tenant_id()::text, ''), true);
+SELECT pg_catalog.set_config('pin.md_counts', pg_catalog.jsonb_build_object(
+  'organisations',     (SELECT count(*) FROM core.organisations),
+  'engagements',       (SELECT count(*) FROM core.engagements),
+  'participants',      (SELECT count(*) FROM core.participants),
+  'certificates',      (SELECT count(*) FROM core.certificates),
+  'invoices',          (SELECT count(*) FROM core.invoices),
+  'approval_requests', (SELECT count(*) FROM core.approval_requests),
+  'pipeline_steps',    (SELECT count(*) FROM core.pipeline_steps)
+)::text, true);
+RESET ROLE;
+
+-- The same query, a member of a different tenant. A fixture world that is
+-- readable cross-tenant is worse than one that is not readable at all, because
+-- every RLS test built on it would pass while measuring nothing.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-4000-8000-00000000dead","role":"authenticated",'
+  '"tenant_id":"00000000-0000-4000-8000-0000000000ff","app_role":"SALES",'
+  '"actor_kind":"HUMAN","aal":"aal1"}', true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('pin.other_counts', pg_catalog.jsonb_build_object(
+  'organisations', (SELECT count(*) FROM core.organisations),
+  'participants',  (SELECT count(*) FROM core.participants)
+)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims', '', true);
+
+DO $t10$
+DECLARE
+  v_tenant text  := pg_catalog.current_setting('pin.md_tenant', true);
+  v_md     jsonb := pg_catalog.current_setting('pin.md_counts', true)::jsonb;
+  v_other  jsonb := pg_catalog.current_setting('pin.other_counts', true)::jsonb;
+  v_want   jsonb := '{"organisations":6,"engagements":10,"participants":136,'
+                    '"certificates":78,"invoices":10,"approval_requests":7,'
+                    '"pipeline_steps":16}'::jsonb;
+BEGIN
+  IF v_tenant IS DISTINCT FROM 'acade111-0000-4000-8000-000000000001' THEN
+    RAISE EXCEPTION
+      'T10a FAIL: app.current_tenant_id() resolved to % for the MD''s claims. '
+      'Every policy predicate is built on it, so nothing below this means '
+      'anything until it is right.', COALESCE(NULLIF(v_tenant, ''), '<null>');
+  END IF;
+
+  IF v_md IS DISTINCT FROM v_want THEN
+    RAISE EXCEPTION
+      'T10b FAIL: through the 014 policies the MD sees %, expected %. The rows '
+      'exist -- T1 to T7 read them as the loader -- so a difference here is a '
+      'policy that does not admit them, and the app would render empty.',
+      v_md::text, v_want::text;
+  END IF;
+
+  IF (v_other->>'organisations')::bigint <> 0 OR (v_other->>'participants')::bigint <> 0 THEN
+    RAISE EXCEPTION
+      'T10c FAIL: a member of another tenant read % organisation(s) and % '
+      'participant(s) of this fixture world. A cross-tenant read is a '
+      'product-ending defect, not a bug.',
+      v_other->>'organisations', v_other->>'participants';
+  END IF;
+
+  RAISE NOTICE
+    'T10 PASS - the whole fixture world reads back through the 014 policies as '
+    'Alex Selvarajah, and is invisible to another tenant''s member.';
+END;
+$t10$;
+
 DO $done$
 BEGIN
-  RAISE NOTICE 'test_fixture_world ALL PASS (T0-T9, rolled back - nothing durable written)';
+  RAISE NOTICE 'test_fixture_world ALL PASS (T0-T10, rolled back - nothing durable written)';
 END;
 $done$;
 

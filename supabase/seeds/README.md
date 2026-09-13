@@ -23,7 +23,10 @@ Rules:
 ## The fixture world
 
 `fixture_world_01…04` are the web app's fixture dataset (`@trainos/fixtures`)
-landed as rows: one tenant, `akademi-perdana`. They are what the 018 RPC tests
+landed as rows: one tenant, `akademi-perdana`. They target migrations **001–017**
+(and 018 when it merges): the tenant is provisioned through 016's own seeders,
+and the pin's last assertion reads the world back through 014's policies. Neither
+works against a database at 013. They are what the 018 RPC tests
 read, what the conformance suite runs against with `VITE_API_MODE=supabase`, and
 what a reviewer opens the app on. Four parts, in foreign-key order, one
 transaction:
