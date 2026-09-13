@@ -437,7 +437,14 @@ BEGIN
   -- copy of 002's permission catalogue that nothing keeps in step with the first.
   -- The `(SELECT ...)` wrapper is the InitPlan form used throughout this file:
   -- one evaluation per statement, not per row.
-  IF p_permission IS NOT NULL AND p_permission <> 'UNGATE' THEN
+  -- ⚠ ORDER MATTERS HERE, and an earlier version got it wrong in a way only a
+  -- probe found: with `UNGATE` excluded from the first branch's condition it fell
+  -- through to the ELSE, which is the refusal, so the documented escape hatch was
+  -- a dead branch that always raised. `UNGATE` is therefore tested FIRST and on
+  -- its own. T16 now exercises all three branches.
+  IF p_permission = 'UNGATE' THEN
+    v_gate := '';
+  ELSIF p_permission IS NOT NULL THEN
     IF NOT EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.permission = p_permission) THEN
       RAISE EXCEPTION
         'apply_tenant_policies: permission % names no row in app.role_permissions, '
@@ -471,15 +478,12 @@ BEGIN
         'passes no permission, which would silently remove it. Its current '
         'isolation predicate is: %. Pass the same permission again to keep the '
         'gate, pass a different one to change it, or pass the literal string '
-        '''UNGATE'' to remove it on purpose.', p_schema, p_table, v_existing;
+        '''UNGATE'' to remove it on purpose — spelled that way so it cannot be '
+        'typed by accident and shows up in a diff as what it is.',
+        p_schema, p_table, v_existing;
     END IF;
   END IF;
 
-  -- The deliberate escape hatch, spelled so it cannot be typed by accident and
-  -- shows up in a diff as what it is.
-  IF p_permission = 'UNGATE' THEN
-    v_gate := '';
-  END IF;
 
   -- Idempotent by DROP-then-CREATE rather than by a pg_policy lookup: a policy
   -- that exists with the WRONG predicate is the failure mode that matters, and a

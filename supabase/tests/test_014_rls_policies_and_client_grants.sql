@@ -1738,4 +1738,109 @@ BEGIN
 END;
 $t15$;
 
+
+-- ─── T16 · the role gate cannot be stripped by accident ─────────────────────
+-- The control this pins is not a predicate, it is a REFUSAL. §4b's gates are
+-- created by `app.apply_tenant_policies`, which is DROP-then-CREATE, shared, and
+-- called with two arguments in three places in 017. So the obvious spelling —
+-- `SELECT app.apply_tenant_policies('core','run_node_io')`, one line, identical
+-- in shape to what 017 already ships — would replace a gated isolation policy
+-- with an ungated one and hand every principal of the tenant the raw agent
+-- prompt and completion text back. Nothing would fail: the policy would exist,
+-- §6's check would not run again until somebody re-applied 014, and T12 would
+-- only notice if somebody re-ran this file.
+--
+-- So the function refuses instead, reading the gate out of the policy it is about
+-- to drop. All three branches are exercised here, on a throwaway table, per 004's
+-- precedent — INCLUDING the `UNGATE` escape, which existed as documented dead
+-- code until this pin was written and raised on every call instead of removing
+-- the gate. An untested branch in a security control is the defect, not the
+-- feature.
+
+CREATE TABLE core.t014_gate_probe (
+  id        uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+  tenant_id uuid NOT NULL);
+ALTER TABLE core.t014_gate_probe ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.t014_gate_probe FORCE  ROW LEVEL SECURITY;
+CREATE INDEX t014_gate_probe_tenant_idx ON core.t014_gate_probe (tenant_id);
+
+DO $t16$
+DECLARE
+  v_gated   boolean;
+  v_refused boolean;
+BEGIN
+  -- (a) gated on creation
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','run:read');
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT v_gated, 'T16a FAIL: a three-argument call produced no gate.';
+
+  -- (b) the two-argument call REFUSES rather than silently stripping it
+  v_refused := false;
+  BEGIN
+    PERFORM app.apply_tenant_policies('core','t014_gate_probe');
+  EXCEPTION WHEN OTHERS THEN
+    v_refused := true;
+    ASSERT SQLERRM LIKE '%already carries a role gate%',
+      pg_catalog.format('T16b1 FAIL: the two-argument call was refused, but not by '
+        'the gate guard: %s', SQLERRM);
+  END;
+  ASSERT v_refused,
+    'T16b FAIL: app.apply_tenant_policies accepted a two-argument call against a '
+    'table that already carries a role gate. That call is one line, is the same '
+    'shape as the three 017 already ships, and would have silently removed the '
+    'gate on core.run_node_io.';
+
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT v_gated, 'T16b2 FAIL: the refused call still removed the gate.';
+
+  -- (c) re-passing the same permission is accepted and keeps it
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','run:read');
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT v_gated, 'T16c FAIL: re-passing the same permission removed the gate.';
+
+  -- (d) a DIFFERENT permission is accepted and replaces it
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','ai:provider:read');
+  ASSERT (SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%ai:provider:read%'
+            FROM pg_catalog.pg_policy p
+           WHERE p.polname = 't014_gate_probe_tenant_isolation'),
+    'T16d FAIL: passing a different permission did not replace the gate.';
+
+  -- (e) the deliberate escape works, and is the ONLY thing that removes a gate
+  PERFORM app.apply_tenant_policies('core','t014_gate_probe','UNGATE');
+  SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%' INTO v_gated
+    FROM pg_catalog.pg_policy p
+   WHERE p.polname = 't014_gate_probe_tenant_isolation';
+  ASSERT NOT v_gated,
+    'T16e FAIL: ''UNGATE'' did not remove the gate. It is the documented way to '
+    'remove one on purpose, and a documented escape that does not work is worse '
+    'than none: the next person removes the guard instead.';
+
+  -- (f) and a permission nobody holds is refused, because a gate no role can
+  --     satisfy is a broken screen rather than security
+  v_refused := false;
+  BEGIN
+    PERFORM app.apply_tenant_policies('core','t014_gate_probe','not:a:real:permission');
+  EXCEPTION WHEN OTHERS THEN
+    v_refused := true;
+  END;
+  ASSERT v_refused,
+    'T16f FAIL: a permission that names no row in app.role_permissions was '
+    'accepted as a gate. Every role would be refused, including ADMIN.';
+
+  RAISE NOTICE
+    'T16 PASS - a three-argument call gates, a two-argument call against a gated '
+    'table REFUSES, re-passing keeps it, a different permission replaces it, '
+    '''UNGATE'' removes it, and an unknown permission is refused.';
+END;
+$t16$;
+
+DROP TABLE core.t014_gate_probe;
+
+
 ROLLBACK;

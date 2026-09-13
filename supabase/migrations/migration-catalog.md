@@ -771,6 +771,16 @@ first review could not have seen because they were introduced by the fix:
   produces. The same DELETE now runs twice, once with the restrictive policy standing and once
   with it dropped, and the second must delete exactly one row.
 
+**AND ONE DEFECT THE FIX FOR (2) INTRODUCED, found by probing the branch rather than reading it.**
+The `'UNGATE'` escape hatch — the documented way to remove a gate on purpose — was dead code. Its
+literal was excluded from the branch that sets the gate but not from the one that refuses, so every
+`UNGATE` call raised instead of ungating. A documented escape that does not work is worse than
+none: the next person removes the guard rather than the gate. Fixed, and **T16 now exercises all
+six branches of that control** — three-argument gates, two-argument against a gated table refuses,
+re-passing keeps, a different permission replaces, `UNGATE` removes, an unknown permission is
+refused — on a throwaway table per 004's precedent. An untested branch in a security control is the
+defect, not the feature.
+
 Plus: `information_schema.table_privileges` survived in two of the three sites the pack claimed
 to have rewritten (the rollback's post-condition and the rollback pin's R3a) — both now use
 `has_table_privilege`; five line citations were off by one to two lines; two references pointed
