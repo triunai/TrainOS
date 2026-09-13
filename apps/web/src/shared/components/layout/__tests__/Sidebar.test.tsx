@@ -26,8 +26,9 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Role } from "@trainos/contract";
 import { ApiProvider } from "@/shared/api";
 import { I18nProvider } from "@/shared/i18n";
 import { BreadcrumbProvider } from "../BreadcrumbProvider";
@@ -76,10 +77,28 @@ const withProviders = (children: ReactNode) => (
   </QueryClientProvider>
 );
 
-const renderAt = (path: string) =>
+/** The route, in the DOM, so a test can assert that a click did NOT move it. */
+function LocationProbe() {
+  const { pathname } = useLocation();
+  return <span data-pathname={pathname} />;
+}
+
+/** `ADMIN` is the one shell role whose tree holds a LEAF parent — Reports, the
+    only nav item that is a link rather than a disclosure, and therefore the
+    only one that can prove the closed rail swallows a navigation. */
+const renderAt = (path: string, role: Role = "SALES") =>
   render(
-    <MemoryRouter initialEntries={[path]}>{withProviders(<Sidebar role="SALES" />)}</MemoryRouter>,
+    <MemoryRouter initialEntries={[path]}>
+      {withProviders(
+        <>
+          <Sidebar role={role} />
+          <LocationProbe />
+        </>,
+      )}
+    </MemoryRouter>,
   );
+
+const pathname = () => (document.querySelector("[data-pathname]") as HTMLElement).dataset.pathname;
 
 /** The rail and the bar together, which is the only way to compare their tops. */
 const renderShellTop = () =>
@@ -398,6 +417,49 @@ describe("Sidebar", () => {
   });
 
   /**
+   * THE THEME SWITCH IS BESIDE THE NAME. 64d464d moved it into the profile
+   * modal to buy room for a collapse control in this band; the control went to
+   * the caption row instead, and the switch came back to the row it describes.
+   */
+  it("keeps the theme switch in the band beside the name, not inside the modal", async () => {
+    const user = userEvent.setup();
+    renderAt("/dashboard");
+    const band = profileBand();
+
+    const themeSwitch = screen.getByRole("switch", { name: "Dark mode" });
+    expect(band).toContainElement(themeSwitch);
+    /* Last child of the band IS its right edge — the band is a plain row. */
+    expect(band.lastElementChild?.contains(themeSwitch)).toBe(true);
+    /* One click, no menu and no modal in the way. */
+    await user.click(themeSwitch);
+    expect(setThemeSpy).toHaveBeenCalledWith("dark");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    /* And it is not ALSO in the modal: two switches for one preference is the
+       divergence the consolidation rule exists to stop. */
+    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByRole("switch", { name: "Dark mode" })).toBeNull();
+  });
+
+  it("gives the name the room the switch does not take: nothing in the band truncates", () => {
+    renderAt("/dashboard");
+    const band = profileBand();
+
+    /* The band is 216px of content box and the name has to survive it. The
+       stack is `min-w-0 flex-1` inside a `min-w-0 flex-1` button, which is what
+       lets the text shrink rather than push the switch off the row — jsdom
+       lays nothing out, so the assertion is the mechanism, and the pixels are
+       measured in the browser. */
+    const name = within(band).getByText("Amirah Yusof");
+    expect(name.parentElement?.className).toMatch(/\bmin-w-0\b/);
+    expect(name.closest("button")?.className).toMatch(/\bmin-w-0\b/);
+    expect(screen.getByRole("switch", { name: "Dark mode" }).closest("span")?.className).toMatch(
+      /\binline-flex\b/,
+    );
+  });
+
+  /**
    * THE TOP BAND. The rail's first row and the breadcrumb are the two things
    * at the top of the frame and the pack draws them on one line. They were not
    * on one line: the rail's `py-4` plus the row's own `pt-2 pb-4` ran the band
@@ -449,26 +511,62 @@ describe("Sidebar", () => {
 
   /**
    * THE COLLAPSE CONTROL. 63888e5 put it at the footer's edge, 0abe2ad removed
-   * it; the user asked for it back at the TOP RIGHT of the profile band, and
-   * for the footer chevron to stay gone.
+   * it, 64d464d put it in the profile band; it is on the MAIN caption row now,
+   * right-aligned, and the band spends its 216px on the name and the switch.
+   * The footer chevron stays gone.
    */
-  describe("the rail collapses, from the top right", () => {
+  describe("the rail collapses, from the MAIN caption row", () => {
     const control = () => screen.getByRole("button", { name: /the sidebar/ });
+    const captionRows = () => [
+      ...screen.getByRole("navigation", { name: "Main" }).querySelectorAll("[data-caption-row]"),
+    ];
 
-    it("sits in the profile band, and nowhere near the footer", () => {
+    it("sits on the first caption row, not in the band and not in the footer", () => {
       renderAt("/dashboard");
-      const band = profileBand();
+      const rows = captionRows();
 
-      expect(band).toContainElement(control());
-      /* Last child of the band IS its right edge — the band is a plain row. */
-      expect(
-        band.lastElementChild?.contains(control()) || band.lastElementChild === control(),
-      ).toBe(true);
+      /* The row the caption MAIN is printed on, and its last child, which is
+         its right edge — the row is a plain flex row. */
+      expect(rows.length).toBeGreaterThan(1);
+      expect(rows[0]).toHaveTextContent("Main");
+      expect(rows[0]).toContainElement(control());
+      expect(rows[0].lastElementChild).toBe(control());
 
+      /* Exactly one row carries it: a control per group would be four. */
+      for (const row of rows.slice(1)) expect(row).not.toContainElement(control());
+
+      expect(profileBand()).not.toContainElement(control());
       const footer = screen.getByRole("button", { name: "Help & support" })
         .parentElement as HTMLElement;
       expect(footer).not.toContainElement(control());
       expect(footer.textContent).not.toMatch(/[«»]/);
+    });
+
+    it("is 24px, and every caption row is the same height whether it holds it or not", () => {
+      renderAt("/dashboard");
+      const rows = captionRows();
+
+      expect(control().className).toMatch(/\bh-6\b/);
+      expect(control().className).toMatch(/\bw-6\b/);
+      /* One rhythm: MAIN must not be a taller group than the rest just for
+         carrying a button. */
+      for (const row of rows) expect(heightClass(row as HTMLElement)).toBe("h-6");
+    });
+
+    it("ends on x220, the column every group's disclosure glyph already ends on", () => {
+      renderAt("/dashboard");
+      const row = captionRows()[0] as HTMLElement;
+      const parent = screen.getByRole("button", { name: /Training/ });
+
+      /* The caption row carries the PARENT row's own padding, which is the
+         whole mechanism: x12 + px-2 = x20 for the caption and the icon boxes
+         alike, and 240 - 12 - 8 = x220 for the control and for the +/- glyph
+         beneath it. Measured in the browser at 1440 and 1920, both themes. */
+      expect(/(?:^|\s)px-2(?:\s|$)/.test(row.className)).toBe(true);
+      expect(/(?:^|\s)px-2(?:\s|$)/.test(parent.className)).toBe(true);
+      /* `flex-1` on the caption is what pushes the control to that edge — a
+         `ml-auto` would read the same until a caption ran long. */
+      expect((row.firstElementChild as HTMLElement).className).toMatch(/\bflex-1\b/);
     });
 
     it("is a disclosure button: aria-expanded, and it names the rail", () => {
@@ -479,6 +577,26 @@ describe("Sidebar", () => {
       expect(control()).toHaveAttribute("aria-expanded", "true");
       expect(control().getAttribute("aria-controls")).toBe(rail.id);
       expect(rail.id).not.toBe("");
+    });
+
+    it("keeps the control where the caption row was, once the rail is closed", async () => {
+      const user = userEvent.setup();
+      renderAt("/dashboard");
+      await user.click(control());
+
+      const rail = screen.getByRole("navigation", { name: "Main" });
+      const rows = [...rail.querySelectorAll("[data-caption-row]")];
+
+      /* One row left, holding the control alone: no caption survives 64px. */
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toContainElement(control());
+      expect(rows[0].textContent).not.toMatch(/Main/i);
+      expect(rows[0].className).toMatch(/justify-center/);
+      /* Still above the navigation, where the reader last saw it. */
+      expect(
+        control().compareDocumentPosition(screen.getByRole("button", { name: /Training/ })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
 
     it("collapses to the 64px rail and expands back", async () => {
@@ -550,36 +668,121 @@ describe("Sidebar", () => {
       expect(rail.querySelectorAll("[data-badge-dot]").length).toBeGreaterThan(0);
       expect(rail.innerHTML).not.toMatch(/min-w-\[20px\]/);
     });
+  });
 
-    it("widens the rail to open a group, because 64px has nowhere to put one", async () => {
-      const user = userEvent.setup();
-      renderAt("/dashboard");
+  /**
+   * THE CLOSED RAIL IS ONE BIG OPEN BUTTON. A column of unlabelled glyphs is a
+   * thing a reader clicks to find out what it is, so every click inside it
+   * spends itself opening the rail and does nothing else — no navigation, no
+   * modal, no menu, no group. Once open, every item behaves normally.
+   */
+  describe("the closed rail opens from anywhere inside it", () => {
+    const control = () => screen.getByRole("button", { name: /the sidebar/ });
+
+    /** Collapsed, at a route the rail can light, for whichever role's tree. */
+    const closedRail = async (user: ReturnType<typeof userEvent.setup>, role?: Role) => {
+      renderAt("/training/programmes", role);
       await user.click(control());
-
-      await user.click(screen.getByRole("button", { name: /Training/ }));
-
       const rail = screen.getByRole("navigation", { name: "Main" });
+      expect(rail.className).toMatch(/\bw-rail\b/);
+      return rail;
+    };
+
+    it("opens on a click on a group glyph, and does not open that group", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user);
+
+      await user.click(screen.getByRole("button", { name: "Sales" }));
       expect(rail.className).toMatch(/\bw-sidebar\b/);
-      expect(screen.getByRole("button", { name: /Training/ })).toHaveAttribute(
+      /* The click was spent on the rail. Sales is where it was. */
+      expect(screen.getByRole("button", { name: "Sales" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    });
+
+    it("opens on a click on the avatar, and does not open the profile modal", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user);
+
+      await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("opens on a click on a leaf link, and does not navigate", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user, "ADMIN");
+
+      const reports = screen.getByRole("link", { name: "Reports" });
+      await user.click(reports);
+
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      expect(pathname()).toBe("/training/programmes");
+      /* And the rail did not repaint around a route it never went to. */
+      expect(reports).not.toHaveAttribute("data-lit");
+      expect(screen.getByRole("button", { name: "Training" })).toHaveAttribute("data-lit", "true");
+    });
+
+    it("opens on a click on a footer row, and does not open its drawer", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user);
+
+      await user.click(screen.getByRole("button", { name: "Help & support" }));
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("opens on a click on the empty rail surface", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user);
+
+      await user.click(rail);
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+    });
+
+    it("opens on Enter or Space on a focused rail item, exactly once", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user, "ADMIN");
+
+      screen.getByRole("button", { name: "Sales" }).focus();
+      await user.keyboard("{Enter}");
+      /* Once, not twice: preventing the key's default is also what stops a
+         focused button from synthesising the click that would close it again. */
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      expect(screen.getByRole("button", { name: "Sales" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+
+      await user.click(control());
+      expect(rail.className).toMatch(/\bw-rail\b/);
+
+      /* Space on a link does nothing at all natively, so it is the case a
+         click-only guard would miss. */
+      screen.getByRole("link", { name: "Reports" }).focus();
+      await user.keyboard(" ");
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      expect(pathname()).toBe("/training/programmes");
+    });
+
+    it("navigates and opens normally once the rail is open", async () => {
+      const user = userEvent.setup();
+      const rail = await closedRail(user, "ADMIN");
+      await user.click(rail);
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+
+      await user.click(screen.getByRole("button", { name: "Sales" }));
+      expect(screen.getByRole("button", { name: "Sales" })).toHaveAttribute(
         "aria-expanded",
         "true",
       );
+
+      await user.click(screen.getByRole("link", { name: "Reports" }));
+      expect(pathname()).toBe("/reports");
+
+      await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
     });
-  });
-
-  it("moves the theme switch into the profile modal, which is where the room is", async () => {
-    const user = userEvent.setup();
-    renderAt("/dashboard");
-
-    /* Not in the band: at 216px the switch and a collapse control together
-       truncate both the name and the role. */
-    expect(screen.queryByRole("switch", { name: "Dark mode" })).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
-    const modalSwitch = await screen.findByRole("switch", { name: "Dark mode" });
-
-    /* Still one click from the row it describes, and still not inside a menu. */
-    await user.click(modalSwitch);
-    expect(setThemeSpy).toHaveBeenCalledWith("dark");
   });
 });

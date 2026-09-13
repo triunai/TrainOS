@@ -4,13 +4,12 @@ import { Avatar, ProfileModal } from "@/shared/components/kit";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
 import { ROLE_LABEL, scopeLabels } from "@/shared/config/roles";
 import { useMe } from "@/shared/hooks/useMe";
-import { useT } from "@/shared/i18n";
-import { ThemeSwitch } from "./ThemeSwitch";
 import { useMeProfile } from "./useMeProfile";
+import { ThemeSwitch } from "./ThemeSwitch";
 import { VERSION_LINE } from "./version";
 
 /**
- * Who you are, at the TOP of the rail — and the control that closes the rail.
+ * Who you are, at the TOP of the rail, with the theme switch beside you.
  *
  * Identity sat in the footer until a reader pointed out that it is the first
  * thing you check and the last place you look for it.
@@ -34,21 +33,25 @@ import { VERSION_LINE } from "./version";
  * in 56px has its name baseline at y25 and the breadcrumb's is at y32 — so the
  * shared centre line is the alignment, and nothing overruns the band.
  *
- * ── WHERE THE COLLAPSE CONTROL SITS, AND WHAT LEFT TO MAKE ROOM ──────────
+ * ── THE SWITCH IS BACK, AND THE COLLAPSE CONTROL IS WHAT LEFT ────────────
  *
- * Top right of this band, and the theme switch moved into the profile modal to
- * pay for it. Measured at 1440 before choosing: the band's content box is
- * 216px (240 less the rail's `px-3`); the avatar takes 26, the button's own
- * padding 16, its gap 8, the theme switch 61, and two 6px gaps plus a 24px
- * control 36 — which leaves 69px of text for a name that needs 84 and a role
- * that needs 87. Both truncate, and the product's own primary user is "Alex
- * Selvarajah", who needs 100. With the switch in the modal the text gets 136px
- * and nothing truncates. The switch is still one click from the row it
- * described, and it is still not inside a menu.
+ * 64d464d put a 24px collapse control in this band's top right and paid for it
+ * by moving the theme switch into the profile modal. That was the wrong half
+ * to spend: the theme is the preference people change most and the rail is a
+ * thing they set once. Measured at 1440, the band's content box is 216px, and
+ * the avatar (26), the button's own padding (16) and gap (8), the switch (61)
+ * and one 6px row gap leave 99px of text — enough for every role label and for
+ * "Alex Selvarajah", the product's own primary user, at 13/500. Add the
+ * control and its second gap back and the text drops to 69px, which truncated
+ * both lines. So the control moved out of the band entirely and onto the MAIN
+ * caption row, where 216px of otherwise-empty row was already being drawn
+ * (`Sidebar.tsx`).
  *
- * Collapsed, the rail is 64px and has no "right": the band stacks the avatar
- * over the same control, which keeps the control in the one place a reader
- * who just collapsed the rail is already looking.
+ * Changing the theme is one click from the row it describes, and it is not
+ * inside a menu — which is what it was before, and what the pack draws.
+ *
+ * Collapsed, the rail is 64px and holds neither: the band is the avatar alone,
+ * and one click anywhere on the rail opens it back up.
  *
  * The modal's eleven extra fields come from `GET /v1/me/profile`, fetched only
  * when the modal opens. `shared/config/profileDetails.ts` held them as invented
@@ -114,40 +117,14 @@ function gmtOffset(timeZone: string): string {
 export interface SidebarProfileProps {
   /** The 64px icon rail. */
   collapsed: boolean;
-  onToggleCollapsed: () => void;
-  /** The rail's own element, which this control expands and collapses. */
-  navId: string;
 }
 
-export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarProfileProps) {
+export function SidebarProfile({ collapsed }: SidebarProfileProps) {
   const { me } = useMe();
-  const t = useT();
   const [open, setOpen] = useState(false);
   /* Not fetched until the modal is opened — see `useMeProfile`. */
   const profile = useMeProfile(open);
   const details = profile.data;
-
-  const label = collapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar");
-
-  const collapseControl = (
-    <button
-      type="button"
-      onClick={onToggleCollapsed}
-      aria-expanded={!collapsed}
-      aria-controls={navId}
-      aria-label={label}
-      title={`${label} ([)`}
-      data-rail-toggle=""
-      className={cn(
-        "flex shrink-0 items-center justify-center rounded-control text-[13px] leading-none",
-        "text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink",
-        collapsed ? "h-[22px] w-8" : "h-6 w-6",
-        FOCUS_RING,
-      )}
-    >
-      <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
-    </button>
-  );
 
   /* One modal, one set of props, whichever shape the band is in.
 
@@ -197,7 +174,6 @@ export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarP
             ]
       }
       dataScope={scopeLabels(me)}
-      headerAction={<ThemeSwitch />}
       fields={[
         { label: "Job title", value: field(details?.jobTitle) },
         { label: "Department", value: field(details?.department) },
@@ -214,7 +190,7 @@ export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarP
 
   if (collapsed) {
     return (
-      <div className="flex h-topbar shrink-0 flex-col items-center justify-center gap-0.5">
+      <div className="flex h-topbar shrink-0 items-center justify-center">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -225,7 +201,6 @@ export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarP
           <span className="sr-only">{me.name}</span>
         </button>
 
-        {collapseControl}
         {modal}
       </div>
     );
@@ -256,7 +231,7 @@ export function SidebarProfile({ collapsed, onToggleCollapsed, navId }: SidebarP
         </span>
       </button>
 
-      {collapseControl}
+      <ThemeSwitch />
       {modal}
     </div>
   );

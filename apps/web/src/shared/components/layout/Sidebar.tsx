@@ -1,4 +1,9 @@
 import { useMemo } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { NavLink } from "react-router-dom";
 import type { Role } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
@@ -23,26 +28,47 @@ import { useSidebarState } from "./useSidebarState";
  * moved up here from the footer because it is the first thing a reader checks
  * and was in the last place they would look. There is no wordmark (24a765f).
  *
- * ── THE RAIL CLOSES AGAIN ────────────────────────────────────────────────
+ * ── THE RAIL CLOSES FROM THE CAPTION ROW ─────────────────────────────────
  *
  * 63888e5 built a rail that collapsed from a chevron at the FOOTER's edge;
- * 0abe2ad removed the whole thing. It is back, and the control is at the top
- * right of the profile band instead — the corner a reader reaches for, and the
- * corner they are already looking at when they close it. The footer chevron
- * does not come back with it: a control at the bottom of a 900px column, for a
- * thing that happens at the top of it, is why the first one went unused.
+ * 0abe2ad removed the whole thing; 64d464d put it at the top right of the
+ * profile band. It is on the MAIN caption row now, right-aligned and 24px, and
+ * the band got the theme switch back in exchange — the band's 216px could not
+ * hold a name, a role, a switch AND a control without truncating two of them,
+ * and this row was already drawing 216px of which ~60 carried a four-letter
+ * caption. The footer chevron does not come back: a control at the bottom of a
+ * 900px column, for a thing that happens at the top of it, is why the first
+ * one went unused.
+ *
+ * Every caption row is `h-6` whether or not it holds the control, so the
+ * groups keep one rhythm and MAIN is not a taller group than OPERATIONS, and
+ * the row carries the parent row's OWN `px-2` — so the caption starts on x20
+ * with the icon boxes and the control's right edge lands on x220, the column
+ * every group's +/- disclosure glyph already ends on. "Right-aligned" here
+ * means aligned to that column, not to the rail's x228 edge: a control 8px
+ * right of every glyph beneath it would be the only thing in the rail not on
+ * a line with something else.
  *
  * Collapsed, the rail is `--shell-rail-width`: icons only, the label in a
  * tooltip, a count reduced to a dot on the glyph, the branch you are in still
- * tinted, the avatar alone, and the footer down to its glyphs. Nothing moves
+ * tinted, the avatar alone, and the footer down to its glyphs. The control
+ * stays where the caption row would be, centred in the 64px. Nothing moves
  * except the width, which is what keeps the content beside it to a single
  * reflow — `main` is the flex sibling, so it takes back the 176px as the rail
  * gives it up and never reflows twice for one toggle.
  *
- * A parent with children cannot open inside 64px, so clicking one from the
- * rail widens the rail first and then opens the group — one click, the thing
- * the reader asked for, rather than a group that expands where it cannot be
- * seen.
+ * ── THE CLOSED RAIL IS ONE BIG OPEN BUTTON ───────────────────────────────
+ *
+ * A 64px rail is a column of unlabelled glyphs, and the reader's first move is
+ * to click one to find out what it is. So every click inside the closed rail —
+ * a glyph, the avatar, a footer row, the empty surface between them — opens
+ * the rail and does NOTHING ELSE: it does not navigate, it does not open the
+ * profile modal, it does not drop a menu. Once open, every item behaves
+ * normally. Guarding it in the CAPTURE phase on the rail itself is what makes
+ * that true for controls this file does not own, and pointerdown is guarded
+ * separately because a Radix menu opens there rather than on click. Enter and
+ * Space are the same rule for the keyboard: preventing the key's default is
+ * also what stops a focused button from synthesising a second toggle.
  *
  * It renders whatever `getNavGroups(role)` returns and knows nothing about
  * roles itself — there is exactly one filtering pass and it is not here.
@@ -73,6 +99,8 @@ import { useSidebarState } from "./useSidebarState";
  *   x52          child dot centre, 6px solid — primary when active
  *   x66          child label, 18px right of the parent label at x48
  *   x212         badge right edge, inside the card
+ *   x220         parent disclosure glyph's right edge, and the collapse
+ *                control's — the caption row shares the parent row's `px-2`
  *
  * The rail's own `px-3` IS x12 → x228, so the parent row is the full content
  * box and every child offset is measured from it. `--ai-tint-2` rather than
@@ -145,19 +173,66 @@ export function Sidebar({ role }: { role: Role }) {
   const { isOpen, toggle, collapsed, toggleCollapsed } = useSidebarState(selection.parentKey);
   const t = useT();
 
+  const collapseLabel = collapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar");
+  /* Right-aligned on the MAIN caption row, 24px. The `[` shortcut is the same
+     control by another route and is bound in `useSidebarState`. */
+  const collapseControl = (
+    <button
+      type="button"
+      onClick={toggleCollapsed}
+      aria-expanded={!collapsed}
+      aria-controls={NAV_ID}
+      aria-label={collapseLabel}
+      title={`${collapseLabel} ([)`}
+      data-rail-toggle=""
+      className={cn(
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-[13px] leading-none",
+        "text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink",
+        FOCUS_RING,
+      )}
+    >
+      <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
+    </button>
+  );
+
+  /* The closed rail opens from anywhere inside it, and the click that opens it
+     is spent doing exactly that — see the docblock. Capture phase, so a child
+     this file does not own (a NavLink, a Radix trigger, the footer's drawers)
+     never sees the event at all. */
+  const openOnAnyClick = collapsed
+    ? {
+        /* A Radix menu opens on pointerdown, which a click-phase guard is too
+           late for. Propagation only: preventing this one would also cancel
+           the click the rail is waiting for. */
+        onPointerDownCapture: (event: ReactPointerEvent) => event.stopPropagation(),
+        onClickCapture: (event: ReactMouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleCollapsed();
+        },
+        onKeyDownCapture: (event: ReactKeyboardEvent) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          toggleCollapsed();
+        },
+      }
+    : null;
+
   return (
     <nav
       id={NAV_ID}
       aria-label="Main"
+      {...openOnAnyClick}
       className={cn(
         "flex h-full shrink-0 flex-col bg-sidebar pb-4",
         /* The width is the only thing that animates, and `main` is its flex
            sibling, so the content takes back the difference in the same pass. */
         "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        collapsed ? "w-rail px-2" : "w-sidebar px-3",
+        collapsed ? "w-rail cursor-pointer px-2" : "w-sidebar px-3",
       )}
     >
-      <SidebarProfile collapsed={collapsed} onToggleCollapsed={toggleCollapsed} navId={NAV_ID} />
+      <SidebarProfile collapsed={collapsed} />
 
       {/* THE SCROLL CONTAINER, AND WHY IT IS TWO ELEMENTS.
           `index.css` reserves the scrollbar's gutter permanently so nothing
@@ -176,14 +251,28 @@ export function Sidebar({ role }: { role: Role }) {
         )}
       >
         <div className={cn("flex flex-col gap-4", collapsed ? "w-rail px-2" : "w-sidebar px-3")}>
-          {groups.map((group) => (
+          {groups.map((group, index) => (
             <div key={group.caption} className="flex flex-col gap-0.5">
               {/* The caption is the group's only label, and at 64px there is no
                   room for it. The glyphs keep their grouping from the 16px gap
-                  between groups, which survives the collapse. */}
-              {collapsed ? null : (
-                <div className="px-2 pb-1 font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                  {CAPTION_KEY[group.caption] ? t(CAPTION_KEY[group.caption]) : group.caption}
+                  between groups, which survives the collapse.
+
+                  The FIRST group's row carries the collapse control on its
+                  right. Collapsed, that row is all that is left of the caption
+                  — the control alone, centred, in the place the reader last
+                  saw it — and the other groups draw no row at all. */}
+              {collapsed ? (
+                index === 0 ? (
+                  <div data-caption-row="" className="mb-0.5 flex h-6 items-center justify-center">
+                    {collapseControl}
+                  </div>
+                ) : null
+              ) : (
+                <div data-caption-row="" className="mb-0.5 flex h-6 items-center gap-2 px-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
+                    {CAPTION_KEY[group.caption] ? t(CAPTION_KEY[group.caption]) : group.caption}
+                  </span>
+                  {index === 0 ? collapseControl : null}
                 </div>
               )}
 
@@ -253,16 +342,10 @@ export function Sidebar({ role }: { role: Role }) {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          /* From the rail there is nowhere for the children to
-                             go, so opening a group widens the rail first. */
-                          if (collapsed) {
-                            toggleCollapsed();
-                            if (!open) toggle(parent.key);
-                            return;
-                          }
-                          toggle(parent.key);
-                        }}
+                        /* No collapsed branch: a click that reaches this
+                           handler is a click on the OPEN rail, because the
+                           closed one spends every click on opening itself. */
+                        onClick={() => toggle(parent.key)}
                         aria-expanded={open}
                         aria-controls={panelId}
                         title={collapsed ? parent.label : undefined}

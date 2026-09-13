@@ -59,7 +59,7 @@ function Harness({ children }: { children: ReactNode }) {
 const renderProfile = () =>
   render(
     <Harness>
-      <SidebarProfile collapsed={false} onToggleCollapsed={() => {}} navId="nav" />
+      <SidebarProfile collapsed={false} />
     </Harness>,
   );
 
@@ -136,7 +136,7 @@ describe("SidebarProfile", () => {
         >
           <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => {} }}>
             <I18nProvider>
-              <SidebarProfile collapsed={false} onToggleCollapsed={() => {}} navId="nav" />
+              <SidebarProfile collapsed={false} />
             </I18nProvider>
           </MeContext.Provider>
         </QueryClientProvider>
