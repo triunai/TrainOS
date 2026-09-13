@@ -15,6 +15,171 @@
 
 ---
 
+## 2026-09-13 22:2x — PR #21 adds Blocker B6 to 018; fix-014's work confirmed complete and pushed; Codex quota-blocked, no 014 verdict yet
+
+**PR #21 confirmed MERGED at `3fb8ea8`**, 35 additions/2 deletions, one
+file — a follow-up appended to the same `docs/reviews/2026-09-13-thermo-018.md`
+review. **018's verdict is now 6 Blocker, 5 High, 8 Medium, 6 Low**,
+confirmed exactly in the doc's own updated severity table (up from 5/5/8/6
+recorded two updates ago).
+
+**New Blocker B6, confirmed word-for-word against the doc: the 018
+pipeline seed is not rollback-reversible.** The rollback deliberately
+keeps the seeded `core.pipelines`/`core.pipeline_steps` rows, and the
+stated reason is a good one: `core.engagement_step_states` carries
+composite foreign keys onto those rows, and the seeds lane's fixtures
+share the derived ids, so deleting them would take the fixture world with
+it. The consequence, confirmed, is that rolling back 018 does not and
+cannot restore the prior state — `pipelines_one_default_uq` (the partial
+unique index on `(tenant_id, object) WHERE is_default`) still rejects a
+default `ENGAGEMENT` pipeline for every tenant after the rollback runs,
+and the original 008/009 fixtures this PR had to edit stay broken in
+their original form, with no supported way to undo the seed at all once
+the rollback has removed the mechanism.
+
+**The assertion meant to cover this does not exist, confirmed directly
+against the pin file.** `R4`'s own comments say "what stays is the DATA,
+and R4 asserts exactly that," and again "and so are the pipeline rows
+themselves" — but R4's actual body only queries `pg_trigger` for 016's
+trigger and never once reads `core.pipelines` or `core.pipeline_steps`.
+Two comments and a closing `RAISE NOTICE` all announce a check that was
+never written — the doc names this "the same overclaiming pattern as H1
+and H5," both already recorded in this log.
+
+**Ruling, routed to `fix-018`, confirmed:** record the seeded ids
+explicitly and make the rollback delete exactly those rows when
+unreferenced elsewhere, refusing loudly rather than silently keeping them
+when they are referenced; make `R4` assert the real `core.pipelines` /
+`core.pipeline_steps` rows rather than a `pg_trigger` proxy that proves
+nothing about them.
+
+⚠ **Process note, recorded as reported since it is a fleet-operations
+incident with no git trace to independently check:** a reviewer's
+worktree was pruned while it was still actively amending its branch. It
+recovered without losing work only because the branch had already been
+pushed before the prune. **New standing rule, worth carrying into every
+future multi-lane blast:** never prune a worktree before its lane has
+confirmed shutdown, no matter how idle it appears from the outside.
+
+---
+
+**Separately, and a larger update: `fix-014`'s work is confirmed complete
+and pushed to `origin/cloud/migrations` at tip `21ec975`** (six commits —
+`d9834b7`, `260ee64`, `7f18c68`, `d8778be`, `ab6a8f7`, `e3a871c`, rebased
+onto `564dd64`), documented in PR #6's own body under a new section,
+"Review fixes — migration 014." Confirmed directly against the commits
+and PR body, not just the summary table:
+
+- **CRIT-1 fixed**: a new `RESTRICTIVE FOR DELETE` policy,
+  `memberships_no_client_delete USING (false)`, confirmed present under
+  that exact name in `d9834b7`. The grant block now restates 002's three
+  privileges (SELECT/INSERT/UPDATE) verbatim, with `REVOKE DELETE`
+  stated explicitly rather than merely omitted, so a later `GRANT ALL`
+  has something concrete to undo.
+- **CRIT-2 fixed**: a new pin file,
+  `test_014_rollback_restores_002_grants.sql`, with assertions `R1`–`R4`,
+  confirmed present, checking the rollback restores 002's original grant
+  set rather than certifying a broken zero-privilege state as the correct
+  outcome.
+- **HIGH-1 fixed for exactly three named tables** — `ai_provider_keys`,
+  `run_node_io`, `public_share_tokens` — via `test_014` T12, confirmed
+  with four sub-cases in the diff, `T12a` through `T12d` (anon / wrong
+  role / tenant role / aal2 ADMIN), the "four-way" check. Deliberately
+  left unfixed for the other 110 tables — a named, stated posture in PR
+  #6's own body, not an oversight discovered later.
+- **HIGH-2 fixed** (the nullable-tenant `WITH CHECK` laxity, T13),
+  **HIGH-3 fixed** (a false header claim about pre-014 grants, corrected
+  against a measured 001–013 baseline), **HIGH-4 deferred DB-side** (T15
+  pins the SQL half and is written to fail once the client half is fixed
+  — that client half already merged as PR #17). All MED findings
+  confirmed fixed. The `check:grants` `pg_temp` exemption confirmed
+  landed in `scripts/check-grants.mjs`, `check:grants` now reports 0
+  findings.
+
+**Three more defects found by executing the fix rather than by reading
+it, confirmed exactly against PR #6's own body:**
+
+1. Rolling 014 back while 017 was still applied destroyed three things
+   at once: the blanket `REVOKE ALL` took 017's grants with nothing to
+   restore them, while the rollback's post-condition certified zero
+   privilege as correct (CRIT-2's exact defect, one schema over); 017's
+   six unstamped tenant policies survived the manifest loop; and the
+   derived manifest count disagreed with the stamped set by exactly six
+   (measured: 228 stamped vs. 234 derived). Now refused outright, with
+   the rollback aborting and naming the required order in its own error
+   message.
+2. `app.apply_tenant_policies('core', 'run_node_io')` — a bare
+   two-argument call, the same shape as three calls 017 already makes —
+   would have silently replaced an existing gated isolation policy with
+   an ungated one. Now refuses a two-argument call against an
+   already-gated table, offering a literal `'UNGATE'` string as a
+   deliberate, greppable escape hatch, confirmed exercised by six
+   branches in a new `T16` (three-argument gate, two-argument-against-
+   gated refuses, re-passing keeps, a different permission replaces,
+   `UNGATE` removes, an unknown permission is refused).
+3. `001:232` was found to independently grant `USAGE ON SCHEMA core` to
+   `anon`, `authenticated` **and** `service_role` — 014's header had
+   claimed `anon` "never had USAGE on `core` to begin with," and the
+   rollback revoked it from `authenticated` as though 014 had granted it.
+   Both were wrong, confirmed by measuring the actual `core` nspacl on a
+   001–013 database. This is CRIT-2's exact class of defect, a third
+   time. 014 now declares the `anon` revoke as the real privilege it
+   takes away, and the rollback restores it; pinned by `R3`.
+
+Also confirmed: `app.apply_tenant_policies`'s own `'UNGATE'` escape from
+fix #2 above was itself found broken by a subsequent probe, not a
+reading — its literal was excluded from the branch that sets the gate but
+not the one that refuses, so every `UNGATE` call raised instead of
+ungating. Fixed in the same push (`e3a871c`); an untested branch in a
+security control is confirmed treated as the defect, not merely the
+missing feature.
+
+**Validation counts, confirmed exactly against PR #6's own table**:
+forward apply 18/18 with 0 errors; all 18 pins 17 pass/0 fail (the
+post-rollback pin correctly _refuses_ while 014 is still applied, which
+counts as a pass); rollback 017→016→015→014 4/4, dropping 228 stamped
+policies; post-rollback pin `R1`–`R4` pass; re-apply 014→017 4/4; all 18
+pins again 17 pass/0 fail/1 correct refusal; an out-of-order rollback
+attempt (014 while 017 applied) refuses with the required order named;
+`check:grants` 0 findings; `lint:sql` 52/52 parsed; `check:rpc` 4
+pass/watch, 0 broken.
+
+⛔ **BLOCKER, confirmed verbatim from PR #6's own body: the second
+required reviewer slot is OWED, not filled, and no verdict has been
+substituted for it.** Codex `gpt-5.6-sol` was dispatched alongside the
+Opus thermonuclear pass (which itself independently ran, returned BLOCK
+on its first revision, found five NEW defects the first review could not
+have seen because the fix introduced them, and had all five fixed in
+`ab6a8f7` — items 1 and 2 above are two of those five) and came back hard
+quota-blocked. The literal message, confirmed: "usage limit … try again
+at Sep 14th, 2026 12:29 AM." PR #6's own body states plainly what is
+specifically uncovered without Codex: the cross-package consumer trace —
+every caller of everything the diff touches across `apps/**` and
+`packages/**`, not just `supabase/**` — which is exactly what a structural
+pass is worst at and Codex is best at. `npm run check:rpc`'s 4 pass/0
+broken bounds but does not discharge that trace. PR #6 explicitly asks
+for a Codex re-run once quota resets, before this merges.
+
+**Fallback in effect per the user's ruling, Kimi confirmed unavailable
+(already established earlier this session):** all remaining reviews on
+this migration line run as Opus thermonuclear plus a security pass, with
+the Codex slot recorded as owed rather than silently dropped or silently
+substituted without saying so — 014's re-review
+(`codex-review-014-017`), 018's (`codex-review-018`, finalizing from its
+own inspection), and 011–013's (`codex-review-011-013`). **015–017's own
+fix work is confirmed still open on `fix-014`**, not yet pushed as of
+this check — only 014 itself has a completed, pushed fix so far.
+
+**One thing worth telling future-me:** "the fix is pushed" and "the fix
+is reviewed" are different claims, and a fix that already survived one
+independent adversarial pass (the Opus thermonuclear one, which found
+five real defects in the first revision) can still be missing the OTHER
+required reviewer entirely. Recording "fixed" without recording "one of
+two required verdicts is outstanding, and here is exactly why" would have
+made this line look more ready to merge than it is.
+
+---
+
 ## 2026-09-13 22:1x — PR #20 merged, 018 BLOCK from a thermonuclear pass; the report's severity list was wrong and dropped two real Blockers
 
 **PR #20 confirmed MERGED at `c7efb8a`**, one file

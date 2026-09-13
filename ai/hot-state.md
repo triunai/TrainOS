@@ -321,8 +321,28 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > active on `lane/rpc-018` at `fc9550c`. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 22:1x — PR #20 merged, 018 BLOCKed; the
-> report's blocker list mixed severities, missing two real Blockers.
+> **BLAST 13 Sep 22:2x +08** — PR #21 confirmed MERGED (`3fb8ea8`), 018's
+> verdict now 6 Blocker/5 High/8 Medium/6 Low, confirmed exactly. New
+> Blocker B6, confirmed: the 018 pipeline seed's rollback deliberately
+> keeps seeded rows (FK-forced) but that means rollback cannot restore
+> prior state — `pipelines_one_default_uq` stays broken for every tenant
+> after rollback with no supported undo — and pin R4 claims to assert the
+> rows survive while its body only checks a `pg_trigger` proxy. Routed to
+> `fix-018`. **Separately, `fix-014`'s work is confirmed complete and
+> pushed** (`cloud/migrations` tip `21ec975`): both original CRITICAL
+> findings fixed with exercising pins, HIGH-1 fixed for 3 named tables
+> (4-way check T12a-d), 3 more execution-only defects found and fixed
+> (rollback-while-017-applied, an erasable role gate, a third destroyed
+> `USAGE ON SCHEMA core` grant). Counts confirmed exactly: 18/18 forward,
+> 17/17 pins, rollback 4/4 (228 policies), re-apply 4/4, check:grants 0,
+> lint:sql 52/52. **BLOCKER: Codex is quota-blocked until 14 Sep 00:29
+> ("usage limit"), confirmed verbatim — no MERGE verdict exists for 014
+> yet.** Fallback per the user: remaining reviews run as Opus
+> thermonuclear + security pass, Codex slot recorded as owed. Full detail
+> in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 22:2x — 018 now 6 blockers (B6 confirmed);
+> 014's fixes pushed but Codex quota-blocked, no verdict yet.
 
 ### Focus
 
@@ -346,9 +366,12 @@ this is fixed; merges proceed on local gates plus independent review in
 the meantime, logged as "CI unavailable, billing" rather than a CI
 reference.
 
-**014 is BLOCKED by the D-012 review** (two CRITICAL security findings,
-confirmed) and 015–017 are unreviewed — this now gates everything else in
-the migration line, ahead of R-F. **014's SQL file itself is now on `main`
+**014's original CRITICAL findings are fixed and pushed, but a MERGE
+verdict is blocked on Codex quota until 14 Sep 00:29** — confirmed
+verbatim. 015–017 remain fully BLOCKED per PR #18, their own fix not yet
+pushed. 018 is at 6 confirmed Blockers per PR #21. None of this line
+merges until every pack has a real reviewed-and-clean verdict, ahead of
+R-F. **014's SQL file itself is now on `main`
 regardless** (landed via PR #12's merge as review evidence, confirmed via
 `git show 02240e6 --stat`), separate from PR #6, which is still open and
 unmerged — its presence in `supabase/migrations/` is not approval; the

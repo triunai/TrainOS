@@ -276,6 +276,21 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 22:2x — PR #21 adds Blocker B6 to 018 (now 6); fix-014 confirmed complete and pushed; Codex quota-blocked, no verdict
+
+- PR #21 confirmed merged: 018 now 6 Blocker/5 High/8 Medium/6 Low. New
+  B6 confirmed: pipeline seed rollback keeps rows (FK-forced) so it can't
+  restore prior state, and pin R4 falsely claims to assert row survival.
+  Routed to fix-018. Separately, fix-014's work confirmed complete and
+  pushed to cloud/migrations at 21ec975: both CRITICALs fixed with
+  exercising pins, plus 3 more execution-only defects found and fixed
+  (rollback-while-017, erasable role gate, a third destroyed USAGE
+  grant). All counts confirmed exactly (18/18, 17/17, 4/4, 228 policies,
+  52/52 lint). BLOCKER: Codex quota-blocked until 14 Sep 00:29, confirmed
+  verbatim -- no MERGE verdict for 014 yet. Fallback to Opus
+  thermonuclear + security pass in effect for remaining reviews. Full
+  detail in `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 22:1x — PR #20 merged, 018 BLOCK (thermonuclear pass); report's blocker list was wrong, missed two real Blockers
 
 - PR #20 confirmed merged, one file, thermonuclear review of 018 at

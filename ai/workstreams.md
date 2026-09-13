@@ -17,7 +17,7 @@
 
 ---
 
-## ⛔ SUPABASE SCHEMA — 014–017 BLOCK per PR #18; 018 also BLOCK per PR #20 (2026-09-13)
+## ⛔ SUPABASE SCHEMA — 014's fixes pushed, second reviewer OWED (quota); 015–017 still BLOCK; 018 at 6 blockers (2026-09-13)
 
 ✅ **The second D-012 pass is now confirmed formally landed as PR #18**
 (merged `4162a4d`, one file, cut from `main` per the new review-branch
@@ -147,21 +147,25 @@ genuinely stale — a tooling artifact, not a fact about the repository. 015,
 review never actually looked at them**, for a different reason than
 "they don't exist."
 
-**Resume:** Read `docs/reviews/2026-09-13-codex-retrofit-014-017.md` in full
-before touching PR #6, but do not trust its "015-017 do not exist" line —
-see the correction above. **014 is BLOCKED**, not merge-ready, on two
-CRITICAL findings (below), which ARE accurate and independently confirmed.
-**015–017 exist and have simply never been reviewed** — a second review
-pass (`codex-review-014-017`'s continuation, now with a proper fetch) is
-in progress; do not treat 015–017 as validated just because 014's pins
-passed, since the pins don't even cover 014's own CRITICAL findings.
-`lane/rpc-018` (worktree `~/Repos/personal-work/trainos-wt/rpc-018`, branch
+**Resume:** Read PR #6's own body section "Review fixes — migration 014"
+first — it is now the most current state for 014. **014's original two
+CRITICAL findings are fixed and pushed** (tip `21ec975`), with pins that
+exercise each fix, but **the second required reviewer (Codex) is
+quota-blocked until 14 Sep 00:29, so no MERGE verdict exists yet** — see
+the confirmed detail below. A second, independent (Opus thermonuclear)
+pass already ran against the fixes and found five NEW defects, all fixed
+in the same push; that pass's own findings are confirmed above alongside
+the original ones. **015–017 are a separate, still-fully-BLOCKED
+question** (see PR #18's confirmed verdicts above) — their own fix work
+remains on `fix-014`, not yet pushed as of this check. `lane/rpc-018`
+(worktree `~/Repos/personal-work/trainos-wt/rpc-018`, branch
 `lane/rpc-018`, PR #11) continues in parallel but must not reach a hosted
-project before 014 lands — see 018's own hard rule below. Merge order: PR
-#6 merges only after BOTH the 014 fix (`fix-014`, below) and the 015–017
-review land clean verdicts; PR #11 (018) merges only after its own Codex
-review, separately. Hosted apply (L3) stays gated on PR #6's eventual MERGE
-verdict AND R-F, whichever lands last. **014's SQL file staying on `main`
+project before 014 lands — see 018's own hard rule below, now itself at 6
+confirmed Blockers per PR #21. Merge order: PR #6 merges only after BOTH
+014's Codex re-review lands a clean verdict AND 015–017 get a real fix
+and pass their own review; PR #11 (018) merges only after its own review
+clears its 6 Blockers, separately. Hosted apply (L3) stays gated on PR
+#6's eventual MERGE verdict AND R-F, whichever lands last. **014's SQL file staying on `main`
 via PR #12 is intentional, not a leak to clean up**: nothing applies to
 hosted without the user's hand regardless, and PR #6's eventual merge
 supersedes the copy already on `main` (same file, same content, no drift
@@ -235,26 +239,80 @@ review also notes the mandated "thermonuclear" reviewer skill
 exist anywhere in this environment; a substitute adversarial pass was run
 in its place and independently converged on both CRITICAL findings.
 
-**Three active fix/review lanes, confirmed via `git worktree list`:**
-`fix-014` (Opus, worktree `~/Repos/personal-work/trainos-wt/fix-014`,
-branch `fix/014-review`, its own shim on port 5436) is fixing the CRIT/HIGH
-findings directly in migration 014, writing pins that fail against the
-pre-fix SQL so the fix is provably load-bearing; confirmed in progress
-(latest tip `873d426` as of this check). **Real caveat from the lane,
-recorded verbatim:** its first shim run hit a port collision — 5436 was
-already held by a foreign postmaster — and that first run silently applied
-001–017 into the wrong cluster before the mistake was caught; the lane now
-asserts `data_directory` before every run rather than trusting the port
-alone. `codex-review-014-017`'s continuation (worktree
+✅ **`fix-014`'s work is now confirmed complete and pushed to
+`origin/cloud/migrations`, tip `21ec975`** (six commits: `d9834b7`,
+`260ee64`, `7f18c68`, `d8778be`, `ab6a8f7`, `e3a871c`, rebased onto
+`564dd64`), documented in PR #6's own body under "Review fixes —
+migration 014." Confirmed every fix has a pin that exercises it (fails
+against the pre-fix SQL, passes against the fix) — verified several
+directly, not just the summary table:
+
+- **CRIT-1 fixed** (`test_014` T11): the DELETE-on-`public.memberships`
+  escalation is closed by a new `RESTRICTIVE FOR DELETE` policy,
+  `memberships_no_client_delete USING (false)`, confirmed present in the
+  commit exactly under that name; the grant block restates 002's three
+  privileges verbatim rather than widening them.
+- **CRIT-2 fixed**, new pin file `test_014_rollback_restores_002_grants.sql`
+  with assertions `R1`–`R4`, confirmed present, checking the rollback
+  restores 002's original grants rather than certifying a broken zero-
+  privilege state as correct.
+- **HIGH-1 fixed for exactly three named tables** — `ai_provider_keys`,
+  `run_node_io`, `public_share_tokens` — via `test_014` T12, confirmed
+  with four sub-cases `T12a`–`T12d` in the diff (the "four-way" check),
+  each covering anon/wrong-role/tenant-role/aal2-ADMIN. Deliberately not
+  fixed for the other 110 tables — a stated posture, not an oversight.
+- **HIGH-2 fixed** (T13, the nullable-tenant WITH CHECK laxity),
+  **HIGH-3 fixed** (a false header claim about pre-014 grants, corrected
+  against a measured baseline), **HIGH-4 deferred DB-side** (T15 pins the
+  SQL half and is written to fail once the client is fixed — the client
+  half already merged via PR #17). All MED findings and the
+  `check:grants` `pg_temp` exemption (now in `scripts/check-grants.mjs`,
+  confirmed) are fixed.
+- **Three execution-only findings, found by running the fix rather than
+  reading it, confirmed exactly against PR #6's own body:**
+  1. Rolling 014 back while 017 was still applied destroyed three things
+     at once — 017's grants, an unstamped-policy gap, and a manifest
+     count mismatch (measured: 228 stamped vs. 234 derived) — now refused
+     outright, with the rollback aborting and naming the required order.
+  2. `app.apply_tenant_policies` could silently erase an existing role
+     gate via a bare two-argument call; now refuses that call and offers
+     a literal `'UNGATE'` escape instead, exercised by six branches in a
+     new `T16`.
+  3. `001:232` was found to independently grant `USAGE ON SCHEMA core` to
+     `anon`, `authenticated` and `service_role` — 014's header and
+     rollback had both been wrong about this a third time in the same
+     class as CRIT-2, now pinned by `R3`.
+- **Validation counts, confirmed exactly against PR #6's own table**: 18/18
+  forward apply, 17/17 pins pass (the post-rollback pin correctly
+  _refuses_ while 014 is applied, which counts as a pass), rollback
+  017→014 4/4 dropping 228 stamped policies, `R1`–`R4` pass, re-apply 4/4,
+  `check:grants` 0 findings, `lint:sql` 52/52, `check:rpc` 4 pass/0 broken.
+
+⛔ **BLOCKER, confirmed exactly: the second required reviewer slot is
+OWED, not filled, and PR #6 says so itself.** Codex `gpt-5.6-sol` was
+dispatched alongside the Opus thermonuclear pass and came back hard
+quota-blocked — the literal message, confirmed: "usage limit … try again
+at Sep 14th, 2026 12:29 AM." No verdict has been substituted; PR #6's own
+body states the consumer-trace check (every caller across `apps/**` and
+`packages/**`) is specifically what a structural pass can't cover, and
+asks for a re-run once quota resets, before merging. **Fallback in effect
+per the user's ruling, Kimi unavailable**: all remaining reviews on this
+line run as Opus thermonuclear plus a security pass, with the Codex slot
+recorded as owed rather than silently dropped — 014's re-review
+(`codex-review-014-017`), 018 (`codex-review-018`, finalizing from its own
+inspection), and 011–013 (`codex-review-011-013`). 015–017's own fix
+slices are confirmed still open on `fix-014`.
+
+**Active fix/review lanes, confirmed via `git worktree list`:**
+`codex-review-014-017`'s continuation (worktree
 `~/Repos/personal-work/trainos-wt/codex-pass2`, detached HEAD at `52caf6b`
 — 017's own tip, confirming this checkout DID fetch correctly this time)
 reviews 015–017 plus the pin edits from the first pass — reported at the
 time as "nineteen," since corrected by three independent recounts to 14
-hunks over 10 files, all legitimate; see below. New: `fix-approval-hash` (Sonnet, worktree
-`~/Repos/personal-work/trainos-wt/fix-approval-hash`, branch
-`fix/approval-diff-hash`, not yet pushed to origin) is doing the client
-half of the 014 review's HIGH finding #6 — `decideApproval` now sends
-`p_expected_diff_hash`; the DB-side half stays with `fix-014`.
+hunks over 10 files, all legitimate; see below. `fix-approval-hash`
+(Sonnet, worktree `~/Repos/personal-work/trainos-wt/fix-approval-hash`,
+branch `fix/approval-diff-hash`) merged as PR #17, confirmed — the client
+half of finding #6 above.
 
 **Two CI fixes landed as separate PRs.** PR #14 (`fix(ci): make the npm
 audit gate block on what ships`, branch `ci/audit-scope`) **confirmed
@@ -576,6 +634,36 @@ would never have surfaced either.
 own shim — port reported as 5438, not independently verified) confirmed
 active on `lane/rpc-018`, tip `fc9550c`. The Codex 018 report folds in
 when it lands.
+
+⛔ **PR #21 confirmed MERGED at `3fb8ea8`** (`gh pr view 21`: mergedAt
+2026-09-13T13:11:43Z, 35 additions/2 deletions, one file — a follow-up
+appended to the same thermo-018 review doc). **018's verdict is now 6
+Blocker, 5 High, 8 Medium, 6 Low** — confirmed exactly in the doc's own
+updated severity table. **New Blocker B6, confirmed word-for-word against
+the doc**: the 018 pipeline seed is not rollback-reversible. The rollback
+deliberately keeps the seeded `core.pipelines`/`core.pipeline_steps` rows
+because `core.engagement_step_states` carries composite foreign keys onto
+them and the seeds lane's fixtures share the derived ids — a good reason,
+confirmed — but the consequence is that rolling back 018 does not and
+cannot restore the prior state: `pipelines_one_default_uq` still rejects
+a default `ENGAGEMENT` pipeline for every tenant afterward, and the
+original 008/009 fixtures this PR had to edit stay broken in their
+original form with no supported way back. **Pin `R4` claims to assert
+exactly this and doesn't**: its own comments say "what stays is the DATA,
+and R4 asserts exactly that," but R4's actual body only queries
+`pg_trigger` for 016's trigger and never reads `core.pipelines` or
+`core.pipeline_steps` at all — confirmed directly, the same
+overclaiming-comment pattern as H1 and H5. Ruling, confirmed routed to
+`fix-018`: record the seeded ids and make the rollback delete exactly
+those rows when unreferenced, refuse loudly otherwise; make R4 assert the
+real rows rather than a proxy trigger check.
+
+⚠ **Process note, recorded as reported — a fleet-operations incident, not
+independently verifiable from git history.** A reviewer's worktree was
+removed while it was still amending; it recovered because the branch had
+already been pushed, so no work was lost, but the near-miss is worth a
+standing rule: **never prune a worktree before its lane has confirmed
+shutdown**, regardless of how idle it appears.
 
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
