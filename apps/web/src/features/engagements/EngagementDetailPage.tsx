@@ -8,6 +8,7 @@ import {
   DataTable,
   describeActionError,
   ENGAGEMENT_TONE,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   LifecycleStepper,
@@ -424,7 +425,12 @@ function SessionsCard({
         onRowClick={(row) =>
           navigate(`/training/participants/${engagementRef}/attendance?day=${row.day}`)
         }
-        empty={<p className="px-4 py-6 text-[13px] text-ink-muted">No sessions scheduled yet.</p>}
+        empty={
+          <EmptyState
+            title="No sessions scheduled yet"
+            description="Delivery days appear here once the engagement has a schedule. Sessions come from the engagement record, not from this screen."
+          />
+        }
       />
     </ContentCard>
   );
@@ -489,9 +495,10 @@ function ParticipantsCard({
           rowKey={(row) => row.participantRef}
           density="compact"
           empty={
-            <p className="px-4 py-6 text-[13px] text-ink-muted">
-              No attendance has been captured yet.
-            </p>
+            <EmptyState
+              title="No attendance captured yet"
+              description="Participants appear here once a day's sheet has been captured. Open a session to capture one."
+            />
           }
         />
       )}

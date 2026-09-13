@@ -13,6 +13,7 @@ import {
   ApprovalBanner,
   CitationChip,
   ErrorState,
+  EmptyState,
   ExceptionBanner,
   formatDate,
   GhostButton,
@@ -473,10 +474,15 @@ function SectionEditor({
   sendAction: ReactNode;
 }) {
   if (!section) {
+    /* An `ExceptionBanner` stood here. It is the wrong component twice over: a
+       banner is an interruption about something that went wrong, and a proposal
+       that has not been written yet is neither. The kit has a component for
+       "there is nothing here", and no second visual language for it. */
     return (
-      <div className="p-5">
-        <ExceptionBanner severity="INFO" title="This proposal has no sections yet." />
-      </div>
+      <EmptyState
+        title="This proposal has no sections yet"
+        description="Add the first section from the rail, or let the Proposal Agent draft one from the TNA."
+      />
     );
   }
 
