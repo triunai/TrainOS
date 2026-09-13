@@ -19,36 +19,40 @@
 
 ## ⛔ SUPABASE SCHEMA — 014 BLOCKED by D-012 review; 015–017 unreviewed; 018 on PR #11 (2026-09-13)
 
-⚠ **Correction to this thread's own prior entry: "014–017 all landed" was
-premature.** That entry recorded PR #6 as complete and validated based on
-its 4 commits and self-reported pin pass rate. It did not record that the
-D-012 review had not yet run, and did not catch that at the time PR #6 was
-reviewed, **015/016/017 did not exist in the repository at all** — only 014
-did. `PR #12` (`docs(reviews): D-012 dual adversarial review — PR #6,
-migration 014 (BLOCK)`) merged at `02240e6`, confirmed, and its own body
-states this directly: "`git log --all` over the whole repo finds no `015_`,
-`016_`, or `017_` file ever committed, on any branch" at review time. 015–017
-now DO exist in PR #6's current diff (confirmed via `gh pr diff 6`) — they
-were pushed after or during the review, and **have not been reviewed at
-all**, by anyone.
+⚠ **Second correction, this time to the "015–017 do not exist" claim this
+thread repeated from the review two updates ago — that claim was itself
+wrong, and I should have caught it against evidence I already had.** The
+review's own body said "`git log --all` finds no `015_`, `016_`, or `017_`
+file ever committed, on any branch," and I recorded that as established
+fact. It was not: 015, 016 and 017 were committed to `cloud/migrations` at
+19:35:49, 19:42:56 and 19:59:54 on 13 Sep — confirmed directly by `git log
+--format="%ai" -1 <sha>` on each of `5e7c4bc`, `5d0f31c`, `52caf6b` — all
+**before** the review doc itself was committed at 20:08:39 (`eb5b43e`). I
+had already run `gh pr diff 6` in an earlier pass and seen these three
+files in the diff; I did not cross-check that against the review's
+contradicting claim before repeating it. The actual cause, confirmed:
+the reviewer's own checkout was detached at `826bb52` (014's commit,
+19:30:03) and never fetched, so its local view of the repository was
+genuinely stale — a tooling artifact, not a fact about the repository. 015,
+016 and 017 have existed the whole time; what's true is that **the D-012
+review never actually looked at them**, for a different reason than
+"they don't exist."
 
 **Resume:** Read `docs/reviews/2026-09-13-codex-retrofit-014-017.md` in full
-before touching PR #6 — it is the authoritative current state, more current
-than anything else in this thread. **014 is BLOCKED**, not merge-ready, on
-two CRITICAL findings (below). **015–017 exist in the PR's diff now but have
-never been reviewed by anyone** — do not treat their presence as validated
-just because 014's pins passed; the pins don't even cover 014's own CRITICAL
-findings, let alone anything in 015–017. Fix the two CRITICAL findings in
-014, get 015–017 through the same D-012 gate, and only then does PR #6
-become mergeable. `lane/rpc-018` (worktree
-`~/Repos/personal-work/trainos-wt/rpc-018`, branch `lane/rpc-018`, PR #11)
-continues in parallel but must not reach a hosted project before 014 lands
-— see 018's own hard rule below. Hosted apply (L3) is authorised by the user
-for after 014 passes `migration-retrofit-qa` — apply via the Supabase MCP's
-`apply_migration` against project `balzmmsmrawzmefkavte` (ap-southeast-1,
-ACTIVE_HEALTHY, zero migrations applied), not psql; region Singapore is
-confirmed by the user and by the project itself. **Do not apply anything to
-the hosted project before 014 passes review AND 015–017 are reviewed.**
+before touching PR #6, but do not trust its "015-017 do not exist" line —
+see the correction above. **014 is BLOCKED**, not merge-ready, on two
+CRITICAL findings (below), which ARE accurate and independently confirmed.
+**015–017 exist and have simply never been reviewed** — a second review
+pass (`codex-review-014-017`'s continuation, now with a proper fetch) is
+in progress; do not treat 015–017 as validated just because 014's pins
+passed, since the pins don't even cover 014's own CRITICAL findings.
+`lane/rpc-018` (worktree `~/Repos/personal-work/trainos-wt/rpc-018`, branch
+`lane/rpc-018`, PR #11) continues in parallel but must not reach a hosted
+project before 014 lands — see 018's own hard rule below. Merge order: PR
+#6 merges only after BOTH the 014 fix (`fix-014`, below) and the 015–017
+review land clean verdicts; PR #11 (018) merges only after its own Codex
+review, separately. Hosted apply (L3) stays gated on PR #6's eventual MERGE
+verdict AND R-F, whichever lands last.
 
 **Confirmed directly 19:5x: `core` is still not exposed on the hosted
 project.** Probed the live REST endpoint myself (`curl .../rest/v1/<table>`
@@ -113,10 +117,38 @@ review also notes the mandated "thermonuclear" reviewer skill
 exist anywhere in this environment; a substitute adversarial pass was run
 in its place and independently converged on both CRITICAL findings.
 
+**Two active fix/review lanes, confirmed via `git worktree list`:**
+`fix-014` (Opus, worktree `~/Repos/personal-work/trainos-wt/fix-014`,
+branch `fix/014-review`, its own shim on port 5436) is fixing the CRIT/HIGH
+findings directly in migration 014, writing pins that fail against the
+pre-fix SQL so the fix is provably load-bearing; confirmed in progress, an
+uncommitted edit to `014_rls_policies_and_client_grants.sql` sitting in the
+worktree as of this check. Codex re-reviews after. `codex-review-014-017`'s
+continuation (worktree `~/Repos/personal-work/trainos-wt/codex-pass2`,
+detached HEAD at `52caf6b` — 017's own tip, confirming this checkout DID
+fetch correctly this time) now reviews 015–017 plus the nineteen pin edits
+from the first pass, into a separate report.
+
+**Two CI fixes also landed as separate PRs, both confirmed to exist and
+match their descriptions:** PR #14 (`fix(ci): make the npm audit gate block
+on what ships`, branch `ci/audit-scope`, open) changes the `deps-audit` job
+from `continue-on-error: true` / `npm audit --audit-level=high` to a
+blocking `npm audit --omit=dev --audit-level=high` — confirmed in the diff,
+with the three dev-only advisories named in a comment exactly as reported
+(`GHSA-fx2h-pf6j-xcff` vite, `GHSA-5xrq-8626-4rwp` vitest,
+`GHSA-82fw-gwwq-j7x9` `@vitest/mocker`/`@vitest/coverage-v8`) and a note
+that production scope is clean at high+ except two moderate react-router
+advisories needing their own major-version work. PR #15
+(`chore(toolchain): vite 7 + vitest 3 (dev-only audit advisories)`, branch
+`chore/vite7-vitest3`, **DRAFT**, confirmed) is the toolchain upgrade that
+actually clears those three advisories; its latest commit
+(`test(web): state the timeout three Radix-menu tests have always needed`)
+confirms the previously-reported `testTimeout: 15s` fix for the three
+Radix-menu tests is in progress.
+
 **014–017 author-reported execution findings** (separate from the D-012
 security review above — these are the authoring lane's own notes, negative
-results for the log, partially spot-checked; 015–017 remain unreviewed by
-anyone as noted above):
+results for the log, partially spot-checked):
 
 - `app.require_tenant_id` was ungranted, so RLS policies errored instead of
   denying — confirmed directly in the PR #6 diff: "no policy in 001-013 used
@@ -239,7 +271,14 @@ not announced separately by any lane. Enquiries → proposals → approvals are
 now on main through the `TrainOsClient` seam, along with all the CI fixes
 this thread tracked earlier (Prettier, timezone pin, artifact-quota
 `continue-on-error`) and the ten new `RPC_NAMES` entries `lane/rpc-018` is
-implementing.
+implementing. **Confirmed at merge time: 17 of 18 checks green** (`gh pr
+checks 5`); the one red was npm audit (high+), and `CI Summary` itself
+passed, confirming npm audit's `continue-on-error` genuinely kept it from
+blocking. `Vitest (unit)` took 14m21s on the runner — confirmed exactly,
+worth a follow-up on its own regardless of the audit question. The
+`--omit=dev` scoping and the vite-7/vitest-3 draft PR mentioned earlier are
+now real, separate PRs (see SUPABASE SCHEMA thread above for confirmation
+of both).
 
 **Resume:** Read `ai/resume-brief.md` BLAST 19:25 entry, then
 `ai/briefs/2026-09-13-api-phase-plan.md` (rulings R-A..R-G). Two cloud lanes,

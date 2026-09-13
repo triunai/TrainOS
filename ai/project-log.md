@@ -15,6 +15,96 @@
 
 ---
 
+## 2026-09-13 20:5x — correcting this log's own 20:4x claim: 015–017 were never missing, a reviewer's stale checkout said they were
+
+**"015-017 do not exist" was wrong, and this log repeated it as fact two
+updates ago.** The D-012 review's own body said "`git log --all` over the
+whole repo finds no `015_`, `016_`, or `017_` file ever committed, on any
+branch," and the 20:4x entry above recorded that verbatim as an established
+finding. It was not established — it was a reviewer working from a stale
+checkout. Confirmed by exact timestamp: `git log --format="%ai" -1 <sha>`
+on `5e7c4bc` (015), `5d0f31c` (016) and `52caf6b` (017) gives 19:35:49,
+19:42:56 and 19:59:54 on 13 September — all committed to `cloud/migrations`
+**before** the review's own findings document was committed at 20:08:39
+(`eb5b43e`). The reviewer's worktree was detached at `826bb52` — 014's
+commit, from 19:30:03 — and never ran `git fetch` afterward, so by the time
+it wrote its findings, three more packs had already been pushed to the
+remote branch that its local checkout simply couldn't see. That is a
+tooling gap in the review's own process, not a fact about the repository.
+
+**The error compounds a mistake this log already flagged once this
+session.** Two updates ago, this log corrected itself for accepting "014-017
+all landed" on the strength of commit headlines without checking the
+actual diff. This time the diff HAD been checked — `gh pr diff 6` in an
+earlier pass genuinely showed all three files present — and the mistake was
+different: a second, contradicting claim arrived from what looked like a
+more authoritative source (a formal security review, VERDICT BLOCK) and
+got recorded without being weighed against evidence already in hand. The
+review's authority on the SECURITY findings (which are real and confirmed)
+does not transfer to every factual claim inside the same document.
+
+**What remains true and unchanged:** migration 014's two CRITICAL findings
+are real, independently confirmed against the SQL in this session, and
+still block PR #6. What was wrong is narrower: 015-017 were never absent,
+they were simply never reviewed — for a mundane git-fetch reason, not
+because they didn't exist.
+
+**Two active lanes now, both confirmed via `git worktree list`:**
+
+- `fix-014` (Opus, worktree `~/Repos/personal-work/trainos-wt/fix-014`,
+  branch `fix/014-review`, its own shim on port 5436) is fixing 014's
+  CRIT/HIGH findings directly in the migration file, writing pins that
+  fail against the pre-fix SQL so the fix is provably load-bearing rather
+  than asserted. Confirmed in progress: an uncommitted edit to
+  `014_rls_policies_and_client_grants.sql` sitting in the worktree as of
+  this check. Codex re-reviews after.
+- `codex-review-014-017`'s continuation (worktree
+  `~/Repos/personal-work/trainos-wt/codex-pass2`, detached HEAD at
+  `52caf6b` — 017's own tip, confirming this checkout fetched correctly)
+  now reviews 015-017 plus the nineteen pin edits from the first pass, into
+  a separate report.
+
+**PR #5 and two new CI PRs, all confirmed:**
+
+- PR #5 confirmed 17 of 18 checks green at merge time (`gh pr checks 5`):
+  the only red was npm audit (high+), and `CI Summary` itself passed,
+  confirming `continue-on-error` genuinely kept it from blocking the merge.
+  `Vitest (unit)` took 14m21s on the runner, confirmed exactly — worth its
+  own follow-up regardless of the audit question.
+- PR #14 (`fix(ci): make the npm audit gate block on what ships`, branch
+  `ci/audit-scope`, open) confirmed: its diff removes `continue-on-error:
+true` and switches the command to `npm audit --omit=dev
+--audit-level=high`, with the three dev-only advisories named in a
+  comment exactly as reported (`GHSA-fx2h-pf6j-xcff` vite,
+  `GHSA-5xrq-8626-4rwp` vitest, `GHSA-82fw-gwwq-j7x9`
+  `@vitest/mocker`/`@vitest/coverage-v8`), plus a note that production
+  scope is clean at high+ except two moderate react-router advisories that
+  need their own major-version work.
+- PR #15 (`chore(toolchain): vite 7 + vitest 3 (dev-only audit
+advisories)`, branch `chore/vite7-vitest3`, **draft**) confirmed real;
+  its latest commit, `test(web): state the timeout three Radix-menu tests
+have always needed`, confirms the previously-reported 15-second timeout
+  fix is in progress.
+
+**Merge order, confirmed and recorded plainly:** PR #6 merges only after
+BOTH the 014 fix and the 015-017 review land clean verdicts. PR #11 (018)
+merges only after its own, separate Codex review. Hosted apply stays gated
+on PR #6's eventual MERGE verdict and R-F (`core` exposed on the hosted
+project), whichever lands last.
+
+**One thing worth telling future-me, and it's about process, not SQL:**
+a claim inside an authoritative document is not automatically authoritative
+itself. This review's two CRITICAL security findings were independently
+re-derived from the SQL in this session and are solid. Its incidental claim
+about which files exist was not re-derived — it was trusted because it sat
+inside the same document as the solid findings, and it contradicted
+something this session had already personally verified minutes earlier.
+The fix for next time isn't "trust reviews less" — it's "when a new claim
+contradicts your own prior verification, that contradiction is itself a
+finding, and it gets checked before either claim gets repeated."
+
+---
+
 ## 2026-09-13 20:4x — 014 BLOCKED by D-012 review, 015–017 never reviewed; PR #5 and PR #10 both merged
 
 **Correction to this log's own 20:3x entry above: "014–017 land on PR #6"

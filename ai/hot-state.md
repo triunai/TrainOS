@@ -136,8 +136,27 @@
 > the claim-window severity chip has never been visible on screen, even
 > after today's fix. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 20:4x — 014 is BLOCKED (2 CRITICAL findings,
-> confirmed), 015-017 unreviewed; PR #5 and PR #10 both merged.
+> **BLAST 13 Sep 20:5x +08** — **Third correction in this migration line,
+> this time to a claim this session made itself:** "015-017 do not exist"
+> was wrong. Confirmed by timestamp: 015/016/017 were committed to
+> `cloud/migrations` at 19:35/19:42/19:59, all before the D-012 review doc
+> was even written at 20:08. The review's checkout was detached and never
+> fetched, so it saw a stale tree and reported non-existence — a tooling
+> artifact, not a fact. This session had already seen all three files in
+> `gh pr diff 6` and should have caught the contradiction instead of
+> repeating the review's claim. 014's two CRITICAL findings remain accurate
+> and confirmed. Two new active lanes: `fix-014` fixing 014's CRIT/HIGH
+> findings directly, and `codex-review-014-017`'s continuation (fetched
+> correctly this time) reviewing 015-017 plus the earlier nineteen pin
+> edits. PR #5 confirmed 17/18 checks green at merge (only npm audit red,
+> non-blocking); PR #14 (`ci/audit-scope`) and PR #15 (`chore/vite7-vitest3`
+> draft) both confirmed real and matching their descriptions exactly,
+> including the three named GHSA ids. Merge order: PR #6 needs both the 014
+> fix AND the 015-017 review clean; PR #11 (018) needs its own review
+> separately. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 20:5x — "015-017 don't exist" was itself
+> wrong (stale reviewer checkout); 014's CRITICAL findings still stand.
 
 ### Focus
 

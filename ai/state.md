@@ -276,6 +276,18 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 20:5x — correction: "015-017 don't exist" was a stale reviewer checkout, not a fact
+
+- Confirmed by timestamp: 015/016/017 were committed to cloud/migrations
+  at 19:35/19:42/19:59, all before the D-012 review doc was written at
+  20:08. The reviewer's checkout never fetched after 014's commit, so it
+  reported non-existence wrongly. 014's two CRITICAL findings still stand.
+  Two active lanes now: fix-014 (fixing 014 directly) and
+  codex-review-014-017's continuation (now reviewing 015-017 correctly).
+  PR #5 confirmed 17/18 checks green; PR #14 and PR #15 (draft) both
+  confirmed real for the audit-scope and toolchain-upgrade work. Full
+  detail in `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 20:4x — 014 BLOCKED by D-012 review (2 CRITICAL); PR #5 and #10 both merged
 
 - Correction to this log's own 20:3x entry: 014-017 were NOT all landed and
