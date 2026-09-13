@@ -276,6 +276,17 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 20:2x — PR #8 merged too; main-red recount (five, not four); MoneyText correction
+
+- PR #8 confirmed merged at a4ea833 after review-pr8's MERGE verdict (1004
+  tests, isolated worktree pinned to 6dfd281). Corrected main-red to five
+  checks (Vitest unit was also failing, missed earlier). fix-pr5's fixes
+  confirmed in PR #5's own commit history. npm audit ruling only partly
+  live (continue-on-error, not the full --omit=dev + toolchain-PR plan).
+  Corrected this log's own earlier claim that the MoneyText follow-up was
+  fully closed — two screens still carry independent font-mono wrappers.
+  Full detail in `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 20:1x — PR #9 merged (reported open); PR #10 open, six deviations confirmed
 
 - PR #9 (ui/tokens) already merged at ed3c337 by the time it was checked;

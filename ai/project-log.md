@@ -15,6 +15,88 @@
 
 ---
 
+## 2026-09-13 20:2x — PR #8 merged, main-red recount (five not four), a correction to this log's own 20:1x entry
+
+**PR #8 confirmed MERGED at `a4ea833`** (`gh pr view 8`: mergedAt
+2026-09-13T11:55:41Z), after `review-pr8`'s MERGE verdict. The reviewer ran
+its own gates in an isolated worktree pinned to `6dfd281` — confirmed as the
+lane's actual tip from the worktree list recorded two updates ago — reporting
+typecheck clean and 1004 tests, a different number from the lane's own
+self-reported 1389 (28 new); recorded as two separate counts from two
+separate checks, not reconciled into one. The reviewer's recount of 8
+replaced tone ternaries (not 10, the other two going to `ui/lists`) matches
+what this thread already recorded independently. `ui-states` worktree
+confirmed shut down. Two of the three UI carry-over PRs (#8, #9) are on main;
+only #10 remains under review.
+
+**Main-red was five failing checks on `9fdcb4d`, not four.** Re-checked run
+34753909066 job-by-job rather than trusting the earlier pass: Vitest (unit)
+also failed, with five wall-clock/timezone-dependent test failures
+(`DateText.test.tsx`, `ClientProposalPage.test.tsx`, `knowledge.test.tsx`,
+`AttendanceCapturePage.test.tsx` ×2) — every one an assertion written
+against a Malaysian wall clock with the runner's timezone left unpinned.
+This was missed in the earlier count of main-red items and is corrected
+here. None of the five came from PR #5's own diff, confirmed by their
+presence on `9fdcb4d` itself.
+
+**`fix-pr5`'s work is confirmed IN PR #5's own commit history, not a
+separate branch that merges in later.** `gh pr view 5 --json commits` lists
+the three fix commits directly. Confirmed each fix landed as described:
+`apps/web/vitest.config.ts` on `origin/cloud/web-swap` sets `TZ:
+"Asia/Kuala_Lumpur"` with a comment citing the same tenant default used
+elsewhere in the schema; `.github/workflows/ci.yml` sets `continue-on-error:
+true` on the `upload-artifact` step with a comment stating the quota is
+account-level and "must not be able to report a green build as a red one."
+Confirmed on PR #5's own latest CI run (34755634781): Gitleaks, Prettier and
+Vite build now pass; Vitest was still running at last check, not yet
+resolved either way.
+
+**npm audit ruling: only the coarse half is live.** The reported plan was to
+scope the CI step to `npm audit --omit=dev --audit-level=high`, note the
+three advisory ids (`GHSA-fx2h-pf6j-xcff` vite, `GHSA-5xrq-8626-4rwp`
+vitest, `@vitest/coverage-v8`) in a comment as dev-only, and land the
+vite-7-and-vitest-3 upgrade as a separate draft PR. What's actually on
+`cloud/web-swap` right now: the `deps-audit` job gained `continue-on-error:
+true` on the unchanged `npm audit --audit-level=high` command — no
+`--omit=dev`, no id comment. No `chore(toolchain): vite 7 + vitest 3` PR
+exists on GitHub yet (`gh pr list --state all` checked directly). Recorded
+as a plan not yet fully executed, not a false report — the coarser mitigation
+that IS live achieves the same immediate goal (main stays green) by a
+blunter means.
+
+**Correction to this log's own 20:1x entry above.** That entry said the
+MoneyText kit follow-up should be dropped entirely — too broad, based on
+confirming only the kit component itself. The correct picture, per the team
+lead and independently confirmed by reading the files: `MoneyText` is fixed
+(PR #9's `5f01e57`), but two screens carry their own `font-mono` wrappers
+that never routed through it, so the kit fix never reached them.
+`InvoiceDetailScreen.tsx` hardcodes `font-mono` at ten call sites (confirmed
+at `a4ea833`) — this closes as a side effect of PR #10's `DataTable`
+conversion, since that's exactly the table being replaced.
+`ExecutiveDashboard.tsx` hardcodes it at three call sites (confirmed
+directly at lines 91, 349, 385) with no lane assigned — this stays open as a
+screen-level item, tracked as verification doc §5 item 5 / §7 row 9, not a
+kit follow-up. `ai/workstreams.md` UI-CARRYOVER corrected in place.
+
+**Two things worth telling future-me:**
+
+1. **A "the kit is fixed" claim needs checking at every call site, not just
+   the kit.** `MoneyText` had zero `font-mono` left in it, which is true and
+   was verified — but two screens had grown their own parallel `font-mono`
+   styling that never went through the shared component at all, so fixing
+   the shared component fixed nothing for them. The lesson isn't "verify the
+   file the report names" — it's "grep for the actual symptom
+   (`font-mono` near a money/numeric value) across the tree, because the
+   defect and the component are not the same scope."
+2. **A CI run that "fails" can still be job-by-job re-examined for a check
+   nobody mentioned.** Vitest (unit) was sitting in the same `gh run view`
+   output used to find the other four main-red failures, twice, before it
+   was actually read all the way through. The habit that would have caught
+   it the first time: read every job row in a failing run, not just the
+   ones a report already names.
+
+---
+
 ## 2026-09-13 20:1x — PR #9 merged (was reported open), PR #10 confirmed with six deviations
 
 **PR #9 (`ui/tokens`) already merged.** `gh pr view 9` shows `state: MERGED`,

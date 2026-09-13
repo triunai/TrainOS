@@ -127,37 +127,56 @@ open for the user: `core` exposed in the dashboard (R-F, confirmed live —
 see SUPABASE SCHEMA above), n8n in the proposal.
 
 ⚠ **PR #5's CI is not "green except Gitleaks,"** and the root cause is
-upstream of PR #5 entirely. Checked directly against the run (`gh pr checks
-5`, run 34754549631) at 19:40: four checks fail. **Main itself has been red
-since `9fdcb4d`** (run 34753909066, confirmed 19:5x) on the same four:
-Gitleaks (license), Prettier (drift check), Vite build (artifact-upload
-quota, build itself passes), and npm audit (high+, 8 vulnerabilities: 5
-moderate, 1 high, 2 critical in the `vite`/`vite-node` and
-`react-router`/`react-router-dom` chains — `npm audit fix --force` would
-force a breaking `react-router-dom@7.18.3`). PR #5 and PR #6 both inherit
-all four from main; they are not lane-specific defects.
+upstream of PR #5 entirely — **five checks fail on main, not four.** Checked
+directly against run 34753909066 (`9fdcb4d`) job-by-job: Gitleaks (license),
+Prettier (drift check), Vite build (artifact-upload step only — the build
+itself passes), npm audit (high+, 8 vulnerabilities: 5 moderate, 1 high, 2
+critical), **and Vitest (unit)** — missed in the first pass through this run
+and confirmed only now: five wall-clock/timezone-dependent test failures
+(`DateText.test.tsx`, `ClientProposalPage.test.tsx`, `knowledge.test.tsx`,
+`AttendanceCapturePage.test.tsx` ×2), all assertions written against a
+Malaysian wall clock with the runner's timezone unpinned. None of the five
+came from PR #5's own diff. PR #5 and PR #6 both inherit all five from main.
 
-**Fix lane, naming mismatch resolved by progress.** The `fix-pr5` worktree
-(branch `fix/pr5`, still not `fix/main-ci` as reported — the name gap is
-unexplained but no longer blocks trusting the lane) has since committed three
-real CI fixes, confirmed by its own `git log`: `0b7221e` formats
-`check-barrels.mjs` for the Prettier gate, `6c84ca0` pins the test suite's
-timezone, and `c4b8a78` stops a shared artifact-storage quota from failing
-the build and test gates. No PR opened from `fix/pr5` yet as of 20:0x.
+**Fix lane's naming mismatch resolved, and its work is now IN PR #5's own
+history, not a separate branch.** The `fix-pr5` worktree (branch `fix/pr5`,
+never `fix/main-ci` as first reported) committed three fixes that are now
+part of `cloud/web-swap`'s own commit list, confirmed via `gh pr view 5
+--json commits`: `fix(web): format check-barrels.mjs so the Prettier drift
+gate passes`, `fix(web): pin the suite timezone so wall-clock assertions
+stop depending on the runner` (confirmed: `apps/web/vitest.config.ts` now
+sets `TZ: "Asia/Kuala_Lumpur"`, with a comment citing the same tenant
+default used elsewhere in the schema), and `ci: stop a shared
+artifact-storage quota from failing the build and test gates` (confirmed:
+`.github/workflows/ci.yml` sets `continue-on-error: true` on the
+`upload-artifact` step, with a comment noting the quota is account-level and
+"must not be able to report a green build as a red one"). Confirmed on
+`origin/cloud/web-swap`: Gitleaks, Prettier and Vite build now pass on PR
+#5's own CI run (34755634781); Vitest was still running at last check.
 
-**PR #7 (`ci/gitleaks`) merged at `0910b9d`** (confirmed: `git log -1
-0910b9d` shows the merge commit, `git merge-base --is-ancestor 0910b9d main`
-confirms it's on main). The `ci-gitleaks` lane worktree is gone — shut down
-as reported. **Merging it fixed Gitleaks repo-wide**, confirmed directly:
-main's next CI run (34755129255) passes Gitleaks, but still fails Prettier
-(drift check) — the other three main-red items (Prettier, Vite build,
-artifact quota, npm audit) are not yet fixed on main; that is `fix-pr5`'s
-remaining work. Merge order: web-swap → migrations; where `fix/pr5` lands
-relative to those is not yet stated by any lane.
+**npm audit ruling only partly implemented so far.** The plan as reported:
+scope the CI step to `npm audit --omit=dev --audit-level=high` with the
+three advisory ids (`GHSA-fx2h-pf6j-xcff` vite, `GHSA-5xrq-8626-4rwp`
+vitest, plus `@vitest/coverage-v8`) in a comment, since all three are
+dev-only; and land the vite 7 + vitest 3 upgrade as a separate draft PR
+"chore(toolchain): vite 7 + vitest 3." **What's actually live on
+`cloud/web-swap` right now is coarser than that plan**: the `deps-audit` job
+just gained `continue-on-error: true` on the unchanged `npm audit
+--audit-level=high` command — no `--omit=dev`, no comment with the GHSA ids.
+No `chore(toolchain)` PR exists yet on GitHub as of this check (`gh pr list
+--state all` shows none). Advisory content itself not independently
+re-verified (which packages are dev-only) — recorded as reported, distinct
+from what's confirmed live.
+
+**PR #7 (`ci/gitleaks`) merged at `0910b9d`**, confirmed on main, fixing
+Gitleaks repo-wide. Merge order: PR #5 → PR #6 (after `codex-review-014-017`'s
+verdict) — PR #5 is now explicitly the vehicle that turns main green, per
+the report and consistent with everything confirmed above.
 
 **Refs:** `ai/briefs/2026-09-13-api-phase-plan.md`, `ai/resume-brief.md`,
 `docs/architecture/07-api-layer-decision.md`,
-`apps/web/src/shared/api/rpcClient.ts`.
+`apps/web/src/shared/api/rpcClient.ts`, `apps/web/vitest.config.ts`,
+`.github/workflows/ci.yml`.
 
 ---
 
@@ -199,12 +218,17 @@ each lane touches; no kit additions beyond what `ui/tokens` lands.
 
 **State:** `ui/states` opened PR #8 ("fix(screens): empty states, tone
 ternaries, drawer primary and the registry toolbar") at ~19:49, closing four
-verifier-carry-over items. Reported as 1389 tests (28 new) with local gates
-green; not independently re-run here, but the diff shape is consistent (23
-files changed, 5 of them test files, confirmed via `gh pr diff 8`). Under
-independent review by `review-pr8` (Sonnet `code-reviewer`) before merge. As
-of ~20:0x PR #8's CI is still mostly pending; Gitleaks, Install and Detect
-optional surfaces have passed so far.
+verifier-carry-over items. **MERGED at `a4ea833`** (confirmed: `gh pr view 8`
+shows `state: MERGED`, `mergedAt` 2026-09-13T11:55:41Z), after `review-pr8`'s
+MERGE verdict. The reviewer ran its own gates in an isolated worktree pinned
+to `6dfd281` (the lane's actual tip, confirmed matching the earlier-recorded
+`git worktree list` output) and reported typecheck clean and 1004 tests —
+a different figure from the lane's own self-reported 1389 (28 new); not
+reconciled here, recorded as two different counts from two different
+checks rather than assumed to agree. The reviewer also recounted the tone
+ternaries at 8 replaced, not 10, with the other two attributed to `ui/lists`
+— consistent with what this thread already recorded independently below.
+`ui-states` lane worktree is shut down (confirmed gone from disk).
 
 **Three deviations from the verification doc, each confirmed against the
 actual files:**
@@ -231,11 +255,10 @@ actual files:**
 M03 `ListToolbar` screens go to `cloud/web-swap` as follow-up;
 `ClaimPacketScreen` and `CollectionsQueueScreen` go to `ui/lists`.
 
-**PR #9 (`ui/tokens`) — already MERGED, not "open under review."** Confirmed
-directly: `gh pr view 9` shows `state: MERGED`, `mergedAt`
-2026-09-13T11:54:52Z, merge commit `ed3c337`, now on main. It reported open
-at the time it was described to this thread; by the time this was verified
-it had landed. 3 commits confirmed; file count is 35, not 33 as reported (a
+**PR #9 (`ui/tokens`) — MERGED at `ed3c337`, after `review-pr9`'s MERGE
+verdict** (confirmed: `gh pr view 9` shows `state: MERGED`, `mergedAt`
+2026-09-13T11:54:52Z). `ui-tokens` lane worktree is shut down (confirmed gone
+from disk). 3 commits confirmed; file count is 35, not 33 as reported (a
 small discrepancy, not disputed further — every substantive claim checked
 out). No feature screen touched, confirmed (all 35 files are under
 `kit/`, `styles/`, `tailwind.config.ts`, and one `docs/reviews/` doc).
@@ -290,15 +313,24 @@ All deviations confirmed against the actual diff:
   it — confirmed via the file's own updated comment, which says so directly
   and marks it "NOT this pass's."
 
-⚠ **One kit follow-up item is already done, not open.** Queued follow-up (a),
-"`MoneyText` hardcodes `font-mono` at `Money.tsx:32,43`," was fixed as part
-of PR #9 itself (`5f01e57`, "labels take the UI font, numbers take tabular
-figures") — confirmed by reading current `Money.tsx` on main: both lines use
-`tabular-nums`, no `font-mono` anywhere in the file. PR #10's own body
-independently corroborates this ("numbers take tabular numerals and NOT
-mono... for the kit lane, not this one... eight dead `tabular-nums` props
-removed"). Whoever picks up the kit follow-ups list should drop (a) rather
-than redo it. Remaining follow-ups, still open: (b) `DataTable`
+⚠ **Correction to this thread's own prior entry: follow-up (a) is not fully
+resolved, only its kit half is.** The earlier record here said "drop (a)
+rather than redo it" — too broad. What's true, confirmed by reading the
+files directly: `MoneyText` itself has no `font-mono` (fixed by PR #9's
+`5f01e57`, "labels take the UI font, numbers take tabular figures";
+`Money.tsx` on main uses `tabular-nums` at both lines, ancestor of `ed3c337`).
+But two SCREENS carry their own independent `font-mono` wrappers around
+money/numeric columns that were never routed through `MoneyText` in the
+first place, so PR #9's kit fix never touched them: `InvoiceDetailScreen.tsx`
+hardcodes `font-mono` at ten call sites in its hand-rolled table (confirmed
+at `a4ea833`) — this one closes as a side effect once PR #10's `DataTable`
+conversion merges, since that table is exactly the one PR #10 replaces.
+`ExecutiveDashboard.tsx` hardcodes `font-mono` at three call sites (confirmed
+directly, lines 91, 349, 385) and has no lane currently touching it — this
+one **stays open as a screen-level item**, tracked as verification doc §5
+item 5 / §7 row 9, not a kit follow-up. Revised follow-up list: (a) DROP —
+the kit half is done, the two screen instances are tracked separately, one
+closing via PR #10 and one still open per above; (b) `DataTable`
 `stickyFirstColumn` prop; (c) a master/detail variant of `ListToolbar`; (d)
 `HRDC_RULE_CHANGES_PATH`'s leaf-opens-a-record defect, untested, unassigned;
 (e) the kit-level `Drawer` primary scope PR #8 deferred; (f) the destructive

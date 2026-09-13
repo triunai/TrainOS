@@ -78,8 +78,27 @@
 > it from the list rather than reassign it. Full detail in
 > `ai/workstreams.md` UI-CARRYOVER.
 
-> **Last updated:** 2026-09-13 20:1x — PR #9 merged (was reported open); PR
-> #10 open under review; one queued follow-up already resolved by PR #9.
+> **BLAST 13 Sep 20:2x +08** — PR #8 also confirmed MERGED, at `a4ea833`,
+> after `review-pr8`'s MERGE verdict (typecheck clean, 1004 tests in an
+> isolated worktree pinned to `6dfd281` — a different count from the lane's
+> own 1389, not reconciled). Two of three UI carry-over PRs are on main now;
+> only PR #10 is still under review. **Main-red was five failures, not
+> four** — Vitest (unit) was also failing on `9fdcb4d` (five wall-clock/
+> timezone test failures), missed in the earlier pass. All three fixes
+> (`fix-pr5`'s work) are confirmed now IN PR #5's own commit history on
+> `cloud/web-swap`, not a separate branch: Gitleaks/Prettier/Vite build pass
+> on PR #5's own CI as of this check. The npm audit plan (`--omit=dev` +
+> GHSA-id comment + a separate toolchain PR) is only partly live: what's
+> actually on `cloud/web-swap` is `continue-on-error: true` on the unchanged
+> command, and no toolchain PR exists on GitHub yet. **Correction to this
+> session's own 20:1x entry:** the MoneyText follow-up is only half closed —
+> the kit component is fixed, but `InvoiceDetailScreen.tsx` (closes via PR
+> #10) and `ExecutiveDashboard.tsx` (stays open, a screen-level item) both
+> carry their own independent `font-mono` wrappers PR #9 never touched.
+> Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 20:2x — PR #8 merged too; main-red was five
+> checks not four; the MoneyText follow-up needed a correction of its own.
 
 ### Focus
 
