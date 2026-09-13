@@ -41,15 +41,10 @@ import {
   type Column,
   type FilterChipModel,
   type RowGroup,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import {
-  isDomainError,
-  isNotDeployed,
-  notDeployedState,
-  readableMessage,
-  toApiError,
-} from "@/shared/api";
+import { isDomainError, isNotDeployed, readableMessage, toApiError } from "@/shared/api";
 import {
   useApprovalInbox,
   useApprovalViews,
@@ -400,7 +395,7 @@ export function ApprovalInbox() {
     return (
       <div className="flex flex-col">
         {headerRow()}
-        <EmptyState {...notDeployedState("The approval queue")} />
+        <NotDeployedState subject="The approval queue" error={toApiError(inbox.error)} />
       </div>
     );
   }

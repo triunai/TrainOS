@@ -22,9 +22,10 @@ import {
   type Column,
   type Density,
   type FilterChipModel,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isNotDeployed, notDeployedState, toApiError } from "@/shared/api";
+import { isNotDeployed, toApiError } from "@/shared/api";
 import { useQuotations } from "./api";
 import { COSTING_WORKSHEET_PATH } from "./paths";
 
@@ -253,7 +254,7 @@ export function QuotationsListPage() {
             — retry is offered only where retrying could help, which R2 says a
             refusal never is. */}
         {isNotDeployed(quotations.error) ? (
-          <EmptyState {...notDeployedState("The quotation list")} />
+          <NotDeployedState subject="The quotation list" error={toApiError(quotations.error)} />
         ) : quotations.isError ? (
           <ErrorState
             title="The quotations could not be loaded"

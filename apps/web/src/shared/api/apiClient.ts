@@ -14,7 +14,13 @@ import type {
 import { ContractError, EventBus, paginate, type FixtureClient } from "@trainos/fixtures";
 
 import type { TrainOsClient } from "./client";
-import { ApiErrorException, transportError, type Result } from "./errors";
+import {
+  ApiErrorException,
+  transportError,
+  withDiagnostics,
+  type ErrorDiagnostics,
+  type Result,
+} from "./errors";
 import {
   bulkDecideIdempotencyKey,
   derivedIdempotencyKey,
@@ -53,14 +59,26 @@ export type ApiClient = { [K in keyof FixtureClient]: FixtureClient[K] };
 function must<T>(result: Result<T>): T {
   if (result.error === null) return result.data;
   if (result.error.kind === "domain") {
-    throw new ContractError(
-      result.error.code,
-      result.error.message,
-      result.error.details,
-      result.error.approvalRequestId,
+    /* The operation and the database's own code ride along on the rethrown
+       refusal, so the error state's Details can still name what refused. */
+    throw Object.assign(
+      new ContractError(
+        result.error.code,
+        result.error.message,
+        result.error.details,
+        result.error.approvalRequestId,
+      ),
+      diagnosticsOnly(result.error),
     );
   }
   throw new ApiErrorException(result.error);
+}
+
+function diagnosticsOnly({ operation, sourceCode }: ErrorDiagnostics): ErrorDiagnostics {
+  return {
+    ...(operation === undefined ? {} : { operation }),
+    ...(sourceCode === undefined ? {} : { sourceCode }),
+  };
 }
 
 /** §1 `Idempotency-Key`, as the fixture client's options bag carries it. */
@@ -310,11 +328,14 @@ export function createRpcApiClient(rpc: TrainOsClient = createRpcClient()): ApiC
       return () =>
         Promise.reject(
           new ApiErrorException(
-            transportError(
-              "NOT_DEPLOYED",
-              `${property}() is not implemented by the Supabase client yet. ` +
-                "Its RPC is specified in docs/architecture/09-golden-path-rpc-specs.md.",
-              { status: 404 },
+            withDiagnostics(
+              transportError(
+                "NOT_DEPLOYED",
+                `${property}() is not implemented by the Supabase client yet. ` +
+                  "Its RPC is specified in docs/architecture/09-golden-path-rpc-specs.md.",
+                { status: 404 },
+              ),
+              { operation: `${property}()`, sourceCode: "NO_ADAPTER" },
             ),
           ),
         );

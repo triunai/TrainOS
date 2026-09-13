@@ -19,7 +19,7 @@ import { isContractError } from "@trainos/fixtures";
  * could have acted on.
  */
 
-export interface DomainError {
+export interface DomainError extends ErrorDiagnostics {
   kind: "domain";
   /** The contract's own code. */
   code: ErrorCode;
@@ -53,12 +53,27 @@ export type TransportErrorCode =
   | "SERVER"
   | "UNKNOWN";
 
-export interface TransportError {
+export interface TransportError extends ErrorDiagnostics {
   kind: "transport";
   code: TransportErrorCode;
   message: string;
   status?: number;
   cause?: unknown;
+}
+
+/**
+ * Where a failure came from, for the reader who has to report it.
+ *
+ * `operation` is the RPC, view or client method that was called — `get_approval`,
+ * `v_budgets`, `listInvoices()`. `sourceCode` is the code the database or
+ * PostgREST answered with — `PGRST202`, `42501`, `22P02`, `TRNOS` — which the
+ * contract's `code` deliberately flattens. Both are optional, both are
+ * diagnostics only: nothing decides behaviour on them, and neither ever carries
+ * a token, a header or a request body.
+ */
+export interface ErrorDiagnostics {
+  operation?: string;
+  sourceCode?: string;
 }
 
 export type ApiError = DomainError | TransportError;
@@ -128,6 +143,33 @@ export function readableMessage(error: ApiError): string {
     default:
       return "Something went wrong. Try again.";
   }
+}
+
+/** The same error, stamped with where it came from. Existing values win. */
+export function withDiagnostics<E extends ApiError>(error: E, diagnostics: ErrorDiagnostics): E {
+  return {
+    ...error,
+    ...(error.operation === undefined && diagnostics.operation !== undefined
+      ? { operation: diagnostics.operation }
+      : {}),
+    ...(error.sourceCode === undefined && diagnostics.sourceCode !== undefined
+      ? { sourceCode: diagnostics.sourceCode }
+      : {}),
+  };
+}
+
+/**
+ * Diagnostics riding on a thrown value that is not an `ApiError` — the
+ * `ContractError` the Supabase adapter rethrows a refusal as, so the operation
+ * that refused survives the trip back through `toApiError`.
+ */
+function diagnosticsOf(thrown: object): ErrorDiagnostics {
+  const operation = "operation" in thrown ? thrown.operation : undefined;
+  const sourceCode = "sourceCode" in thrown ? thrown.sourceCode : undefined;
+  return {
+    ...(typeof operation === "string" ? { operation } : {}),
+    ...(typeof sourceCode === "string" ? { sourceCode } : {}),
+  };
 }
 
 /** Thrown only where a caller needs an exception — a TanStack Query `queryFn`. */
@@ -200,6 +242,7 @@ export function toApiError(thrown: unknown): ApiError {
       ...(thrown.approvalRequestId === undefined
         ? {}
         : { approvalRequestId: thrown.approvalRequestId }),
+      ...diagnosticsOf(thrown),
     };
   }
 

@@ -23,11 +23,11 @@ import {
   type Column,
   type Density,
   type FilterChipModel,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import {
   isNotDeployed,
-  notDeployedState,
   toApiError,
   useOpportunityIndex,
   useOrganisationDirectory,
@@ -254,7 +254,7 @@ export function ProposalsListPage() {
         {proposals.isPending ? <LoadingState rows={6} label="Loading the proposals" /> : null}
 
         {isNotDeployed(proposals.error) ? (
-          <EmptyState {...notDeployedState("The proposal list")} />
+          <NotDeployedState subject="The proposal list" error={toApiError(proposals.error)} />
         ) : proposals.isError ? (
           <ErrorState
             title="The proposals could not be loaded"

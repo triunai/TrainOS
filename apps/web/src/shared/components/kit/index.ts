@@ -313,11 +313,12 @@ export { StateCardPanel, type StateCardPanelProps } from "./StateCardPanel";
 
 /* ---- States: the scaffold owns these; re-exported so a screen has ONE
        import for everything visual. Not reimplemented. ----------------- */
-export { EmptyState, LoadingState, ErrorState } from "@/shared/components/states";
+export { EmptyState, LoadingState, ErrorState, NotDeployedState } from "@/shared/components/states";
 export type {
   EmptyStateProps,
   LoadingStateProps,
   ErrorStateProps,
+  NotDeployedStateProps,
 } from "@/shared/components/states";
 
 /* ---- Board (added 13 Sep 2026, brief §19; no artboard draws one) ----- */

@@ -32,15 +32,10 @@ import {
   tabsFromViews,
   type ActionError,
   type FilterChipModel,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import {
-  isNotDeployed,
-  notDeployedState,
-  readableMessage,
-  toApiError,
-  useActor,
-} from "@/shared/api";
+import { isNotDeployed, readableMessage, toApiError, useActor } from "@/shared/api";
 import { cn } from "@/shared/lib/utils";
 import { useEnquiryAction, useEnquiries, useEnquiry, useEnquiryViews } from "./api";
 
@@ -266,7 +261,7 @@ export function EnquiryInboxPage() {
             /* The environment has no `list_enquiries` yet. That is a fact
                about this deployment, not about the request, so it reads as a
                state rather than as a failure with a retry on it. */
-            <EmptyState {...notDeployedState("The enquiry queue")} />
+            <NotDeployedState subject="The enquiry queue" error={toApiError(enquiries.error)} />
           ) : enquiries.isError ? (
             <ErrorState
               title="The queue did not load"
@@ -330,7 +325,7 @@ export function EnquiryInboxPage() {
           detail.isPending && current ? (
             <LoadingState rows={5} label="Loading the enquiry" />
           ) : isNotDeployed(detail.error) ? (
-            <EmptyState {...notDeployedState("The enquiry preview")} />
+            <NotDeployedState subject="The enquiry preview" error={toApiError(detail.error)} />
           ) : detail.isError ? (
             <ErrorState
               title="The enquiry did not load"

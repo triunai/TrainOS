@@ -1,8 +1,10 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 import { isDomainError, readableMessage, type ApiError } from "@/shared/api/errors";
-import { isNotDeployed, notDeployedState } from "@/shared/api/notDeployed";
-import { EmptyState } from "./EmptyState";
+import { isNotDeployed } from "@/shared/api/notDeployed";
+import { ErrorDetails } from "./ErrorDetails";
+import { apiErrorRows } from "./errorDetailRows";
+import { NotDeployedState } from "./NotDeployedState";
 
 export interface ErrorStateProps {
   /** What failed, in the reader's terms. */
@@ -34,6 +36,10 @@ export interface ErrorStateProps {
  * the standard not-available empty state: no alert, no retry. Deciding it here
  * rather than per screen is what lets every screen over an unserved endpoint say
  * the true thing without each one learning the rule.
+ *
+ * Both carry `ErrorDetails` — code, operation, status, the database's own code,
+ * message, time — when details are enabled, so a tester can report exactly
+ * what failed from the screen rather than the console.
  */
 export function ErrorState({
   title = "Something went wrong",
@@ -43,10 +49,13 @@ export function ErrorState({
   action,
   className,
 }: ErrorStateProps) {
+  const [at] = useState(() => new Date().toISOString());
+
   if (isNotDeployed(error)) {
     return (
-      <EmptyState
-        {...notDeployedState("This part of TrainOS")}
+      <NotDeployedState
+        subject="This part of TrainOS"
+        error={error}
         {...(className === undefined ? {} : { className })}
       />
     );
@@ -82,6 +91,7 @@ export function ErrorState({
         ) : null}
         {action}
       </div>
+      {error ? <ErrorDetails rows={apiErrorRows(error, at)} /> : null}
     </div>
   );
 }

@@ -32,15 +32,10 @@ import {
   humanise,
   type ActionError,
   PartialDataBanner,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import {
-  isNotDeployed,
-  notDeployedState,
-  readableMessage,
-  toApiError,
-  useActor,
-} from "@/shared/api";
+import { isNotDeployed, readableMessage, toApiError, useActor } from "@/shared/api";
 import { useEnquiryAction, useEnquiry, useOrganisation, usePatchExtraction } from "./api";
 
 /**
@@ -104,7 +99,7 @@ export function EnquiryDetailPage() {
   /* Ahead of the error branch on purpose: a missing RPC is a deployment fact,
      and the reader can do nothing with "Try again" over one. */
   if (isNotDeployed(enquiry.error)) {
-    return <EmptyState {...notDeployedState("This enquiry")} />;
+    return <NotDeployedState subject="This enquiry" error={toApiError(enquiry.error)} />;
   }
 
   if (enquiry.isError || !enquiry.data) {

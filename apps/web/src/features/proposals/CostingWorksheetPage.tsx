@@ -32,9 +32,10 @@ import {
   type Column,
   type MetricCellProps,
   PartialDataBanner,
+  NotDeployedState,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, isNotDeployed, notDeployedState, toApiError } from "@/shared/api";
+import { isDomainError, isNotDeployed, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
@@ -89,7 +90,9 @@ export function CostingWorksheetPage() {
   if (quotationQuery.isPending) return <LoadingState label="Loading the costing worksheet" />;
 
   if (isNotDeployed(quotationQuery.error)) {
-    return <EmptyState {...notDeployedState("This costing worksheet")} />;
+    return (
+      <NotDeployedState subject="This costing worksheet" error={toApiError(quotationQuery.error)} />
+    );
   }
 
   if (quotationQuery.isError || !quotation) {
