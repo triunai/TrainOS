@@ -78,14 +78,14 @@ const LINE_COLUMNS: Column<InvoiceLine>[] = [
     label: "Unit",
     width: "124px",
     align: "right",
-    accessor: (line) => <MoneyText value={line.unit} className="tabular-nums text-ink-secondary" />,
+    accessor: (line) => <MoneyText value={line.unit} className="text-ink-secondary" />,
   },
   {
     key: "amount",
     label: "Amount",
     width: "132px",
     align: "right",
-    accessor: (line) => <MoneyText value={line.amount} className="tabular-nums" />,
+    accessor: (line) => <MoneyText value={line.amount} />,
   },
 ];
 
@@ -255,15 +255,15 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
             <dl className="flex flex-col gap-2 border-t border-divider px-4 py-3 text-[13px]">
               <SumLine
                 term={`Subtotal · sum of ${data.lines.length} line${data.lines.length === 1 ? "" : "s"}`}
-                value={<MoneyText value={computedSubtotal} className="tabular-nums" />}
+                value={<MoneyText value={computedSubtotal} />}
               />
               <SumLine
                 term={`SST on net${data.sstReason ? ` · ${humanise(data.sstReason).toLowerCase()}` : ""}`}
-                value={<MoneyText value={data.sst} className="tabular-nums" />}
+                value={<MoneyText value={data.sst} />}
               />
               <SumLine
                 term="Total"
-                value={<MoneyText value={data.total} className="tabular-nums font-semibold" />}
+                value={<MoneyText value={data.total} className="font-semibold" />}
                 strong
               />
             </dl>

@@ -202,7 +202,7 @@ export function InvoicesListScreen() {
       width: "124px",
       align: "right",
       sortable: true,
-      accessor: (invoice) => <MoneyText value={invoice.total} className="tabular-nums" />,
+      accessor: (invoice) => <MoneyText value={invoice.total} />,
     },
     {
       key: "outstanding",
@@ -212,9 +212,7 @@ export function InvoicesListScreen() {
       sortable: true,
       /* A settled invoice shows a dash rather than RM 0.00: zero is a number a
          reader has to compare, and nothing outstanding is not a number at all. */
-      accessor: (invoice) => (
-        <MoneyText value={invoice.outstanding} dashWhenZero className="tabular-nums" />
-      ),
+      accessor: (invoice) => <MoneyText value={invoice.outstanding} dashWhenZero />,
     },
     {
       key: "status",

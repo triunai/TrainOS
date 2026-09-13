@@ -213,7 +213,7 @@ export function ClaimPacketsScreen() {
       width: "132px",
       align: "right",
       sortable: true,
-      accessor: (row) => <MoneyText value={row.claimValue} className="tabular-nums" />,
+      accessor: (row) => <MoneyText value={row.claimValue} />,
     },
     {
       key: "deadlineAt",
