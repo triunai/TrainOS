@@ -122,6 +122,24 @@ export class ApiErrorException extends Error {
 }
 
 /**
+ * Is this value already one of ours?
+ *
+ * Structural rather than `instanceof`, for the same reason `isContractError`
+ * is: the two branches of `ApiError` are plain objects with a closed `kind`,
+ * and a bundler that ends up with two copies of this module must still
+ * recognise both.
+ */
+function isApiErrorValue(value: unknown): value is ApiError {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<ApiError>;
+  return (
+    (candidate.kind === "domain" || candidate.kind === "transport") &&
+    typeof candidate.code === "string" &&
+    typeof candidate.message === "string"
+  );
+}
+
+/**
  * Narrow an unknown thrown value back to an `ApiError`.
  *
  * The `ContractError` branch is the one that matters. The client throws a
@@ -139,6 +157,15 @@ export class ApiErrorException extends Error {
  */
 export function toApiError(thrown: unknown): ApiError {
   if (thrown instanceof ApiErrorException) return thrown.apiError;
+
+  /* Already converted. Several data layers narrow a refusal at the `queryFn`
+     and reject with the `ApiError` itself, and the centralised `MutationCache`
+     then calls this on whatever it was handed. Without this branch that second
+     pass falls through to the `instanceof Error` test, fails it — an `ApiError`
+     is a plain object — and reclassifies a 403 as a transport `UNKNOWN`, which
+     is "Something went wrong. Try again." printed over a policy decision, plus
+     a retry `ErrorState` would then offer. Conversion has to be idempotent. */
+  if (isApiErrorValue(thrown)) return thrown;
 
   if (isContractError(thrown)) {
     return {

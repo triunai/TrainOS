@@ -78,6 +78,9 @@ export function useReopenTna(id: string | undefined) {
 
   return useMutation({
     mutationFn: () => client.reopenTna(id as string),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
     onSuccess: (tna) => {
       queryClient.setQueryData(queryKeys.tnas.detail(id ?? ""), tna);
     },

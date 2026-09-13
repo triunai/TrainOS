@@ -187,6 +187,9 @@ export function useExportAttendance(id: string) {
   const api = useApi();
   return useMutation<AttendanceExport, unknown, string | undefined>({
     mutationFn: (format) => api.exportAttendance(id, format ?? "HRDC"),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
   });
 }
 

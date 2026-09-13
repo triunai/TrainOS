@@ -81,6 +81,9 @@ export function usePatchExtraction(id: string | undefined) {
   return useMutation({
     mutationFn: (patch: EnquiryExtractionPatch) =>
       client.patchEnquiryExtraction(id as string, patch),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
     onSuccess: (detail) => {
       queryClient.setQueryData(queryKeys.enquiries.detail(id ?? ""), detail);
       void queryClient.invalidateQueries({ queryKey: queryKeys.enquiries.lists() });

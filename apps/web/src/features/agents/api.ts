@@ -135,6 +135,9 @@ export function useDeadLetterRun() {
   return useMutation<AutomationRun, ApiError, { id: string; reason: string }>({
     mutationFn: ({ id, reason }) =>
       api.deadLetterRun(id, { reason }).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.runs.all });
     },

@@ -211,6 +211,9 @@ export function useSaveQuotation(id: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: QuotationWrite) => client.putQuotation(id as string, body),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.quotations.detail(id ?? "") });
     },

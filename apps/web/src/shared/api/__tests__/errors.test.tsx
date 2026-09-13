@@ -99,3 +99,40 @@ describe("ErrorState · what a reader can do about it", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });
+
+/**
+ * Conversion has to survive being applied twice.
+ *
+ * Several feature data layers narrow a refusal at the `queryFn` and reject with
+ * the `ApiError` itself; the centralised `MutationCache` in `queryClient.ts`
+ * then calls `toApiError` on whatever it was handed. A non-idempotent
+ * conversion turns that second pass into a transport `UNKNOWN`, so the reader
+ * gets "Something went wrong. Try again." over a 403 the server had already
+ * explained — and `ErrorState` draws a retry button on it, which is the exact
+ * failure the domain/transport split exists to prevent.
+ */
+describe("toApiError · converting an already-converted error", () => {
+  it("returns a domain refusal unchanged rather than reclassifying it", () => {
+    const once = toApiError(thrownForbidden());
+    const twice = toApiError(once);
+
+    expect(twice).toBe(once);
+    expect(isDomainError(twice)).toBe(true);
+    expect(readableMessage(twice)).toBe("Operations cannot read pricing.");
+    expect(isRetryable(twice)).toBe(false);
+  });
+
+  it("returns a transport failure unchanged too", () => {
+    const once = toApiError(new Error("socket hang up"));
+    const twice = toApiError(once);
+
+    expect(twice).toBe(once);
+    expect(isDomainError(twice)).toBe(false);
+  });
+
+  it("still classifies a plain object that is not one of ours as transport", () => {
+    const error = toApiError({ kind: "domain" });
+
+    expect(isDomainError(error)).toBe(false);
+  });
+});

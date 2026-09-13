@@ -72,6 +72,9 @@ export function useReingestSource() {
   return useMutation<KnowledgeSourceReingestResponse, ApiError, string>({
     mutationFn: (id) =>
       api.reingestKnowledgeSource(id).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },
@@ -84,6 +87,9 @@ export function useCreateSource() {
   return useMutation<KnowledgeSource, ApiError, KnowledgeSourceCreateRequest>({
     mutationFn: (body) =>
       api.createKnowledgeSource(body).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* Fire-and-forget from a button: nothing awaits this call and no screen
+       renders its `error`, so without the flag a refusal is invisible. R3. */
+    meta: { toastOnError: true },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },
