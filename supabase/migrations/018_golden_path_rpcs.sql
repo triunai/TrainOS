@@ -233,9 +233,24 @@ BEGIN
   -- every caller then omits the `provenance` KEY entirely rather than emitting
   -- a null one — the AI badge renders on presence, so a null would badge every
   -- hand-typed field in the product.
+  --
+  -- THE TENANT PREDICATE IS NOT OPTIONAL, and it is derived here rather than
+  -- taken as an argument — a `p_tenant_id` parameter is a cross-tenant read
+  -- waiting for one caller to pass the wrong value, and adding one would also
+  -- create a SECOND OVERLOAD of this function (the PGRST203 trap the $verify$
+  -- block guards against for `core`). This read previously filtered on
+  -- `subject_table` and `subject_id` alone. Not reachable as a leak today —
+  -- `subject_id` is always a uuid from a row the caller's tenant owns, and 014
+  -- grants `authenticated` no write anywhere in `core`, so nobody can plant a
+  -- provenance row with a chosen subject_id — but it broke the posture this
+  -- file states at §"tenant", and 014's verify check 10 requires `tenant_id` to
+  -- LEAD an index on every core table, so a lookup without it cannot use one.
+  -- On what becomes the largest table in the system that is a sequential scan
+  -- per projected field.
   SELECT prov.* INTO v_row
     FROM core.provenance AS prov
-   WHERE prov.subject_table = p_subject_table
+   WHERE prov.tenant_id      = app.require_tenant_id()
+     AND prov.subject_table = p_subject_table
      AND prov.subject_id    = p_subject_id
      AND prov.field IS NOT DISTINCT FROM p_field
    ORDER BY prov.updated_at DESC
@@ -2842,12 +2857,21 @@ BEGIN
          'urgencyGroup',   v_row.urgency_group)
     -- §17 `modelAgreement` renders under the evidence list ONLY when a jury
     -- actually ran. An empty agreement block would imply one did.
+    -- TENANT-CORRELATED AND DETERMINISTIC. This read carried neither: no
+    -- `tenant_id` predicate (the same defect as `app._provenance`, and the same
+    -- lost index), and `LIMIT 1` with NO `ORDER BY` — so which jury became
+    -- `modelAgreement` when an approval had more than one provenance row was
+    -- whatever the planner happened to return, and could change between two
+    -- reads of the same approval. `app._provenance` already orders by
+    -- `updated_at DESC`; this is the same rule, said the same way.
     || COALESCE((
          SELECT CASE WHEN verdict.jury IS NULL THEN '{}'::jsonb
                      ELSE pg_catalog.jsonb_build_object('modelAgreement', verdict.jury) END
            FROM core.provenance AS verdict
-          WHERE verdict.subject_table = 'approval_requests'
-            AND verdict.subject_id = v_row.id
+          WHERE verdict.tenant_id     = v_tenant
+            AND verdict.subject_table = 'approval_requests'
+            AND verdict.subject_id    = v_row.id
+          ORDER BY verdict.updated_at DESC, verdict.id DESC
           LIMIT 1), '{}'::jsonb));
 END;
 $fn$;

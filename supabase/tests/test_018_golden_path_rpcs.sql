@@ -2373,5 +2373,120 @@ BEGIN
 END
 $t33$;
 
+DO $banner$ BEGIN RAISE NOTICE '════════ T34 · PROVENANCE IS TENANT-SCOPED AND DETERMINISTIC ════════'; END $banner$;
+DO $t34$
+DECLARE
+  v         jsonb;
+  v_tenant  uuid := '11111111-1111-4111-8111-111111111111';
+  v_other   uuid := '99999999-9999-4999-8999-999999999999';
+  v_enq     uuid := 'ddddddd1-0000-4000-8000-000000000001';
+  v_apv     uuid;
+BEGIN
+  -- ── app._provenance read without a tenant predicate ──────────────────────
+  -- `core.provenance` was read on `subject_table` + `subject_id` alone, in
+  -- `app._provenance` and again in `core.get_approval`. Not reachable as a leak
+  -- in the product — `subject_id` is always a uuid from a row the caller's
+  -- tenant owns, and 014 grants `authenticated` no write anywhere in `core` —
+  -- but "not reachable" is a property of today's grants, not of the query, and
+  -- the pin is written against the query. A row planted under ANOTHER tenant
+  -- with the SAME subject_id is the shape of the defect.
+  INSERT INTO core.provenance
+    (tenant_id, subject_table, subject_id, field, origin, model, generated_at,
+     agent_id, confidence, created_by_kind, created_by_id, updated_at)
+  VALUES (v_other, 'enquiries', v_enq, 'classification_label', 'AI_GENERATED',
+          'other-tenants-model', pg_catalog.now(), 'agent:intruder', 0.999,
+          'AGENT', 'agent:intruder', pg_catalog.now() + interval '1 hour');
+
+  v := core.get_enquiry(v_enq::text);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T34a: %', v; END IF;
+  IF (v #>> '{data,classification,provenance,model}') = 'other-tenants-model' THEN
+    RAISE EXCEPTION 'T34b: app._provenance returned ANOTHER TENANT''S provenance row '
+                    'for this enquiry: %', v #> '{data,classification,provenance}';
+  END IF;
+  -- and the tenant's OWN row is still the one that answers.
+  IF (v #>> '{data,classification,provenance,origin}') IS NULL THEN
+    RAISE EXCEPTION 'T34c: the tenant''s own provenance stopped resolving: %',
+      v #> '{data,classification}';
+  END IF;
+
+  -- ── core.get_approval's jury lookup ──────────────────────────────────────
+  SELECT id INTO v_apv FROM core.approval_requests
+   WHERE tenant_id = v_tenant ORDER BY created_at LIMIT 1;
+  IF v_apv IS NULL THEN RAISE EXCEPTION 'T34-setup: no approval fixture'; END IF;
+
+  -- ⚠ AND A FINDING WHILE PINNING THE FIX. `core.provenance.subject_table` is
+  -- FK'd to `core.provenance_subjects` (007:140), a nine-row allowlist that does
+  -- NOT contain `approval_requests`. So the `modelAgreement` block in
+  -- `core.get_approval` can match no row on any database as shipped: the
+  -- §17 jury badge is unreachable, not merely unpinned. That is recorded in the
+  -- PR body as a MEDIUM for the pack that owns §17; this pin adds the allowlist
+  -- row so the QUERY's tenant and ordering behaviour can be asserted at all,
+  -- and asserts the gap itself so the day the row is seeded for real, this
+  -- line says so rather than passing silently.
+  IF EXISTS (SELECT 1 FROM core.provenance_subjects
+              WHERE subject_table = 'approval_requests') THEN
+    RAISE NOTICE 'T34: approval_requests is now an allowed provenance subject — the '
+                 'modelAgreement badge is reachable in production; drop this fixture.';
+  ELSE
+    INSERT INTO core.provenance_subjects (subject_table, note)
+    VALUES ('approval_requests','T34 fixture only; rolled back with the test');
+  END IF;
+
+  -- THE APPROVAL HAS NO PROVENANCE ROW OF ITS OWN. The only row carrying its
+  -- subject_id belongs to the other tenant, so `modelAgreement` must be ABSENT.
+  -- Pre-fix, `LIMIT 1` over a predicate that named neither the tenant nor an
+  -- order returned that row and badged this approval with a jury it never had.
+  INSERT INTO core.provenance
+    (tenant_id, subject_table, subject_id, origin, model, generated_at,
+     jury, created_by_kind, created_by_id)
+  VALUES (v_other, 'approval_requests', v_apv, 'AI_GENERATED',
+          'other-tenants-model', pg_catalog.now(),
+          '{"mode":"GATE","quorum":2,"of":3}'::jsonb, 'AGENT', 'agent:intruder');
+
+  v := core.get_approval(v_apv::text);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T34d: %', v; END IF;
+  IF (v -> 'data') ? 'modelAgreement' THEN
+    RAISE EXCEPTION 'T34e: get_approval read a jury from ANOTHER TENANT''S provenance '
+                    'row: %', v #> '{data,modelAgreement}';
+  END IF;
+
+  -- ── LIMIT 1 WITH NO ORDER BY ─────────────────────────────────────────────
+  -- Two of the tenant's own rows now carry a jury. The query filters on
+  -- `subject_table` and `subject_id` only — not on `field` — so a record-level
+  -- row and a field-level row both match, and `provenance_record_uq` (007:199)
+  -- constrains only the record-level one. Which became `modelAgreement` was
+  -- whatever the planner returned, and need not have been stable between two
+  -- reads. It is the most recently updated now, the rule `app._provenance`
+  -- already used.
+  INSERT INTO core.provenance
+    (tenant_id, subject_table, subject_id, field, origin, model, generated_at,
+     jury, created_by_kind, created_by_id, updated_at)
+  VALUES (v_tenant, 'approval_requests', v_apv, 'risk', 'AI_GENERATED', 'older',
+          pg_catalog.now(), '{"mode":"GATE","quorum":1,"of":3}'::jsonb,
+          'AGENT', 'agent:jury', pg_catalog.now() - interval '2 hours'),
+         (v_tenant, 'approval_requests', v_apv, NULL, 'AI_GENERATED', 'newer',
+          pg_catalog.now(), '{"mode":"GATE","quorum":3,"of":3}'::jsonb,
+          'AGENT', 'agent:jury', pg_catalog.now() - interval '1 hour');
+
+  v := core.get_approval(v_apv::text);
+  IF (v #>> '{data,modelAgreement,quorum}') <> '3' THEN
+    RAISE EXCEPTION 'T34f: the jury shown is not the most recent one: %',
+      v #> '{data,modelAgreement}';
+  END IF;
+  -- Asked twice, same answer. A LIMIT 1 with no ORDER BY need not be stable
+  -- even within one transaction.
+  IF (core.get_approval(v_apv::text) #> '{data,modelAgreement}')
+     <> (v #> '{data,modelAgreement}') THEN
+    RAISE EXCEPTION 'T34g: two reads of one approval disagreed about modelAgreement';
+  END IF;
+
+  DELETE FROM core.provenance
+   WHERE subject_id IN (v_enq, v_apv) AND created_by_id IN ('agent:intruder','agent:jury');
+
+  RAISE NOTICE 'T34 PASS: provenance reads are tenant-correlated in app._provenance and '
+               'in get_approval, and the jury lookup is ordered rather than arbitrary.';
+END
+$t34$;
+
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
