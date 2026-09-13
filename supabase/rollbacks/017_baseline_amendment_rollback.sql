@@ -82,7 +82,11 @@ BEGIN
   IF pg_catalog.to_regclass('core.evaluation_responses') IS NOT NULL THEN
     SELECT pg_catalog.count(*) INTO v_bad
       FROM core.evaluation_responses
-     WHERE overall_score IS NOT NULL AND pg_catalog.scale(overall_score) > 2;
+     WHERE overall_score IS NOT NULL
+       -- The VALUE, not the type's scale: after 017 the column is numeric(4,3),
+       -- so scale() is 3 for every row and a scale test refuses any database
+       -- holding a single response, including 0.450.
+       AND overall_score IS DISTINCT FROM pg_catalog.round(overall_score, 2);
     IF v_bad > 0 THEN
       RAISE EXCEPTION
         'ROLLBACK 017 refused: % evaluation response(s) hold an overall_score with '
