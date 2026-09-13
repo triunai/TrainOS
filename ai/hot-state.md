@@ -63,8 +63,23 @@
 > UI-CARRYOVER, plus carryover items handed to `cloud/web-swap` and
 > `ui/lists`.
 
-> **Last updated:** 2026-09-13 20:0x — PR #7 merged and fixed Gitleaks
-> repo-wide; three main-red items remain; PR #8 open under review.
+> **BLAST 13 Sep 20:1x +08** — PR #9 (`ui/tokens`) is already MERGED
+> (`ed3c337`), not "open" as reported — verified `gh pr view 9` directly.
+> Every substantive claim about it checked out exactly against
+> `docs/reviews/2026-09-13-verification.md`: rows 1b/1c closed (6.54:1
+> light / 4.82:1 dark), contrast suite 33→49, mono-caps counts exact on all
+> four routes, the participants "x275" confirmed a false violation (record
+> references the brief keeps in mono), and both unfixed defects (destructive
+> alias 2.22:1 dark, dead `ui/button.tsx`) confirmed real. PR #10
+> (`ui/lists`) confirmed open, 5 commits/17 files exact, 1009 tests
+> confirmed in its own body; all six deviations confirmed against the diff.
+> One kit follow-up item queued off PR #10 turned out to already be done:
+> `Money.tsx`'s `font-mono` was fixed by PR #9 itself, not left open — drop
+> it from the list rather than reassign it. Full detail in
+> `ai/workstreams.md` UI-CARRYOVER.
+
+> **Last updated:** 2026-09-13 20:1x — PR #9 merged (was reported open); PR
+> #10 open under review; one queued follow-up already resolved by PR #9.
 
 ### Focus
 

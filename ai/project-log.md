@@ -15,6 +15,92 @@
 
 ---
 
+## 2026-09-13 20:1x — PR #9 merged (was reported open), PR #10 confirmed with six deviations
+
+**PR #9 (`ui/tokens`) already merged.** `gh pr view 9` shows `state: MERGED`,
+merged at 11:54:52Z as `ed3c337`, now on main. Reported to this thread as
+"open... under review by review-pr9"; by the time it was checked it had
+landed — the review evidently passed. Confirmed 3 commits (matches); files
+35, not 33 as reported (minor, not disputed — every substantive claim was
+accurate). Confirmed no feature screen touched: all 35 files are under
+`kit/`, `styles/`, `tailwind.config.ts`, or `docs/reviews/`.
+
+**Verified word-for-word against `docs/reviews/2026-09-13-verification.md`
+at `ed3c337`:**
+
+- Row 1b: muted text on a selected row now reads 6.54:1 light / 6.69:1 dark
+  (was 4.36:1). Mechanism: `SELECTED_TINT` rebinds `--ink-muted` to
+  `--ink-secondary` for its own subtree via `[--ink-muted:var(--ink-secondary)]`,
+  so every descendant follows without a per-call-site change.
+- Row 1c: `--on-primary` on solid primary now reads 4.82:1 dark (was 3.24:1).
+  Mechanism: new `--primary-solid` / `--primary-solid-hover` tokens carry
+  `#1F5BFF` in both themes, used only at the four call sites that paint the
+  accent as a fill under text; `--primary` keeps every text/mark use.
+- Contrast suite: confirmed exactly "49 cases, was 33" in
+  `tokens.contrast.test.ts`'s own gate table.
+- Mono-caps, confirmed exact on all four cited routes: `/dashboard` 29→11,
+  `/sales/enquiries` 34→21, `/compliance/hrd-corp` 22→12, `/finance/invoices`
+  36→22. Mechanism: `MONO_LABEL` (nine kit components) became `SECTION_LABEL`,
+  and `MoneyText` dropped `font-mono`, keeping `tabular-nums`.
+- `/training/participants` "x275" confirmed real (it's the literal count in
+  the route table) and confirmed a false violation, exactly as reported: the
+  doc's own re-measurement finds 350 of 354 counted runs are `PAR-…`/
+  `CERT-…` record references, which brief §1 keeps in mono on purpose —
+  "there is no kit lever on them and there should not be one."
+- Two defects confirmed recorded, not fixed, for the stated reason (owning
+  file outside this lane's allowed set): `--on-primary` on `--danger` is
+  2.22:1 dark — the alias is in `tailwind.config.ts` (this lane's file), the
+  call site is `shared/components/ui/toast.tsx` (a shadcn primitive, not
+  this lane's). `shared/components/ui/button.tsx` has zero importers
+  anywhere in the app, confirmed independently via `git grep` — a dead
+  second button vocabulary beside kit `Button`.
+
+**PR #10 (`ui/lists`) confirmed open**, 5 commits and 17 files, both exact.
+"1009 passing, 110 files" confirmed verbatim in the PR's own Validation
+section (not independently re-run). Under review by `review-pr10`. All six
+deviations confirmed against the actual diff:
+
+1. Invoice totals moved to a `<dl>` under the table rather than table rows —
+   confirmed via the file's own "DECISIONS §7" comment: kit `DataTable` has
+   no footer, and a summary is not a line item.
+2. The AI tier-assignment matrix lost its sticky first column and its
+   staged-row `bg-ai-tint` converting to `DataTable` — confirmed via the
+   diff's own "TWO THINGS THE CONVERSION COSTS" comment; no kit prop exists
+   for either, and the tint specifically is AI-hue territory CLAUDE.md
+   reserves, so it couldn't be improvised back.
+3. `tsconfig.strict.json` gained exactly three new paths, confirmed in the
+   diff: `compliance/registers.ts`, `ClaimPacketsScreen.tsx`,
+   `InvoicesListScreen.tsx`.
+4. Collections' `ListToolbar` sits above the DETAIL pane, not the table,
+   because it spans the full width of a master/detail grid — confirmed via
+   the PR body's own reasoning that constraining it to the table column
+   would stack two bands, exactly what §10b forbids. Kept as-is.
+5. `HRDC_RULE_CHANGES_PATH` still carries the identical "leaf opens the
+   record" defect that `HRDC_PACKET_PATH` had before this lane fixed it —
+   confirmed via the file's own updated comment, which states this directly
+   and marks it "NOT this pass's."
+
+**One queued kit follow-up is already resolved, not open.** Follow-up (a),
+"`MoneyText` hardcodes `font-mono` at `Money.tsx:32,43`," was fixed as part
+of PR #9 (`5f01e57`, "labels take the UI font, numbers take tabular
+figures") — confirmed by reading current `Money.tsx` on main: both lines use
+`tabular-nums`, `font-mono` appears nowhere in the file. PR #10's own body
+independently corroborates this (it removed eight now-redundant
+`tabular-nums` props and explicitly scoped the kit-level fix to "the kit
+lane, not this one"). Whoever next works the kit follow-up list should drop
+(a) rather than redo it; (b)–(f) remain open as reported.
+
+**One thing worth telling future-me:** a report that a PR is "open under
+review" is a snapshot, not a fact — by the time the doc spine gets to verify
+it, the state may have already moved on. Always re-check `state`/`mergedAt`
+directly rather than assuming the reported lifecycle stage still holds; this
+is the second time in one session a PR's actual state (open vs. checks vs.
+merged) differed from what was reported, both times because real time had
+passed between the report and the check, not because the report was wrong
+when written.
+
+---
+
 ## 2026-09-13 20:0x — PR #7 merged, PR #8 opened and reviewed, two earlier flags resolved
 
 **PR #7 (`ci/gitleaks`) merged.** Confirmed at `0910b9d` — `git log -1

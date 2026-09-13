@@ -231,9 +231,87 @@ actual files:**
 M03 `ListToolbar` screens go to `cloud/web-swap` as follow-up;
 `ClaimPacketScreen` and `CollectionsQueueScreen` go to `ui/lists`.
 
+**PR #9 (`ui/tokens`) — already MERGED, not "open under review."** Confirmed
+directly: `gh pr view 9` shows `state: MERGED`, `mergedAt`
+2026-09-13T11:54:52Z, merge commit `ed3c337`, now on main. It reported open
+at the time it was described to this thread; by the time this was verified
+it had landed. 3 commits confirmed; file count is 35, not 33 as reported (a
+small discrepancy, not disputed further — every substantive claim checked
+out). No feature screen touched, confirmed (all 35 files are under
+`kit/`, `styles/`, `tailwind.config.ts`, and one `docs/reviews/` doc).
+Verified word-for-word against `docs/reviews/2026-09-13-verification.md` at
+`ed3c337`:
+
+- Rows 1b/1c closed exactly as reported — 1b: muted text on a selected row is
+  now 6.54:1 light / 6.69:1 dark (was 4.36:1), via a `SELECTED_TINT` rebind of
+  `--ink-muted` to `--ink-secondary` for that subtree; 1c: `--on-primary` on
+  solid primary is now 4.82:1 dark (was 3.24:1), via a new `--primary-solid`
+  / `--primary-solid-hover` token pair carrying the brand hex `#1F5BFF` in
+  both themes, used only where the accent paints a fill under text.
+- Contrast suite: confirmed exactly "49 cases, was 33" in the test file.
+- Mono-caps counts confirmed exactly: `/dashboard` 29→11, `/sales/enquiries`
+  34→21, `/compliance/hrd-corp` 22→12, `/finance/invoices` 36→22.
+- The `/training/participants` "x275" figure is real (it's in the route
+  table) but confirmed a false violation, exactly as reported: 350 of 354
+  counted runs are `PAR-…`/`CERT-…` record references that §1 of the brief
+  keeps in mono deliberately: there is no kit lever on them and none should
+  exist.
+- Two defects confirmed recorded, not fixed, because the owning files are
+  outside this lane's scope: `--on-primary` on `--danger` is 2.22:1 in dark
+  (the alias lives in `tailwind.config.ts`, which this lane owns, but the
+  call site is `shared/components/ui/toast.tsx`, a shadcn primitive outside
+  it); and `apps/web/src/shared/components/ui/button.tsx` has zero importers
+  anywhere in the app (confirmed via `git grep`) — a dead second button
+  vocabulary beside kit `Button`, the exact divergence CLAUDE.md names.
+
+**PR #10 (`ui/lists`) confirmed open**, 5 commits, 17 files (both exact).
+1009 passing / 110 test files confirmed verbatim in the PR body's own
+Validation section; not independently re-run. Under review by `review-pr10`.
+All deviations confirmed against the actual diff:
+
+- Invoice totals moved to a `<dl>` under the table rather than table rows,
+  because kit `DataTable` has no footer and a summary is not a line item —
+  confirmed via the file's own comment citing "DECISIONS §7."
+- The AI tier-assignment matrix lost its sticky first column and its staged-
+  row `bg-ai-tint` on conversion to `DataTable`, because the kit has no
+  sticky-column prop and no staged-row tint prop — confirmed via the diff's
+  own "TWO THINGS THE CONVERSION COSTS" comment, which also notes
+  `bg-ai-tint` specifically was AI-hue territory CLAUDE.md reserves, so it
+  couldn't be improvised back in.
+- `apps/web/tsconfig.strict.json` gained exactly three new paths (confirmed
+  in the diff): `compliance/registers.ts`, `ClaimPacketsScreen.tsx`,
+  `InvoicesListScreen.tsx`.
+- Collections' `ListToolbar` sits above the DETAIL pane, not the table,
+  because it spans the full width of a master/detail grid and constraining
+  it to the table column would stack two bands — exactly what §10b forbids.
+  Kept as-is; confirmed via the PR body's own explanation.
+- `HRDC_RULE_CHANGES_PATH` confirmed to still carry the same "leaf opens the
+  record" shape of defect that `HRDC_PACKET_PATH` had before this lane fixed
+  it — confirmed via the file's own updated comment, which says so directly
+  and marks it "NOT this pass's."
+
+⚠ **One kit follow-up item is already done, not open.** Queued follow-up (a),
+"`MoneyText` hardcodes `font-mono` at `Money.tsx:32,43`," was fixed as part
+of PR #9 itself (`5f01e57`, "labels take the UI font, numbers take tabular
+figures") — confirmed by reading current `Money.tsx` on main: both lines use
+`tabular-nums`, no `font-mono` anywhere in the file. PR #10's own body
+independently corroborates this ("numbers take tabular numerals and NOT
+mono... for the kit lane, not this one... eight dead `tabular-nums` props
+removed"). Whoever picks up the kit follow-ups list should drop (a) rather
+than redo it. Remaining follow-ups, still open: (b) `DataTable`
+`stickyFirstColumn` prop; (c) a master/detail variant of `ListToolbar`; (d)
+`HRDC_RULE_CHANGES_PATH`'s leaf-opens-a-record defect, untested, unassigned;
+(e) the kit-level `Drawer` primary scope PR #8 deferred; (f) the destructive
+alias at 2.22:1 dark and the dead `ui/button.tsx`, both from PR #9.
+Unverified by the `ui/lists` lane itself, per its own report: artboard
+fidelity for its four screens, an axe pass, and the blue-budget rule.
+
 **Refs:** `ai/resume-brief.md` (verifier carry-over section),
 `docs/reviews/2026-09-13-verification.md`,
-`apps/web/src/shared/components/kit/statusTone.ts`.
+`apps/web/src/shared/components/kit/statusTone.ts`,
+`apps/web/src/shared/components/kit/Money.tsx`,
+`apps/web/src/shared/components/kit/tokens.ts`,
+`apps/web/src/styles/tokens.css`.
 
 ---
 

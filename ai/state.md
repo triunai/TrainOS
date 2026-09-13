@@ -276,6 +276,16 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 20:1x — PR #9 merged (reported open); PR #10 open, six deviations confirmed
+
+- PR #9 (ui/tokens) already merged at ed3c337 by the time it was checked;
+  every substantive claim (rows 1b/1c, contrast 33→49, mono-caps counts,
+  participants x275 false violation, two unfixed defects) confirmed exact.
+  PR #10 (ui/lists) confirmed open with all six deviations verified against
+  its diff. One queued kit follow-up (MoneyText font-mono) is already fixed
+  by PR #9, not open. Full detail in `ai/project-log.md` and
+  `ai/workstreams.md`.
+
 ## 2026-09-13 20:0x — PR #7 merged (fixed Gitleaks repo-wide); PR #8 open, reviewed
 
 - PR #7 confirmed merged at 0910b9d; ci-gitleaks lane shut down. fix-pr5 has
