@@ -238,6 +238,7 @@ export {
   type FilterSelectProps,
 } from "./FilterBar";
 export { PillTabGroup, type PillTabGroupProps } from "./PillTabGroup";
+export { ListToolbar, type ListToolbarProps } from "./ListToolbar";
 
 /* ---- Calendar (added 13 Sep 2026; no artboard draws one) ------------ */
 export {
