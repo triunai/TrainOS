@@ -1,34 +1,30 @@
 /**
- * The client is selected ONCE, here. Everything else imports `apiClient` and
- * has no idea whether it is talking to fixtures or to the network.
+ * The data boundary. Everything outside `shared/api` imports from here.
  *
- * Swapping in the HTTP client is a one-line change in this file.
+ * `useApi()` is the seam: it hands back the client, and swapping the fixture
+ * client for an HTTP one is a change inside this folder rather than at six
+ * hundred call sites. The scaffold's `TrainOsClient` interface and its
+ * all-`NOT_IMPLEMENTED` stub are gone — they described a boundary the app had
+ * already outgrown, and keeping a second client surface alive next to the real
+ * one is the divergence CLAUDE.md forbids.
  */
-import type { TrainOsClient } from "./client";
-import { fixtureClient } from "./fixture-client";
+export {
+  ACTOR_FOR_ROLE,
+  ApiProvider,
+  newIdempotencyKey,
+  useAction,
+  useActor,
+  useApi,
+  type ActionResult,
+  type ApiProviderProps,
+  type UseActionOptions,
+} from "./useApi";
 
-export const apiClient: TrainOsClient = fixtureClient;
-
-export type {
-  TrainOsClient,
-  TrainOsClientMethod,
-  ShellApi,
-  ActionsApi,
-  EnquiriesApi,
-  OrganisationsApi,
-  ProposalsApi,
-  ApprovalsApi,
-  EngagementsApi,
-  ComplianceFinanceApi,
-  KnowledgeApi,
-  AgentsApi,
-  AiOpsApi,
-  ReportsApi,
-} from "./client";
+/** The client's own type, re-exported so no module reaches past this barrel. */
+export type { FixtureClient } from "@trainos/fixtures";
 
 export {
   ApiErrorException,
-  NOT_IMPLEMENTED,
   domainErrorFromEnvelope,
   fail,
   isDomainError,

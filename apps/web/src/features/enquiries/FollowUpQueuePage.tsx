@@ -22,7 +22,8 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { errorMessageOf, useAction, useActor, useFollowUpDraft, useFollowUps } from "./api";
+import { readableMessage, useActor } from "@/shared/api";
+import { errorMessageOf, useEnquiryAction, useFollowUpDraft, useFollowUps } from "./api";
 
 /**
  * M03-S06 · Follow-up queue (`M03 Leads.dc.html`).
@@ -74,7 +75,7 @@ export function FollowUpQueuePage() {
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
 
   const draft = useFollowUpDraft(selected?.id, channel);
-  const action = useAction();
+  const action = useEnquiryAction();
   const actor = useActor();
 
   const counts = useMemo(() => {
@@ -140,8 +141,16 @@ export function FollowUpQueuePage() {
         requestedBy: actor,
       },
       {
-        onSuccess: setResponse,
-        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
+        /* Every §3 outcome arrives here as a value, the refusal included: a
+           queued approval is a success and rendering it through an error path
+           is how an approval queue becomes invisible. */
+        onSuccess: (result) => {
+          if (result.kind === "error") {
+            setFailure(describeActionError(result.error, readableMessage(result.error)));
+            return;
+          }
+          setResponse(result.response);
+        },
       },
     );
   };

@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Me, Role } from "@trainos/contract";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
+import { ApiProvider } from "@/shared/api";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 
 /**
@@ -35,11 +36,13 @@ export function renderScreen(
   return render(
     <QueryClientProvider client={queryClient}>
       <MeContext.Provider value={{ me, setRole: () => undefined }}>
-        <MemoryRouter initialEntries={[options.path ?? "/"]}>
-          <Routes>
-            <Route path={options.route ?? "/"} element={element} />
-          </Routes>
-        </MemoryRouter>
+        <ApiProvider>
+          <MemoryRouter initialEntries={[options.path ?? "/"]}>
+            <Routes>
+              <Route path={options.route ?? "/"} element={element} />
+            </Routes>
+          </MemoryRouter>
+        </ApiProvider>
       </MeContext.Provider>
     </QueryClientProvider>,
   );

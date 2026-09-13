@@ -36,8 +36,7 @@ import {
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError } from "@/shared/api";
-import { apiErrorFromThrown } from "./client";
+import { isDomainError, toApiError } from "@/shared/api";
 import { navPath } from "@/shared/config/nav";
 import { APPROVALS_PATH } from "@/features/approvals";
 import { useExecutiveDashboard, useProposalsVsWon } from "./api";
@@ -196,7 +195,7 @@ export function ExecutiveDashboard() {
   if (dashboard.error || !data) {
     /* The query throws an exception WRAPPING the ApiError; unwrap it or every
        refusal reads as a transport failure and gets a retry button. */
-    const failure = dashboard.error ? apiErrorFromThrown(dashboard.error) : undefined;
+    const failure = dashboard.error ? toApiError(dashboard.error) : undefined;
 
     return (
       <div className="flex flex-col">

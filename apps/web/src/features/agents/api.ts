@@ -23,8 +23,14 @@ import type {
   AutomationRun,
   ListResponse,
 } from "@trainos/contract";
-import { fixtureClient, isContractError } from "@trainos/fixtures";
-import { domainErrorFromEnvelope, queryKeys, transportError, type ApiError } from "@/shared/api";
+import { isContractError } from "@trainos/fixtures";
+import {
+  domainErrorFromEnvelope,
+  queryKeys,
+  transportError,
+  useApi,
+  type ApiError,
+} from "@/shared/api";
 
 /**
  * `ContractError` → the scaffold's `ApiError`.
@@ -58,33 +64,35 @@ export const agentKeys = {
 } as const;
 
 export function useAgentRegistry(): UseQueryResult<AgentRegistryResponse, ApiError> {
+  const api = useApi();
   return useQuery<AgentRegistryResponse, ApiError>({
     queryKey: agentKeys.registry,
-    queryFn: () => fixtureClient.listAgents().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.listAgents().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 export function useAgentEvals(agentId?: string): UseQueryResult<ListResponse<AgentEval>, ApiError> {
+  const api = useApi();
   return useQuery<ListResponse<AgentEval>, ApiError>({
     queryKey: agentKeys.evals(agentId),
-    queryFn: () =>
-      fixtureClient.listEvals(agentId).catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.listEvals(agentId).catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 export function useRuns(): UseQueryResult<ListResponse<AutomationRun>, ApiError> {
+  const api = useApi();
   return useQuery<ListResponse<AutomationRun>, ApiError>({
     queryKey: agentKeys.runs,
-    queryFn: () => fixtureClient.listRuns().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.listRuns().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 export function useRun(id: string | undefined): UseQueryResult<AutomationRun, ApiError> {
+  const api = useApi();
   return useQuery<AutomationRun, ApiError>({
     queryKey: agentKeys.run(id ?? ""),
     enabled: Boolean(id),
-    queryFn: () =>
-      fixtureClient.getRun(id as string).catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.getRun(id as string).catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
@@ -96,10 +104,11 @@ export function useRun(id: string | undefined): UseQueryResult<AutomationRun, Ap
  * is not a kill switch.
  */
 export function usePauseAgent() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<Agent, ApiError, { id: string; body: AgentPauseRequest }>({
     mutationFn: ({ id, body }) =>
-      fixtureClient.pauseAgent(id, body).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.pauseAgent(id, body).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.agents.all });
     },
@@ -108,10 +117,11 @@ export function usePauseAgent() {
 
 /** §10 `POST /v1/runs/{id}/retry?from=checkpoint` — resumes from the state card. */
 export function useRetryRun() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<AutomationRun, ApiError, { id: string; from?: "checkpoint" }>({
     mutationFn: ({ id, from }) =>
-      fixtureClient.retryRun(id, from).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.retryRun(id, from).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.runs.all });
     },
@@ -120,12 +130,11 @@ export function useRetryRun() {
 
 /** §10 `POST /v1/runs/{id}/dead-letter` — stop retrying and hold it for a human. */
 export function useDeadLetterRun() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<AutomationRun, ApiError, { id: string; reason: string }>({
     mutationFn: ({ id, reason }) =>
-      fixtureClient
-        .deadLetterRun(id, { reason })
-        .catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.deadLetterRun(id, { reason }).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.runs.all });
     },

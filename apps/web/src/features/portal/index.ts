@@ -18,6 +18,5 @@ export {
   portalKeys,
   useAcceptPortalProposal,
   useAddPortalComment,
-  useApi,
   usePortalProposal,
 } from "./api";

@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import {
   useMutation,
   useQueries,
@@ -19,32 +18,23 @@ import type {
   Participant,
   PipelineConfig,
 } from "@trainos/contract";
+import { isContractError, type EngagementProjection } from "@trainos/fixtures";
 import {
-  fixtureClient,
-  isContractError,
-  users,
-  type EngagementProjection,
-  type FixtureClient,
-} from "@trainos/fixtures";
-import { domainErrorFromEnvelope, transportError, type ApiError } from "@/shared/api";
-import { useMe } from "@/shared/hooks/useMe";
+  domainErrorFromEnvelope,
+  transportError,
+  useActor,
+  useApi,
+  type ApiError,
+} from "@/shared/api";
 
 /**
  * The engagements data boundary — M09-S02 and M10-S06.
  *
- * `useApi()` is a hook so the shared provider `shared/api` will eventually own
- * is a one-line swap and no screen moves. Today it returns the
- * `@trainos/fixtures` singleton, because `shared/api`'s `TrainOsClient` is the
- * scaffold's `Result<T>` interface with every method `NOT_IMPLEMENTED` and
- * without the §8 attendance and §17 compliance-check endpoints.
- *
- * It also binds the fixture client's PRINCIPAL to the topbar's role toggle.
- * Permissions in the fixtures are enforced against the signed-in actor, not
- * against the request body, so without this the role toggle would change the
- * sidebar and nothing else, and the OPS projection of an engagement — the one
- * that has no `finance` block at all — would be unreachable from the UI. The
- * actor is looked up from the fixture roster by role rather than written down
- * here, so adding a role to the dataset needs no edit in this file.
+ * The client and the principal both come from `shared/api`. The principal
+ * matters here beyond authorisation: these query keys carry the actor, because
+ * the OPS projection of an engagement DROPS the `finance` block rather than
+ * zeroing it, and caching two roles' projections under one key would serve a
+ * SALES reader's finance figures to an OPS reader.
  *
  * Two things this file refuses to do, both on purpose:
  *
@@ -57,17 +47,6 @@ import { useMe } from "@/shared/hooks/useMe";
  *    rather than zeroing it, so the type is optional and the screen renders the
  *    panel only when the projection carries one.
  */
-export function useApi(): { api: FixtureClient; actorId: string } {
-  const { me } = useMe();
-  const actorId = useMemo(
-    () => users.find((user) => user.role === me.role)?.id ?? fixtureClient.actorId,
-    [me.role],
-  );
-
-  if (fixtureClient.actorId !== actorId) fixtureClient.signInAs(actorId);
-
-  return { api: fixtureClient, actorId };
-}
 
 /** A thrown fixture error, in the shape `ErrorState` and `readableMessage` read. */
 export function asApiError(thrown: unknown): ApiError {
@@ -104,7 +83,7 @@ export const engagementKeys = {
 
 /** Stage labels and order. Never hardcoded — CLAUDE.md's standing rule. */
 export function usePipelineConfig(object: string): UseQueryResult<PipelineConfig> {
-  const { api } = useApi();
+  const api = useApi();
   return useQuery({
     queryKey: engagementKeys.pipeline(object),
     queryFn: () => api.getPipelineConfig(object),
@@ -113,7 +92,8 @@ export function usePipelineConfig(object: string): UseQueryResult<PipelineConfig
 }
 
 export function useEngagement(id: string): UseQueryResult<EngagementProjection> {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   return useQuery({
     queryKey: engagementKeys.detail(actorId, id),
     queryFn: () => api.getEngagement(id),
@@ -124,7 +104,8 @@ export function useEngagement(id: string): UseQueryResult<EngagementProjection> 
 export function useComplianceChecks(
   engagementRef: string,
 ): UseQueryResult<ComplianceChecksResponse> {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   return useQuery({
     queryKey: engagementKeys.checks(actorId, engagementRef),
     queryFn: () => api.getComplianceChecks(engagementRef),
@@ -133,7 +114,8 @@ export function useComplianceChecks(
 }
 
 export function useEngagementParticipants(id: string): UseQueryResult<ListResponse<Participant>> {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   return useQuery({
     queryKey: engagementKeys.participants(actorId, id),
     queryFn: () => api.getEngagementParticipants(id),
@@ -142,7 +124,8 @@ export function useEngagementParticipants(id: string): UseQueryResult<ListRespon
 }
 
 export function useAttendance(id: string, day: number): UseQueryResult<AttendanceSheet> {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   return useQuery({
     queryKey: engagementKeys.attendance(actorId, id, day),
     queryFn: () => api.getAttendance(id, day),
@@ -156,7 +139,8 @@ export function useAttendance(id: string, day: number): UseQueryResult<Attendanc
  * does — so the join happens in `attendanceModel`, not in a component.
  */
 export function useAttendanceDays(id: string, days: number[]) {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   return useQueries({
     queries: days.map((day) => ({
       queryKey: engagementKeys.attendance(actorId, id, day),
@@ -172,7 +156,8 @@ export function useAttendanceDays(id: string, days: number[]) {
  * rather than invented.
  */
 export function useOrganisation(ref: string | undefined): UseQueryResult<Organisation> {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   return useQuery({
     queryKey: engagementKeys.organisation(actorId, ref ?? ""),
     queryFn: () => api.getOrganisation(ref as string),
@@ -187,7 +172,8 @@ export function useOrganisation(ref: string | undefined): UseQueryResult<Organis
  * nothing.
  */
 export function useCaptureAttendance(id: string, day: number) {
-  const { api, actorId } = useApi();
+  const api = useApi();
+  const actorId = useActor().id;
   const queryClient = useQueryClient();
   return useMutation<AttendanceSheet, unknown, AttendanceCaptureRequest>({
     mutationFn: (body) => api.captureAttendance(id, day, body),
@@ -198,7 +184,7 @@ export function useCaptureAttendance(id: string, day: number) {
 }
 
 export function useExportAttendance(id: string) {
-  const { api } = useApi();
+  const api = useApi();
   return useMutation<AttendanceExport, unknown, string | undefined>({
     mutationFn: (format) => api.exportAttendance(id, format ?? "HRDC"),
   });
@@ -209,14 +195,15 @@ export function useExportAttendance(id: string) {
  * through it, and every caller must handle all three outcomes — EXECUTED,
  * QUEUED_FOR_APPROVAL and SUGGESTED — because an approval is a success.
  *
- * `requestedBy` comes from `useMe()`, so the actor is the session's and never a
- * literal in a screen.
+ * `requestedBy` comes from `useActor()`, so it is the SAME principal the client
+ * is signed in as. It used to be built from `me.id`, which is the shell's
+ * display identity and not a principal the fixture roster contains — a request
+ * stamped with an id the server has never heard of.
  */
 export function usePerformAction() {
-  const { api } = useApi();
+  const api = useApi();
   const queryClient = useQueryClient();
-  const { me } = useMe();
-  const requestedBy: Actor = { id: me.id, name: me.name, kind: "HUMAN" };
+  const requestedBy: Actor = useActor();
 
   return useMutation<ActionResponse, unknown, Omit<ActionRequest, "requestedBy">>({
     mutationFn: (request) =>

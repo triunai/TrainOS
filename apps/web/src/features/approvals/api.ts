@@ -30,8 +30,7 @@ import type {
   PageRequest,
   SavedView,
 } from "@trainos/contract";
-import { ApiErrorException, queryKeys } from "@/shared/api";
-import { apiErrorFromThrown, useApi } from "./client";
+import { ApiErrorException, queryKeys, toApiError, useApi } from "@/shared/api";
 
 /** `listApprovals` takes the §7 urgency grouping alongside the §1 page request. */
 export type ApprovalPageRequest = PageRequest & { group?: "URGENCY" };
@@ -41,15 +40,15 @@ export type ApprovalPageRequest = PageRequest & { group?: "URGENCY" };
  * One wrapper converts a thrown `ContractError` into an exception carrying the
  * `ApiError` union, so a consumer can tell a refusal from a dropped connection.
  *
- * Unwrap it with `apiErrorFromThrown` at the point of use: TanStack hands back
- * the EXCEPTION, and testing `kind` on the exception silently reads every
- * refusal as a transport failure.
+ * Unwrap it with `toApiError` at the point of use: TanStack hands back the
+ * EXCEPTION, and testing `kind` on the exception silently reads every refusal
+ * as a transport failure.
  */
 const call = async <T>(work: () => Promise<T>): Promise<T> => {
   try {
     return await work();
   } catch (thrown) {
-    throw new ApiErrorException(apiErrorFromThrown(thrown));
+    throw new ApiErrorException(toApiError(thrown));
   }
 };
 

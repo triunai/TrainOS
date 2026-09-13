@@ -15,49 +15,18 @@ import {
   USER_KHAIRUL,
   USER_SITI,
 } from "@trainos/contract";
-import { fixtureClient, isContractError, type FixtureClient } from "@trainos/fixtures";
-import { queryKeys } from "@/shared/api";
-import { useMe } from "@/shared/hooks/useMe";
+import { isContractError } from "@trainos/fixtures";
+import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
 
 /**
  * The enquiries data layer — M03-S01, M03-S02, M03-S06.
  *
- * TEMPORARY SHAPE — `useApi()` belongs in `src/shared/api` and is duplicated
- * here only because `shared/api` is still the scaffold's NOT_IMPLEMENTED stub
- * and this feature may not write outside `features/enquiries`. When the shared
- * hook lands, delete `useApi` from this file and import it; nothing else moves.
- * The same note stands in `features/organisations/api.ts` and `features/tna`.
- *
- * The fixture client enforces permissions for real, so the signed-in actor has
- * to track the shell's role toggle — otherwise every call would answer as
- * Amirah and a role-gated refusal would never be reachable from the UI.
+ * The client comes from `useApi()` in `shared/api`, which also keeps the
+ * signed-in principal in step with the role toggle. That matters here: the
+ * fixture client enforces permissions for real, so without it every call would
+ * answer as Amirah and a role-gated refusal would never be reachable from the
+ * UI.
  */
-
-/** Shell role -> the fixture principal that holds that role's permissions. */
-const ACTOR_FOR_ROLE: Readonly<Record<Role, string>> = {
-  SALES: USER_AMIRAH,
-  SALES_MANAGER: USER_KELVIN,
-  OPS: USER_SITI,
-  FINANCE: USER_JASON,
-  MD: "u_lim",
-  ADMIN: USER_KHAIRUL,
-  TRAINER: TRAINER_FARAH,
-  CLIENT: USER_AMIRAH,
-  AGENT: USER_AMIRAH,
-};
-
-export function useApi(): FixtureClient {
-  const { me } = useMe();
-  const actorId = ACTOR_FOR_ROLE[me.role];
-  if (fixtureClient.actorId !== actorId) fixtureClient.signInAs(actorId);
-  return fixtureClient;
-}
-
-/** The signed-in principal as the action envelope wants it. */
-export function useActor(): Actor {
-  const { me } = useMe();
-  return { id: ACTOR_FOR_ROLE[me.role], name: me.name, kind: "HUMAN" };
-}
 
 /** A contract error's code, or null when the failure was not a refusal. */
 export function errorCodeOf(error: unknown): string | null {
@@ -160,17 +129,18 @@ export function useFollowUpDraft(id: string | undefined, channel: "EMAIL" | "WHA
 /**
  * Every primary button on these screens goes through here, and every caller
  * renders all three outcomes. An approval is a success, not an error — R2.
+ *
+ * The envelope itself belongs to `shared/api`'s `useAction`; this adds only
+ * what is specific to the feature, which is what a converted enquiry makes
+ * stale. Refusals are skipped deliberately: nothing moved, so there is nothing
+ * to refetch.
  */
-export function useAction() {
-  const client = useApi();
+export function useEnquiryAction() {
   const queryClient = useQueryClient();
 
-  return useMutation<ActionResponse, unknown, ActionRequest>({
-    mutationFn: (request) =>
-      client.performAction(request, {
-        idempotencyKey: `${request.type}:${request.targetRef}:${Date.now()}`,
-      }),
-    onSuccess: () => {
+  return useAction({
+    onSettled: (result) => {
+      if (result.kind === "error") return;
       void queryClient.invalidateQueries({ queryKey: queryKeys.enquiries.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.followUps.all });
     },

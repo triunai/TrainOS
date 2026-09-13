@@ -39,9 +39,8 @@ import {
   type MetricCellProps,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError } from "@/shared/api";
+import { isDomainError, toApiError } from "@/shared/api";
 import { useApproval, useApprovalAudit, useApprovalInbox, useDecideApproval } from "./api";
-import { apiErrorFromThrown } from "./client";
 import { APPROVALS_PATH, approvalPath } from "./paths";
 
 /** The two decisions §7 requires a note for. */
@@ -150,7 +149,7 @@ export function ApprovalDetail() {
     /* TanStack hands back the EXCEPTION the query threw, not the `ApiError`
        inside it. Unwrapping is what keeps a NOT_FOUND classified as a refusal
        — and a refusal, per CLAUDE.md R2, is never offered a retry button. */
-    const failure = approval.error ? apiErrorFromThrown(approval.error) : undefined;
+    const failure = approval.error ? toApiError(approval.error) : undefined;
 
     return (
       <div className="flex flex-col">
@@ -209,7 +208,7 @@ export function ApprovalDetail() {
   /* §7: a 409 means the world moved under the rendered diff and carries the
      recomputed one. The toast reports the failure; this panel shows the new
      consequences, so the two do not repeat each other. */
-  const decideFailure = decide.error ? apiErrorFromThrown(decide.error) : undefined;
+  const decideFailure = decide.error ? toApiError(decide.error) : undefined;
   const recomputed: DiffLine[] | undefined =
     decideFailure && isDomainError(decideFailure) && decideFailure.details?.diffChanged === true
       ? (decideFailure.details.diff as DiffLine[] | undefined)

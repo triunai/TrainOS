@@ -5,6 +5,7 @@ import type { Role } from "@trainos/contract";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
 import { BreadcrumbProvider } from "@/shared/components/layout";
+import { ApiProvider } from "@/shared/api";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { BreadcrumbProbe } from "./BreadcrumbProbe";
 
@@ -41,14 +42,16 @@ export function renderAt(
   return (
     <QueryClientProvider client={queryClient}>
       <MeContext.Provider value={{ me: { ...FIXTURE_ME, role }, setRole: () => {} }}>
-        <BreadcrumbProvider>
-          <BreadcrumbProbe />
-          <MemoryRouter initialEntries={[path]}>
-            <Routes>
-              <Route path={pattern} element={element} />
-            </Routes>
-          </MemoryRouter>
-        </BreadcrumbProvider>
+        <ApiProvider>
+          <BreadcrumbProvider>
+            <BreadcrumbProbe />
+            <MemoryRouter initialEntries={[path]}>
+              <Routes>
+                <Route path={pattern} element={element} />
+              </Routes>
+            </MemoryRouter>
+          </BreadcrumbProvider>
+        </ApiProvider>
       </MeContext.Provider>
     </QueryClientProvider>
   );

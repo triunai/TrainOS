@@ -18,8 +18,14 @@ import type {
   KnowledgeSourceReingestResponse,
   ListResponse,
 } from "@trainos/contract";
-import { fixtureClient, isContractError } from "@trainos/fixtures";
-import { domainErrorFromEnvelope, queryKeys, transportError, type ApiError } from "@/shared/api";
+import { isContractError } from "@trainos/fixtures";
+import {
+  domainErrorFromEnvelope,
+  queryKeys,
+  transportError,
+  useApi,
+  type ApiError,
+} from "@/shared/api";
 
 /**
  * `ContractError` → the scaffold's `ApiError`.
@@ -39,19 +45,20 @@ export const knowledgeKeys = {
 } as const;
 
 export function useKnowledgeSources(): UseQueryResult<ListResponse<KnowledgeSource>, ApiError> {
+  const api = useApi();
   return useQuery<ListResponse<KnowledgeSource>, ApiError>({
     queryKey: knowledgeKeys.sources,
-    queryFn: () =>
-      fixtureClient.listKnowledgeSources().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.listKnowledgeSources().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 /** Re-fetch and hash. A changed hash opens a rule-change review; it changes nothing. */
 export function useCheckSource() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<KnowledgeSourceCheckResponse, ApiError, string>({
     mutationFn: (id) =>
-      fixtureClient.checkKnowledgeSource(id).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.checkKnowledgeSource(id).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },
@@ -60,12 +67,11 @@ export function useCheckSource() {
 
 /** Rebuild chunks and embeddings. This one does change what the agents read. */
 export function useReingestSource() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<KnowledgeSourceReingestResponse, ApiError, string>({
     mutationFn: (id) =>
-      fixtureClient
-        .reingestKnowledgeSource(id)
-        .catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.reingestKnowledgeSource(id).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },
@@ -73,12 +79,11 @@ export function useReingestSource() {
 }
 
 export function useCreateSource() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<KnowledgeSource, ApiError, KnowledgeSourceCreateRequest>({
     mutationFn: (body) =>
-      fixtureClient
-        .createKnowledgeSource(body)
-        .catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.createKnowledgeSource(body).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },

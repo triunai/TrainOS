@@ -5,18 +5,15 @@ import type {
   PortalCommentRequest,
   PortalProposal,
 } from "@trainos/contract";
-import { fixtureClient, isContractError, type FixtureClient } from "@trainos/fixtures";
-import { domainErrorFromEnvelope, transportError, type ApiError } from "@/shared/api";
+import { isContractError } from "@trainos/fixtures";
+import { domainErrorFromEnvelope, transportError, useApi, type ApiError } from "@/shared/api";
 
 /**
  * The portal's data boundary.
  *
- * `useApi()` is a hook rather than a bare import so the single shared provider
- * that `shared/api` will eventually expose is a one-line swap here and nothing
- * in the screen moves. Today it hands back the `@trainos/fixtures` singleton:
- * `shared/api`'s own `TrainOsClient` is the scaffold's `Result<T>` interface
- * whose every method is `NOT_IMPLEMENTED`, and it carries none of the §11
- * portal endpoints this screen is built on.
+ * The client comes from `useApi()` in `shared/api`, the one seam for the whole
+ * app. The portal is signed out by design, so it reads whatever principal the
+ * provider holds and relies on the §11 token for its authority.
  *
  * The fixture client THROWS `ContractError`; TanStack Query wants a thrown
  * error, so nothing is caught here. `asApiError` translates a refusal into the
@@ -24,10 +21,6 @@ import { domainErrorFromEnvelope, transportError, type ApiError } from "@/shared
  * domain refusal (a revoked or expired token) out of the "something went wrong"
  * bucket where a retry button would be offered for a fact.
  */
-export function useApi(): FixtureClient {
-  return fixtureClient;
-}
-
 /** A thrown fixture error, in the shape `ErrorState` and `readableMessage` read. */
 export function asApiError(thrown: unknown): ApiError {
   if (isContractError(thrown)) return domainErrorFromEnvelope(thrown.toEnvelope());

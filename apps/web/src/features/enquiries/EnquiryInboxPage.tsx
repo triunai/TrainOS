@@ -31,15 +31,9 @@ import {
   type FilterChipModel,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
+import { readableMessage, useActor } from "@/shared/api";
 import { cn } from "@/shared/lib/utils";
-import {
-  errorMessageOf,
-  useAction,
-  useActor,
-  useEnquiries,
-  useEnquiry,
-  useEnquiryViews,
-} from "./api";
+import { errorMessageOf, useEnquiryAction, useEnquiries, useEnquiry, useEnquiryViews } from "./api";
 
 /**
  * M03-S01 · Unified enquiry inbox (Kit.dc.html `proof-m03s01`).
@@ -100,7 +94,7 @@ export function EnquiryInboxPage() {
   const current = selectedRef ?? firstWorkable?.ref ?? null;
   const detail = useEnquiry(current ?? undefined);
 
-  const action = useAction();
+  const action = useEnquiryAction();
   const actor = useActor();
 
   const tabs = useMemo(
@@ -147,8 +141,16 @@ export function EnquiryInboxPage() {
         requestedBy: actor,
       },
       {
-        onSuccess: setResponse,
-        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
+        /* Every §3 outcome arrives here as a value, the refusal included: a
+           queued approval is a success and rendering it through an error path
+           is how an approval queue becomes invisible. */
+        onSuccess: (result) => {
+          if (result.kind === "error") {
+            setFailure(describeActionError(result.error, readableMessage(result.error)));
+            return;
+          }
+          setResponse(result.response);
+        },
       },
     );
   };

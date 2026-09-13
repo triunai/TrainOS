@@ -1,5 +1,6 @@
 import type { ErrorCode, ErrorDetails, ErrorEnvelope } from "@trainos/contract";
 import { ERROR_STATUS } from "@trainos/contract";
+import { isContractError } from "@trainos/fixtures";
 
 /**
  * Two kinds of failure, kept apart on purpose.
@@ -32,15 +33,7 @@ export interface DomainError {
 
 /** Transport failure codes. Deliberately small and closed. */
 export type TransportErrorCode =
-  | "NETWORK"
-  | "TIMEOUT"
-  | "ABORTED"
-  | "MALFORMED"
-  | "UNAUTHENTICATED"
-  | "SERVER"
-  /** The client method exists in the interface but has no implementation yet. */
-  | "NOT_IMPLEMENTED"
-  | "UNKNOWN";
+  "NETWORK" | "TIMEOUT" | "ABORTED" | "MALFORMED" | "UNAUTHENTICATED" | "SERVER" | "UNKNOWN";
 
 export interface TransportError {
   kind: "transport";
@@ -98,13 +91,6 @@ export function transportError(
   };
 }
 
-/** The marker every unimplemented client method returns. */
-export const NOT_IMPLEMENTED = (method: string): TransportError =>
-  transportError(
-    "NOT_IMPLEMENTED",
-    `${method}() is declared in the TrainOsClient interface but has no implementation in this client yet.`,
-  );
-
 /**
  * Message to show a reader. Domain messages come from the server and are
  * written for a person; transport messages are not, so they get a plain
@@ -119,8 +105,6 @@ export function readableMessage(error: ApiError): string {
       return "The request took too long. Try again.";
     case "UNAUTHENTICATED":
       return "Your session has expired. Sign in again.";
-    case "NOT_IMPLEMENTED":
-      return "This is not connected yet.";
     default:
       return "Something went wrong. Try again.";
   }
@@ -137,9 +121,41 @@ export class ApiErrorException extends Error {
   }
 }
 
-/** Narrow an unknown thrown value back to an `ApiError`. */
+/**
+ * Narrow an unknown thrown value back to an `ApiError`.
+ *
+ * The `ContractError` branch is the one that matters. The client throws a
+ * refusal rather than returning it, and every thrown value is an `Error`, so
+ * without this check a `403` came back classified as a transport `UNKNOWN` —
+ * and `ErrorState` reads that classification to decide whether to draw "Try
+ * again". The result was a retry button on a policy decision, which is the
+ * exact failure the domain/transport split in this file exists to prevent, and
+ * a `readableMessage()` of "Something went wrong" over a server message that
+ * had already explained which role and permission were missing.
+ *
+ * `isContractError` is deliberately not `instanceof`-only: it also matches the
+ * structural shape, so a bundler that ends up with two copies of the fixtures
+ * module still classifies a refusal as a refusal.
+ */
 export function toApiError(thrown: unknown): ApiError {
   if (thrown instanceof ApiErrorException) return thrown.apiError;
+
+  if (isContractError(thrown)) {
+    return {
+      kind: "domain",
+      code: thrown.code,
+      message: thrown.message,
+      /* The error's own status, not a second lookup. They agree today because
+         `ContractError` sets `http` from `ERROR_STATUS`, and trusting the
+         instance keeps them agreeing if that ever stops being true. */
+      status: thrown.http,
+      ...(thrown.details === undefined ? {} : { details: thrown.details }),
+      ...(thrown.approvalRequestId === undefined
+        ? {}
+        : { approvalRequestId: thrown.approvalRequestId }),
+    };
+  }
+
   if (thrown instanceof Error) return transportError("UNKNOWN", thrown.message, { cause: thrown });
   return transportError("UNKNOWN", "Unknown error", { cause: thrown });
 }

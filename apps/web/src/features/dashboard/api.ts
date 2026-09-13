@@ -9,14 +9,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { ExecutiveDashboard, HoursSavedReport, ProposalsVsWonReport } from "@trainos/contract";
-import { ApiErrorException, queryKeys } from "@/shared/api";
-import { apiErrorFromThrown, useApi } from "./client";
+import { ApiErrorException, queryKeys, toApiError, useApi } from "@/shared/api";
 
 const call = async <T>(work: () => Promise<T>): Promise<T> => {
   try {
     return await work();
   } catch (thrown) {
-    throw new ApiErrorException(apiErrorFromThrown(thrown));
+    throw new ApiErrorException(toApiError(thrown));
   }
 };
 

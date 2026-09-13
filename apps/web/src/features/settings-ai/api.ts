@@ -24,8 +24,14 @@ import type {
   RoutingResponse,
   UsageResponse,
 } from "@trainos/contract";
-import { fixtureClient, isContractError } from "@trainos/fixtures";
-import { domainErrorFromEnvelope, queryKeys, transportError, type ApiError } from "@/shared/api";
+import { isContractError } from "@trainos/fixtures";
+import {
+  domainErrorFromEnvelope,
+  queryKeys,
+  transportError,
+  useApi,
+  type ApiError,
+} from "@/shared/api";
 
 /**
  * `ContractError` → the scaffold's `ApiError`.
@@ -59,17 +65,18 @@ export const aiKeys = {
 export type UsageGroupBy = "TIER" | "AGENT" | "ACTION_TYPE";
 
 export function useAiTiers(): UseQueryResult<ListResponse<ModelTier>, ApiError> {
+  const api = useApi();
   return useQuery<ListResponse<ModelTier>, ApiError>({
     queryKey: aiKeys.tiers,
-    queryFn: () => fixtureClient.getAiTiers().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.getAiTiers().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 export function useAiRouting(): UseQueryResult<RoutingResponse, ApiError> {
+  const api = useApi();
   return useQuery<RoutingResponse, ApiError>({
     queryKey: aiKeys.routing,
-    queryFn: () =>
-      fixtureClient.getAiRouting().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.getAiRouting().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
@@ -81,10 +88,11 @@ export function useAiRouting(): UseQueryResult<RoutingResponse, ApiError> {
  * already started, and a button called Save would imply otherwise.
  */
 export function usePutAiRouting() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<RoutingResponse, ApiError, RoutingEntry[]>({
     mutationFn: (entries) =>
-      fixtureClient.putAiRouting(entries).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.putAiRouting(entries).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.routing });
     },
@@ -92,18 +100,19 @@ export function usePutAiRouting() {
 }
 
 export function useProviders(): UseQueryResult<ListResponse<ProviderKey>, ApiError> {
+  const api = useApi();
   return useQuery<ListResponse<ProviderKey>, ApiError>({
     queryKey: aiKeys.providers,
-    queryFn: () =>
-      fixtureClient.listProviders().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.listProviders().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 export function useCreateProvider() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<ProviderKey, ApiError, ProviderKeyCreateRequest>({
     mutationFn: (body) =>
-      fixtureClient.createProvider(body).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.createProvider(body).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.providers });
     },
@@ -112,10 +121,10 @@ export function useCreateProvider() {
 
 /** §17 a live probe. Updates `lastTestedAt` whatever the verdict. */
 export function useTestProvider() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<ProviderKeyTestResponse, ApiError, string>({
-    mutationFn: (id) =>
-      fixtureClient.testProvider(id).catch((thrown) => Promise.reject(toApiError(thrown))),
+    mutationFn: (id) => api.testProvider(id).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.providers });
     },
@@ -131,9 +140,10 @@ export function useTestProvider() {
  * cache could replay is not an audited reveal.
  */
 export function useRevealProvider() {
+  const api = useApi();
   return useMutation<ProviderKeyRevealResponse, ApiError, string>({
     mutationFn: (id) =>
-      fixtureClient.revealProvider(id).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.revealProvider(id).catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
@@ -141,17 +151,19 @@ export function useUsage(
   period: string,
   groupBy: UsageGroupBy,
 ): UseQueryResult<UsageResponse, ApiError> {
+  const api = useApi();
   return useQuery<UsageResponse, ApiError>({
     queryKey: aiKeys.usage(period, groupBy),
     queryFn: () =>
-      fixtureClient.getUsage(period, groupBy).catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.getUsage(period, groupBy).catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
 export function useBudgets(): UseQueryResult<ListResponse<Budget>, ApiError> {
+  const api = useApi();
   return useQuery<ListResponse<Budget>, ApiError>({
     queryKey: aiKeys.budgets,
-    queryFn: () => fixtureClient.getBudgets().catch((thrown) => Promise.reject(toApiError(thrown))),
+    queryFn: () => api.getBudgets().catch((thrown) => Promise.reject(toApiError(thrown))),
   });
 }
 
@@ -164,12 +176,11 @@ export function useBudgets(): UseQueryResult<ListResponse<Budget>, ApiError> {
  * refusal is rendered as a routing instruction rather than as a failure.
  */
 export function usePutBudget() {
+  const api = useApi();
   const client = useQueryClient();
   return useMutation<Budget, ApiError, { scope: Budget["scope"]; key: string; body: BudgetWrite }>({
     mutationFn: ({ scope, key, body }) =>
-      fixtureClient
-        .putBudget(scope, key, body)
-        .catch((thrown) => Promise.reject(toApiError(thrown))),
+      api.putBudget(scope, key, body).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.usageRoot });
     },

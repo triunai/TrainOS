@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { BadgeCounts } from "@trainos/contract";
-import { fixtureClient } from "@trainos/fixtures";
-import { queryKeys } from "@/shared/api";
+import { queryKeys, useApi } from "@/shared/api";
 
 /**
  * §2 `GET /v1/badges` — what the top bar's bell counts.
@@ -17,16 +16,12 @@ import { queryKeys } from "@/shared/api";
  * reload. That is the whole reason this reads through the query cache rather
  * than holding its own state.
  *
- * TEMPORARY — the import. This should read `useApi()` from `@/shared/api`,
- * which another agent owns and has not landed yet. When it does, the one line
- * below becomes `const api = useApi();` and nothing else in this file changes.
- * Reaching for the singleton here is the same shortcut the screens are making,
- * and it dies in the same pass.
  */
 export function useBadgeCounts() {
+  const api = useApi();
   return useQuery<BadgeCounts>({
     queryKey: queryKeys.badges,
-    queryFn: () => fixtureClient.getBadges(),
+    queryFn: () => api.getBadges(),
   });
 }
 

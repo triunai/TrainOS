@@ -16,42 +16,18 @@ import {
   USER_SITI,
   TRAINER_FARAH,
 } from "@trainos/contract";
-import { fixtureClient, isContractError, type FixtureClient } from "@trainos/fixtures";
-import { queryKeys } from "@/shared/api";
-import { useMe } from "@/shared/hooks/useMe";
+import { isContractError } from "@trainos/fixtures";
+import { newIdempotencyKey, queryKeys, useApi } from "@/shared/api";
 
 /**
  * The proposals and quotations data layer.
  *
- * TEMPORARY SHAPE — `useApi()` belongs in `src/shared/api` and is duplicated
- * here only because `shared/api` is still the scaffold's NOT_IMPLEMENTED stub
- * and this feature may not write outside `features/proposals`. When the shared
- * hook lands, delete `useApi` from this file and import it; nothing else moves.
+ * The client comes from `useApi()` in `shared/api`.
  *
  * Every governed write on these two screens goes through `performAction`. The
  * screens render the response variant — EXECUTED, QUEUED_FOR_APPROVAL or
  * SUGGESTED — rather than deciding anything themselves.
  */
-
-/** Shell role -> the fixture principal that holds that role's permissions. */
-const ACTOR_FOR_ROLE: Readonly<Record<Role, string>> = {
-  SALES: USER_AMIRAH,
-  SALES_MANAGER: USER_KELVIN,
-  OPS: USER_SITI,
-  FINANCE: USER_JASON,
-  MD: "u_lim",
-  ADMIN: USER_KHAIRUL,
-  TRAINER: TRAINER_FARAH,
-  CLIENT: USER_AMIRAH,
-  AGENT: USER_AMIRAH,
-};
-
-export function useApi(): FixtureClient {
-  const { me } = useMe();
-  const actorId = ACTOR_FOR_ROLE[me.role];
-  if (fixtureClient.actorId !== actorId) fixtureClient.signInAs(actorId);
-  return fixtureClient;
-}
 
 /* ---- The action envelope --------------------------------------------- */
 
@@ -188,7 +164,10 @@ export function useSendProposal(id: string | undefined) {
   const client = useApi();
   const queryClient = useQueryClient();
   return useMutation<ActionResponse, unknown, ActionRequest>({
-    mutationFn: (request) => client.performAction(request),
+    /* §3 replays a key with the same body and refuses it with a different
+       one, so a key is what stops a double-clicked send from queueing two
+       approvals. These two writes were sending none at all. */
+    mutationFn: (request) => client.performAction(request, { idempotencyKey: newIdempotencyKey() }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.detail(id ?? "") });
       void queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
@@ -243,7 +222,10 @@ export function useApplyQuotation(id: string | undefined) {
   const client = useApi();
   const queryClient = useQueryClient();
   return useMutation<ActionResponse, unknown, ActionRequest>({
-    mutationFn: (request) => client.performAction(request),
+    /* §3 replays a key with the same body and refuses it with a different
+       one, so a key is what stops a double-clicked send from queueing two
+       approvals. These two writes were sending none at all. */
+    mutationFn: (request) => client.performAction(request, { idempotencyKey: newIdempotencyKey() }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.quotations.detail(id ?? "") });
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.all });

@@ -30,7 +30,6 @@ export {
   asApiError,
   blockersOf,
   engagementKeys,
-  useApi,
   useAttendance,
   useAttendanceDays,
   useCaptureAttendance,

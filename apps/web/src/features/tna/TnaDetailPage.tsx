@@ -31,10 +31,10 @@ import {
   type ActionError,
   type Column,
 } from "@/shared/components/kit";
+import { readableMessage, useActor } from "@/shared/api";
 import {
   errorMessageOf,
-  useAction,
-  useActor,
+  useTnaAction,
   useReopenTna,
   useTna,
   useTnaClient,
@@ -72,7 +72,7 @@ export function TnaDetailPage() {
   const client = useTnaClient(tna.data?.opportunityRef);
   const recommendations = useTnaRecommendations(tnaId);
   const reopen = useReopenTna(tnaId);
-  const action = useAction();
+  const action = useTnaAction();
   const actor = useActor();
 
   const [response, setResponse] = useState<ActionResponse | undefined>(undefined);
@@ -112,8 +112,16 @@ export function TnaDetailPage() {
         requestedBy: actor,
       },
       {
-        onSuccess: setResponse,
-        onError: (thrown) => setFailure(describeActionError(thrown, errorMessageOf(thrown))),
+        /* Every §3 outcome arrives here as a value, the refusal included: a
+           queued approval is a success and rendering it through an error path
+           is how an approval queue becomes invisible. */
+        onSuccess: (result) => {
+          if (result.kind === "error") {
+            setFailure(describeActionError(result.error, readableMessage(result.error)));
+            return;
+          }
+          setResponse(result.response);
+        },
       },
     );
   };

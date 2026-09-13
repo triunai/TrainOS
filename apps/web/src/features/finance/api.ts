@@ -10,25 +10,14 @@ import type {
   PaymentRecordRequest,
   ReceivablesAging,
 } from "@trainos/contract";
-import {
-  fixtureClient,
-  isContractError,
-  type FixtureClient,
-  type FixtureCollectionsQueueResponse,
-} from "@trainos/fixtures";
-import { ApiErrorException, domainErrorFromEnvelope, queryKeys } from "@/shared/api";
+import { isContractError, type FixtureCollectionsQueueResponse } from "@trainos/fixtures";
+import { ApiErrorException, domainErrorFromEnvelope, queryKeys, useApi } from "@/shared/api";
 
 /**
  * The finance feature's data boundary. Screens call hooks from this file and
- * never touch a client directly.
- *
- * `useApi()` is the seam. Today it hands back the fixture singleton; when the
- * scaffold lands a shared provider, only this function changes and no screen
- * moves.
+ * never touch a client directly; the client itself comes from `useApi()` in
+ * `shared/api`, which is the one seam for the whole app.
  */
-export function useApi(): FixtureClient {
-  return fixtureClient;
-}
 
 /**
  * Fixture errors are THROWN `ContractError`s; the app's query layer speaks

@@ -8,42 +8,18 @@ import {
   USER_SITI,
   TRAINER_FARAH,
 } from "@trainos/contract";
-import { fixtureClient, isContractError, type FixtureClient } from "@trainos/fixtures";
-import { queryKeys } from "@/shared/api";
-import { useMe } from "@/shared/hooks/useMe";
+import { isContractError } from "@trainos/fixtures";
+import { queryKeys, useApi } from "@/shared/api";
 
 /**
  * The programmes data layer.
  *
- * TEMPORARY SHAPE — `useApi()` belongs in `src/shared/api` and is duplicated
- * here only because `shared/api` is still the scaffold's NOT_IMPLEMENTED stub
- * and this feature may not write outside `features/programmes`. When the shared
- * hook lands, delete `useApi` from this file and import it; nothing else moves.
- *
- * The fixture client enforces permissions for real, so the signed-in actor must
- * track the shell's role toggle — otherwise `putProgramme` would always answer
- * as Amirah and the L&D gate on M06-S02 would be decorative.
+ * The client comes from `useApi()` in `shared/api`, which also keeps the
+ * signed-in principal in step with the role toggle. That matters here: the
+ * fixture client enforces permissions for real, so without it `putProgramme`
+ * would always answer as Amirah and the L&D gate on M06-S02 would be
+ * decorative.
  */
-
-/** Shell role -> the fixture principal that holds that role's permissions. */
-const ACTOR_FOR_ROLE: Readonly<Record<Role, string>> = {
-  SALES: USER_AMIRAH,
-  SALES_MANAGER: USER_KELVIN,
-  OPS: USER_SITI,
-  FINANCE: USER_JASON,
-  MD: "u_lim",
-  ADMIN: USER_KHAIRUL,
-  TRAINER: TRAINER_FARAH,
-  CLIENT: USER_AMIRAH,
-  AGENT: USER_AMIRAH,
-};
-
-export function useApi(): FixtureClient {
-  const { me } = useMe();
-  const actorId = ACTOR_FOR_ROLE[me.role];
-  if (fixtureClient.actorId !== actorId) fixtureClient.signInAs(actorId);
-  return fixtureClient;
-}
 
 /**
  * The catalogue is human-maintained, so editing it is restricted. The fixture

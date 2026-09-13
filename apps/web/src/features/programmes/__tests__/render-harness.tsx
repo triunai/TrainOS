@@ -4,6 +4,7 @@ import { render } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Me, Role } from "@trainos/contract";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
+import { ApiProvider } from "@/shared/api";
 import { MeContext, FIXTURE_ME } from "@/shared/hooks/useMe";
 import { resetPrimaries } from "@/shared/components/kit";
 
@@ -38,11 +39,13 @@ export function renderScreen(
   return render(
     <QueryClientProvider client={queryClient}>
       <MeContext.Provider value={{ me, setRole: () => undefined }}>
-        <MemoryRouter initialEntries={[options.path]}>
-          <Routes>
-            <Route path={options.route} element={element} />
-          </Routes>
-        </MemoryRouter>
+        <ApiProvider>
+          <MemoryRouter initialEntries={[options.path]}>
+            <Routes>
+              <Route path={options.route} element={element} />
+            </Routes>
+          </MemoryRouter>
+        </ApiProvider>
       </MeContext.Provider>
     </QueryClientProvider>,
   );

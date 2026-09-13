@@ -41,14 +41,13 @@ import {
   type RowGroup,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isDomainError, readableMessage, type ApiError } from "@/shared/api";
+import { isDomainError, readableMessage, toApiError, type ApiError } from "@/shared/api";
 import {
   useApprovalInbox,
   useApprovalViews,
   useBulkDecideApprovals,
   type ApprovalPageRequest,
 } from "./api";
-import { apiErrorFromThrown } from "./client";
 import { approvalPath } from "./paths";
 
 /**
@@ -269,7 +268,7 @@ export function ApprovalInbox() {
       /* The refusal IS the screen, which is why this write is awaited rather
          than toasted. §7 returns the offending refs in `details.blockers`, and
          naming them beats "something went wrong". */
-      const error = apiErrorFromThrown(thrown);
+      const error = toApiError(thrown);
       const blockers = isDomainError(error) ? error.details?.blockers : undefined;
       if (blockers && blockers.length > 0) setBulkBlockers(blockers);
       else setBulkError(error);
@@ -300,7 +299,7 @@ export function ApprovalInbox() {
     /* TanStack hands back the EXCEPTION the query threw, not the `ApiError`
        inside it. Unwrapping is what keeps a refusal classified as one — and a
        refusal, per CLAUDE.md R2, is never offered a retry button. */
-    const failure = apiErrorFromThrown(inbox.error);
+    const failure = toApiError(inbox.error);
 
     return (
       <div className="flex flex-col">

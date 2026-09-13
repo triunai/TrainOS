@@ -8,42 +8,15 @@ import {
   USER_KHAIRUL,
   USER_SITI,
 } from "@trainos/contract";
-import { fixtureClient, isContractError, type FixtureClient } from "@trainos/fixtures";
-import { queryKeys } from "@/shared/api";
-import { useMe } from "@/shared/hooks/useMe";
+import { isContractError } from "@trainos/fixtures";
+import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
 
 /**
  * The TNA data layer — M05-S02.
  *
- * TEMPORARY SHAPE — `useApi()` belongs in `src/shared/api` and is duplicated
- * here only because `shared/api` is still the scaffold's NOT_IMPLEMENTED stub
- * and this feature may not write outside `features/tna`. When the shared hook
- * lands, delete `useApi` from this file and import it.
+ * The client and the principal come from `useApi()` and `useActor()` in
+ * `shared/api`. This file holds only what is specific to the TNA.
  */
-
-const ACTOR_FOR_ROLE: Readonly<Record<Role, string>> = {
-  SALES: USER_AMIRAH,
-  SALES_MANAGER: USER_KELVIN,
-  OPS: USER_SITI,
-  FINANCE: USER_JASON,
-  MD: "u_lim",
-  ADMIN: USER_KHAIRUL,
-  TRAINER: TRAINER_FARAH,
-  CLIENT: USER_AMIRAH,
-  AGENT: USER_AMIRAH,
-};
-
-export function useApi(): FixtureClient {
-  const { me } = useMe();
-  const actorId = ACTOR_FOR_ROLE[me.role];
-  if (fixtureClient.actorId !== actorId) fixtureClient.signInAs(actorId);
-  return fixtureClient;
-}
-
-export function useActor(): Actor {
-  const { me } = useMe();
-  return { id: ACTOR_FOR_ROLE[me.role], name: me.name, kind: "HUMAN" };
-}
 
 export function errorCodeOf(error: unknown): string | null {
   return isContractError(error) ? error.code : null;
@@ -111,16 +84,17 @@ export function useReopenTna(id: string | undefined) {
   });
 }
 
-export function useAction() {
-  const client = useApi();
+/**
+ * The envelope belongs to `shared/api`'s `useAction`; this adds only what a
+ * recommendation acceptance makes stale. A refusal moved nothing, so it
+ * invalidates nothing.
+ */
+export function useTnaAction() {
   const queryClient = useQueryClient();
 
-  return useMutation<ActionResponse, unknown, ActionRequest>({
-    mutationFn: (request) =>
-      client.performAction(request, {
-        idempotencyKey: `${request.type}:${request.targetRef}:${Date.now()}`,
-      }),
-    onSuccess: () => {
+  return useAction({
+    onSettled: (result) => {
+      if (result.kind === "error") return;
       void queryClient.invalidateQueries({ queryKey: queryKeys.tnas.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.all });
     },
