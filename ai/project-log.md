@@ -15,6 +15,88 @@
 
 ---
 
+## 2026-09-13 21:2x — trainer TDF entry re-corrected (a later commit superseded the last correction), PR #15 confirmed blocked, PR #17 confirmed
+
+**Re-correction, not a new mistake: the trainer HRD-TDF entry from the
+previous block was itself superseded by a later commit, and this block
+re-checks it against the current head rather than trusting either
+report.** The previous block correctly read the commit it checked and
+found `hrd_tdf = false` on all four trainers. A further commit, `f5aa04a`
+("call provision_tenant with p_id, keep TDF accreditation true"), changed
+this: the three genuinely TDF-accredited trainers now carry `hrd_tdf =
+true`, with `hrd_tdf_valid_to` reusing that trainer's own TTT
+certification expiry rather than any invented date — confirmed directly
+in the diff: `hrd_tdf: trainer.hrdTdf`, `hrd_tdf_valid_to: trainer.hrdTdf
+? trainer.tttValidTo : null`, `hrd_tdf_ref: null`. The file's own comment
+explains the reuse: the same three trainers hold both accreditations, so
+the seed states one real convention (reuse the TTT date) rather than
+fabricating a second, independent one. Three new pins confirm this is
+enforced, not just commented: `T2h` (exactly 3 trainers carry `hrd_tdf`),
+`T2i` (none lapsed at the fixture clock, 2026-11-14), and `T2j`, whose own
+"FAIL (good news)" framing is worth quoting — it is designed to fail the
+day a real, independent TDF expiry date arrives in the fixture, which is
+exactly when the reuse convention should be retired. Both this entry and
+the one it supersedes were correct readings of the commit each checked;
+neither check was sloppy. The actual lesson is procedural: confirm a PR's
+current head before restating a finding that was true of an earlier one,
+especially on a fast-moving branch that gained a commit between two
+verification passes minutes apart.
+
+**PR #16 confirmed at head `f5aa04a`, 7 commits, still targeting 001–017,
+merging right after PR #6.** One more commit is still coming, per the
+report: deterministic pipeline stage ids shared between `lane/seeds` and
+`lane/rpc-018`. Kept explicitly unconfirmed here, per direct instruction:
+it is a ruling agreed between two lanes, not yet code on either side, and
+recording it as landed before either lane pushes would be exactly the
+same mistake as trusting a stale reviewer checkout.
+
+**PR #15 confirmed BLOCKED, not merely draft-in-progress — checked
+directly against a live failing CI run, not taken on the report.** On run
+`34757075746`, even with `testTimeout` raised to `30_000`,
+`knowledge.test.tsx`'s "keeps Check and Re-ingest out of every row" and
+`pipeline.test.tsx`'s "offers every other stage in the card's menu" both
+failed with the literal message "Test timed out in 30000ms." (The third
+test named in the original diagnosis, `RowActionMenu`, was not among the
+failures on this specific run — recorded as observed, not chased
+further.) The refined diagnosis matches what this spine already had on
+record: a CPU-bound spin inside `findBy*`'s `asyncAct` wrapper while
+floating-ui keeps scheduling position work for the open menu, fixable by
+a raw poll plus a synchronous `getByRole`, not by any timeout value. The
+fixer's refusal to write that rewrite without first reproducing it is the
+right call, not foot-dragging. `npm audit (high+)` passes cleanly on this
+same run, confirming the toolchain upgrade's audit-clearing purpose works
+independently of the test-timeout blocker.
+
+**Negative result, now doubly confirmed: "raise the timeout" is a dead
+lever for this specific failure.** 15 seconds failed on the runner; 30
+seconds also failed on the runner. Both attempts are now on record so a
+future pass does not try a third timeout bump before doing the
+poll-based rewrite the diagnosis actually calls for.
+
+**A small discrepancy worth naming rather than silently resolving:**
+`fix-pr5`'s lane is reported shut down, but its worktree
+(`~/Repos/personal-work/trainos-wt/fix-pr5`, still checked out on branch
+`chore/vite7-vitest3`) is still present on disk as of this check. "Lane
+shut down" (the orchestration state) and "worktree removed" (the
+filesystem state) are different claims, and only the first was made.
+
+**PR #17 (`fix(web): decideApproval sends the expected diff hash`)
+confirmed open, 3 commits, matching its description precisely.** Closes
+the client half of migration 014's HIGH finding #6. Confirmed in the
+diff: `ApprovalRequest.diffHash` and a required
+`ApprovalDecideRequest.diffHash` added to the contract; a new
+`DIFF_CHANGED` error code, confirmed mapped to HTTP `409` in
+`ERROR_STATUS` (alongside `AGENT_PAUSED` and `IDEMPOTENT_REPLAY`, the same
+family); `rpcClient.decideApproval` now sends `p_expected_diff_hash`; the
+fixture client enforces the identical guard on `APPROVE` only, matching
+migration 011's own scope exactly; a new conformance test proves both
+clients refuse a stale hash and accept a fresh one identically. **1504
+tests confirmed exactly**: the PR's own test plan states "1118 + 189 +
+107 + 90 tests, all passing," which sums to 1504. Under review by
+`review-pr17`.
+
+---
+
 ## 2026-09-13 21:1x — PR #13 merged, seeds now on 001–017 with a real RLS pin, a reported ruling corrected as backwards
 
 **PR #13 confirmed MERGED at `47d56e1`.** Its own CI run still shows `CI

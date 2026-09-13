@@ -276,6 +276,18 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 21:2x — trainer TDF re-corrected (later commit superseded it); PR #15 confirmed blocked; PR #17 confirmed
+
+- Re-checked the trainer HRD-TDF item at PR #16's current head: a later
+  commit changed it back to true with a real (not fabricated) reused TTT
+  expiry date, pinned by three new assertions. Previous correction was
+  accurate for the commit it read; this supersedes it. PR #15 confirmed
+  genuinely blocked (two Radix tests still time out at 30s on the runner,
+  confirmed on a live failing run); raising the timeout is now a
+  confirmed dead lever at both 15s and 30s. PR #17 confirmed open and
+  matching its description exactly, 1504 tests. Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 21:1x — PR #13 merged; seeds now on 001-017 with a real RLS pin; one reported ruling was backwards
 
 - PR #13 confirmed merged despite still-failing inherited checks. PR #16

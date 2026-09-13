@@ -194,8 +194,27 @@ FUNCTION` confirmed load-bearing (a bare `CREATE OR REPLACE` with a
 > floating-ui scheduling, not Radix; `testTimeout` now `30_000`, a ceiling
 > not a budget. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 21:1x — PR #13 merged; PR #16 retargets
-> 001-017 with a real RLS pin; one ruling as reported was backwards.
+> **BLAST 13 Sep 21:2x +08** — **Re-correction: the trainer HRD-TDF entry
+> corrected last round was itself superseded by PR #16's next commit
+> (`f5aa04a`).** Re-checked at the current head, not either report's word:
+> the three genuinely accredited trainers now DO carry `hrd_tdf = true`
+> with `hrd_tdf_valid_to` reusing their own TTT certificate expiry (a
+> stated convention, not a fabricated date) — confirmed in the diff and
+> pinned by three new assertions, T2h/T2i/T2j, all confirmed present and
+> matching exactly. Both the earlier "false" entry and this "true" entry
+> were accurate for the commit each one read. PR #15 confirmed BLOCKED,
+> not just draft: even at 30s, two Radix-menu tests still time out on the
+> runner — confirmed on a live failing run, exact test names and timeout
+> matching. "Raise the timeout" is now a confirmed-dead lever, tried at
+> both 15s and 30s. `fix-pr5`'s worktree is still on disk despite being
+> reported shut down — noted, not disputed. PR #17 confirmed open and
+> matching its description exactly, including 1504 tests (1118+189+107+90)
+> and `DIFF_CHANGED` mapped to HTTP 409. Stage-id formula stays explicitly
+> unconfirmed per instruction — a ruling, not yet code on either lane.
+> Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 21:2x — trainer TDF entry re-corrected to
+> true (superseding commit); PR #15 confirmed blocked, not just draft.
 
 ### Focus
 

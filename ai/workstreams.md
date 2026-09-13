@@ -177,8 +177,49 @@ floating-ui keeps scheduling position work for the open menu. Swapping
 those three `findBy*` awaits for a settle plus `getByRole` is the real fix
 (would return ~21s to the suite) but touches three files outside this
 branch's scope, so it's left for its own change. The 15s guess was
-confirmed to have failed on the runner; `testTimeout` is now `30_000` as a
-ceiling for a hung test, not a budget, exactly as reported.
+confirmed to have failed on the runner; `testTimeout` was raised to
+`30_000` as a ceiling for a hung test, not a budget.
+
+⛔ **PR #15 stays DRAFT and is now confirmed BLOCKED, not just
+in-progress — checked directly against its own CI, not taken on the
+report.** Even at 30s, the `knowledge` and `pipeline` Radix-menu tests
+time out on the runner while passing in well under 10s locally —
+confirmed on live run `34757075746`: `knowledge.test.tsx`'s "keeps Check
+and Re-ingest out of every row" failed at exactly `Test timed out in
+30000ms`, and `pipeline.test.tsx`'s "offers every other stage in the
+card's menu" failed identically. (`RowActionMenu`, the third test named
+in the original diagnosis, was not among the failures on this run —
+recorded as observed, not explained further.) The refined diagnosis: a
+CPU-bound spin inside `findBy*`'s `asyncAct` wrapper while floating-ui
+schedules position work, so the fix is a raw poll plus a synchronous
+`getByRole`, not any timeout value — confirmed as the stated reasoning,
+matching the mechanism already recorded above. The fixer refused to write
+that fix without first reproducing it, which is the right call rather
+than guessing at a rewrite under time pressure. **Negative result for the
+log: "raise the timeout" is a dead lever, tried twice** — 15s failed, 30s
+also failed, and both attempts are now on record so nobody tries a third
+timeout bump before writing the poll-based rewrite. `npm audit (high+)`
+was separately confirmed passing on this same run, so the toolchain
+upgrade's audit-clearing purpose does work; only the test-timeout question
+blocks the merge. `fix-pr5`'s lane is reported shut down; the worktree
+itself (`~/Repos/personal-work/trainos-wt/fix-pr5`, still on branch
+`chore/vite7-vitest3`) is still present on disk as of this check — noted,
+not disputed, since "lane shut down" and "worktree not yet cleaned up" are
+different claims.
+
+🟢 **PR #17 (`fix(web): decideApproval sends the expected diff hash`,
+branch `fix/approval-diff-hash`) confirmed open, 3 commits, matching its
+description exactly.** Closes the client half of 014's HIGH finding #6.
+Confirmed in the diff: `ApprovalRequest.diffHash` and a required
+`ApprovalDecideRequest.diffHash` added to the contract; a new
+`DIFF_CHANGED` error code, confirmed mapped to HTTP `409` in
+`ERROR_STATUS`; `rpcClient.decideApproval` now sends
+`p_expected_diff_hash`; the fixture client enforces the same guard on
+`APPROVE` only, matching 011's own scope; a new conformance test proving
+both clients refuse a stale hash identically and accept a fresh one
+identically. **1504 tests confirmed exactly** — the PR's own test plan
+states "1118 + 189 + 107 + 90 tests, all passing," which sums to 1504.
+Under review by `review-pr17`.
 
 **014–017 author-reported execution findings** (separate from the D-012
 security review above — these are the authoring lane's own notes, negative
@@ -419,39 +460,33 @@ the report and consistent with everything confirmed above.
 
 ---
 
-## 🟢 SEEDS — PR #16 open, fixture-world seed for tenant akademi-perdana (2026-09-13)
+## 🟢 SEEDS — PR #16 open at f5aa04a, targets 001–017, merges right after PR #6 (2026-09-13)
 
 **Resume:** Read PR #16's own body first — 22 schema gaps are enumerated
 there in full; this thread only summarizes. Then `ai/resume-brief.md`
 BLAST 19:25/19:4x entries and `supabase/seeds/README.md`. Built against a
 shim on port 5434 (separate from the other lanes' shims). Under review by
-`review-pr16` (Opus).
+`review-pr16` (Opus). Merges right after PR #6, per the report — not
+independently timed here since PR #6 itself is still blocked.
 
 **Scope:** `supabase/seeds/` — the fixture-world seed data, a wipe script,
 and an executable pin — plus `packages/fixtures/scripts/` for the
 generator that emits the SQL.
 
-**State:** PR #16 confirmed open, now 6 commits (was 5), 17 files, 9920
-additions total (4560 of those in `supabase/seeds/*.sql`, the rest in the
-`emit-seed.ts` generator and its slice modules — both figures confirmed
-via `gh pr view 16 --json files`; the exact "3,848 lines" figure reported
-earlier was not reproduced precisely by this count, likely a different
-exclusion set, e.g. comments/blank lines, and is not disputed further).
-**The 6th commit retargets the seed from 001–013 to 001–017** ("feat(supabase):
-target 001-017, provision through 016, pin RLS visibility," confirmed by
-title and diff). Four SQL parts (tenant/parties, sales/money,
-delivery/compliance/finance, AI-ops/agents) plus a wipe script and a pin —
-confirmed matching the "four parts + wipe + pin" description exactly by
-filename. Generated by the committed `emit-seed.ts` generator from
-`@trainos/fixtures`, with CI able to prove the emitted SQL and the
-generator agree (`--check` flag, confirmed in the diff). On the shim: seed
-exit 0, pin passes, wipe leaves 0 fixture rows, re-seed passes, `lint:sql`
-45/45, `check:grants` unaffected — all as reported, not independently
-re-run here (needs the shim). Idempotence measured via
-`pg_stat_xact_all_tables` (0 inserted/updated/deleted across 98 tables on
-a re-seed within the same transaction) — a stronger and more direct proof
-than a row-count diff, confirmed as a real technique via the pin file's
-own comment describing exactly this mechanism.
+**State:** PR #16 confirmed open at head `f5aa04a`, now 7 commits, 17
+files, 9920+ additions (base figures: 4560 in `supabase/seeds/*.sql`, the
+rest in `emit-seed.ts` and its slices — the exact "3,848 lines" figure
+reported earlier was never reproduced precisely by this count and is not
+disputed further). Targets 001–017, confirmed by the 6th commit's title
+and diff. One more commit still coming, per the report: deterministic
+pipeline stage ids — **kept unconfirmed here on purpose**, since the
+formula is a ruling agreed between two lanes and not yet code on either
+side; do not treat it as landed until both `lane/seeds` and `lane/rpc-018`
+actually push it. Four SQL parts, a wipe script and a pin confirmed
+matching by filename. Generated by the committed `emit-seed.ts` generator
+with a `--check` flag CI can use to prove the generator and its output
+agree, confirmed in the diff. On the shim: T0–T10 all pass, per the
+report, not independently re-run (needs the shim).
 
 ⚠ **T10, the new RLS-visibility pin, confirmed exactly against the actual
 test file.** After provisioning through 016 the seed now impersonates
@@ -490,27 +525,34 @@ RLS.
    not resolved here, flagged rather than guessed at.
 4. **Seed calls `provision_tenant` with `p_id`, which required a schema
    change (see the migrations addendum below).**
-5. ⚠ **Correction to how the trainer accreditation ruling was described:
-   the seed does NOT invent an expiry and reference for the four
-   accredited trainers — confirmed directly against the file, and the
-   file says the opposite of what was reported.** All four trainers get
-   `hrd_tdf: false`, `hrd_tdf_valid_to: null`, `hrd_tdf_ref: null` — even
-   though three of them are TDF-accredited in the underlying fixture data
-   — because 017's `trainers_hrd_tdf_needs_expiry` CHECK refuses `hrd_tdf
-= true` without a valid-to date, and the seed has no such date to give
-   it honestly. The file's own comment states the reasoning explicitly:
-   "A wrong boolean that the pin asserts and the PR names beats a
-   fabricated expiry" — i.e. the seed chose a known-wrong `false` over
-   inventing an audit-actionable date. Recorded as a genuine finding this
-   thread got backwards, not a nitpick: the direction of the trade-off
-   matters (refusing to fabricate a compliance-sensitive field, not
-   fabricating one).
+5. ⚠ **Re-correction: the trainer accreditation entry above was itself
+   superseded by a later commit — re-checked directly at head `f5aa04a`,
+   not taken on either report's word.** Two updates ago this thread
+   recorded (correctly, for the commit it read) that all four trainers got
+   `hrd_tdf = false`. That was accurate for the commit at the time. A
+   further commit, `f5aa04a` itself ("call provision_tenant with p_id,
+   keep TDF accreditation true"), changed this: the three genuinely
+   TDF-accredited trainers now carry `hrd_tdf = true` with
+   `hrd_tdf_valid_to` set to that trainer's own TTT certificate expiry —
+   confirmed directly in the diff (`hrd_tdf: trainer.hrdTdf`,
+   `hrd_tdf_valid_to: trainer.hrdTdf ? trainer.tttValidTo : null`) — and
+   `hrd_tdf_ref` stays NULL, confirmed. This is NOT a fabricated date: the
+   file's own comment states the same three trainers hold both
+   accreditations, so the seed reuses the TTT expiry as a stated
+   convention rather than inventing a second one, and pins the convention
+   with three new assertions, all confirmed present and matching exactly:
+   `T2h` (3 trainers carry `hrd_tdf`), `T2i` (none lapsed at the fixture
+   clock, 2026-11-14), `T2j` ("good news" framing — fails the day a real,
+   independent TDF expiry arrives and the reuse convention should be
+   dropped). Both this entry and the one it supersedes were accurate for
+   the commit each one read; the lesson is to check PR head freshness
+   before restating a finding, not that either check was sloppy.
 6. Pipeline step ids are deterministic, confirmed in the generator:
    `uuidFor(childKey(\`pipeline:${object}\`, "step", stage.key))`. This
-is close to but not literally the `(tenant_id, 'pipeline:'||stage_key)`formula reported — the actual key composes the pipeline object, a`"step"` literal, and the stage key, not the tenant id. The claim that
-   018 computes an identical formula was **not confirmed**: 018's own
-   pipeline-stage seed is a still-open follow-up per this thread's own
-   earlier entry, so there is no 018-side code yet to compare against.
+is close to but not literally the `(tenant_id, 'pipeline:'||stage_key)`formula reported — the actual key composes the pipeline object, a`"step"` literal, and the stage key, not the tenant id. **The claim that
+   018 computes an identical formula stays explicitly unconfirmed, per
+   the team lead's own instruction**: this is a ruling agreed between the
+   seeds and rpc-018 lanes, not yet code on either side.
 
 ⚠ **USER DECISION queued, not resolved here:** SST treatment of the three
 fixture quotations. They currently carry `STANDARD_RATED` at 0%; Malaysian
