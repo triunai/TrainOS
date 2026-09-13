@@ -285,7 +285,7 @@ export function FilterSearch({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         {...(placeholder === undefined ? {} : { placeholder })}
-        className={cn(FILTER_CONTROL, "w-[184px]", FOCUS_RING)}
+        className={cn(FILTER_CONTROL, "w-[184px] max-w-full", FOCUS_RING)}
       />
     </label>
   );
