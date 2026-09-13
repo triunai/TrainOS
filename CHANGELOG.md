@@ -12,6 +12,194 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-12 — twenty-seven screens, and a rule that is checkable rather than read
+
+### Added
+
+- **Every screen the design pack names, across fourteen modules.** The dashboard, the approval
+  inbox and detail, the enquiry inbox and detail, the follow-up queue, the organisation record,
+  the needs-analysis detail, the programme catalogue and record, the proposal builder and pricing
+  worksheet, the client portal, the engagement record, the attendance sheet, the HRD Corp claim
+  packet, the rules registry and rule-change review, the invoice detail and the collections queue.
+- **The one-solid-primary-button rule is now something a test can fail.** Buttons register
+  themselves, so the claim is checked rather than confirmed by reading the markup. Two screens
+  deliberately have no primary at all, and the tests assert that too.
+- **Every primary action renders the answer it got back, never the answer it expected.** An action
+  the policy gate queues for approval is a success, and is shown as one. Rendering it as a failure
+  is how an approval queue becomes invisible and how people learn to read a policy decision as a
+  bug.
+- **A trail of where you are, in one place.** A screen declares its path and the top bar renders
+  it; no screen draws its own. A route that declares nothing shows nothing, rather than inheriting
+  the last screen's path and being confidently wrong about where the reader is.
+- **The notification bell counts all three things that need a person**, not just approvals — a bell
+  that only watched approvals would go quiet while a training grant claim window ran out.
+
+### Fixed
+
+- **Six things only a rendered page shows**, found by opening the app rather than by running the
+  tests. Two names for one fact on the same screen; training grant scheme codes rendered as
+  sentence case rather than as the proper nouns they are; dates shown in raw machine form in a
+  table a person reads; and a margin gauge drawing its floor marker in the middle of the track
+  while the floor was elsewhere. A gauge that misplaces the limit it exists to show is worse than
+  no gauge.
+- **A messaging rate shown to four decimal places that was wrong in the second one.** The figure
+  was derived from a rounded value, so RM 0.0564 rendered as RM 0.0600 — a wrong number shown
+  precisely, which is the most convincing way to be wrong. The same panel also only showed its
+  comparison when the alternative was cheaper, so the case the artboard actually draws rendered
+  nothing at all.
+
+### Note
+
+- These screens have only ever been seen against sample data. Every figure, refusal and empty state
+  on them comes from the in-memory fixtures package; nothing has yet been rendered against a real
+  API response.
+
+## 2026-09-12 — one component library, and the only place a status colour lives
+
+### Added
+
+- **The component kit: every pattern the design pack names, built once.** Record headers, metric
+  strips, lifecycle steppers, the data table, filter bars, pill tabs, status and AI chips, approval
+  banners, proposed-action cards, agent-run cards, drawers, dialogs, the command palette, and the
+  empty, loading and error states.
+- **A gallery at `/dev/kit` that is the library's contract with the people building screens.** Every
+  component and every variant, rendered twice — once light, once dark — inside the real application
+  shell. A pattern that is not on that page is not in the kit, and inventing it on a screen is the
+  divergence this library exists to prevent.
+- **Status colour is confined to chips, and the confinement is checkable.** A status fill anywhere
+  in the screens tree means somebody skipped the chip.
+- **A confirmation dialog opens with Cancel focused, not the destructive button.** A stray Enter on
+  a dialog that opens the other way is a deleted record.
+- **Money is never a floating-point number anywhere in the interface.** One component owns both
+  directions of the conversion, so no screen multiplies by a hundred and no rounding error reaches
+  a quotation. A training date is read as a calendar date and never as an instant, which is what
+  stops a Kuala Lumpur course rendering a day early.
+
+### Changed
+
+- **No progress bar is ever green.** Amber and red appear only as a limit nears. A completeness bar
+  at 100% is not an achievement, it is a blocker that stopped blocking.
+- **A bar takes its colour from what the server said, never from its own ratio.** 87% of a cap the
+  server has flagged is amber; 87% of one it has not is still neutral. Deciding that in the
+  interface would make a display component decide policy.
+
+### Fixed
+
+- **The claim in one file's documentation was stated more strongly than it was true**, and a reader
+  running the grep it offered would have found thirteen counter-examples. Every one was legitimate;
+  the rule was rewritten to describe what it actually protects. A rule stated too strongly is worse
+  than no rule, because the first person to disprove it stops believing the rest of the file.
+
+## 2026-09-12 — sample data that tells the whole story, including the awkward parts
+
+### Added
+
+- **An in-memory client implementing the whole published interface**, so every screen could be
+  built, tested and demonstrated before a single line of the real backend existed.
+- **The sample data covers the states that are easy to leave out**: the low-confidence
+  classification a person has to look at, the message that turned out not to be an enquiry, the
+  recommendation that honestly does not fit, the locked attendance day, the claim missing two
+  documents, the superseded compliance rule, the escalated receivable, the failed automated run,
+  and the provider key that has expired.
+- **The policy gate in the sample data enforces rather than pretends.** Permissions are refused,
+  not merely reported; the value a rule is measured against is read from the stored record and
+  never from the request, so an agent understating a proposal is still measured against the real
+  figure; and re-proposing the same thing returns the approval already waiting rather than creating
+  a second one.
+
+### Note
+
+- Five places where the published interface's own worked examples contradict themselves, and twelve
+  gaps where it cannot express something the design requires, were reported rather than quietly
+  patched. Both lists ship with the package.
+
+## 2026-09-12 — an agent that stops when the rules say stop
+
+### Added
+
+- **The automation runtime**: an orchestrator that plans, four bounded sub-agents that each hold one
+  set of tools, a jury that reviews, and a run that ends by submitting to the same policy gate a
+  person's action goes through.
+- **Being stopped is a successful outcome, not a failure.** The demo run reaches the approval gate
+  and halts there, and the record of the run is what proves nothing was sent.
+- **Bring your own key.** One interface for every model provider, keys held only in an injected
+  store, never logged and never written down, and a mock provider so the whole system runs with no
+  key at all.
+- **A run survives being killed.** Cloud functions are stopped at a fixed wall clock, so a long run
+  writes a checkpoint and continues in the next one, keeping its identity, its numbering and its
+  total duration across every slice.
+
+### Fixed
+
+- **Two ways a run could have appeared healthy while making no progress at all**, both found by
+  building the resumption rather than by reasoning about it. A budget counted across the whole run
+  can never be satisfied by starting again, so a resumed run began over its limit and yielded
+  forever; and a stage that restarted from its beginning never finished if it needed more work than
+  one slice allows. Both would have looked like a busy queue.
+- **A dissenting reviewer is recorded rather than overruled**, and an unreadable verdict counts as
+  dissent. A review that fails open stops working the day a model changes its formatting.
+
+## 2026-09-12 — the design pack, copied rather than adapted
+
+### Added
+
+- **Thirty artboards, the written records and eighteen screenshots**, copied into the repository
+  exactly as drawn. These files are the record of what was designed and the thing every screen is
+  checked against; editing one to record a later decision silently rewrites the reference.
+- **A provenance note saying where each piece of the pack now lives in the application**, and
+  pointing at the two sections a builder has to read before trusting a number: what the inventory
+  could not verify, and the three corrections to values the artboards still draw.
+
+## 2026-09-12 — five design documents, and a review that disagreed with them
+
+### Added
+
+- **The domain model, the tenancy and access design, the action envelope and policy gate, the money
+  and versioning model, and the events and audit backbone.** Eighty-nine tables, the complete
+  entity diagram, and the rules each of them enforces.
+- **A two-part critical review of all five**, kept as written rather than tidied after the fixes, so
+  the record shows what was wrong and when — including the parts still open.
+- **A spike on how an automated agent should authenticate**, which changed the answer: an agent
+  signs in like any other principal and never issues its own credential, because the alternative
+  uses one project-wide signing key that could be used to void every access rule in the system.
+
+### Changed
+
+- **Where the reasoning moved, the documents say so.** The five were written in parallel and
+  reconciled against each other afterwards, and several conclusions reversed in the process. Each
+  reversal is recorded with the argument that won rather than silently applied.
+
+### Note
+
+- Two constants that cross a boundary between two of these documents each moved four times in
+  conversation before being pinned as a table duplicated verbatim on both sides. Prose reads
+  plausibly whichever way round it is written, which is how they kept drifting.
+
+## 2026-09-12 — one published interface, shared by the database and the application
+
+### Added
+
+- **A typed package derived from the API contract**, used by both the application and the database
+  work, so the two cannot drift apart silently. The database's own type vocabulary is generated
+  from it, which means a change there is a change to the schema.
+- **One word for one operation.** An approval screen must be able to show that what was approved is
+  exactly what will happen, and two vocabularies for the same operation make that impossible to
+  check, so the two were merged into one.
+- **A trading hold is its own action, and needs the managing director.** It had previously been
+  modelled as a variant of sending a reminder, which made the most consequential step of the
+  collections ladder look like a message.
+
+## 2026-09-12 — nine research documents, and the skill they became
+
+### Added
+
+- **Research covering the stack, the commit and CI gates, the guardrails, the database conventions,
+  the documentation system, the application architecture, the agent tooling, agentic database
+  practice and the design pack**, each written from two live reference projects rather than from
+  first principles.
+- **A reusable setup skill synthesised from all nine**, carrying the literal configurations,
+  scripts and templates, and parameterised so it stands up a second project without edits.
+
 ## 2026-09-12 — compliance rules that remember what we knew, and when
 
 ### Added
@@ -88,7 +276,7 @@ record of a migration, an entry here is the human-facing summary of the same eve
   end of the transaction instead. Two related checks were reading a stale copy of the row and
   rejecting correct work. And one of the tests asserted the wrong thing about the contract's own
   worked example, which was corrected rather than left to pass for the wrong reason.
- and a trainer who cannot be in two places
+## 2026-09-12 — the catalogue, and a trainer who cannot be in two places
 
 ### Added
 
