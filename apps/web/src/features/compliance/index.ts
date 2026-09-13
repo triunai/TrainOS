@@ -16,7 +16,6 @@ export { COMPLIANCE_DOCUMENTS_PATH, COMPLIANCE_DEADLINES_PATH } from "./paths";
 export { HRDC_DOCUMENT_LABEL, hrdcDocumentLabel } from "./labels";
 export {
   PACKET_TONE,
-  SEVERITY_TONE,
   byUrgency,
   deadlineRows,
   documentRows,

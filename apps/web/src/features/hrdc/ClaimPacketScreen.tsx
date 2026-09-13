@@ -17,6 +17,7 @@ import {
   LoadingState,
   MoneyText,
   PACKET_TONE,
+  SEVERITY_TONE,
   PrimaryButton,
   RecordHeader,
   RuleCheckRow,
@@ -28,7 +29,6 @@ import {
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
 import { HRDC_PACKET_PATH } from "./paths";
-import { severityTone } from "./tone";
 import {
   useAttachDocument,
   useClaimPacket,
@@ -115,13 +115,18 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
             <StatusChip tone={PACKET_TONE[data.status]} live>
               {humanise(data.status)}
             </StatusChip>
-            {/* The SERVER's severity through the shared map, not a two-branch
-                ternary over it. `Severity` has four members and the ternary had
-                two, so DANGER and ALERT both came out "warning" — a claim
-                window the server was calling urgent rendered as merely worth a
-                look. R14: the receiving side must not fold a vocabulary it does
-                not own down to whichever branch is the `else`. */}
-            <StatusChip tone={severityTone(data.deadlineSeverity)}>
+            {/* The KIT's severity map, not a two-branch ternary over it.
+                `Severity` has four members and the ternary had two, so DANGER
+                and ALERT both came out "warning" — a claim window the server
+                was calling urgent rendered as merely worth a look. R14: the
+                receiving side must not fold a vocabulary it does not own down
+                to whichever branch is the `else`.
+
+                `?? "neutral"` is not redundant beside a typed exhaustive
+                record: several contract fields carry a severity as a bare
+                `string`, so a value the types promise cannot arrive still can,
+                and a chip must not be undefined-toned when it does. */}
+            <StatusChip tone={SEVERITY_TONE[data.deadlineSeverity] ?? "neutral"}>
               {`Claim window · ${data.daysRemaining} days left`}
             </StatusChip>
           </>

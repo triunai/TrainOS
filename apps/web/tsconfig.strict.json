@@ -42,6 +42,5 @@
     "src/features/compliance/registers.ts",
     "src/features/compliance/ClaimPacketsScreen.tsx",
     "src/features/finance/InvoicesListScreen.tsx",
-    "src/features/hrdc/tone.ts",
   ],
 }
