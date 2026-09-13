@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CollectionsQueueScreen } from "../CollectionsQueueScreen";
+import { currentPrimaries } from "@/shared/components/kit";
 import { InvoiceDetailScreen } from "../InvoiceDetailScreen";
 import { DEFAULT_INVOICE_REF } from "../paths";
 import { renderScreen } from "@/test/renderScreen";
@@ -140,5 +141,63 @@ describe("M13-S05 · collections queue", () => {
       expect(screen.getByText(/Collections reminder · INV-2026-0288/)).toBeInTheDocument();
     });
     expect(screen.getByText(/Policy FIN-03 routes every reminder to a human/)).toBeInTheDocument();
+  });
+
+  /* ---- §10b conformance --------------------------------------------- *
+   *
+   * This screen is the composition §10b names as the reference for every other
+   * list screen, and it was the one screen not following it: a hand-rolled
+   * `h1`, the tab group alone on its own row, no filters and no count. Judging
+   * other screens against it propagated the defect, so these assertions pin the
+   * shape rather than leaving it to the next eyeball.
+   */
+
+  it("puts the identity in the kit's RecordHeader, not a hand-rolled heading", async () => {
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    const heading = await screen.findByRole("heading", { name: "Collections" });
+    /* RecordHeader draws the title inside the header element it owns. A bare
+       `h1` in the page body is exactly what this replaced. */
+    expect(heading.closest("header")).not.toBeNull();
+  });
+
+  it("carries exactly one solid primary", async () => {
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+    expect(currentPrimaries()).toEqual(["Approve & send"]);
+  });
+
+  it("puts the tabs and the narrowing on ONE row, with the count on it", async () => {
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+
+    const toolbar = document.querySelector("[data-list-toolbar]");
+    expect(toolbar).not.toBeNull();
+    /* Both halves inside the one toolbar: the switcher that says WHICH SUBSET
+       and the filters that say which slice of it. */
+    expect(within(toolbar as HTMLElement).getByRole("tablist")).toBeInTheDocument();
+    expect(within(toolbar as HTMLElement).getByLabelText("Filters")).toBeInTheDocument();
+    expect(within(toolbar as HTMLElement).getByText(/of \d+ shown/)).toBeInTheDocument();
+  });
+
+  it("names the breadcrumb after the PATH, not after the default tab", async () => {
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+    expect(screen.getByTestId("breadcrumb-trail")).toHaveAttribute(
+      "data-trail",
+      "Finance › Collections",
+    );
+  });
+
+  it("says the SEARCH is empty rather than claiming the bucket is clear", async () => {
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+    await userEvent.type(screen.getByLabelText("Search receivables"), "no such client");
+
+    expect(await screen.findByText("No receivable matches this search")).toBeInTheDocument();
   });
 });

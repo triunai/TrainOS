@@ -15,24 +15,33 @@ import {
   ContentCard,
   DataTable,
   DateText,
+  DensityToggle,
   describeActionError,
   EmptyState,
   ErrorState,
   EscalationLadder,
   ExceptionBanner,
+  FilterBar,
+  FilterSearch,
+  ListToolbar,
   LoadingState,
   MoneyText,
   PillTabGroup,
   PrimaryButton,
+  RecordHeader,
   SecondaryButton,
   StatusChip,
   WhatsAppCostStrip,
+  formatMoney,
   humanise,
   type Column,
+  type Density,
+  type FilterChipModel,
   type LadderRung,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
+import { INVOICES_PATH } from "./paths";
 import {
   useCollectionDraft,
   useCollectionRules,
@@ -94,7 +103,9 @@ function rungsFor(rules: CollectionRule[], stage: string | undefined): LadderRun
 }
 
 export function CollectionsQueueScreen() {
-  useBreadcrumb([{ label: "Finance" }, { label: "Collections" }, { label: "Overdue" }]);
+  /* The crumb is the PATH. "Overdue" was a third crumb naming the default tab,
+     which is a filter this screen owns and not a route anyone can navigate to. */
+  useBreadcrumb([{ label: "Finance" }, { label: "Collections" }]);
 
   const navigate = useNavigate();
   const queue = useCollectionsQueue();
@@ -102,6 +113,8 @@ export function CollectionsQueueScreen() {
   const rules = useCollectionRules();
 
   const [tab, setTab] = useState<TabId>("approval");
+  const [query, setQuery] = useState("");
+  const [density, setDensity] = useState<Density>("comfortable");
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
   const [channel, setChannel] = useState<MessageChannel | null>(null);
   const [outcome, setOutcome] = useState<ActionResponse | undefined>(undefined);
@@ -118,13 +131,29 @@ export function CollectionsQueueScreen() {
   const draft = useCollectionDraft(hasDraft ? (selected?.invoiceRef ?? null) : null);
   const send = useSendReminder(selected?.invoiceRef ?? null);
 
+  /* Narrowed FIRST, then tabbed, so a tab count answers "how many of the rows I
+     can currently see" rather than "how many exist" — the same order the other
+     list screens use. */
+  const narrowed = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return rows;
+    return rows.filter(
+      (row) =>
+        row.invoiceRef.toLowerCase().includes(needle) ||
+        row.organisation.name.toLowerCase().includes(needle),
+    );
+  }, [rows, query]);
+
   const visible = useMemo(
-    () => (tab === "all" ? rows : rows.filter((row) => tabOf(row) === tab)),
-    [rows, tab],
+    () => (tab === "all" ? narrowed : narrowed.filter((row) => tabOf(row) === tab)),
+    [narrowed, tab],
   );
 
   const countOf = (id: TabId) =>
-    id === "all" ? rows.length : rows.filter((row) => tabOf(row) === id).length;
+    id === "all" ? narrowed.length : narrowed.filter((row) => tabOf(row) === id).length;
+
+  const chips: FilterChipModel[] =
+    query.trim().length > 0 ? [{ id: "query", label: "Search", value: query.trim() }] : [];
 
   const columns: Column<Receivable>[] = [
     {
@@ -193,15 +222,22 @@ export function CollectionsQueueScreen() {
 
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-3 px-6 pb-4 pt-3">
-        <h1 className="text-[20px] font-semibold text-ink">Collections</h1>
-        {arTotal ? (
-          <span className="font-mono text-[12px] text-ink-muted">
-            AR <MoneyText value={arTotal} compact />
-          </span>
-        ) : null}
-        <div className="ml-auto flex items-center gap-2">
-          <SecondaryButton onClick={() => navigate("/finance/invoices")}>Invoices</SecondaryButton>
+      {/* The kit owns the page's identity. This was a hand-rolled `h1` with an
+          `ml-auto` action cluster beside it — the one composition §10b names as
+          the REFERENCE for every other list screen, which made the divergence
+          something other screens were being judged against. */}
+      <RecordHeader
+        title="Collections"
+        withoutCondensed
+        meta={[
+          `${rows.length} overdue ${rows.length === 1 ? "invoice" : "invoices"}`,
+          arTotal ? `${formatMoney(arTotal)} receivable` : null,
+          aging.data ? `DSO ${aging.data.dsoDays} days` : null,
+        ]}
+        actions={
+          <SecondaryButton onClick={() => navigate(INVOICES_PATH)}>Invoices</SecondaryButton>
+        }
+        primaryAction={
           <PrimaryButton
             disabled={!hasDraft || !draft.data || send.isPending}
             onClick={() => {
@@ -219,8 +255,8 @@ export function CollectionsQueueScreen() {
           >
             Approve &amp; send
           </PrimaryButton>
-        </div>
-      </div>
+        }
+      />
 
       <div className="px-6">
         {aging.isPending ? <LoadingState rows={1} label="Loading the ageing buckets" /> : null}
@@ -234,16 +270,41 @@ export function CollectionsQueueScreen() {
         {aging.data ? <AgingStrip aging={aging.data} /> : null}
       </div>
 
+      {/* §10b: the tabs and the narrowing are ONE row. The tab group used to own
+          a row of its own with nothing on its right half and no filters or
+          count anywhere on the screen. */}
       <div className="px-6 pt-4">
-        <PillTabGroup
-          label="Collections queue"
-          activeId={tab}
-          onSelect={(id) => setTab(id as TabId)}
-          tabs={(Object.keys(TABS) as TabId[]).map((id) => ({
-            id,
-            label: TABS[id],
-            count: countOf(id),
-          }))}
+        <ListToolbar
+          tabs={
+            <PillTabGroup
+              label="Collections queue"
+              activeId={tab}
+              onSelect={(id) => setTab(id as TabId)}
+              tabs={(Object.keys(TABS) as TabId[]).map((id) => ({
+                id,
+                label: TABS[id],
+                count: countOf(id),
+              }))}
+            />
+          }
+          filters={
+            <FilterBar
+              filters={chips}
+              shown={visible.length}
+              total={rows.length}
+              onRemove={() => setQuery("")}
+              onClearAll={() => setQuery("")}
+            >
+              <FilterSearch
+                label="Search receivables"
+                labelHidden
+                value={query}
+                onChange={setQuery}
+                placeholder="Client or invoice"
+              />
+            </FilterBar>
+          }
+          actions={<DensityToggle value={density} onChange={setDensity} />}
         />
       </div>
 
@@ -263,15 +324,26 @@ export function CollectionsQueueScreen() {
               columns={columns}
               rows={visible}
               rowKey={(row) => row.invoiceRef}
+              density={density}
               onRowClick={(row) => {
                 setSelectedRef(row.invoiceRef);
                 setChannel(null);
               }}
               empty={
-                <EmptyState
-                  title="Nothing in this bucket"
-                  description="Every invoice in this state has been paid or has moved to another rung of the ladder."
-                />
+                narrowed.length === 0 && query.trim().length > 0 ? (
+                  /* The SEARCH is empty, not the bucket. Telling a reader every
+                     invoice here has been paid, when they have just typed a
+                     client name, is a sentence about the wrong control. */
+                  <EmptyState
+                    title="No receivable matches this search"
+                    description="Clear the search to see every overdue invoice on the ladder."
+                  />
+                ) : (
+                  <EmptyState
+                    title="Nothing in this bucket"
+                    description="Every invoice in this state has been paid or has moved to another rung of the ladder."
+                  />
+                )
               }
             />
           ) : null}
@@ -295,7 +367,7 @@ export function CollectionsQueueScreen() {
               loading={hasDraft && draft.isPending}
               channel={channel ?? draft.data?.channel ?? "EMAIL"}
               onChannel={setChannel}
-              onOpenInvoice={() => navigate(`/finance/invoices/${selected.invoiceRef}`)}
+              onOpenInvoice={() => navigate(`${INVOICES_PATH}/${selected.invoiceRef}`)}
             />
           ) : null}
 
