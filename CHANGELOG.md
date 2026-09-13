@@ -12,6 +12,38 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-13 — what the agents did, what it cost, and where the keys are not
+
+Authored and executed against a scratch database. Applied nowhere. Engineering detail is in
+`supabase/migrations/migration-catalog.md`.
+
+### Added
+
+- **Every agent run is now traceable end to end** — the run, the steps inside it, what went in
+  and what came back, the decisions it recorded, and the checkpoints it can be replayed from.
+  Reasoning: `docs/architecture/05` §6.
+- **Bring-your-own-key provider credentials, with the key kept out of the database.** The stored
+  record is a masked prefix and a pointer; the key itself lives in the platform secret store and
+  is never a parameter to anything, so it cannot appear in a request body or in a slow-query log.
+- **Revealing a key is rate limited and always audited.** Once per key per 24 hours, requiring a
+  second factor checked against the session the login service wrote, and the audit record is
+  written first — a reveal whose audit fails does not happen.
+- **Model tiers, routing and per-scope AI budgets**, with usage rolled up behind the usage and
+  forecast screens. The point at which a budget goes from fine, to near, to paused is defined
+  once and is configuration rather than a number in code.
+- **A run can be joined to the proposal, provenance record or rule change it produced.** Three
+  links the earlier migrations left open with a note saying this one would close them.
+
+### Known limits, stated rather than implied
+
+- **Redaction of run inputs and outputs catches patterns, not people.** Email addresses and
+  phone numbers are masked; a person's name is not, because no pattern can find one reliably.
+  This is checked by a test that asserts a name survives, so the day it stops surviving, the
+  documentation is flagged as out of date rather than quietly becoming wrong.
+- **A run id written as free text still has no referential check.** Historic records use a text
+  identifier and the new one uses both, so the two resolve to each other, but a mistyped id in a
+  new record will not be caught. Registered as a decision for the API contract owner.
+
 ## 2026-09-13 — the work queue, and an audit trail that can outlive a privacy request
 
 Authored and executed against a scratch database. Applied nowhere. Engineering detail is in

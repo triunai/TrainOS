@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 12 · **Applied:** 0 · **Authored, not applied:** 12
+**Migrations:** 13 · **Applied:** 0 · **Authored, not applied:** 13
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 1 (2026-09-13, rulings R-EXT / search_path / FORCE RLS — see the entry below)
 
@@ -13,6 +13,30 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-13 — **013: AI operations, and the `run_id` divergence settled by reconciliation rather than by picking a side.**
+013 lands the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree, and evals. Nineteen tables, two security-invoker views, twenty-nine functions, four triggers, **zero policies and zero new types**. **Applied nowhere.**
+
+**The `run_id` divergence is closed without retyping anything.** 012 left two representations of one concept in the schema: `text` on `core.events`, `app.outbox` and 011's `agent_run_id`, because the design pack's demo run id `run_4821` is not a uuid; `uuid` on `core.proposals`, `core.provenance` and `core.rule_change_sets` from 007 and 009. 013 gives `core.runs` a `uuid` id **and** a `ref`, so a text run id is now the run's `ref` and `app.finalise_table`'s `UNIQUE (tenant_id, ref)` resolves text to uuid in one index lookup inside the tenant. Neither side is altered. The uuid side cost nothing and was invited — 007 and 009 both wrote `-- FK added by 013` — so `proposals_run_fk`, `provenance_run_fk` and `rule_change_sets_run_fk` land composite and `ON DELETE SET NULL`, the only thing 013 does to a table it does not own, dropped by name in the rollback. **The cost on the text side is stated and NOT closed:** those columns get no foreign key, so a typo'd `runId` still writes an event whose trace cannot be followed and nothing says so. It is not closeable here — an FK would require every already-written row to name an existing run, which is the data the reconciliation exists to preserve. On a live database the migration is one INSERT into `core.runs` per historical distinct run id with `ref` set to that string, and no UPDATE at all. Whether the API should stop accepting a caller-supplied `runId` and look the run up by ref is a contract change, registered as **D-59, owner the API contract**, blocking before the first real agent run.
+
+**Secrets, done properly rather than asserted.** `M-10` named four defects in doc 02's provider-key handling and all four are closed: no RPC takes the raw key at all; reveal checks `app.aal2_verified()` rather than the forgeable claim; the once-per-24-hours ceiling is **the predicate of the UPDATE**, so two concurrent reveals cannot both pass; and the audit row is written first, with a trigger that re-derives from the catalogue that it was written, so a reveal whose audit fails takes the transaction with it. `M-11`: the agent key is minted **in the database** from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach the digest through `select=*` or an embed. That is a mechanism; omitting a column from a grant is not, which is what `H-09` was about.
+
+**Fail-closed under the carried RLS residue, deliberately.** Every migration since 004 forces RLS with no policy, and the measured consequence is that a `SECURITY DEFINER` function reading its own forced table returns zero rows silently where the owner lacks `BYPASSRLS`. 013's security paths are shaped so that residue makes them REFUSE rather than permit: the reveal ceiling is an UPDATE predicate (no visible row means no reveal) and the audit is an INSERT (a refused `WITH CHECK` aborts the transaction). A `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" under exactly the same condition.
+
+**Six defects found by EXECUTION.** Four are new classes:
+
+1. **`to_regproc('app.emit_event')` returns NULL for an AMBIGUOUS name, not only an absent one.** The rollback's "012 must survive" guard therefore reported 012's event path as dropped on a database where both overloads were present, and aborted the whole rollback. This is `M-09`'s defect in a third spelling. Fixed to an `EXISTS` over `pg_proc`.
+2. **`aclexplode(COALESCE(x, '{}'::aclitem[]))` raises "ACL arrays must be one-dimensional"** — an empty aclitem literal is zero-dimensional. `CROSS JOIN LATERAL aclexplode(relacl)` is both correct and right for a NULL acl.
+3. **`app.finalise_table`'s immutability trigger fires BEFORE CHECK constraints.** Testing a frozen column's constraint with an UPDATE raises `IMMUTABLE_COLUMN` and proves nothing about the constraint. Two of fourteen jsonb cases were passing for the wrong reason until they were rewritten as INSERTs.
+4. **`now()` is `transaction_timestamp()`.** A test that bumps `last_revealed_at = now()` inside the same transaction as the reveal writes the SAME value, an `IS NOT DISTINCT FROM` short-circuit lets it through, and the audit-trigger test passes vacuously. The real attack is moving that column BACKWARDS to reset the ceiling, and that is what the pin now does.
+
+**A claim in 001's own header is false, checked against the applied set.** 001 states that every RPC in 011 and 016 returns through `app.ok`/`app.err`. **011 calls neither.** 013 is the first migration that actually calls `app.ok`, and only on success — errors RAISE, because an exception is what rolls the transaction back. Recorded rather than corrected in 001.
+
+**What is still enforced only in the worker, named rather than implied.** Run I/O masking catches five patterns and nothing else: `Alex Selvarajah` passes straight through, and the pin asserts that it SURVIVES, so if that ever changes the pin says the header is now wrong. Addresses, job titles and company-identifying text are unmasked because no pattern can find them. `core.run_state_cards`' goal, decisions, constraints and open questions carry client text verbatim by doc 05's own admission and are kept indefinitely; the table comment records that as an assumption, not a safety claim. `core.run_node_io.subject_type`/`subject_id` are written by the worker, so `M-25`'s index exists but an unpopulated subject is still an erasure that cannot find its rows. And the BYOK decrypt itself happens in the Edge Function: `ai_provider_key_reveal` is the gate and the ledger, and a caller holding the platform secret store's own credentials bypasses both.
+
+**Executed:** 13/13 migrations apply, 13/13 pins pass (150 assertions), full round trip forward → rollback → forward green with zero relations left in `app` and `core`, convention sweep clean. Nothing applied to any hosted database.
+
+---
 
 **Last updated:** 2026-09-13 — **012: the events, the outbox, and seven more defects that only execution could find.**
 012 lands domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhook routing and the retention reapers doc 05 §5.5 had promised and never written. Ten tables, one security-invoker view, thirty function names (thirty-one `pg_proc` rows — `app.emit_event` is overloaded), one policy, and the eighteen-row job-type map. **Applied nowhere.**
@@ -110,6 +134,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 013 | `013_ai_ops_agents_keys_runs_and_budgets.sql` | **AI operations: the agent roster and its credentials, BYOK provider keys, model tiers and routing, budgets and usage, the run trace tree and evals (2026-09-13).** Nineteen tables, two security-invoker views, twenty-nine functions, zero policies, zero new types. **`core.runs` settles the `run_id` divergence by reconciliation rather than by retyping**: the run has a `uuid` id AND a `ref`, so 012's text run ids resolve through `UNIQUE (tenant_id, ref)` and 007/009's uuid columns finally get the foreign keys their own comments said 013 would add. Neither side is altered and no row is rewritten. **Secrets are handled by mechanism, not by assertion**: no RPC takes a raw BYOK key at all, so it never reaches a request body, `log_min_duration_statement` or `pg_stat_activity`; the once-per-24-hours reveal ceiling is the PREDICATE of an UPDATE so two concurrent reveals cannot both pass; the audit row is written first and a trigger re-derives that it exists, so a reveal whose audit fails takes the transaction with it. The agent key is minted in the database from `gen_random_bytes(32)`, returned once as a result value and never as a parameter, and its salted digest lives in `app.agent_api_key_secrets` — `app` is not an exposed schema, so PostgREST cannot reach it through `select=*` or an embed, which is what `H-09` asked for and is stronger than omitting a column from a grant. Every security path is shaped to FAIL CLOSED under the carried FORCE-with-no-policy residue: a `SELECT count(*) … IF < 1 THEN allow` ceiling would have degraded to "always allow" where a definer function reads zero rows, and these degrade to "always refuse". Run I/O masking is honest about its limits — the pin asserts that a person's NAME survives it, so the day masking improves, the pin says the header is out of date. Spine untouched. |
 | 012 | `012_events_outbox_and_jobs.sql` | **Domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhooks and the retention reapers doc 05 promised and never wrote (2026-09-13).** Ten tables, one security-invoker view, thirty functions. `core.events` is the business record and is append-only by revoke, by a row trigger AND by a statement-level `BEFORE TRUNCATE` trigger — a row trigger does not fire for `TRUNCATE`, so before that the guarantee was defeated by one statement. `C-09` is answered by exactly one narrow exemption: `app.redact_event_actor` writes its own audit row and the append-only trigger re-derives from the row that the change was a redaction and nothing else, so PDPA erasure has a path and only that path. `C-08`, the poison pill, is closed on both lanes — `claim_jobs` will not hand out a job at `max_attempts` and `reap_jobs` dead-letters it instead of returning the lease — which is what stops a handler that OOMs the isolate re-pushing the same invoice to the accounting package forever. `H-12` and `M-14`: `fail_job` and `heartbeat_job` now check tenant, state AND owner, so worker A cannot dead-letter or extend a job worker B is running; the race is pinned end to end, not asserted. `H-16` gives the claim per-tenant fairness by `row_number() OVER (PARTITION BY tenant_id)`, proved by flooding fifty jobs from one tenant and watching the other's single interactive job still come back. `M-20`: a provider idempotency key is `<subject>#<attempt>` from a stored counter, never the job id, so replaying a dead-lettered push cannot submit the same invoice twice. **The seam with 011 is one enum and one raising function**: `app.effect_status` is reused by oid, the outbox's own state vocabulary is deliberately different, and `app.effect_status_for_job_state` raises on anything but SUCCEEDED and DEAD (R14). Spine untouched — 012 wires the envelope's external effects to a queue without changing the envelope. |
 | 011 | `011_action_envelope_and_policy_gate.sql` | **The write spine: the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry (2026-09-13).** Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions. Every primary button and every agent proposal in the product passes through `app.perform_action`, which is evaluated once, logged once, and dispatched to exactly one of EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED; the policy input is derived from stored rows and never trusted from the payload. New capability ships as a new action *type* plus a handler registered in data, never as a branch inside the envelope. **Second spine, and the one this migration makes real: `core.state_transitions`.** A status is no longer something a caller types into a column — 124 registry rows say which edges exist and which action authorises each, and `app.enforce_state_transition` is attached to every gated column that exists. That is what invalidated six committed pins, and repairing them is what found a defect in 008 and three missing edges in doc 01 §5.3. Seven critic findings are closed with an assertion each: `H-02` the agent cannot grant itself autonomy (the one RLS policy deliberately landing before 014, `AS RESTRICTIVE FOR ALL` in both clauses so INSERT and DELETE are covered); `H-03` self-approval, including the NULL requester, because `NULL IS DISTINCT FROM <uuid>` is TRUE and that is the fraud; `H-04` a NULL role raises before the authorisation disjunction instead of falling through it; `H-05` money-moving actions check `app.aal2_verified()`, grounded in an `auth.sessions` row GoTrue wrote rather than a claim the caller presents; `H-07` all three holes; `M-12` a NULL ceiling raises instead of permitting; `M-21` an idempotent replay returns the original body with 200. Nothing is granted to `anon` or `authenticated` — the `C-04` grant-sequencing residue is carried to 014, where policies and grants land together. Spine: this IS the spine, and it is pinned hardest. |
 | 010 | `010_finance_invoices_payments_collections.sql` | **Invoices, payments, credit notes, the e-invoice mirror, receivables aging and the collections ladder (2026-09-13).** Ten tables. Total-from-lines reuses 007's pattern rather than inventing a second one — the line amount is GENERATED, an AFTER trigger recomputes the header, a DEFERRABLE constraint trigger asserts at COMMIT — and extends it: `sst_sen` and `total_sen` are GENERATED too, so a wrong total is unrepresentable rather than merely rejected. **SST is computed on the summed net**, and the pin proves that is not pedantry: three lines at RM 333.33 at 8% give 8,001 sen per-line and 8,000 sen on the summed net. **Payments are append-only**, enforced by a trigger that refuses UPDATE and DELETE; a correction is a reversal row with a reason, because a signed amount column would let a correction be entered as an ordinary payment and vanish into the total. **Critic C-11 is answered**: the e-invoice mirror separates the document UUID from the submission UID, carries the QR long id, a status vocabulary that can express SUBMITTED_PENDING_VALIDATION and CANCELLED, structured per-field validation errors with a key-presence CHECK, per-line classification and UoM codes, self-billed and consolidated flags, a supplier tax profile and buyer identifiers — and enforces the **statutory 72-hour cancellation window**, proved at 71 and 73 hours. Credit notes are the legal exit from a mistake on a filed invoice and cannot exceed it. Aging buckets and the 7/30/45/60/75 ladder are DATA with a GiST exclusion and two CHECK constraints that make "reminder 3 is always human" and "a trading hold needs MD" unrepresentable. Spine untouched. |
@@ -299,6 +324,121 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 013 (`013_ai_ops_agents_keys_runs_and_budgets.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.** Sources:
+`docs/architecture/05` §5.4 and §6 (run traces, run I/O, state cards, checkpoints, replay, PII
+redaction, evals); `docs/architecture/04` §5 (model tiers, the routing matrix, budget status);
+`docs/architecture/02` §3.1 (agent API keys), §6 (BYOK provider keys) and §7.2a
+(`app.aal2_verified`); `docs/architecture/06` findings `C-03`, `C-04` residue, `H-08`, `H-09`,
+`M-03`, `M-10`, `M-11`, `M-16`, `M-25`, `N-02`, `N-09`.
+
+### What it does
+
+- **The agent roster and its credentials.** `core.agents`, `public.agent_api_keys` (enabled AND
+  forced — `H-09`'s inert-policy finding), and `app.agent_api_key_secrets` holding the salted
+  digest in a schema PostgREST cannot reach.
+- **BYOK provider keys.** `core.ai_provider_keys` holds a masked prefix and a locator; the
+  material lives in the platform secret store. Five RPCs — set, test, rotate, delete, reveal —
+  and none of them takes the raw key as a parameter.
+- **Model tiers, routing and budgets.** `core.tier_keys`, `core.model_tiers`,
+  `core.routing_matrix_versions`, `core.routing_entries`, `core.ai_budgets`,
+  `app.usage_rollup` and `app.roll_up_usage`, with `core.budget_status` and
+  `core.model_tier_status` as the two security-invoker views. `M-03`'s phantom relation is
+  defined in both directions — the table exists AND something fills it. The `WITHIN` / `NEAR` /
+  `PAUSED` transition is defined ONCE, in the view, with `near_threshold` as per-budget DATA
+  rather than a constant in SQL.
+- **The run trace tree.** `core.runs`, `run_nodes`, `run_node_io`, `run_events`,
+  `run_state_cards`, `run_checkpoints`, `run_snapshots`, and `core.evals`.
+- **`app.key_access_audit`** — doc 05 §5.4's rule #1, made structural rather than procedural.
+- **Spine untouched.** 013 adds no action type and no branch to the envelope.
+
+### The `run_id` reconciliation, in full
+
+| Column | Type | From | What 013 does |
+|---|---|---|---|
+| `core.action_requests.agent_run_id` | `text` | 011 | unchanged, no FK |
+| `core.events.run_id` | `text` | 012 | unchanged, no FK |
+| `app.outbox.run_id` | `text` | 012 | unchanged, no FK |
+| `core.proposals.run_id` | `uuid` | 007 | `proposals_run_fk` added |
+| `core.provenance.run_id` | `uuid` | 007 | `provenance_run_fk` added |
+| `core.rule_change_sets.run_id` | `uuid` | 009 | `rule_change_sets_run_fk` added |
+
+`core.runs` carries BOTH: a `uuid` primary key and a `ref` with `UNIQUE (tenant_id, ref)` from
+`app.finalise_table`, allocated `RUN-YYYY-NNNN` by `core.assign_ref`. A text run id is the
+run's ref. Nothing is retyped, no row is rewritten, and the three FKs are the ones 007 and 009
+wrote `-- FK added by 013` against. **The open half is stated, not hidden:** the three text
+columns get no foreign key, so a typo'd `runId` still writes an event whose trace cannot be
+followed. Closing it would require every already-written row to name an existing run, which is
+the data this reconciliation exists to preserve. On a live database the fix-up is one INSERT
+into `core.runs` per historical distinct run id, `ref` set to that string, and no UPDATE.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — `public.ai_provider_key_set/test/rotate/delete/reveal`. 013 is the FIRST
+   migration that actually calls `app.ok` (001's header claims 011 does; it does not). Success
+   returns through `app.ok`; errors RAISE, because an exception is what rolls back and a
+   returned error object next to a committed side effect is the failure mode.
+2. **Unwrap** — `data` remains the sole non-`success` key on every one.
+3. **RpcMap** — the contract's AI surface already describes these. 013 adds no shape it does
+   not carry. `ModelTier.model` is a string in the contract, which is why there is no
+   `core.ai_models` table: it would be a table nothing reads.
+4. **Call sites** — the provider screen and the usage screen. `app.verify_agent_key` and
+   `app.record_key_access` are the only two functions `service_role` may execute.
+5. **Casts** — none.
+6. **Reload/restore** — the reveal ceiling is per key per 24 hours and survives a reload,
+   because it is a stored timestamp rather than session state.
+7. **Public routes** — none. Nothing reaches `anon`.
+
+### Pin — `tests/test_013_ai_ops_agents_keys_runs_and_budgets.sql`
+
+Thirteen checks, all executed, all PASS, against the FULL applied set 001–013. The ones that
+earn their place: the reveal ceiling proved by moving `last_revealed_at` BACKWARDS rather than
+forwards, because `now()` is `transaction_timestamp()` and a forward bump inside the same
+transaction writes the same value and passes vacuously; the audit-first ordering proved by
+refusing the audit and watching the reveal go with it; fourteen jsonb shapes refused, including
+doc 04 §735's legacy boolean jury; the budget transition walked at 799, 800, 999 and 1000
+against a cap of 1000; twenty-one relations and eleven functions refused to `anon` and
+`authenticated` by IMPERSONATION rather than by reading `has_table_privilege`; and **T9j, which
+asserts that a person's name SURVIVES the masker** — so the day masking improves, the pin fails
+and says the header is out of date.
+
+### Rollback — `rollbacks/013_ai_ops_agents_keys_runs_and_budgets_rollback.sql`
+
+Pre-flight guards with no override, including one that 012 must still be intact — which is
+where `to_regproc` returning NULL for an AMBIGUOUS name was found, reporting 012's overloaded
+`app.emit_event` as dropped and aborting the whole rollback on a database where it was present.
+The three foreign keys onto 007's and 009's tables are dropped by name, and the rollback asserts
+that those columns and 007's `provenance_run_idx` survive. Round-tripped: applied → rolled back
+→ re-applied, `relations in app+core: before=0 after=0`.
+
+### Deliberately NOT built
+
+`app.usage_event` (doc 04 §5.5's partitioned micro-MYR ledger) — out of scope, and the rollup
+aggregates `core.runs`/`core.run_nodes` where cost and tokens actually live. The peak/off-peak
+daily series — it needs a tenant-level `peak_hours bit(24)` that does not exist on
+`public.tenants`, and hardcoding a peak window in SQL is the same defect as a hardcoded stage
+list. `core.ai_models` — the contract has no model entity. Event names for set/test/rotate and
+delete — doc 05 §5.4 says only REVEAL emits, and inventing four names would put unsigned-off
+§1.7 catalogue additions into the database; the pin asserts they are ABSENT. An FK from
+`core.autonomy_grants.agent_id` to `core.agents` — 011 owns that column, and a grant that
+cannot exist before a roster row would make the kill switch depend on provisioning order.
+`scope_tiers`/`fallback_chain` element validation — an array element cannot carry an FK, and a
+validating trigger would read `core.tier_keys` under FORCE-with-no-policy and refuse every
+write; named for 014, not solved here.
+
+### ⚠ Carried risk and standing conditions
+
+- **The FORCE-with-no-policy residue**, as 011 and 012 carry it. 013's response is to shape
+  every security path to fail CLOSED under it rather than to add a `USING (true)` policy that
+  would be a cross-tenant read grant landing before the grant layer. **014 owns the close.**
+- **`core.runs` is unwritable per tenant until 016** seeds the `RUN` row in
+  `core.ref_formats`, which is the standing condition of every ref'd table since 004.
+- **`core.rate` (007) is `numeric(6,5)`** while root `CLAUDE.md` prescribes `numeric(6,4)` for
+  rates. 013 uses the explicit types the rule names rather than the domain. Not 013's to settle.
 
 ---
 
