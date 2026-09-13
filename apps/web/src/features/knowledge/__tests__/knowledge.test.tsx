@@ -95,4 +95,31 @@ describe("M16-S05 · knowledge sources", () => {
 
     expect(await screen.findByText(/^Re-ingested · \d+ chunks, embedding /)).toBeInTheDocument();
   });
+  it("opens the add-source drawer and makes retrieval scope a decision, not a default", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add source" }));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("Compliance answers and rule extraction")).toBeInTheDocument();
+    expect(within(drawer).getByText("Client-facing generation")).toBeInTheDocument();
+    /* Scope is the control the retrieval policy describes, so the drawer says
+       what it buys rather than offering it as a tag. */
+    expect(within(drawer).getByText(/Scope is the control, not a tag/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/A new source is ingested unindexed/)).toBeInTheDocument();
+  });
+
+  it("ingests a source through createKnowledgeSource", async () => {
+    renderScreen(<KnowledgeSourcesScreen />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add source" }));
+
+    const drawer = await screen.findByRole("dialog");
+    await userEvent.type(
+      within(drawer).getByPlaceholderText("Circular 10/2026"),
+      "Circular 11/2026",
+    );
+    await userEvent.click(within(drawer).getByRole("button", { name: "Add source" }));
+
+    const table = await screen.findByRole("table", { name: "Knowledge sources" });
+    expect(await within(table).findByText("Circular 11/2026")).toBeInTheDocument();
+  });
 });

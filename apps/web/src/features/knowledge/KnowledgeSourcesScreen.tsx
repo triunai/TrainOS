@@ -25,6 +25,7 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
+import { AddSourceDrawer } from "./AddSourceDrawer";
 import { useCheckSource, useKnowledgeSources, useReingestSource } from "./api";
 
 /**
@@ -75,6 +76,7 @@ export function KnowledgeSourcesScreen() {
   const check = useCheckSource();
   const reingest = useReingestSource();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const rows = useMemo(() => sources.data?.data ?? [], [sources.data]);
 
@@ -244,7 +246,7 @@ export function KnowledgeSourcesScreen() {
             </SecondaryButton>
           </>
         }
-        primaryAction={<PrimaryButton>Add source</PrimaryButton>}
+        primaryAction={<PrimaryButton onClick={() => setAdding(true)}>Add source</PrimaryButton>}
         metrics={[
           { label: "Sources", value: rows.length },
           { label: "Chunks", value: chunks.toLocaleString("en-MY") },
@@ -315,7 +317,9 @@ export function KnowledgeSourcesScreen() {
               <EmptyState
                 title="No sources ingested"
                 description="Agents answer from the model alone until a source is added, which means they answer without citations."
-                action={<SecondaryButton>Add source</SecondaryButton>}
+                action={
+                  <SecondaryButton onClick={() => setAdding(true)}>Add source</SecondaryButton>
+                }
               />
             }
           />
@@ -354,6 +358,8 @@ export function KnowledgeSourcesScreen() {
           </p>
         </ContentCard>
       </div>
+
+      <AddSourceDrawer open={adding} onClose={() => setAdding(false)} />
     </div>
   );
 }
