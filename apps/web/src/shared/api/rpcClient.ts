@@ -632,7 +632,13 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   bulkDecide(input: BulkDecideInput): Promise<Result<ApprovalBulkDecideResponse>> {
     return this.call<ApprovalBulkDecideResponse>("bulk_decide_approvals", {
-      p_ids: input.ids,
+      /* 011:3407-3419 (062e5e2) — `p_items jsonb`, not `p_ids uuid[]`: a hash
+         per approval cannot travel in an array of ids. Each item is the same
+         diffHash the single decide path sends as `p_expected_diff_hash`. */
+      p_items: input.items.map((item) => ({
+        approvalId: item.approvalId,
+        expectedDiffHash: item.diffHash,
+      })),
       p_decision: input.decision,
       p_note: input.note ?? null,
       p_idempotency_key: input.idempotencyKey,

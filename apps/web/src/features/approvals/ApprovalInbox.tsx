@@ -272,7 +272,14 @@ export function ApprovalInbox() {
     setBulkBlockers(null);
     setBulkError(null);
     try {
-      await bulkDecide.mutateAsync({ ids: [...selected], decision: "APPROVE", note: null });
+      /* §7 `POST /v1/approvals/bulk-decide` — one `diffHash` per approval,
+         echoed off the same row the checkbox selected. `rowKey` is `row.ref`,
+         so the selection is resolved back to `{approvalId, diffHash}` through
+         `rows` rather than carrying the hash in `selected` itself. */
+      const items = rows
+        .filter((row) => selected.has(row.ref))
+        .map((row) => ({ approvalId: row.id, diffHash: row.diffHash }));
+      await bulkDecide.mutateAsync({ items, decision: "APPROVE", note: null });
       setSelected(new Set());
     } catch (thrown) {
       /* The refusal IS the screen, which is why this write is awaited rather

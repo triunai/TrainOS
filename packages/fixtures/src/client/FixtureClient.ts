@@ -1076,27 +1076,62 @@ export class FixtureClient {
     });
   }
 
-  /** §7 `409` if any id carries a monetary value, i.e. `bulkApprovable: false`. */
+  /**
+   * §7 `409` if any id carries a monetary value, i.e. `bulkApprovable: false`.
+   *
+   * 011:3407-3419 (062e5e2) mirrored here: `body.items` carries one
+   * `expectedDiffHash` per approval, because a bulk APPROVE has to enforce the
+   * same optimistic-concurrency guard `decideApproval` enforces on the single
+   * path — a hash per approval cannot travel in an array of ids. Both refusals
+   * below happen BEFORE any item is applied, in item order matching the SQL's
+   * own pre-checks: a partial bulk decide is worse than a refused one, because
+   * the approver cannot tell which half went through.
+   */
   async bulkDecideApprovals(
     body: ApprovalBulkDecideRequest,
     options: RequestOptions = {},
   ): Promise<ApprovalBulkDecideResponse> {
     return this.#write(options, body, 200, () => {
-      const rows = body.ids.map((id) => {
-        const approval = byIdOrRef(this.#store.approvals, id);
-        if (!approval) throw notFound("Approval", id);
-        return approval;
+      /* 011:3455-3479 order, mirrored exactly: missing-hash before not-found,
+         not-found before bulk-approvable, bulk-approvable before
+         DIFF_CHANGED — so a batch mixing failure modes refuses on the same
+         one, on both clients, every time. */
+      if (body.decision === "APPROVE") {
+        const missingFor = body.items
+          .filter((item) => !item.diffHash || item.diffHash.trim() === "")
+          .map((item) => item.approvalId);
+        if (missingFor.length > 0) {
+          throw validationFailed(
+            "every APPROVE item must carry the diff hash the approver was shown",
+            { fields: [{ field: "expectedDiffHash", reason: "REQUIRED" }], missingFor },
+          );
+        }
+      }
+      const rows = body.items.map((item) => {
+        const approval = byIdOrRef(this.#store.approvals, item.approvalId);
+        if (!approval) throw notFound("Approval", item.approvalId);
+        return { item, approval };
       });
-      const blocked = rows.filter((approval) => !approval.bulkApprovable);
+      const blocked = rows.filter(({ approval }) => !approval.bulkApprovable);
       if (blocked.length > 0) {
         throw new ContractError(
           "AGENT_PAUSED",
           "One or more selected approvals carry a monetary value and must be decided individually.",
-          { blockers: blocked.map((approval) => approval.ref) },
+          { blockers: blocked.map(({ approval }) => approval.ref) },
         );
       }
+      if (body.decision === "APPROVE") {
+        const stale = rows.find(({ item, approval }) => item.diffHash !== approval.diffHash);
+        if (stale) {
+          throw new ContractError("DIFF_CHANGED", "the rendered diff is stale", {
+            diffChanged: true,
+            diff: stale.approval.diff,
+            diffHash: stale.approval.diffHash,
+          });
+        }
+      }
       const decidedBy = this.#actor();
-      const results = rows.map((approval) => {
+      const results = rows.map(({ approval }) => {
         const effects: Effect[] = body.decision === "APPROVE" ? approval.diff.map(toEffect) : [];
         approval.status =
           body.decision === "APPROVE"

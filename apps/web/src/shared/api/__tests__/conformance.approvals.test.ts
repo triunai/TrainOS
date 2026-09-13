@@ -49,7 +49,10 @@ const FUNCTIONS: RpcHandlers = {
   bulk_decide_approvals: (args, oracle) =>
     oracle.bulkDecideApprovals(
       {
-        ids: args.p_ids as string[],
+        items: (args.p_items as { approvalId: string; expectedDiffHash: string }[]).map((item) => ({
+          approvalId: item.approvalId,
+          diffHash: item.expectedDiffHash,
+        })),
         decision: args.p_decision,
         note: args.p_note,
       } as ApprovalBulkDecideRequest,
@@ -133,7 +136,10 @@ describe("M02 · the two clients answer the approval screens the same", () => {
    * to arrive as a domain refusal with its details, not as a transport failure.
    */
   it("a bulk decision over a monetary approval refuses identically", async () => {
-    const body: ApprovalBulkDecideRequest = { ids: [APPROVAL_AURORA], decision: "APPROVE" };
+    const body: ApprovalBulkDecideRequest = {
+      items: [{ approvalId: APPROVAL_AURORA, diffHash: "diff_0771_v1" }],
+      decision: "APPROVE",
+    };
     const fromFixtures = await fixtures
       .bulkDecideApprovals(body, { idempotencyKey: "bulk:test" })
       .catch((error: unknown) => error);
@@ -148,6 +154,71 @@ describe("M02 · the two clients answer the approval screens the same", () => {
       return;
     }
     expect(fromRpc).toEqual(fromFixtures);
+  });
+
+  /**
+   * 011:3407-3479 (062e5e2): a bulk APPROVE carries one `diffHash` per item,
+   * and both clients must refuse a hashless or stale item identically, before
+   * admitting a fresh one. `APV-2026-0773` is bulk-approvable (unlike
+   * `APPROVAL_AURORA` above, which is money-carrying and refuses for a
+   * different reason before either check runs) — see
+   * `packages/fixtures/src/data/approvals.ts`, `diffHash: "diff_0773_v1"`.
+   */
+  it("bulk decide refuses a hashless or stale item identically, and admits a fresh one", async () => {
+    const RULE_CHANGE = "APV-2026-0773";
+
+    const hashless = await fixtures
+      .bulkDecideApprovals(
+        { items: [{ approvalId: RULE_CHANGE, diffHash: "" }], decision: "APPROVE" },
+        { idempotencyKey: "bulk-decide:hashless:fixtures" },
+      )
+      .catch((error: unknown) => error);
+    const hashlessRpc = await rpc
+      .bulkDecideApprovals(
+        { items: [{ approvalId: RULE_CHANGE, diffHash: "" }], decision: "APPROVE" },
+        { idempotencyKey: "bulk-decide:hashless:rpc" },
+      )
+      .catch((error: unknown) => error);
+    expect(isContractError(hashless)).toBe(true);
+    expect(isContractError(hashlessRpc)).toBe(true);
+    expect(isContractError(hashlessRpc) && hashlessRpc.code).toBe("VALIDATION_FAILED");
+    expect(isContractError(hashlessRpc) && hashlessRpc.code).toBe(
+      isContractError(hashless) && hashless.code,
+    );
+
+    const stale = await fixtures
+      .bulkDecideApprovals(
+        { items: [{ approvalId: RULE_CHANGE, diffHash: "stale-hash" }], decision: "APPROVE" },
+        { idempotencyKey: "bulk-decide:stale:fixtures" },
+      )
+      .catch((error: unknown) => error);
+    const staleRpc = await rpc
+      .bulkDecideApprovals(
+        { items: [{ approvalId: RULE_CHANGE, diffHash: "stale-hash" }], decision: "APPROVE" },
+        { idempotencyKey: "bulk-decide:stale:rpc" },
+      )
+      .catch((error: unknown) => error);
+    expect(isContractError(stale)).toBe(true);
+    expect(isContractError(staleRpc)).toBe(true);
+    expect(isContractError(staleRpc) && staleRpc.code).toBe("DIFF_CHANGED");
+    expect(isContractError(staleRpc) && staleRpc.code).toBe(isContractError(stale) && stale.code);
+    expect(isContractError(staleRpc) && staleRpc.details).toEqual(
+      isContractError(stale) && stale.details,
+    );
+
+    /* Neither refusal above applied anything, so the same fresh hash still
+       clears on both — the negative cases are only meaningful next to this. */
+    const fresh = {
+      items: [{ approvalId: RULE_CHANGE, diffHash: "diff_0773_v1" }],
+      decision: "APPROVE" as const,
+    };
+    const freshFromFixtures = await fixtures.bulkDecideApprovals(fresh, {
+      idempotencyKey: "bulk-decide:fresh:fixtures",
+    });
+    const freshFromRpc = await rpc.bulkDecideApprovals(fresh, {
+      idempotencyKey: "bulk-decide:fresh:rpc",
+    });
+    expect(freshFromRpc).toEqual(freshFromFixtures);
   });
 
   /**

@@ -165,7 +165,11 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
           ...body,
           idempotencyKey: key(
             options,
-            derivedIdempotencyKey("approval-bulk-decide", body.ids.join(","), body),
+            derivedIdempotencyKey(
+              "approval-bulk-decide",
+              body.items.map((item) => item.approvalId).join(","),
+              body,
+            ),
           ),
         }),
       ),
