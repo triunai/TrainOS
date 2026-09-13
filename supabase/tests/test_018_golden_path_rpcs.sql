@@ -1764,12 +1764,12 @@ BEGIN
   IF (v #> '{data,section,needsReview}') <> 'true'::jsonb THEN
     RAISE EXCEPTION 'T26o: the section was not flagged as awaiting the worker';
   END IF;
-  -- A SECOND press produces a NEW run, not a replay of the rejected one.
-  IF (core.regenerate_proposal_section(v_prop, 1) #>> '{data,runId}') = v_run THEN
-    RAISE EXCEPTION 'T26p: regenerate replayed the run the author just rejected';
-  END IF;
+  -- T26p WAS "two consecutive calls return different runIds", which the inert
+  -- version of this RPC satisfied perfectly — it wrote a fresh orphan run every
+  -- time. The question that actually distinguishes enqueued work from an inert
+  -- run is asked in T33, along with the replay check, which moved there with it.
   RAISE NOTICE 'T26 PASS: add uses max(n)+1 and writes no provenance, replay adds nothing, '
-               'empty title ignored, regenerate enqueues a real run and never replays.';
+               'empty title ignored, regenerate returns a real run (T33 pins the job).';
 END
 $t26$;
 
@@ -2252,6 +2252,126 @@ BEGIN
                'now refuse it with UNSUPPORTED_VIEW_OBJECT — signature unchanged.';
 END
 $t32$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T33 · REGENERATE ENQUEUES REAL WORK, OR REFUSES ════════'; END $banner$;
+DO $t33$
+DECLARE
+  v        jsonb;
+  v_tenant uuid := '11111111-1111-4111-8111-111111111111';
+  v_prop   text;
+  v_run    text;
+  v_run2   text;
+  v_job    app.outbox%ROWTYPE;
+  v_runs   integer;
+  v_jobs   integer;
+  v_detail text;
+BEGIN
+  SELECT ref INTO v_prop FROM core.proposals
+   WHERE tenant_id = v_tenant ORDER BY created_at LIMIT 1;
+  IF v_prop IS NULL THEN RAISE EXCEPTION 'T33-setup: no proposal fixture'; END IF;
+
+  SELECT pg_catalog.count(*)::integer INTO v_jobs FROM app.outbox WHERE tenant_id = v_tenant;
+
+  v := core.regenerate_proposal_section(v_prop, 1);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T33a: %', v; END IF;
+  v_run := v #>> '{data,runId}';
+
+  -- ── THE BLOCKER. The comment said "ENQUEUE the work … and hand back the run
+  -- the worker will fill". The code inserted a RUNNING run, flipped
+  -- needs_review, and returned 200. No perform_action, no emit_event, no
+  -- enqueue_effect_jobs, no outbox row, and no AFTER INSERT trigger on
+  -- core.runs to make one. Nothing in the product ever regenerated the
+  -- section; five presses left five orphan RUNNING runs.
+  --
+  -- The old pin (T26p) asserted only that two consecutive calls return
+  -- DIFFERENT runIds, which the inert version satisfied perfectly. It is
+  -- replaced here by the question that distinguishes the two: IS THERE A JOB?
+  SELECT pg_catalog.count(*)::integer INTO v_jobs
+    FROM app.outbox WHERE tenant_id = v_tenant AND run_id = v_run;
+  IF v_jobs < 1 THEN
+    RAISE EXCEPTION 'T33b: regenerate wrote run % and enqueued NOTHING — the run '
+                    'will sit at RUNNING forever and the section will never be '
+                    'regenerated', v_run;
+  END IF;
+
+  SELECT job.* INTO v_job FROM app.outbox AS job
+   WHERE job.tenant_id = v_tenant AND job.run_id = v_run LIMIT 1;
+  IF v_job.state <> 'QUEUED' THEN
+    RAISE EXCEPTION 'T33c: the job is % rather than QUEUED', v_job.state;
+  END IF;
+  IF v_job.job_type <> 'AI_DRAFT_PROPOSAL_SECTION' THEN
+    RAISE EXCEPTION 'T33d: the job carries job_type %', v_job.job_type;
+  END IF;
+  IF v_job.event_id IS NULL THEN
+    RAISE EXCEPTION 'T33e: the job has no event — it did not come through app.emit_event';
+  END IF;
+  IF (v_job.payload ->> 'sectionN')::integer <> 1
+     OR v_job.payload ->> 'proposalRef' <> v_prop THEN
+    RAISE EXCEPTION 'T33f: the worker cannot tell WHICH section to redraft: %', v_job.payload;
+  END IF;
+  IF v_job.correlation_id <> (SELECT correlation_id FROM core.runs WHERE id = v_run::uuid) THEN
+    RAISE EXCEPTION 'T33g: the job and the run do not share a correlation id';
+  END IF;
+
+  -- A WORKER CAN ACTUALLY CLAIM IT. A job nothing can claim is the same
+  -- non-event as no job at all.
+  IF NOT EXISTS (SELECT 1 FROM app.claim_jobs('t33-worker', v_tenant,
+                                              ARRAY['AI_DRAFT_PROPOSAL_SECTION'], 1)) THEN
+    RAISE EXCEPTION 'T33h: app.claim_jobs will not serve the job';
+  END IF;
+
+  -- The event is in the audit spine too, keyed to the run.
+  IF NOT EXISTS (SELECT 1 FROM core.events
+                  WHERE tenant_id = v_tenant AND id = v_job.event_id
+                    AND type = 'PROPOSAL_SECTION_REGENERATE_REQUESTED'
+                    AND run_id = v_run) THEN
+    RAISE EXCEPTION 'T33i: no event row for the regeneration';
+  END IF;
+
+  -- A SECOND PRESS IS A NEW RUN AND A NEW JOB, not a replay of the draft the
+  -- author just rejected.
+  v_run2 := core.regenerate_proposal_section(v_prop, 1) #>> '{data,runId}';
+  IF v_run2 = v_run THEN
+    RAISE EXCEPTION 'T33j: regenerate replayed the run the author just rejected';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM app.outbox WHERE tenant_id = v_tenant AND run_id = v_run2) THEN
+    RAISE EXCEPTION 'T33k: the second press enqueued nothing';
+  END IF;
+
+  -- ── AND IT REFUSES RATHER THAN RETURNING 200 ON NOTHING ──────────────────
+  -- If the routing row is gone, app.emit_event enqueues no job and says
+  -- nothing about it. That is the exact shape of the defect this slice fixed,
+  -- so the function checks and RAISEs — and because it RAISEs rather than
+  -- returning app.err, the run and the needs_review flag roll back with it and
+  -- no orphan RUNNING run is left behind.
+  SELECT pg_catalog.count(*)::integer INTO v_runs FROM core.runs WHERE tenant_id = v_tenant;
+  BEGIN
+    UPDATE app.event_subscriptions SET enabled = false
+     WHERE event_type = 'PROPOSAL_SECTION_REGENERATE_REQUESTED';
+    BEGIN
+      PERFORM core.regenerate_proposal_section(v_prop, 1);
+      RAISE EXCEPTION 'T33l: regenerate returned success with no routing row — it is '
+                      'back to writing runs nothing will ever complete';
+    EXCEPTION WHEN sqlstate 'TRNOS' THEN
+      GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+      IF (v_detail::jsonb ->> 'reason') <> 'REGENERATE_NOT_ROUTED' THEN
+        RAISE EXCEPTION 'T33m: wrong refusal: %', v_detail;
+      END IF;
+    END;
+  END;
+  UPDATE app.event_subscriptions SET enabled = true
+   WHERE event_type = 'PROPOSAL_SECTION_REGENERATE_REQUESTED';
+
+  IF (SELECT pg_catalog.count(*)::integer FROM core.runs WHERE tenant_id = v_tenant) <> v_runs THEN
+    RAISE EXCEPTION 'T33n: the refused call left an orphan RUNNING run behind — '
+                    'app.err would COMMIT here, which is why this function raises';
+  END IF;
+
+  RAISE NOTICE 'T33 PASS: regenerate emits an event, enqueues a claimable '
+               'AI_DRAFT_PROPOSAL_SECTION job carrying the section, shares the run''s '
+               'correlation id, and refuses (rolling the run back) when nothing routes it.';
+END
+$t33$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;

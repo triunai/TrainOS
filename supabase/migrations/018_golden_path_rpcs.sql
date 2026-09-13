@@ -74,8 +74,15 @@
 --
 --   * READ functions refuse with `app.err`. They have written nothing, so
 --     there is nothing to roll back, and the envelope is the better wire shape.
---   * WRITE functions (`create_proposal`, `put_quotation`) refuse with RAISE
---     TRNOS, so a refusal never leaves a partial write behind.
+--   * WRITE functions refuse with RAISE TRNOS, so a refusal never leaves a
+--     partial write behind. SIX FUNCTIONS WRITE, not the two this note used to
+--     name: `create_proposal`, `put_quotation`, `patch_enquiry_extraction`,
+--     `add_proposal_section`, `put_proposal_section` and
+--     `regenerate_proposal_section`. The last of those used `app.err` on all
+--     four of its refusals; its refusals happened to precede its first write,
+--     which is exactly the property this rule exists so that nobody has to
+--     re-verify by hand for each new branch. It is on RAISE with the other
+--     five now, and it needs to be: it enqueues a job.
 --   * The three 011 wrappers pass 011's own RAISE straight through.
 --
 -- ── THE 014/018 GRANT NOTE ─────────────────────────────────────────────────
@@ -4102,7 +4109,26 @@ DECLARE
   v_proposal core.proposals%ROWTYPE;
   v_section  core.proposal_sections%ROWTYPE;
   v_run      core.runs%ROWTYPE;
+  v_event    uuid;
+  v_actor    record;
+  v_profile_name text;
+  v_jobs     integer;
 BEGIN
+  SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
+  SELECT profile.display_name INTO v_profile_name
+    FROM public.user_profiles AS profile
+   WHERE profile.tenant_id = v_tenant
+     AND profile.user_id::text = v_actor.actor_id;
+
+  -- THIS IS A WRITE FUNCTION, SO IT REFUSES WITH `RAISE ... TRNOS`, NOT
+  -- `app.err`. `app.err` COMMITS. Before this change every refusal here
+  -- returned an `app.err` envelope, and the header's own rule (§"HOW A REFUSAL
+  -- TRAVELS") puts write functions on RAISE precisely so that nobody has to
+  -- re-verify by hand, for each new branch, that no write precedes it. That
+  -- verification is now load-bearing rather than incidental: this function
+  -- enqueues a job, and a refusal after the enqueue that COMMITTED would leave
+  -- a worker holding work for a request the server said no to.
+  --
   -- NO IDEMPOTENCY KEY, DELIBERATELY. A second press of "Regenerate" must
   -- produce a NEW draft, not replay the one the author just rejected. The
   -- client sends no key for this endpoint for exactly that reason.
@@ -4110,7 +4136,10 @@ BEGIN
    WHERE proposal.tenant_id = v_tenant
      AND (proposal.id::text = p_id OR proposal.ref = p_id);
   IF NOT FOUND THEN
-    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('id', p_id));
+    RAISE EXCEPTION 'proposal not found'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+                       'code','NOT_FOUND', 'id', p_id)::text;
   END IF;
 
   SELECT section.* INTO v_section FROM core.proposal_sections AS section
@@ -4118,7 +4147,10 @@ BEGIN
      AND section.proposal_id = v_proposal.id
      AND section.n = p_n::smallint;
   IF NOT FOUND THEN
-    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('id', p_id, 'n', p_n));
+    RAISE EXCEPTION 'proposal section not found'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+                       'code','NOT_FOUND', 'id', p_id, 'n', p_n)::text;
   END IF;
 
   -- THE DRAFTING AGENT MUST BE REGISTERED. `core.runs` FKs
@@ -4128,8 +4160,11 @@ BEGIN
   -- is said as one.
   IF NOT EXISTS (SELECT 1 FROM core.agents AS agent
                   WHERE agent.tenant_id = v_tenant AND agent.agent_id = 'agent_proposal') THEN
-    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
-      'reason','NO_DRAFTING_AGENT', 'agentId','agent_proposal'));
+    RAISE EXCEPTION 'no drafting agent registered'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+                       'code','VALIDATION_FAILED',
+                       'reason','NO_DRAFTING_AGENT', 'agentId','agent_proposal')::text;
   END IF;
 
   -- An agent that is paused or killed must not be handed work. 013 owns both
@@ -4138,15 +4173,40 @@ BEGIN
               WHERE agent.tenant_id = v_tenant AND agent.agent_id = 'agent_proposal'
                 AND (agent.kill_switch OR agent.paused_at IS NOT NULL
                      OR agent.status <> 'ACTIVE')) THEN
-    RETURN app.err('AGENT_PAUSED', pg_catalog.jsonb_build_object('agentId','agent_proposal'));
+    RAISE EXCEPTION 'drafting agent is paused'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+                       'code','AGENT_PAUSED', 'agentId','agent_proposal')::text;
   END IF;
 
   -- THIS RPC DOES NOT CALL A MODEL AND MUST NOT. Ruling R-A puts every LLM call
   -- behind the worker, ruling R-B forbids `pg_net`, and a generation inside a
   -- request would blow the 10s statement timeout under load. What it does is
-  -- ENQUEUE the work through 011's own envelope and hand back the run the
-  -- worker will fill — the same split `core.get_tna_recommendations` relies on
-  -- for reading worker-produced rows.
+  -- ENQUEUE the work and hand back the run the worker will fill — the same
+  -- split `core.get_tna_recommendations` relies on for reading worker-produced
+  -- rows.
+  --
+  -- ⚠ THIS COMMENT USED TO SAY THAT AND THE CODE DID NOT DO IT. The function
+  -- inserted a `RUNNING` run, flipped `needs_review`, and returned 200. No
+  -- `app.perform_action`, no `app.emit_event`, no `app.enqueue_effect_jobs`, no
+  -- outbox row, and no AFTER INSERT trigger on `core.runs` to make one. Nothing
+  -- ever completed the run. Press Regenerate five times and the tenant held
+  -- five orphan RUNNING runs and five unchanged sections. The enqueue below is
+  -- the missing half; T33 asserts a job row exists after the call.
+  --
+  -- WHY `app.emit_event` AND NOT `app.perform_action`. 011's envelope gates
+  -- ACTIONS against `app.action_types` and an autonomy policy, and its effect
+  -- planner (`app.plan_effects`) emits effects only for the action types it
+  -- knows. There is no action type for regenerating a proposal section and 018
+  -- may not add one to 011's catalogue or teach 011's planner a new branch, so
+  -- `perform_action` would refuse and `enqueue_effect_jobs` would enqueue zero.
+  -- 012's event path is the one that fits and the one 012 designed for this:
+  -- `app.emit_event` writes the event, its subject index rows and ONE JOB PER
+  -- ENABLED SUBSCRIPTION in the caller's transaction, carries `p_run_id`
+  -- (`app.outbox.run_id` and `outbox_run_idx` exist for exactly this), and
+  -- 012's own comment on `app.event_subscriptions` says routing "is data, not
+  -- code, so adding a side effect to an event is an insert rather than a
+  -- deploy". 018 makes that insert in §10d rather than editing 012.
   --
   -- `runId` is REQUIRED on the response, so the run row is created here and the
   -- worker attaches to it. A response with an invented run id would point the
@@ -4175,6 +4235,57 @@ BEGIN
 
   SELECT section.* INTO v_section FROM core.proposal_sections AS section
    WHERE section.tenant_id = v_tenant AND section.id = v_section.id;
+
+  -- THE ENQUEUE. Same transaction as the run and the flag: if this rolls back,
+  -- neither the event nor its jobs exist, so there is no window in which a
+  -- worker is holding work for a regeneration that did not happen.
+  v_event := app.emit_event(
+    p_tenant_id      => v_tenant,
+    p_type           => 'PROPOSAL_SECTION_REGENERATE_REQUESTED',
+    -- UPPER_SNAKE: `core.events.aggregate_type` CHECKs `^[A-Z][A-Z0-9_]*$`
+    -- (012:490), and `app.aggregate_type_for` writes the same spelling.
+    p_aggregate_type => 'PROPOSAL',
+    p_aggregate_id   => v_proposal.id,
+    p_aggregate_ref  => v_proposal.ref,
+    p_payload        => pg_catalog.jsonb_build_object(
+                          'proposalId', v_proposal.id::text,
+                          'proposalRef', v_proposal.ref,
+                          'sectionN',   p_n,
+                          'sectionId',  v_section.id::text,
+                          'agentId',    'agent_proposal'),
+    p_summary        => pg_catalog.format('Section %s of %s queued for regeneration',
+                                          p_n, v_proposal.ref),
+    -- `app.is_valid_actor` (012:328) requires the `name` KEY to be PRESENT and
+    -- string-or-null — absent and null are different bugs and only one is a
+    -- shape error — so this is built explicitly rather than through
+    -- `app._actor`, which OMITS the key when the name is unknown.
+    p_actor          => pg_catalog.jsonb_build_object(
+                          'kind', COALESCE(v_actor.actor_kind, 'SYSTEM'),
+                          'id',   COALESCE(v_actor.actor_id, 'system'),
+                          'name', pg_catalog.to_jsonb(v_profile_name)),
+    p_correlation_id => v_run.correlation_id,
+    p_run_id         => v_run.id::text,
+    p_related        => pg_catalog.jsonb_build_array(
+                          pg_catalog.jsonb_build_object(
+                            'type','PROPOSAL_SECTION', 'id', v_section.id)));
+
+  -- AND THE JOB MUST ACTUALLY BE THERE. `app.emit_event` enqueues one job per
+  -- ENABLED subscription and silently enqueues none when there are none — a
+  -- disabled or deleted routing row would put this function straight back into
+  -- the state it was just fixed out of, with a green 200 and nothing queued.
+  -- Refusing is the honest answer: the run and the `needs_review` flag roll
+  -- back with it, so a tenant never accumulates orphan RUNNING runs.
+  SELECT pg_catalog.count(*)::integer INTO v_jobs
+    FROM app.outbox AS job
+   WHERE job.tenant_id = v_tenant AND job.event_id = v_event;
+  IF v_jobs < 1 THEN
+    RAISE EXCEPTION 'no job was enqueued for run %', v_run.id
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+                       'code','SERVER_ERROR',
+                       'reason','REGENERATE_NOT_ROUTED',
+                       'eventType','PROPOSAL_SECTION_REGENERATE_REQUESTED')::text;
+  END IF;
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'section',
@@ -4710,6 +4821,29 @@ BEGIN
   RAISE NOTICE '018 backfill: % pipeline and step row(s) seeded across existing tenants.', v_total;
 END
 $backfill$;
+
+-- ═══ 10d · One routing row, so the regenerate enqueue has somewhere to go ══
+--
+-- `app.event_subscriptions` (012:672) is 012's routing table and 012 SEEDS NO
+-- ROWS on purpose: "seeding a routing table before the events it routes are
+-- agreed is how a job type nobody implemented starts being enqueued." That
+-- reasoning is what makes this row legitimate rather than an exception to it —
+-- the event is emitted by a function in THIS file, and the job type is claimed
+-- by the drafting worker `apps/worker` already runs for `core.runs`. Routing is
+-- data (012's own words), so this is an INSERT, not an edit to 012.
+--
+-- `tenant_id IS NULL` means every tenant. `ON CONFLICT DO NOTHING` against
+-- `event_subscriptions_key`, which is UNIQUE NULLS NOT DISTINCT precisely so a
+-- second global row for the same pair cannot be accepted and enqueue the job
+-- twice.
+INSERT INTO app.event_subscriptions (event_type, job_type, tenant_id, priority, delay, note)
+VALUES ('PROPOSAL_SECTION_REGENERATE_REQUESTED', 'AI_DRAFT_PROPOSAL_SECTION',
+        NULL, 5, interval '0',
+        'core.regenerate_proposal_section emits the event and app.emit_event '
+        'turns this row into the job. Without it that RPC refuses with '
+        'REGENERATE_NOT_ROUTED rather than returning 200 on nothing — which is '
+        'what it did before this row existed.')
+ON CONFLICT ON CONSTRAINT event_subscriptions_key DO NOTHING;
 
 -- ═══ 11 · Grants ═══════════════════════════════════════════════════════════
 --
