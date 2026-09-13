@@ -15,6 +15,241 @@
 
 ---
 
+## 2026-09-13 23:9x — fix-014 closes the freeze-window fixes and the 019 fixture debt at 062e5e2/2edab79; PR #28 and #29 find T1 genuinely unfixed and a live CLIENT-role regression
+
+**`fix-014` pushed `062e5e2` to `origin/cloud/migrations`, then a third
+commit `2edab79`** — confirmed present, not yet a PR. Closes the two
+fixes the freeze was lifted for (the bulk-decide bypass and the
+`p_migration` validation gap, both from PR #26), plus the three items
+this journal already recorded as owed from the 019 split.
+
+**Bulk-decide bypass closed, confirmed exactly against the diff.**
+`core.bulk_decide_approvals` — granted to `authenticated` exactly like
+the single-decide path it sits beside — took no hash argument at all,
+and `app.bulk_decide` forwarded every item as `app.decide_approval(id,
+decision, note, NULL, NULL)`, the hash hardcoded NULL. Confirmed the
+014 comment that previously claimed a guard "both sides enforce...
+cannot be re-disabled by one of them changing" is now corrected in
+place to state plainly that the claim was false, rather than quietly
+deleted — a genuine improvement in honesty over simply removing the
+evidence of the earlier mistake. `p_ids uuid[]` is now `p_items jsonb`,
+an array of `{approvalId, expectedDiffHash}`, confirmed necessary
+because a hash per approval cannot travel in a bare array of ids.
+APPROVE items with a missing or blank hash are refused **before any
+item in the batch is applied**, confirmed as deliberate: a partial bulk
+decide is worse than a refused one, because the approver cannot tell
+which half of the batch went through. Old signatures confirmed dropped
+explicitly on both `app.bulk_decide` and `core.bulk_decide_approvals`,
+in both rollbacks.
+
+**T4/F4's SQL half confirmed closed in the same commit**, since the
+response shape had to change anyway to carry per-item hashes: the
+response is now `{results:[{id,ref,status,effects}]}` rather than
+`{data:[...],count}`. Confirmed this closes two real defects at once —
+the elements previously carried no `id` or `ref` at all, so the inbox
+could not tell which of N approvals got which outcome; and `count`
+being a second top-level key meant `app.ok`'s envelope no longer
+auto-unwrapped on the client, leaving `response.results` `undefined`
+behind a blind cast. New pin T20 confirmed to cover a hashless item
+refused, a repriced approval refused as `DIFF_CHANGED` specifically
+through the bulk door, an unchanged one admitted, and the response
+shape itself.
+
+**`p_migration` validation gap closed, confirmed exactly, and the fix
+reaches further than a simple non-null check.** `NULL` and empty string
+previously produced a policy with no owner stamp the rollback's manifest
+loop could never find. **Worse, and confirmed as the part a plain DROP
+could never have fixed**: there was no three-argument overload to
+resolve to at all, so the old spelling the catalog still taught —
+`app.apply_tenant_policies('core','run_node_io','run:read')` — silently
+bound to the four-argument function with `p_migration='run:read'` and
+`p_permission=NULL`, confirmed reproduced live: an UNGATED policy
+stamped `migration:run:read`. The slot is now typed by its content,
+`^[0-9]{3}$`, confirmed via the diff to refuse `'run:read'`, `NULL`,
+`''`, `'14'`, `'0014'`, and `'migration:014'` alike — and confirmed to
+also cover a NULL stamp on `app.ungate_tenant_policy`, on the stated
+reasoning that removing a gate is the act most worth attributing to
+someone. T16 confirmed to pin every one of these refusal cases.
+
+**Negative result for the log, confirmed word-for-word from the commit
+body, worth preserving exactly**: "dropping an old overload does
+nothing when the old spelling already resolves to the new function by
+defaulted arguments — type the slot by content." A DROP only removes a
+signature that exists; when the _old_ calling convention is simply
+absorbed by the _new_ function's defaulted arguments, there is nothing
+to drop, and the only real fix is validating what actually lands in the
+slot.
+
+**`2edab79` closes the three items this journal already recorded as
+owed from the 019 split, confirmed exactly:**
+
+- `test_014`'s T1c is now scoped to 014-time objects via the existing
+  migration-comment manifest already in place: a table counts only if
+  its policies carry a `migration:0NN` stamp of 017 or earlier; views
+  carry no policy and therefore no stamp, so the four granted views are
+  matched **by name** instead, confirmed to be the same four the
+  assertion's own message already enumerated. A fifth granted view
+  would now be caught as a deliberate edit here rather than silent
+  drift — confirmed as the property worth keeping. 018's T38 confirmed
+  to assert its own three-view delta separately.
+- `test_017` line 87's fixture pipeline flipped to `is_default = false`,
+  confirmed passing now that 019 seeds the real per-tenant default —
+  confirmed nothing in the fixture depended on it being the default in
+  the first place, only on having a `pipeline_id` to reference.
+- **`test_016`'s T7 confirmed KEPT, not weakened — and the commit states
+  exactly why, worth preserving verbatim**: "I own 016's intent here and
+  the clause STAYS... The pin was wrong, not the rollback." `v_seeded`
+  is recomputed to ask the same question 016's own rollback
+  post-condition already asks — of the rows 016 seeded, how many remain
+  unallocated — so pin, rollback, and post-condition now agree by
+  construction rather than by arithmetic that happened to line up
+  before 019's real `PIP` ref allocation exposed the gap between two
+  different populations the pin and the rollback were each counting.
+- **A small, honest correction folded in, confirmed in the diff**: T1's
+  own success `NOTICE` said "118 SELECT grants" against an assertion
+  twenty lines above requiring 121 — a stale number in a success message
+  describing a database two migration packs old. Both counts in the
+  notice are now interpolated, so the notice can never drift from the
+  assertion it's supposed to describe again.
+
+**Validation counts, confirmed unchanged from the prior push**: 18/18
+apply, 17/17 pins pass plus 2 apply-context pins that correctly refuse,
+`lint:sql` 53/53, `check:grants` 0, `check:rpc` 4 pass/0 broken.
+
+---
+
+**Separately, PR #28 confirmed MERGED at `06176b7`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-011-013-rereview.md` — an
+independent re-review of the 011-013 fix commits at `0d9e00c`, with an
+explicit look forward at `eff8084` and `a20e6d8`. Confirmed this review
+predates and is partially superseded by the freeze-window fixes recorded
+above, none of which had landed when this review ran.
+
+**Confirmed clean, four items**: `T2/O2` (the dead effect pipeline),
+`S1(a)` (the reveal-audit short-circuit), `S3` (the `service_role`
+revoke, syntax-verified correct), `T8` (the GUC residue) are all
+confirmed fixed cleanly by this independent pass, cross-checking rather
+than merely repeating the earlier fix commits' own claims.
+
+**T1 confirmed NOT actually fixed, live-reproduced rather than reasoned
+about — the standout finding of this review.** `eff8084`'s own commit
+claimed T1 fixed under that exact name, but the reviewer confirmed its
+diff touches only `test_012`'s pin file, never the migration itself,
+and the new pin asserts only that `app.action_effects` reaches
+`SETTLED` — nothing whatsoever about `core.action_requests.status`.
+Reproduced directly: after a full claim→complete cycle on the replayed
+job, the effect genuinely reaches `SETTLED` (the invoice really was
+pushed on replay) but the parent `core.action_requests` row **stays
+`PARTIALLY_FAILED` forever** — confirmed as the exact original incident
+the finding described in the first place ("TrainOS says it failed,
+forever"). **Confirmed quoted directly, worth keeping verbatim as
+guidance for whoever picks this up next**: "before closing T1 or T5 as
+resolved anywhere, re-run this report's exact §3 live reproduction...
+against whatever commit is actually about to merge — a passing
+`test_012` T15 will not tell you whether it is fixed."
+
+**S1(b) confirmed only partial.** The frozen-column defect is genuinely
+fixed, but the new pairing trigger only fires when `key_fingerprint`
+itself changes — confirmed reproduced live that `key_ref` can be
+changed alone, with no fingerprint change, firing no trigger and
+writing no audit row at all. The practical exploit window is confirmed
+bounded by the unrelated 24-hour reveal ceiling, not immediate — stated
+precisely rather than overstated in either direction.
+
+**REGRESSION confirmed found independently by both review lenses, not
+a single reviewer's idiosyncratic read — a genuine convergence, not a
+restatement.** `CLIENT` is confirmed a valid role in `app.app_role`
+with **zero** rows anywhere in `app.role_permissions`, so the new
+HIGH-1/T3 permission check this same fix pass added now unconditionally
+refuses every CLIENT-initiated action — confirmed live via direct
+catalog query. Whether this is a genuine regression or an undocumented
+product decision is confirmed stated as an open question needing an
+answer before merge, not silently resolved either way by the review.
+
+**S5 confirmed only partially fixed, with the commit's own count wrong.**
+Only 11 sites confirmed converted to `TRNOS`, not the claimed 13,
+confirmed by direct grep against the diff and the resulting file.
+**`REVEAL_AUDIT_MISMATCH` confirmed reachable by an authenticated
+caller**, resolving a genuine disagreement between the two independent
+reviewers (the security pass had concluded neither surviving raise was
+reachable): the orchestrator read `public.ai_provider_key_reveal`'s body
+directly and confirmed it is `SECURITY DEFINER`, performs the exact
+`UPDATE` that fires the trigger itself, with no exception handler around
+it — the file's own "no RPC path can reach it" justification is
+confirmed false specifically for this raise.
+
+**T5 confirmed genuinely fixed at `a20e6d8`**, consistent with this
+journal's own prior recording — this review independently re-derives
+and re-confirms it rather than merely repeating the earlier claim.
+
+**Negative results for the log, both confirmed word-for-word from the
+doc itself.** "A pin named for a finding proved the wrong table" — T1's
+own new pin asserts `app.action_effects`, not `core.action_requests`,
+the table the actual incident happens in; a pin's name is not proof it
+tests what it claims to. "A default-deny permission check needs every
+valid role seeded, or the roles with none are silently locked out" —
+the CLIENT regression's exact mechanism, worth keeping as a standing
+rule for any future permission-catalogue change anywhere in this repo,
+not just this one pack.
+
+**All routed to `fix-014` in the open freeze window; a final 011-013
+pass confirmed reported to follow the re-freeze** — not yet
+independently confirmed by this journal.
+
+---
+
+**PR #29 confirmed MERGED at `8bb95ed`**, one file amended (not newly
+created) — the same 011-013 re-review doc updated to include `eff8084`.
+
+**T5 confirmed live-verified fixed at `eff8084`**: `test_011`'s T18
+passes, confirmed. **A new S7-class dependency noted and worth tracking
+as its own pattern**: T18's own fixture needs migration 016's
+ref-formats provisioning to exist — an undocumented cross-pack
+dependency of the exact same class this migration line has now hit
+multiple times across different packs.
+
+**T1 confirmed STILL not fixed at `eff8084` either**, consistent
+exactly with PR #28's own finding two updates ago — the reviewer
+extended T15's own fixture specifically to re-check this and got the
+identical result: effect `SETTLED`, parent `core.action_requests`
+`PARTIALLY_FAILED`. Routed to `fix-014` alongside the CLIENT regression,
+S1(b), and S5.
+
+**Reported one more `fix-014` push pending for the four 011-013
+residuals, then the re-freeze** — confirmed this journal's own
+`062e5e2`/`2edab79` recording above already closes the two separate
+PR #26 items (the bulk-decide bypass and the `p_migration` gap), which
+are a genuinely different set of findings from these four 011-013
+residuals (T1's `action_requests` reconcile, the CLIENT regression,
+S1(b)'s audit gap, S5's `REVEAL_AUDIT_MISMATCH`) — confirmed the four
+011-013 items are still open as of this check.
+
+**Things worth telling future-me:**
+
+1. A fix commit naming a finding in its own title ("T1 (CRIT)... the
+   replay pin the report asked for") is not proof the finding is
+   closed — this is now the clearest case this session of a commit
+   message's own framing outrunning its actual diff, caught only by an
+   independent reviewer reading the diff and re-running the exact
+   original reproduction rather than trusting the new pin's green
+   result.
+2. A security fix that adds a new default-deny check needs every
+   currently-valid enum value checked against the permission table it
+   reads from, not just the roles the fix's own author had in mind —
+   the CLIENT regression is a textbook case of a control that is
+   correct in isolation and wrong in context, and the fix that closes
+   HIGH-1/T3 correctly needed a companion check ("does every role in
+   the enum have at least one row") that nothing in this pass ran.
+3. "Type the slot by content, not by dropping the old shape" is a
+   reusable principle now demonstrated twice in one migration line (the
+   `p_migration` slot here, and the earlier `dated`-flag-style validation
+   gaps elsewhere) — worth treating as a standing review question for
+   any future required-argument addition to an existing function: what
+   happens when the OLD calling convention's arguments land in the NEW
+   function's slots by position, not by an old signature resolving?
+
+---
+
 ## 2026-09-13 23:8x — 019 split lands at 66ad184; the test_014-red discrepancy is resolved as a stale measurement; PR #27 closes the worker heartbeat bug (S4/T16)
 
 **`fix-018` pushed the M4 split to `origin/lane/rpc-018`, tip

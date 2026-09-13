@@ -287,6 +287,32 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:9x — fix-014 closes the freeze-window fixes and 019 fixture debt at 062e5e2/2edab79; PR #28 and #29 find T1 genuinely unfixed and a live CLIENT-role regression
+
+- `fix-014` confirmed pushed `062e5e2` then `2edab79` to `cloud/
+migrations`: bulk-decide bypass closed (p_items jsonb replaces p_ids,
+  hashless items refused before any apply, T20 pins the bulk door);
+  T4/F4's SQL half closed in the same commit (response now
+  {results:[...]} with id/ref). p_migration validation closed, slot now
+  typed ^[0-9]{3}$ — negative result: dropping an old overload does
+  nothing when the old spelling already resolves to the new function by
+  defaulted arguments. 2edab79 closes the three 019-split fixture items
+  (T1c scoped by manifest, test_017 flip, **test_016 T7 kept — "the pin
+  was wrong, not the rollback"**).
+- PR #28 confirmed merged (`06176b7`): independent 011-013 re-review
+  finds T1 confirmed NOT actually fixed (eff8084 only touched the pin;
+  core.action_requests stays PARTIALLY_FAILED forever after a
+  successful replay, live-reproduced) and a genuine **REGRESSION**:
+  CLIENT role has zero permission rows, every CLIENT action now
+  refused. S1(b) partial (key_ref-alone change writes no audit), S5's
+  REVEAL_AUDIT_MISMATCH confirmed reachable. T5 confirmed genuinely
+  fixed at a20e6d8.
+- PR #29 confirmed merged (`8bb95ed`): same doc updated — T5 re-confirmed
+  fixed at eff8084 too (with a new S7-class fixture dependency noted),
+  T1 confirmed still broken there as well. All four 011-013 residuals
+  routed to fix-014. See `ai/project-log.md` 23:9x block for full
+  detail.
+
 ## 2026-09-13 23:8x — 019 split lands at 66ad184; the test_014-red discrepancy is resolved as a stale measurement; PR #27 closes the worker heartbeat bug (S4/T16)
 
 - `fix-018` confirmed pushed the M4 split to `lane/rpc-018`, tip

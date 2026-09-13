@@ -644,8 +644,34 @@ ungate_tenant_policy()` (already fixed twice) passed a full 7-case
 > 90/90). Both lanes confirmed shut down. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:8x — 019 split lands at 66ad184,
-> test_014 discrepancy resolved (stale base); PR #27 closes S4/T16.
+> **BLAST 13 Sep 23:9x +08** — `fix-014` pushed the two freeze-window
+> fixes to `cloud/migrations` at `062e5e2`, then `2edab79` closed the
+> three items owed from the 019 split. Bulk-decide bypass closed:
+> `p_ids uuid[]` → `p_items jsonb`, APPROVE items with no hash refused
+> before any item applies, T20 pins a repriced approval refused through
+> the bulk door. T4/F4's SQL half closed in the same commit (response
+> now `{results:[...]}` with id/ref). `p_migration` slot now typed
+> `^[0-9]{3}$` — negative result worth keeping: "dropping an old
+> overload does nothing when the old spelling already resolves to the
+> new function by defaulted arguments." `2edab79`: T1c scoped via the
+> stamp manifest, `test_017` fixture flipped to non-default, `test_016`
+> T7 **kept, not weakened** ("the pin was wrong, not the rollback").
+> Separately, **PR #28 confirmed MERGED (`06176b7`)**: independent
+> 011-013 re-review at `0d9e00c` finds T1 **NOT actually fixed**
+> (`eff8084`'s commit only touched the pin; `core.action_requests`
+> stays `PARTIALLY_FAILED` forever after a successful replay, live
+> -reproduced), a genuine **REGRESSION** (`CLIENT` role has zero
+> permission rows, every CLIENT action now refused), S1(b) partial
+> (`key_ref`-alone change writes no audit), S5's
+> `REVEAL_AUDIT_MISMATCH` confirmed reachable. **PR #29 confirmed
+> MERGED (`8bb95ed`)**: same doc updated — T5 confirmed fixed at
+> `a20e6d8`, T1 confirmed still broken at `eff8084` too. All four
+> 011-013 residuals routed to `fix-014`. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:9x — freeze-window fixes + 019
+> fixture items land; PR #28/#29 find T1 unfixed and a CLIENT-role
+> regression.
 
 ### Focus
 

@@ -1403,6 +1403,162 @@ confirmed still open and correctly scoped**: `bulk_decide`'s
 response-shape mismatch (T4/F4) — the SQL side is in `fix-014`'s open
 freeze window, the TS side reported routed to a web lane afterward.
 
+✅ **`fix-014` pushed the two freeze-window fixes to `origin/cloud/
+migrations`, tip `062e5e2`, then a third commit `2edab79`** — confirmed
+present, not yet a PR. Closes the bulk-decide bypass and the
+`p_migration` validation gap from PR #26, plus the three items owed from
+the 019 split, landing sooner than "pending" as first reported.
+
+- **Bulk-decide bypass closed, confirmed exactly against the diff.**
+  `core.bulk_decide_approvals` — granted to `authenticated` exactly like
+  the single-decide path — took no hash and `app.bulk_decide` forwarded
+  every item as `app.decide_approval(id, decision, note, NULL, NULL)`,
+  hash hardcoded NULL. Confirmed the 014 comment claiming a guard "both
+  sides enforce... cannot be re-disabled by one of them" is now
+  corrected in place to state it was false, rather than quietly deleted.
+  `p_ids uuid[]` is now `p_items jsonb`, an array of `{approvalId,
+expectedDiffHash}` — confirmed necessary since a hash per approval
+  cannot travel in a bare id array. APPROVE items with a missing or
+  blank hash are refused **before any item is applied**, confirmed as
+  deliberate: a partial bulk decide is worse than a refused one, since
+  the approver cannot tell which half went through. Old signatures
+  confirmed dropped explicitly in both rollbacks.
+- **T4/F4's SQL half confirmed closed in the same commit**, since the
+  shape had to change anyway: response is now `{results:[{id,ref,
+status,effects}]}`, confirmed fixing two real defects at once —
+  elements previously carried no `id`/`ref` at all, and `count` being a
+  second top-level key stopped `app.ok`'s auto-unwrap, leaving
+  `response.results` `undefined` behind a blind cast. New pin T20
+  confirmed to cover a hashless item refused, a repriced approval
+  refused as `DIFF_CHANGED` through the bulk door specifically, an
+  unchanged one admitted, and the response shape itself.
+- **`p_migration` validation gap closed, confirmed exactly, with the
+  fix reaching further than a simple format check.** The slot is now
+  typed by content (`^[0-9]{3}$`), confirmed via the diff to refuse
+  `'run:read'`, `NULL`, `''`, `'14'`, `'0014'`, and `'migration:014'`
+  alike — and confirmed to also apply to a NULL stamp on `app.
+ungate_tenant_policy`, on the stated reasoning that removing a gate is
+  the act most worth attributing. **Negative result for the log,
+  confirmed word-for-word from the commit body**: "dropping an old
+  overload does nothing when the old spelling already resolves to the
+  new function by defaulted arguments" — there was never a
+  three-argument overload to drop; the old three-argument call spelling
+  the catalog still taught silently bound its permission string into
+  the migration-name slot of the new four-argument function instead,
+  producing a real ungated policy (`migration:run:read`) reproduced live
+  in the commit. T16 confirmed to pin every one of the refusal cases.
+- **Confirmed the TS side is explicitly not touched here** (no
+  `apps/**` change in the diff), with the exact required client change
+  stated in the commit for whoever picks it up: `ApprovalBulkDecideRequest`
+  needs `p_items` (an array of `{approvalId, expectedDiffHash}`) instead
+  of `p_ids`; the response type needs no change since it already matches
+  `{results:[...]}`.
+- **The three items owed from the 019 split, confirmed closed in
+  `2edab79`**: `test_014`'s T1c is now scoped to 014-time objects via
+  the existing migration-comment manifest (tables matched by stamp,
+  views matched by name since views carry no policy to stamp) —
+  confirmed 018's T38 asserts its own three-view delta separately, and a
+  fifth granted view would now be a deliberate edit here rather than
+  silent drift. `test_017` line 87's fixture pipeline flipped to
+  `is_default = false`, confirmed passing once 019 seeds the real
+  default. **`test_016`'s T7 confirmed kept, not weakened, with the
+  commit stating plainly why**: "I own 016's intent here and the clause
+  STAYS... The pin was wrong, not the rollback" — `v_seeded` is
+  recomputed to ask the same question the rollback's post-condition
+  already asks (of the rows 016 seeded, how many remain unallocated),
+  so both sides now agree by construction rather than by coincidental
+  arithmetic. **A small, honest correction folded in**: T1's own success
+  `NOTICE` said "118 SELECT grants" against an assertion requiring 121 —
+  a stale number in a success message describing a database two packs
+  old — now interpolated so the notice can never drift from the
+  assertion again.
+- **Validation counts, confirmed unchanged from the prior push**: 18/18
+  apply, 17/17 pins pass plus 2 apply-context pins that correctly
+  refuse, `lint:sql` 53/53, `check:grants` 0, `check:rpc` 4 pass/0
+  broken.
+
+⛔ **PR #28 confirmed MERGED at `06176b7`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-011-013-rereview.md` — an
+independent re-review of the 011-013 fix commits at `0d9e00c`, with an
+explicit look at the two later commits `eff8084`/`a20e6d8` (confirmed
+this review predates and is superseded on some points by the fixes
+above, which had not landed when it ran).
+
+- **Confirmed clean, four items**: `T2/O2` (the dead effect pipeline),
+  `S1(a)` (the reveal-audit short-circuit), `S3` (the `service_role`
+  revoke, syntax-verified correct), `T8` (the GUC residue) are all
+  confirmed fixed cleanly by this independent pass.
+- **T1 confirmed NOT actually fixed, live-reproduced, not reasoned
+  about — the standout finding of this review.** `eff8084`'s own commit
+  claimed T1 fixed, but the reviewer confirmed its diff touches only
+  `test_012`'s pin, never the migration, and the new pin asserts only
+  that `app.action_effects` reaches `SETTLED` — nothing about
+  `core.action_requests.status`. Reproduced directly: after a full
+  claim→complete cycle on the replayed job, the effect genuinely reaches
+  `SETTLED` (the invoice really was pushed) but the parent
+  `core.action_requests` row **stays `PARTIALLY_FAILED` forever**,
+  confirmed as the exact original incident the finding described. **The
+  reviewer's own recommendation, confirmed quoted directly**: "a passing
+  `test_012` T15 will not tell you whether it is fixed."
+- **S1(b) confirmed partial**: the frozen-column defect is genuinely
+  fixed, but the pairing trigger only fires when `key_fingerprint`
+  changes — confirmed reproduced live that `key_ref` can be changed
+  alone, with no fingerprint change, firing no trigger and writing no
+  audit row at all.
+- **REGRESSION confirmed found independently by both review lenses, not
+  a single reviewer's read**: `CLIENT` is a valid role in `app.app_role`
+  with **zero** rows anywhere in `app.role_permissions`, so the new
+  HIGH-1/T3 permission check now unconditionally refuses every
+  CLIENT-initiated action — confirmed live via direct catalog query.
+  Whether this is a genuine regression or an undocumented product
+  decision is confirmed stated as an open question needing an answer
+  before merge, not resolved by the review itself.
+- **S5 confirmed only partially fixed, with the commit's own count
+  wrong**: only 11 sites confirmed converted to `TRNOS`, not the
+  claimed 13, confirmed by direct grep. **`REVEAL_AUDIT_MISMATCH`
+  confirmed reachable by an authenticated caller**, resolving a genuine
+  disagreement between the two independent reviewers: the orchestrator
+  read `public.ai_provider_key_reveal`'s body directly and confirmed it
+  is `SECURITY DEFINER`, performs the exact `UPDATE` that fires the
+  trigger, with no exception handler — the "no RPC path can reach it"
+  justification in the file is confirmed false for this specific raise.
+- **T5 confirmed genuinely fixed at `a20e6d8`**, consistent with this
+  thread's own prior recording — this review independently re-confirms
+  it rather than merely repeating it.
+- **Negative results for the log, both confirmed word-for-word from the
+  doc.** "A pin named for a finding proved the wrong table" — T1's own
+  new pin asserts `app.action_effects`, not `core.action_requests`, the
+  table the actual incident happens in. "A default-deny permission check
+  needs every valid role seeded, or the roles with none are silently
+  locked out" — the CLIENT regression's exact mechanism, worth keeping
+  as a standing rule for any future permission-catalogue change in this
+  repo.
+- **All routed to `fix-014` in the open freeze window; a final 011-013
+  pass confirmed reported to follow the re-freeze** — not yet
+  independently confirmed by this thread.
+
+⛔ **PR #29 confirmed MERGED at `8bb95ed`**, one file amended (not new)
+— the same 011-013 re-review doc updated to include `eff8084`.
+
+- **T5 confirmed live-verified fixed at `eff8084`**: `test_011`'s T18
+  passes, confirmed. **New S7-class dependency noted, confirmed and
+  worth tracking**: T18's own fixture needs migration 016's ref-formats
+  provisioning to exist, an undocumented dependency of the same class
+  this migration line has now hit multiple times.
+- **T1 confirmed STILL not fixed at `eff8084`**, consistent with PR
+  #28's own finding — the reviewer extended T15's own fixture and
+  confirmed the same result: effect `SETTLED`, parent
+  `core.action_requests` `PARTIALLY_FAILED`. Routed to `fix-014`
+  alongside the CLIENT regression, S1(b), and S5.
+- **Reported one more `fix-014` push pending for the four 011-013
+  residuals, then the re-freeze** — confirmed this thread's own
+  `062e5e2`/`2edab79` recording above already closes two of these four
+  (the bulk-decide bypass and the `p_migration` gap belong to PR #26's
+  findings, not the 011-013 four); the four 011-013 residuals
+  specifically (T1's `action_requests` reconcile, the CLIENT regression,
+  S1(b)'s audit gap, S5's `REVEAL_AUDIT_MISMATCH`) are confirmed still
+  open as of this check.
+
 ✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
 `origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
 a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header
