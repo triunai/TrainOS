@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Breadcrumb, NotificationBell, SearchTrigger } from "@/shared/components/kit";
 import { useBreadcrumbTrail } from "./BreadcrumbProvider";
+import { LocaleSwitch } from "./LocaleSwitch";
+import { useT } from "@/shared/i18n";
 import { useUnreadCount } from "./useBadgeCounts";
 
 /**
@@ -36,6 +38,7 @@ export function Topbar() {
   const [, setPaletteOpen] = useState(false);
   const trail = useBreadcrumbTrail();
   const unread = useUnreadCount();
+  const t = useT();
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 bg-sidebar pl-1 pr-5">
@@ -58,8 +61,9 @@ export function Topbar() {
             that has to behave identically to the first one. The palette itself
             is mounted by whoever owns the app's overlays; until then this is
             wired to local state so the control is real rather than inert. */}
-        <SearchTrigger onOpen={() => setPaletteOpen(true)} />
+        <SearchTrigger onOpen={() => setPaletteOpen(true)} placeholder={t("shell.search")} />
         <NotificationBell unread={unread} />
+        <LocaleSwitch />
       </div>
     </header>
   );

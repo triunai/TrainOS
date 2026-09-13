@@ -47,15 +47,23 @@ export function SearchTrigger({ onOpen, placeholder = "Search", className }: Sea
 }
 
 export interface NotificationBellProps {
-  /** How many unread. Only its being above zero is drawn — the dot, not a count. */
+  /** How many unread. Drawn as the number, capped at 99+. */
   unread?: number;
   onOpen?: () => void;
   className?: string;
 }
 
 /**
- * The bell. §07 draws "a small red unread dot", not a number: the top bar says
- * whether there is something, and the queue says how much.
+ * The bell, with the count.
+ *
+ * §07's prose says "a small red unread dot", but every artboard that actually
+ * DRAWS a top bar draws a number in a danger-tinted pill — M06 shows `4`, and
+ * it is `4` because it is the sum of the three badge counts. The artboards win
+ * over the prose: a dot says a queue exists, and the number is what decides
+ * whether the reader goes there now.
+ *
+ * Capped at `99+`, because past that the digit count moves the bar's layout and
+ * the difference between 100 and 340 changes nothing a reader does.
  */
 export function NotificationBell({ unread = 0, onOpen, className }: NotificationBellProps) {
   const has = unread > 0;
@@ -70,8 +78,10 @@ export function NotificationBell({ unread = 0, onOpen, className }: Notification
       {has ? (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-pill bg-danger ring-2 ring-canvas"
-        />
+          className="pointer-events-none absolute -right-1 -top-0.5 rounded-pill border border-danger-border bg-danger-fill px-1 font-mono text-[10px] font-semibold leading-4 text-danger"
+        >
+          {unread > 99 ? "99+" : unread}
+        </span>
       ) : null}
     </span>
   );

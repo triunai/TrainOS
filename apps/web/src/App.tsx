@@ -3,6 +3,7 @@ import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "sonner";
 import { ApiProvider, queryClient } from "@/shared/api";
 import { MeProvider } from "@/shared/hooks/MeProvider";
+import { I18nProvider } from "@/shared/i18n";
 import { ThemeProvider } from "@/shared/theme";
 import { AppRoutes } from "@/routes/routes";
 import { useScrollbarReveal } from "@/shared/components/layout";
@@ -30,12 +31,14 @@ export default function App() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <MeProvider>
-          <ApiProvider>
-            <BrowserRouter>
-              <AppRoutes />
-            </BrowserRouter>
-            <Toaster position="bottom-right" richColors closeButton />
-          </ApiProvider>
+          <I18nProvider>
+            <ApiProvider>
+              <BrowserRouter>
+                <AppRoutes />
+              </BrowserRouter>
+              <Toaster position="bottom-right" richColors closeButton />
+            </ApiProvider>
+          </I18nProvider>
         </MeProvider>
       </QueryClientProvider>
     </ThemeProvider>

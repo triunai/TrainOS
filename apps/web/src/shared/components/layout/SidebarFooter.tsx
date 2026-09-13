@@ -6,6 +6,7 @@ import { Drawer, KeyboardShortcut } from "@/shared/components/kit";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
 import { ROLE_LABEL, SHELL_ROLES } from "@/shared/config/roles";
 import { useMe } from "@/shared/hooks/useMe";
+import { useT, type MessageKey } from "@/shared/i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,17 +47,18 @@ function Glyph({ children }: { children: string }) {
 }
 
 /** The shortcuts the shell itself owns. Screens add their own in context. */
-const SHORTCUTS: { keys: string[]; action: string }[] = [
-  { keys: ["⌘", "K"], action: "Open the command palette" },
-  { keys: ["J"], action: "Next item in a queue" },
-  { keys: ["K"], action: "Previous item in a queue" },
-  { keys: ["↵"], action: "Open the selected item" },
-  { keys: ["⌘", "↵"], action: "Open it in a drawer" },
-  { keys: ["esc"], action: "Close the drawer or palette" },
+const SHORTCUTS: { keys: string[]; action: MessageKey }[] = [
+  { keys: ["⌘", "K"], action: "shortcuts.palette" },
+  { keys: ["J"], action: "shortcuts.next" },
+  { keys: ["K"], action: "shortcuts.previous" },
+  { keys: ["↵"], action: "shortcuts.open" },
+  { keys: ["⌘", "↵"], action: "shortcuts.drawer" },
+  { keys: ["esc"], action: "shortcuts.close" },
 ];
 
 export function SidebarFooter() {
   const { me, setRole } = useMe();
+  const t = useT();
   const { pathname } = useLocation();
   const [helpOpen, setHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -79,7 +81,7 @@ export function SidebarFooter() {
         className={cn(ROW, "h-7", FOCUS_RING)}
       >
         <Glyph>?</Glyph>
-        <span>Help &amp; support</span>
+        <span>{t("shell.help")}</span>
       </button>
 
       <button
@@ -88,14 +90,14 @@ export function SidebarFooter() {
         className={cn(ROW, "h-7", FOCUS_RING)}
       >
         <Glyph>⌘</Glyph>
-        <span>Shortcuts</span>
+        <span>{t("shell.shortcuts")}</span>
       </button>
 
       {import.meta.env.DEV ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             className={cn(ROW, "h-7", FOCUS_RING)}
-            aria-label="Role (development only)"
+            aria-label={`${t("shell.role")} (development only)`}
           >
             <Glyph>◑</Glyph>
             <span className="truncate">{ROLE_LABEL[me.role]}</span>
@@ -109,7 +111,7 @@ export function SidebarFooter() {
             className="w-[var(--radix-dropdown-menu-trigger-width)]"
           >
             <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-muted">
-              Role · development only
+              {t("shell.roleDevOnly")}
             </DropdownMenuLabel>
             <DropdownMenuRadioGroup
               value={me.role}
@@ -137,33 +139,31 @@ export function SidebarFooter() {
         <span className="truncate">{VERSION_LINE}</span>
       </p>
 
-      <Drawer open={helpOpen} onClose={() => setHelpOpen(false)} title="Help & support">
+      <Drawer open={helpOpen} onClose={() => setHelpOpen(false)} title={t("shell.help")}>
         <div className="flex flex-col gap-4 text-[13px] text-ink-secondary">
           <section className="flex flex-col gap-1.5">
             <h3 className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-muted">
-              Documentation
+              {t("help.documentation")}
             </h3>
-            <a href="https://docs.trainos.app/getting-started">Getting started</a>
-            <a href="https://docs.trainos.app/hrd-corp">HRD Corp claims</a>
-            <a href="https://docs.trainos.app/agents">Agents and autonomy</a>
+            <a href="https://docs.trainos.app/getting-started">{t("help.gettingStarted")}</a>
+            <a href="https://docs.trainos.app/hrd-corp">{t("help.hrdc")}</a>
+            <a href="https://docs.trainos.app/agents">{t("help.agents")}</a>
           </section>
 
           <section className="flex flex-col gap-1.5">
             <h3 className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-muted">
-              Contact
+              {t("help.contact")}
             </h3>
             <a href="mailto:support@trainos.app">support@trainos.app</a>
-            <span>Weekdays, 9am–6pm MYT</span>
+            <span>{t("help.hours")}</span>
           </section>
 
           <section className="flex flex-col gap-1.5">
             <h3 className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-muted">
-              Something wrong?
+              {t("help.problem")}
             </h3>
-            <a href={reportHref}>Report an issue</a>
-            <span className="text-ink-muted">
-              Opens an email with the version and the page you are on already filled in.
-            </span>
+            <a href={reportHref}>{t("help.report")}</a>
+            <span className="text-ink-muted">{t("help.reportHint")}</span>
           </section>
 
           <p className="font-mono text-[11px] text-ink-muted">{VERSION_LINE}</p>
@@ -173,13 +173,13 @@ export function SidebarFooter() {
       <Drawer
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
-        title="Keyboard shortcuts"
-        subtitle="⌘K opens the command palette from anywhere"
+        title={t("shortcuts.title")}
+        subtitle={t("shortcuts.subtitle")}
       >
         <ul className="flex flex-col gap-2.5">
           {SHORTCUTS.map((shortcut) => (
             <li key={shortcut.action} className="flex items-center justify-between gap-4">
-              <span className="text-[13px] text-ink-secondary">{shortcut.action}</span>
+              <span className="text-[13px] text-ink-secondary">{t(shortcut.action)}</span>
               <KeyboardShortcut keys={shortcut.keys} />
             </li>
           ))}

@@ -5,6 +5,7 @@ import { cn } from "@/shared/lib/utils";
 import { Collapse } from "@/shared/components/kit";
 import { FOCUS_RING } from "@/shared/components/kit/tokens";
 import { getNavGroups } from "@/shared/config/nav";
+import { useT, type MessageKey } from "@/shared/i18n";
 import { NavBadge } from "./NavBadge";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarProfile } from "./SidebarProfile";
@@ -41,6 +42,16 @@ import { useSidebarState } from "./useSidebarState";
  * `index.css`, applied site-wide rather than opted into here.
  */
 
+/* The tree's captions are source data from the pack (`navTree.ts`), so they are
+   mapped to keys here rather than translated in place — the source stays
+   verbatim and the catalogue stays the only place a string lives twice. */
+const CAPTION_KEY: Readonly<Record<string, MessageKey>> = {
+  MAIN: "nav.group.main",
+  OPERATIONS: "nav.group.operations",
+  KNOWLEDGE: "nav.group.knowledge",
+  SYSTEM: "nav.group.admin",
+};
+
 const ROW_BASE =
   "flex w-full items-center gap-2 rounded-control px-2 text-left text-[13px] transition-colors";
 const ROW_IDLE = "text-ink-secondary hover:bg-surface-hover";
@@ -51,6 +62,7 @@ export function Sidebar({ role }: { role: Role }) {
   const groups = useMemo(() => getNavGroups(role), [role]);
   const selection = useNavSelection(groups);
   const { isOpen, toggle } = useSidebarState(selection.parentKey);
+  const t = useT();
 
   return (
     <nav aria-label="Main" className="flex h-full w-sidebar shrink-0 flex-col bg-sidebar px-3 py-4">
@@ -66,7 +78,7 @@ export function Sidebar({ role }: { role: Role }) {
         {groups.map((group) => (
           <div key={group.caption} className="flex flex-col gap-0.5">
             <div className="px-2 pb-1 font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-              {group.caption}
+              {CAPTION_KEY[group.caption] ? t(CAPTION_KEY[group.caption]) : group.caption}
             </div>
 
             {group.parents.map((parent) => {

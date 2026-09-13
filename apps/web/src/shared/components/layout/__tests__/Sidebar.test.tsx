@@ -14,6 +14,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { I18nProvider } from "@/shared/i18n";
 import { Sidebar } from "../Sidebar";
 
 vi.mock("@/shared/hooks/useMe", () => ({
@@ -45,7 +46,9 @@ vi.mock("@/shared/theme", async () => {
 const renderAt = (path: string) =>
   render(
     <MemoryRouter initialEntries={[path]}>
-      <Sidebar role="SALES" />
+      <I18nProvider>
+        <Sidebar role="SALES" />
+      </I18nProvider>
     </MemoryRouter>,
   );
 

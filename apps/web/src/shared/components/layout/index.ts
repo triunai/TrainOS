@@ -12,6 +12,7 @@ export { NavBadge } from "./NavBadge";
 export { SidebarFooter } from "./SidebarFooter";
 export { SidebarProfile } from "./SidebarProfile";
 export { ThemeSwitch } from "./ThemeSwitch";
+export { LocaleSwitch } from "./LocaleSwitch";
 export { selectNav, useNavSelection, type NavSelection } from "./useNavSelection";
 export { useSidebarState, type SidebarState } from "./useSidebarState";
 export { useScrollbarReveal, SCROLLING_CLASS, HIDE_AFTER_MS } from "./useScrollbarReveal";

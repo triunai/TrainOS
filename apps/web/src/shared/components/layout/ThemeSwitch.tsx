@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/shared/lib/utils";
 import { Switch } from "@/shared/components/ui/switch";
 import { useTheme } from "@/shared/theme";
+import { useT } from "@/shared/i18n";
 
 /**
  * Light or dark, in one click, beside the profile row.
@@ -24,6 +25,7 @@ import { useTheme } from "@/shared/theme";
  */
 export function ThemeSwitch({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
+  const t = useT();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -38,7 +40,7 @@ export function ThemeSwitch({ className }: { className?: string }) {
       <Switch
         checked={dark}
         onCheckedChange={(next) => setTheme(next ? "dark" : "light")}
-        aria-label="Dark mode"
+        aria-label={t("shell.darkMode")}
         className="h-4 w-7 border-border bg-border-strong data-[state=checked]:bg-primary"
       />
       <span aria-hidden="true" className="text-[11px] text-ink-muted">
