@@ -9,6 +9,7 @@ import {
   describeActionError,
   DIFF_OP_TONE,
   DiffBlock,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatDate,
@@ -217,6 +218,20 @@ export function RuleChangeReviewScreen({ documentId }: { documentId: string }) {
             }
             subject={`Rule changes · ${data.title}`}
           />
+
+          {/* A change set with nothing in it is a real answer, not an absence:
+              ingestion read the circular and found no rule the registry does
+              not already carry. With no branch here the column rendered empty
+              below the header's "Proposed changes · 0", which reads as a screen
+              that failed to draw rather than as a document with nothing to
+              review. Held changes count: a set that is entirely below the
+              confidence floor is not empty, it is waiting on a person. */}
+          {shown.length === 0 && held.length === 0 ? (
+            <EmptyState
+              title="No rule changes were read from this document"
+              description={`Ingestion compared ${data.title} against the rules registry and found nothing that differs from the rules already on file. Nothing needs approving.`}
+            />
+          ) : null}
 
           {shown.map((change) => (
             <ChangeCard

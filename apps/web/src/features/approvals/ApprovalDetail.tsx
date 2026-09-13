@@ -43,6 +43,7 @@ import {
   DangerButton,
   DateText,
   DiffBlock,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   humanise,
@@ -517,7 +518,25 @@ export function ApprovalDetail() {
             </div>
           </Block>
 
-          <Block title={`Audit trail · ${audit.data?.data.length ?? 0}`}>
+          {/* Three branches, where there was one. The count in the heading was
+              `audit.data?.data.length ?? 0`, so a failed read printed "Audit
+              trail · 0" above the same sentence a genuinely empty trail gets:
+              "nothing has happened to this approval" and "we could not find out
+              what happened to this approval" were the same pixels. On an
+              approval that is the wrong two things to confuse. The count is now
+              omitted until there is an answer to count. */}
+          <Block title={audit.data ? `Audit trail · ${audit.data.data.length}` : "Audit trail"}>
+            {audit.isPending ? <LoadingState rows={2} label="Loading the audit trail" /> : null}
+
+            {audit.isError ? (
+              <ErrorState
+                className="px-0 py-6"
+                title="The audit trail did not load"
+                error={toApiError(audit.error)}
+                onRetry={() => void audit.refetch()}
+              />
+            ) : null}
+
             {audit.data && audit.data.data.length > 0 ? (
               <ul className="flex flex-col gap-2">
                 {audit.data.data.map((entry) => (
@@ -531,11 +550,15 @@ export function ApprovalDetail() {
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="text-[12px] text-ink-muted">
-                Nothing has been recorded against this approval yet.
-              </p>
-            )}
+            ) : null}
+
+            {audit.data && audit.data.data.length === 0 ? (
+              <EmptyState
+                className="px-0 py-6"
+                title="Nothing recorded yet"
+                description="Every decision, reassignment and escalation on this approval is written here as it happens."
+              />
+            ) : null}
           </Block>
         </aside>
       </div>

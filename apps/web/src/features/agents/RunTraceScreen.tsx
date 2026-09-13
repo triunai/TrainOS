@@ -5,6 +5,7 @@ import {
   AgentRunCard,
   ContentCard,
   DataTable,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatDuration,
@@ -381,9 +382,15 @@ export function RunTraceScreen() {
 
           <ContentCard title="Events" eyebrow={`${events.length} recorded`} flush>
             {events.length === 0 ? (
-              <p className="px-4 py-6 text-[13px] text-ink-muted">
-                No escalation, jury, truncation, handoff or policy event was recorded for this run.
-              </p>
+              /* A clean run genuinely has none of these, so this is the common
+                 case and not a failure — which is exactly why it needs the kit
+                 component rather than a bare paragraph. The sentence says what
+                 WOULD be here, so a reader can tell "nothing went wrong" from
+                 "the events did not load". */
+              <EmptyState
+                title="No events recorded for this run"
+                description="Escalations, jury votes, truncations, handoffs and policy interventions are recorded here. A run that completed inside its budget and its autonomy raises none of them."
+              />
             ) : (
               <ul>
                 {/* Keyed by position, not by type-and-timestamp. A real run
