@@ -330,6 +330,25 @@ export function AutomationPoliciesScreen() {
       {/* Master and detail, the Collections composition the tightening brief
           names as the target look: the list answers "which gates are busy",
           the panel answers "and then what happens to this one". */}
+      {/* Deliberately NOT the kit's `SplitWorkspace`, and the reason is not
+          that this predates it.
+
+          `SplitWorkspace` is the QUEUE-and-RECORD split: a narrow scanning
+          pane capped at 40% beside a wider record the reader reads, both
+          scrolling independently inside a full-height flex column, with a
+          sticky header on the record. The enquiry, follow-up, leads and
+          contacts screens are that shape and use it.
+
+          This screen is the other shape: a WIDE TABLE beside a narrow
+          reference card, on a page that scrolls as one. Capping the table at
+          40% is what put the last two columns off the right edge in the first
+          place, and this component has no full-height flex parent for the
+          panes to size against, so they would collapse rather than scroll.
+
+          Two shapes, not two variants of one — so this is not the divergence
+          CLAUDE.md forbids. If the kit grows a named component for the
+          table-and-reference shape, this becomes a migration in that pass.
+          Flagged to the lead 13 Sep. */}
       <div className="grid grid-cols-1 gap-5 px-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <DataTable
           label="Approval policies"
