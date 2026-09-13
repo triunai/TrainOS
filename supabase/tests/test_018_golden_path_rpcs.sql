@@ -3061,5 +3061,247 @@ BEGIN
 END
 $t37$;
 
+DO $banner$ BEGIN RAISE NOTICE '════════ T38 · 018 OWNS ITS OWN THREE VIEW GRANTS ════════'; END $banner$;
+DO $t38$
+DECLARE
+  v_missing text[] := ARRAY[]::text[];
+  v_name    text;
+  v_total   integer;
+  v_at017   integer;
+BEGIN
+  -- 018 ADDS EXACTLY THREE SELECT GRANTS IN `core`, AND THIS IS WHERE THEY ARE
+  -- ASSERTED. They used to be asserted by moving `test_014`'s exact count from
+  -- 121 to 124 — which made 014's own pin depend on a later migration having
+  -- been applied, and the documented deploy order puts 014 first, so there was
+  -- a window in which 014's test was red for a reason that had nothing to do
+  -- with 014. `test_014` now counts the 001-017 surface and passes at 014; the
+  -- delta lives here, in the pin that owns it.
+  --
+  -- ⚠ The condition `test_014` could not pass standalone is THREE MIGRATIONS
+  -- OLD, not 018's invention: the same file's T1a already read "116 tables,
+  -- 113 from 014 + 3 from 017" before this pack touched anything. 018 stops
+  -- extending the pattern rather than claiming to have found it.
+  FOREACH v_name IN ARRAY ARRAY['v_organisation_relations','v_budgets','v_model_tiers'] LOOP
+    IF NOT pg_catalog.has_table_privilege('authenticated', 'core.' || v_name, 'SELECT') THEN
+      v_missing := v_missing || v_name;
+    END IF;
+    -- `anon` is HOSTILE BY DEFAULT and gets none of them.
+    IF pg_catalog.has_table_privilege('anon', 'core.' || v_name, 'SELECT') THEN
+      RAISE EXCEPTION 'T38a: anon can SELECT core.% ', v_name;
+    END IF;
+    -- SELECT AND NOTHING MORE. A view a client can write through is a table.
+    IF pg_catalog.has_table_privilege('authenticated', 'core.' || v_name, 'INSERT')
+       OR pg_catalog.has_table_privilege('authenticated', 'core.' || v_name, 'UPDATE')
+       OR pg_catalog.has_table_privilege('authenticated', 'core.' || v_name, 'DELETE') THEN
+      RAISE EXCEPTION 'T38b: authenticated holds a WRITE privilege on core.%', v_name;
+    END IF;
+  END LOOP;
+  IF pg_catalog.array_length(v_missing, 1) IS NOT NULL THEN
+    RAISE EXCEPTION 'T38c: authenticated cannot SELECT 018''s view(s): %',
+      pg_catalog.array_to_string(v_missing, ', ');
+  END IF;
+
+  -- AND EXACTLY THREE, measured the same way `test_014` measures its own: the
+  -- difference between the whole count and the 001-017 surface is 018's delta,
+  -- and it is three. A fourth grant added here without a line in this pin, or
+  -- one of these three quietly revoked, moves the number.
+  SELECT pg_catalog.count(*),
+         pg_catalog.count(*) FILTER (
+           WHERE grant_row.table_name NOT IN
+             ('v_organisation_relations','v_budgets','v_model_tiers'))
+    INTO v_total, v_at017
+    FROM information_schema.table_privileges AS grant_row
+   WHERE grant_row.table_schema = 'core'
+     AND grant_row.grantee = 'authenticated'
+     AND grant_row.privilege_type = 'SELECT';
+  IF v_total - v_at017 <> 3 THEN
+    RAISE EXCEPTION 'T38d: 018''s SELECT-grant delta in core is %, expected 3 '
+                    '(total %, 001-017 surface %)', v_total - v_at017, v_total, v_at017;
+  END IF;
+
+  -- THE PAIR 014 COULD NOT GRANT STAYS REVOKED. `budget_status` and
+  -- `model_tier_status` are security_invoker over `app.usage_rollup`, so no
+  -- grant on them can work; 018's replacements carry the names rpcClient.ts
+  -- actually reads and cross the `app` boundary through a definer function.
+  -- Granting the originals to "fix" the screen is the shortcut this asserts
+  -- against.
+  FOREACH v_name IN ARRAY ARRAY['budget_status','model_tier_status','v_approval_requests'] LOOP
+    IF pg_catalog.to_regclass('core.' || v_name) IS NOT NULL
+       AND pg_catalog.has_table_privilege('authenticated', 'core.' || v_name, 'SELECT') THEN
+      RAISE EXCEPTION 'T38e: core.% was granted to authenticated; 014 revoked it '
+                      'deliberately', v_name;
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE 'T38 PASS: 018''s three views are SELECT-only to authenticated, invisible '
+               'to anon, exactly three, and 014''s three deliberate exclusions stay '
+               'revoked — asserted here rather than by moving 014''s count.';
+END
+$t38$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T39 · THE PIPELINE SEED IS REVERSIBLE, EXACTLY ════════'; END $banner$;
+DO $t39$
+DECLARE
+  v_tenant  uuid := '11111111-1111-4111-8111-111111111111';
+  v_fresh   uuid := 'a9a9a9a9-9999-4999-8999-999999999999';
+  v_pipes   integer;
+  v_steps   integer;
+  v_ledger  integer;
+  v_hand    uuid;
+  v_removed integer;
+  v_detail  text;
+  v_ok      boolean := false;
+  v_prog    uuid;
+  v_org     uuid;
+BEGIN
+  -- ── THE LEDGER RECORDS WHAT THE SEED ACTUALLY INSERTED ───────────────────
+  -- Before `app.seeded_pipelines` existed, rolling 018 back dropped the
+  -- mechanism and KEPT the rows, so `pipelines_one_default_uq` went on
+  -- rejecting a default ENGAGEMENT pipeline for every tenant permanently and
+  -- there was no supported way to undo the seed at all. The ledger is what
+  -- makes "delete exactly what 018 wrote, and nothing else" expressible.
+  INSERT INTO public.tenants (id, slug, name, status, timezone, locale)
+  VALUES (v_fresh, 't39', 'Reversal', 'ACTIVE', 'Asia/Kuala_Lumpur', 'en-MY');
+
+  SELECT pg_catalog.count(*) INTO v_pipes FROM core.pipelines WHERE tenant_id = v_fresh;
+  SELECT pg_catalog.count(*) INTO v_steps FROM core.pipeline_steps WHERE tenant_id = v_fresh;
+  IF v_pipes <> 2 OR v_steps <> 16 THEN
+    RAISE EXCEPTION 'T39a: the trigger seeded %/% rather than 2/16', v_pipes, v_steps;
+  END IF;
+
+  SELECT pg_catalog.count(*) INTO v_ledger FROM app.seeded_pipelines WHERE tenant_id = v_fresh;
+  IF v_ledger <> 18 THEN
+    RAISE EXCEPTION 'T39b: the ledger holds % rows for a tenant the seed gave 18', v_ledger;
+  END IF;
+  -- AND IT RECORDS NOTHING ELSE. Every ledger row names a row that exists.
+  IF EXISTS (
+    SELECT 1 FROM app.seeded_pipelines AS ledger
+     WHERE (ledger.row_kind = 'PIPELINE'
+            AND NOT EXISTS (SELECT 1 FROM core.pipelines AS p
+                             WHERE p.tenant_id = ledger.tenant_id AND p.id = ledger.row_id))
+        OR (ledger.row_kind = 'STEP'
+            AND NOT EXISTS (SELECT 1 FROM core.pipeline_steps AS st
+                             WHERE st.tenant_id = ledger.tenant_id AND st.id = ledger.row_id))) THEN
+    RAISE EXCEPTION 'T39c: the ledger names a row that does not exist';
+  END IF;
+
+  -- ── A ROW 018 DID NOT WRITE IS NOT 018'S TO DELETE ───────────────────────
+  -- The seed is ON CONFLICT (id) DO NOTHING, so a row that already existed
+  -- under the same derived id was never inserted and never recorded. This is
+  -- the case the old keep-everything design was protecting; it is protected by
+  -- construction now. A hand-made non-default pipeline stands for it.
+  INSERT INTO core.pipelines (tenant_id, object, name, is_default, status,
+                              created_by_kind, created_by_id)
+  VALUES (v_fresh, 'OPPORTUNITY', 'A pipeline the tenant made', false, 'ACTIVE',
+          'HUMAN', '22222222-2222-4222-8222-222222222222')
+  RETURNING id INTO v_hand;
+  IF EXISTS (SELECT 1 FROM app.seeded_pipelines WHERE row_id = v_hand) THEN
+    RAISE EXCEPTION 'T39d: a hand-made pipeline was recorded as 018''s';
+  END IF;
+
+  -- ── THE REFUSAL PATH ─────────────────────────────────────────────────────
+  -- `core.engagements` carries an ON DELETE RESTRICT composite key onto
+  -- `core.pipelines` (008:108). Once live data points at a seeded row, the seed
+  -- can no longer be reversed, and the honest answer is a refusal that says how
+  -- many rows and which constraints — not a silent skip, and not a deletion.
+  SELECT id INTO v_org FROM core.organisations WHERE tenant_id = v_tenant LIMIT 1;
+  SELECT id INTO v_prog FROM core.programmes   WHERE tenant_id = v_tenant LIMIT 1;
+  IF v_org IS NULL OR v_prog IS NULL THEN
+    RAISE EXCEPTION 'T39-setup: no organisation/programme fixture in tenant A';
+  END IF;
+  INSERT INTO core.engagements (tenant_id, organisation_id, programme_id, owner_id,
+                                pipeline_id, title, status, starts_on, ends_on, value_sen)
+  VALUES (v_tenant, v_org, v_prog, '22222222-2222-4222-8222-222222222222',
+          pg_catalog.md5(v_tenant::text || 'pipeline:ENGAGEMENT')::uuid,
+          'Holds the seeded pipeline down', 'PROPOSED', '2026-11-12', '2026-11-13', 1850000);
+
+  BEGIN
+    PERFORM app.unseed_pipelines();
+    RAISE EXCEPTION 'T39e: unseed_pipelines deleted a pipeline a live engagement '
+                    'references, or reported success without deleting it';
+  EXCEPTION WHEN foreign_key_violation THEN
+    v_ok := true;
+    GET STACKED DIAGNOSTICS v_detail = MESSAGE_TEXT;
+    -- THE COUNT AND THE CONSTRAINT ARE IN THE MESSAGE. "Something references
+    -- them" is not an instruction anybody can act on.
+    IF pg_catalog.strpos(v_detail, 'engagements_pipeline_fk') = 0 THEN
+      RAISE EXCEPTION 'T39f: the refusal does not name the blocking constraint: %', v_detail;
+    END IF;
+    IF v_detail !~ '[1-9][0-9]* row\(s\) are referenced' THEN
+      RAISE EXCEPTION 'T39g: the refusal does not carry a referencing count: %', v_detail;
+    END IF;
+  END;
+  IF NOT v_ok THEN
+    RAISE EXCEPTION 'T39h: the refusal path did not fire';
+  END IF;
+
+  -- AND IT DELETED NOTHING. All-or-nothing is the property that makes the
+  -- refusal safe to hit: a half-reversed seed is worse than an unreversed one.
+  SELECT pg_catalog.count(*) INTO v_ledger FROM app.seeded_pipelines;
+  IF v_ledger = 0 THEN
+    RAISE EXCEPTION 'T39i: the ledger was emptied by a call that refused';
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM core.pipeline_steps WHERE tenant_id = v_fresh) <> 16 THEN
+    RAISE EXCEPTION 'T39j: a refused unseed still deleted steps';
+  END IF;
+
+  -- ── AND THE SUCCESS PATH, ONCE NOTHING REFERENCES THEM ───────────────────
+  DELETE FROM core.engagements WHERE tenant_id = v_tenant
+     AND pipeline_id = pg_catalog.md5(v_tenant::text || 'pipeline:ENGAGEMENT')::uuid;
+
+  v_removed := app.unseed_pipelines();
+  IF v_removed < 18 THEN
+    RAISE EXCEPTION 'T39k: unseed removed only % rows', v_removed;
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM core.pipelines WHERE tenant_id = v_fresh AND id <> v_hand) <> 0
+     OR (SELECT pg_catalog.count(*) FROM core.pipeline_steps WHERE tenant_id = v_fresh) <> 0 THEN
+    RAISE EXCEPTION 'T39l: seeded rows survived a successful unseed';
+  END IF;
+  -- THE HAND-MADE ROW IS STILL THERE. This is the assertion that separates
+  -- "reverse the seed" from "empty the table".
+  IF NOT EXISTS (SELECT 1 FROM core.pipelines WHERE id = v_hand) THEN
+    RAISE EXCEPTION 'T39m: unseed deleted a pipeline 018 never wrote';
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM app.seeded_pipelines) <> 0 THEN
+    RAISE EXCEPTION 'T39n: the ledger was not cleared after a successful unseed';
+  END IF;
+
+  -- AND THE CONSTRAINT THAT WAS PERMANENTLY BLOCKED IS FREE AGAIN. This is
+  -- B6's actual complaint, asserted rather than described: before the reversal
+  -- existed, pipelines_one_default_uq rejected a default ENGAGEMENT pipeline
+  -- for every tenant for ever after a rollback.
+  INSERT INTO core.pipelines (tenant_id, object, name, is_default, status,
+                              created_by_kind, created_by_id)
+  VALUES (v_fresh, 'ENGAGEMENT', 'Made after the reversal', true, 'ACTIVE',
+          'HUMAN', '22222222-2222-4222-8222-222222222222');
+
+  -- ── AND THE SEED IS REGISTERED WITH 016'S COMPLETENESS GUARD ─────────────
+  -- This is the FOURTH provisioning trigger on public.tenants, and
+  -- app.provision_tenant refuses a tenant whose registered seeds did not all
+  -- land. A trigger that is not registered is a trigger whose silent failure
+  -- the guard exists to catch and does not. Guarded on the registry's
+  -- existence, because it is not on every base this file has to run against —
+  -- and the ELSE branch is an assertion too: it records the obligation rather
+  -- than letting the check quietly evaporate.
+  IF pg_catalog.to_regclass('app.tenant_seed_checks') IS NOT NULL THEN
+    IF (SELECT pg_catalog.count(*) FROM app.tenant_seed_checks
+         WHERE pack = '018'
+           AND (schema_name, table_name) IN (('core','pipelines'),('core','pipeline_steps'))) <> 2 THEN
+      RAISE EXCEPTION 'T39o: 018''s pipeline seed is not registered in '
+                      'app.tenant_seed_checks, so provision_tenant would return a '
+                      'tenant with no lifecycle and call it provisioned';
+    END IF;
+  ELSE
+    RAISE NOTICE 'T39: app.tenant_seed_checks is absent on this base — the pipeline '
+                 'seed registration is OWED when 016''s registry lands.';
+  END IF;
+
+  RAISE NOTICE 'T39 PASS: the ledger records exactly what the seed inserted, unseed '
+               'refuses with a count and the constraint name while live data points at '
+               'a seeded row and deletes nothing when it does, and on the clear path it '
+               'removes the seed exactly and leaves a hand-made pipeline standing.';
+END
+$t39$;
+
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;

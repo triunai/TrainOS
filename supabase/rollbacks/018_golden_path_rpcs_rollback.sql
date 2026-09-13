@@ -230,13 +230,33 @@ DROP FUNCTION IF EXISTS core.decide_approval(uuid, text, text, text);
 -- `function app.seed_pipelines_on_tenant() does not exist` — a rollback that
 -- breaks the thing it was rolling back.
 --
--- ⚠ THE SEEDED ROWS ARE DELIBERATELY LEFT IN PLACE. Rolling back the migration
--- that seeded a tenant's pipeline configuration must not delete that
--- configuration: by the time anyone rolls back, those rows are a tenant's
--- settings and `core.engagement_step_states` has composite foreign keys onto
--- them. The seeds lane's fixture rows share the same derived ids, so deleting
--- them here would take the fixture world with it too. What goes is the
--- MECHANISM; what stays is the DATA, and R4 asserts exactly that.
+-- ⚠ THE SEED IS REVERSED, AND THAT IS A CHANGE FROM THE FIRST VERSION OF THIS
+-- FILE. It used to drop the mechanism and keep the rows, on the reasoning that
+-- a tenant's pipeline configuration is theirs by the time anyone rolls back and
+-- that `core.engagement_step_states` carries composite foreign keys onto those
+-- rows. Both halves of that reasoning are true and neither justified the
+-- outcome: after the rollback the mechanism was gone, so there was NO SUPPORTED
+-- WAY TO UNDO THE SEED AT ALL, and `pipelines_one_default_uq` — the partial
+-- unique index on (tenant_id, object) WHERE is_default — went on rejecting a
+-- default ENGAGEMENT pipeline for every tenant permanently. A rollback that
+-- leaves a repo-wide constraint change in place is not a rollback.
+--
+-- `app.unseed_pipelines()` deletes EXACTLY the rows `app.seed_pipelines`
+-- recorded having inserted, from `app.seeded_pipelines`. A row that already
+-- existed under the same derived id — the seeds lane's fixtures — was never
+-- recorded and is never touched, which is the case the old design was trying to
+-- protect, now protected by construction.
+--
+-- AND IT REFUSES LOUDLY RATHER THAN DELETING SOMETHING LIVE. If any seeded row
+-- is referenced, it raises with the COUNT and the CONSTRAINT NAMES and deletes
+-- nothing, which aborts this whole file (it is wrapped in one transaction).
+-- That is the honest answer to "018 cannot be rolled back while this tenant
+-- configuration is in use" — an operator who sees it knows what to clear.
+--
+-- R4 ASSERTS THE ROWS, not a trigger belonging to another migration. Its body
+-- used to query `pg_trigger` for 016's `trg_tenants_seed_ref_formats` while two
+-- comments and the closing NOTICE all announced a pipeline-row check that was
+-- never written.
 -- 018's ONE routing row (§10d). Deleted by its exact (event_type, job_type)
 -- pair rather than by event_type alone: a later pack adding a second handler
 -- for the same event owns its own row and this rollback must not take it.
@@ -245,10 +265,26 @@ DELETE FROM app.event_subscriptions
    AND job_type   = 'AI_DRAFT_PROPOSAL_SECTION'
    AND tenant_id IS NULL;
 
+-- REVERSE THE DATA BEFORE DROPPING THE MECHANISM. The other order leaves the
+-- function that knows how to undo the seed already gone.
+DO $unseed$
+DECLARE v_n integer;
+BEGIN
+  v_n := app.unseed_pipelines();
+  RAISE NOTICE '018 rollback: % seeded pipeline/step row(s) removed; the ledger is empty.', v_n;
+END
+$unseed$;
+
 DROP TRIGGER IF EXISTS trg_tenants_z_seed_pipelines ON public.tenants;
+DROP FUNCTION IF EXISTS app.unseed_pipelines();
 DROP FUNCTION IF EXISTS app.seed_pipelines_all();
 DROP FUNCTION IF EXISTS app.seed_pipelines_on_tenant();
 DROP FUNCTION IF EXISTS app.seed_pipelines(uuid);
+
+-- The ledger LAST, after the function that reads it and after the rows it
+-- describes are gone. Dropping it earlier would strand the only record of what
+-- the seed wrote.
+DROP TABLE IF EXISTS app.seeded_pipelines;
 
 -- ═══ 4 · The internal projection helpers ═════════════════════════════════════════
 -- LAST, because every `core` function above called at least one of them.
@@ -273,7 +309,7 @@ DROP FUNCTION IF EXISTS app._money(bigint, text);
 -- happily after dropping half the database. The second half of this block is
 -- the one that matters.
 DO $verify$
-DECLARE v_left text[]; v_lost text[];
+DECLARE v_left text[]; v_lost text[]; v_rows_left integer;
 BEGIN
   -- R1 · Nothing 018 created is left behind.
   SELECT pg_catalog.array_agg(p.proname ORDER BY p.proname) INTO v_left
@@ -407,20 +443,70 @@ BEGIN
                     'the §18 money rule lives in that column and it is 007''s';
   END IF;
 
-  -- R4 · THE SEEDED CONFIGURATION SURVIVES. The other three provisioning
-  -- triggers (011, 016, 017) are untouched, and so are the pipeline rows
-  -- themselves. A rollback that deleted a tenant's stage configuration would
-  -- cascade into core.engagement_step_states and take the fixture world with
+  -- R4 · THE SEED IS ACTUALLY REVERSED, MEASURED ON THE ROWS.
+  --
+  -- ⚠ THIS CHECK USED TO QUERY `pg_trigger` FOR 016's
+  -- `trg_tenants_seed_ref_formats` — a ref-format trigger with no relationship
+  -- to the pipeline seed — while its own comment and the closing NOTICE both
+  -- announced that it verified pipeline rows. It never read `core.pipelines` or
+  -- `core.pipeline_steps` at all, so the safety net meant to catch a regression
+  -- of the row contract was watching a different object entirely. Both halves
+  -- are asserted now, and the row half is first because it is the one that was
+  -- missing.
+  --
+  -- The ids are RE-DERIVED rather than read from the ledger, because the ledger
+  -- has been dropped by this point — and re-deriving is the stronger test: it
+  -- asks the question from outside the bookkeeping that is supposed to answer
   -- it.
+  SELECT pg_catalog.count(*)::integer INTO v_rows_left
+    FROM core.pipelines AS pipe
+    JOIN public.tenants AS tenant ON tenant.id = pipe.tenant_id
+   WHERE pipe.id = pg_catalog.md5(tenant.id::text || 'pipeline:' || pipe.object)::uuid;
+  IF v_rows_left <> 0 THEN
+    RAISE EXCEPTION '018 rollback R4: % pipeline row(s) with 018-derived ids survived '
+                    'the reversal — the seed was not undone and '
+                    'pipelines_one_default_uq still rejects a default ENGAGEMENT '
+                    'pipeline for those tenants', v_rows_left;
+  END IF;
+
+  SELECT pg_catalog.count(*)::integer INTO v_rows_left
+    FROM core.pipeline_steps AS step
+    JOIN public.tenants AS tenant ON tenant.id = step.tenant_id
+   WHERE step.id IN (
+           pg_catalog.md5(tenant.id::text || 'pipeline:ENGAGEMENT:'  || step.step_key)::uuid,
+           pg_catalog.md5(tenant.id::text || 'pipeline:OPPORTUNITY:' || step.step_key)::uuid);
+  IF v_rows_left <> 0 THEN
+    RAISE EXCEPTION '018 rollback R4b: % pipeline_step row(s) with 018-derived ids '
+                    'survived the reversal', v_rows_left;
+  END IF;
+
+  IF pg_catalog.to_regclass('app.seeded_pipelines') IS NOT NULL THEN
+    RAISE EXCEPTION '018 rollback R4c: app.seeded_pipelines still exists';
+  END IF;
+
+  -- ROWS A TENANT CONFIGURED ITSELF ARE UNTOUCHED. `app.unseed_pipelines`
+  -- deletes only what the seed recorded inserting, so anything under a
+  -- different id must still be here; a rollback that emptied the table would
+  -- pass every assertion above.
+  IF pg_catalog.to_regclass('core.pipelines') IS NULL
+     OR pg_catalog.to_regclass('core.pipeline_steps') IS NULL THEN
+    RAISE EXCEPTION '018 rollback R4d: a pipeline table was dropped';
+  END IF;
+
+  -- AND THE OTHER THREE PROVISIONING TRIGGERS ARE UNTOUCHED. This is what the
+  -- old R4 actually tested, kept, and now stated accurately: 011's action
+  -- policies, 016's ref formats and 017's check keys all seed from their own
+  -- AFTER INSERT triggers on public.tenants and none of them is 018's.
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger AS t
                    JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
                   WHERE c.relname = 'tenants' AND NOT t.tgisinternal
                     AND t.tgname = 'trg_tenants_seed_ref_formats') THEN
-    RAISE EXCEPTION '018 rollback R4: 016''s ref-format seed trigger was destroyed';
+    RAISE EXCEPTION '018 rollback R4e: 016''s ref-format seed trigger was destroyed';
   END IF;
 
   RAISE NOTICE '018 rollback: 30 core RPCs, 3 views, 11 app helpers and the pipeline '
-               'seed mechanism dropped; seeded pipeline ROWS deliberately kept; '
+               'seed mechanism dropped, the seeded pipeline ROWS reversed exactly '
+               '(R4 counts them) and rows 018 did not write left alone; '
                '001-017 verified intact, including 014''s three gate wrappers, '
                '011''s grants, 017''s tax registry, 016''s provisioning triggers '
                'and 007''s generated money columns.';
