@@ -15,6 +15,154 @@
 
 ---
 
+## 2026-09-13 22:5x — PR #24 (011-013) BLOCK; severity count corrected to 3 CRIT/7 HIGH/13 MED, not 2/4/9; fixes routed to fix-014
+
+**PR #24 confirmed MERGED at `b9bca03`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-011-013.md` — an Opus
+thermonuclear + security review of migrations 011, 012 and 013, at
+commit `e20e1ba` on `origin/main`. **011–013 confirmed already on
+`main`** — their migration files exist there directly, not gated behind
+a PR the way 014–018 are — though nothing has been applied to any hosted
+project. **VERDICT: BLOCK.**
+
+**Severity count correction, confirmed directly against the findings
+table rather than the doc's own headline framing: 3 CRIT, 7 HIGH, 13 MED
+and 5 LOW (28 rows total), not the "2 CRIT, 4 HIGH, 9 MED, 5 LOW" first
+reported.** Counted every row of the table by its severity column
+directly, not summarized from prose. The verdict's own prose headlines
+only two CRITs as "confirmed by live execution," which is accurate on
+its own narrow terms, but a third row — **T1** — is independently
+CRIT-severity in the same table and was left out of the report entirely:
+`app.replay_dead_letter` copies `effect_id` onto a replacement job after
+the original dead-lettering already marked the effect `DEAD_LETTERED`,
+so `report_effect_result` on a _successful_ replay hits
+`IF v_effect.status IN ('SETTLED','DEAD_LETTERED') THEN RETURN;` — a
+silent no-op — and an invoice that actually got pushed successfully on
+replay stays recorded as permanently failed in the ledger, with no
+supported way to correct it later (`PARTIALLY_FAILED` is guarded
+`AND status='EXECUTING'`). This finding is static-only (thermo pass,
+not independently executed this round), but static-only is not the same
+claim as lower-severity — the table itself rates it CRIT, and it belongs
+in any severity count of this review.
+
+**The two CRITs that were live-reproduced, confirmed exactly, not just
+quoted:**
+
+1. Nothing outside the test pin calls `app.enqueue_effect_jobs` —
+   confirmed by a repo-wide grep across `apps/`, `packages/`, all
+   migrations and rollbacks: the only non-definition call site is
+   `supabase/tests/test_012_events_outbox_and_jobs.sql`. Every external
+   effect (email, invoice push, reminder, broadcast) is written
+   `DISPATCHED` and then silently never enqueued as a job, forever.
+2. BYOK key rotation is permanently blocked on exactly the key that was
+   just revealed — reproduced live against the G6 shim: `ai_provider_key_set`
+   → `ai_provider_key_reveal` → `ai_provider_key_rotate` on the same
+   `provider_ref` raises `42501 REVEAL_AUDIT_REQUIRED` forever, because
+   the reveal-audit trigger's short-circuit condition
+   (`NEW IS NOT DISTINCT FROM OLD`) is false for a timestamp-to-NULL
+   transition, and rotate never sets the GUC the trigger then demands.
+   `test_013` never exercises a successful rotate, which is why no pin
+   caught it.
+
+Neither CRIT is exercised by the existing pins, confirmed directly, which
+is why "13/13 and 14/14 all pins pass" is true and does not contradict
+either finding.
+
+**HIGH-1, confirmed exactly**: `app.has_permission` is called exactly
+once in all of migration 011 (inside `decide_approval`). On the HUMAN
+path, if no `core.action_policies` row matches, dispatch falls through to
+bare `EXECUTING` with no permission check at all — reachable today for
+several action types with no policy row at all (`ENQUIRY_ARCHIVE`,
+`OPPORTUNITY_CONVERT`, `TNA_RECOMMENDATION_ACCEPT`), and 014's wrapper
+performs no re-validation on top.
+
+**Six more HIGH findings not in the original summary, confirmed present
+in the table:** a worker heartbeat that sets the lease absolutely rather
+than extending it, so the first heartbeat can shorten the effective
+window and race the reaper into a double-send under load; `bulk_decide`'s
+response shape not matching what the web contract's own type expects
+(`results` silently `undefined` at runtime); an approval diff-hash guard
+that hashes only immutable columns of the request itself, so
+`DIFF_CHANGED` can mathematically never fire regardless of what changed
+underneath; `service_role` execute-grant exposure on the five BYOK
+functions that can be neither confirmed nor ruled out on this local
+harness (it doesn't model Supabase's platform-level default-privilege
+bootstrap); every one of 013's authorization refusals raising
+`insufficient_privilege` instead of the repo's own error-code convention,
+which the web client's own code list misclassifies as a session-expiry
+error rather than a permission refusal; and an idempotency request-hash
+omitting confidence/reasoning/evidence fields, so a retry with a
+materially downgraded confidence value silently inherits the original
+high-autonomy execution path.
+
+**Catalog/pin-honesty findings, confirmed live rather than trusted:** the
+012/013 pins genuinely require migration 014's grants to be applied,
+contrary to the catalog's own "001–013" claim — confirmed by the
+orchestrator running `test_012`/`test_013` against 001–013 alone first
+(both failed for exactly this reason) before passing cleanly once 014
+was applied. **This is the same pattern this thread already recorded for
+014's own pin** (needing 001–017 despite its header saying 001–014) —
+worth naming as a recurring class of defect across this whole migration
+line, not three unrelated incidents. The catalog's "twenty-seven
+functions" claim for 011 is also wrong; 28 is confirmed correct three
+independent ways (the migration header, the revoke list, and 011's own
+`$verify$` block).
+
+**Confirmed clean, worth keeping on record so it isn't lost if any of
+these packs gets rewritten:** the 011/014 envelope seam (011 returns raw
+jsonb by design, wrapped by 014's `app.ok()` calls) is a genuine,
+intentional, correctly-implemented design, not a catalog oversight; 013's
+BYOK secrecy mechanism holds under adversarial reading (no RPC ever
+returns raw key material, the 24-hour reveal ceiling is a real UPDATE
+predicate rather than check-then-act); every `search_path=''` pin holds
+exactly across all three packs (011 28/28, 012 31/31, 013 29/29).
+
+**Could not verify, stated in the doc's own words:** the FORCE-RLS/
+definer degradation direction is unmeasurable in any local harness — the
+local superuser owns everything and bypasses RLS, so no local execution
+can confirm which of roughly 80 definer functions in these packs would
+degrade open vs. closed on a real Supabase project where the migration
+owner lacks BYPASSRLS; `app.aal2_verified`'s behavior against a real
+GoTrue-managed `auth.sessions` could not be confirmed against the
+harness's hand-built stub.
+
+**Codex `gpt-5.6-sol` did not land** — two attempts, both unsuccessful
+(killed ~1 minute in on the first; no retrievable output on the second),
+independently confirmed as the same hard quota block until 14 Sep 00:29,
+recorded as owed rather than substituted. **The two Opus passes ran
+independently and were disjoint on 30 of 32 raw findings**, confirmed
+exactly against the doc's own count — only one real overlap (a
+loose S2↔T7-adjacent connection at the 012 idempotency-key site).
+
+**Fixes reported routed to `fix-014` as in-place amendments on
+`cloud/migrations`, then re-review** — not yet independently confirmed
+by this thread; a report to verify next round. **001–013 confirmed
+applied to no hosted project**, consistent with every prior check this
+session; hosted apply for this whole migration line stays gated on PR
+#6's eventual clean verdict.
+
+**Things worth telling future-me:**
+
+1. A verdict's own prose headline ("two CRIT findings") is a summary, not
+   a ground truth — the findings table it summarizes is the actual
+   source, and this is now the second time this session a report's
+   severity framing diverged from what the underlying table says (PR #20
+   was the first). Count the table directly before repeating a headline
+   count anywhere in the spine.
+2. "Static-only, not independently executed" describes how a finding was
+   confirmed, not how severe it is — T1 is exactly as CRIT as the two
+   live-reproduced findings even though nobody ran it this pass, and
+   filtering a severity count by "which ones got executed" quietly
+   drops real risk from the record.
+3. The same class of catalog/pin-range defect (a pin's stated dependency
+   range being narrower than what it actually needs) has now shown up
+   independently in 014's own pin and in 012/013's pins — worth treating
+   as a systemic pattern across this migration line's authorship, not
+   three coincidences, and worth a standing check before any future pack
+   claims a dependency range.
+
+---
+
 ## 2026-09-13 22:4x — PR #23 (014 re-review) MERGE-WITH-FIXES; fix-014 pushes 015-017 fixes at bdd49aa; new human ruling needed on 016's dated refs
 
 **PR #23 confirmed MERGED at `db0ec94`**, one file —

@@ -856,6 +856,100 @@ a date; refs are immutable once allocated, so getting this wrong ships a
 permanent per-tenant defect from day one. Needs a human ruling against
 `docs/architecture/01-domain-model.md`, not a lane decision.
 
+⛔ **PR #24 confirmed MERGED at `b9bca03`**, one file —
+`docs/reviews/2026-09-13-codex-retrofit-011-013.md` — an Opus
+thermonuclear + security review of migrations 011–013, at commit
+`e20e1ba` on `origin/main`. **011–013 confirmed already on `main`**
+(their migration files exist there directly, not gated behind a PR like
+014–018) — the SQL itself is live on the default branch today, even
+though nothing has been applied to any hosted project. **VERDICT: BLOCK.**
+Codex `gpt-5.6-sol` did not land (killed ~1 minute in on the first
+attempt, no retrievable output on the second) and is recorded as owed
+until 14 Sep 00:29, not substituted; the two Opus passes ran
+independently and were disjoint on 30 of 32 raw findings, confirmed
+exactly against the doc's own count.
+
+- **Severity count correction, confirmed directly against the findings
+  table rather than the doc's own headline framing: the table holds
+  3 CRIT, 7 HIGH, 13 MED and 5 LOW (28 rows total), not the "2 CRIT, 4
+  HIGH, 9 MED, 5 LOW" first reported.** The verdict's own prose
+  headlines only two CRITs as "confirmed by live execution," which is
+  accurate on its own terms, but a third row (**T1**) is independently
+  CRIT-severity in the same table and was left out of the summary
+  entirely: `app.replay_dead_letter` copies `effect_id` onto a
+  replacement job after the original dead-lettering already marked the
+  effect `DEAD_LETTERED`, so `report_effect_result` on a _successful_
+  replay hits a silent no-op guard and the invoice stays recorded as
+  permanently failed in the ledger with no way to correct it later —
+  static-only (thermo pass, not independently executed), but genuinely
+  CRIT and genuinely a live-production risk, not a lesser one just
+  because execution didn't confirm it this pass.
+- **The two CRITs independently reproduced live, confirmed exactly**: (1)
+  nothing anywhere outside the test pin calls `app.enqueue_effect_jobs`
+  — every external effect (email, invoice push, reminder, broadcast) is
+  written `DISPATCHED` and never enqueued, confirmed by a repo-wide grep
+  across `apps/`, `packages/`, all migrations and rollbacks. (2) BYOK key
+  rotation is permanently blocked on exactly the key that was just
+  revealed — reproduced live (set → reveal → rotate on the same
+  `provider_ref` raises `42501 REVEAL_AUDIT_REQUIRED` forever), because
+  the reveal-audit trigger's short-circuit doesn't recognize a rotate
+  (timestamp → NULL) as distinct from a bare reveal. Neither is exercised
+  by the existing pins, which is why "all pins pass" does not contradict
+  either finding.
+- **HIGH-1, confirmed exactly**: `app.has_permission` is called exactly
+  once in all of 011 (inside `decide_approval`); on the HUMAN path, if no
+  `core.action_policies` row matches, dispatch falls through to bare
+  `EXECUTING` with no permission check at all — reachable today for
+  several action types with no policy row (`ENQUIRY_ARCHIVE`,
+  `OPPORTUNITY_CONVERT`, `TNA_RECOMMENDATION_ACCEPT`), and 014's wrapper
+  does no re-validation on top.
+- **Six more HIGH findings not in the original summary, confirmed
+  present in the table**: a worker heartbeat that shortens rather than
+  extends the effective lease, risking a double-send under load; a
+  `bulk_decide` response shape the web contract can't actually parse
+  (`results` silently `undefined`); an approval diff-hash guard that
+  hashes only immutable columns, so `DIFF_CHANGED` can mathematically
+  never fire; `service_role` execute-grant exposure on the BYOK
+  functions that can't be confirmed or ruled out on this local harness
+  (Supabase's platform bootstrap isn't modeled); every 013 authorization
+  refusal raising the wrong error code class, rendering as a session
+  expiry instead of a permission refusal to the web client; and an
+  idempotency hash omitting the AI confidence/reasoning/evidence fields,
+  so a downgraded-confidence retry silently inherits the original
+  high-autonomy execution.
+- **Catalog/pin-honesty findings, confirmed live rather than trusted**:
+  the 012/013 pins genuinely require 014's grants applied, contrary to
+  the catalog's "001–013" claim — confirmed by the orchestrator running
+  `test_012`/`test_013` against 001–013 alone first (both failed for
+  exactly this reason) before passing cleanly once 014 was applied,
+  matching this thread's own earlier finding of the same pattern in
+  014's own pin. The catalog's "twenty-seven functions" claim for 011 is
+  also wrong; 28 is confirmed correct three independent ways (header,
+  revoke list, and 011's own `$verify$`).
+- **Explicitly checked and confirmed clean, worth keeping on record**:
+  the 011/014 envelope seam (011's raw jsonb, wrapped by 014's `app.ok()`
+  calls) is a genuine, intentional, correctly-implemented design, not a
+  defect the catalog undersells; 013's BYOK secrecy mechanism (no raw key
+  material ever returned, the 24-hour reveal ceiling is a real UPDATE
+  predicate, not check-then-act); all `search_path=''` pins hold exactly
+  (011 28/28, 012 31/31, 013 29/29); anon/authenticated EXECUTE grants
+  confirmed live via `has_function_privilege` on both the gated and
+  ungated sides.
+- **Could not verify, stated in the doc's own words**: the FORCE-RLS/
+  definer degradation direction is unmeasurable in any local harness (the
+  local superuser bypasses RLS, so no execution can confirm which of
+  roughly 80 definer functions would degrade open vs. closed on a real
+  Supabase project); `app.aal2_verified`'s behavior against a real
+  GoTrue-managed `auth.sessions` could not be confirmed against the
+  harness's hand-built stub.
+- **Fixes reported routed to `fix-014` as in-place amendments on
+  `cloud/migrations`, then re-review** — not independently confirmed by
+  this thread yet, consistent with how 014–017's own fixes have been
+  handled all session. **001–013 confirmed applied to no hosted
+  project**, consistent with every prior check this session; hosted
+  apply for this whole migration line stays gated on PR #6's eventual
+  clean verdict.
+
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
 `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero

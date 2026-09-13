@@ -385,8 +385,32 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > with the domain model deliberately left unfixed, needs a human ruling
 > — added to `ai/state.md`'s Backlog. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 22:4x — PR #23 (014) MERGE-WITH-FIXES;
-> fix-014 pushed 015-017's fixes at bdd49aa; new human ruling needed.
+> **BLAST 13 Sep 22:5x +08** — PR #24 confirmed MERGED (`b9bca03`), one
+> file: an Opus thermonuclear + security review of migrations 011-013,
+> already on `main` today (not gated behind a PR). VERDICT BLOCK. Severity
+> count corrected against the findings table itself: **3 CRIT, 7 HIGH, 13
+> MED, 5 LOW (28 rows)**, not the "2 CRIT, 4 HIGH, 9 MED" first reported
+> — a third CRIT (T1) was left out of the summary: `app.replay_dead_letter`
+> marks a _successfully replayed_ invoice push as permanently failed in
+> the ledger via a silent no-op guard, no way to correct it later
+> (static-only, not live-reproduced, but genuinely CRIT). The two CRITs
+> that were live-reproduced: nothing calls `app.enqueue_effect_jobs`, so
+> every external effect (email/invoice/reminder/broadcast) dispatches and
+> never sends; BYOK key rotation is permanently blocked on any key ever
+> revealed. HIGH-1 confirmed: `perform_action`'s HUMAN path has no
+> permission check at all when no policy row matches. Six more HIGH
+> findings not in the original summary (worker heartbeat shortening the
+> lease, `bulk_decide`'s response shape the web contract can't parse, an
+> approval diff-hash that can never fire, etc). Confirmed live: the
+> 012/013 pins genuinely require 014 applied, contrary to the catalog —
+> same pattern as 014's own pin. Codex owed until 00:29, not substituted;
+> two Opus passes disjoint on 30/32 raw findings. Fixes reported routed
+> to `fix-014` as in-place amendments, then re-review — not yet
+> confirmed. 001-013 confirmed applied to no hosted project. Full detail
+> in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 22:5x — PR #24 (011-013) BLOCK, 3 CRIT
+> not 2 (T1 omitted from the original report); fixes routed to fix-014.
 
 ### Focus
 

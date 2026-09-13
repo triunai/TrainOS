@@ -287,6 +287,24 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 22:5x — PR #24 (011-013) BLOCK; severity count corrected to 3 CRIT/7 HIGH/13 MED (not 2/4/9); fixes routed to fix-014
+
+- PR #24 confirmed merged (`b9bca03`): Opus thermonuclear + security
+  review of 011-013 (already on main, not PR-gated). VERDICT BLOCK.
+  Corrected the reported severity count against the findings table
+  itself: 3 CRIT/7 HIGH/13 MED/5 LOW (28 rows), not 2/4/9/5 — a third
+  CRIT (T1, a replay bug that marks successful invoice replays as
+  permanently failed) was left out of the original report despite being
+  CRIT-severity in the table, just static-only rather than live-tested.
+  Two CRITs live-reproduced: nothing calls app.enqueue_effect_jobs (every
+  external effect dispatches and never sends), and BYOK rotation deadlocks
+  on any revealed key. HIGH-1 confirmed (perform_action's HUMAN path has
+  no permission check when no policy matches), plus six more HIGH findings
+  not in the original summary. 012/013 pins confirmed to need 014 applied,
+  same pattern as 014's own pin. Codex owed until 00:29, two Opus passes
+  disjoint on 30/32 findings. Fixes reported routed to fix-014, re-review
+  pending. See `ai/project-log.md` 22:5x block for full detail.
+
 ## 2026-09-13 22:4x — PR #23 (014 re-review) MERGE-WITH-FIXES; fix-014 pushed 015-017 fixes at bdd49aa; new human ruling needed on 016's dated refs
 
 - PR #23 confirmed merged (`db0ec94`): Opus thermonuclear + security
