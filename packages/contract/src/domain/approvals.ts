@@ -133,9 +133,18 @@ export interface ApprovalDiffChangedDetails {
  * §7 `POST /v1/approvals/bulk-decide` — `409` if any id has
  * `bulkApprovable: false`. `bulkApprovable` is server-decided: false for any
  * action carrying a monetary value.
+ *
+ * `items`, not `ids`: a hash per approval cannot travel in an array of ids, and
+ * a bulk APPROVE needs one, for the same optimistic-concurrency reason
+ * `ApprovalDecideRequest.diffHash` is required on the single path
+ * (`011:2781-2787`, `core.bulk_decide_approvals`). Each `diffHash` is the one
+ * already on the row the screen selected — nothing new to compute. An APPROVE
+ * item with a missing or blank hash is refused before any item in the batch is
+ * applied, and a repriced approval refuses `DIFF_CHANGED` the same way the
+ * single path does.
  */
 export interface ApprovalBulkDecideRequest {
-  ids: string[];
+  items: { approvalId: string; diffHash: string }[];
   decision: ApprovalDecision;
   note?: string | null;
 }

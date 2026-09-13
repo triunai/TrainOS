@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Me, Role } from "@trainos/contract";
 import {
@@ -7,8 +7,10 @@ import {
   isDomainError,
   isRetryable,
   queryKeys,
+  readDemoRole,
   readableMessage,
   toApiError,
+  writeDemoRole,
   type ApiError,
 } from "@/shared/api";
 import { useAuth } from "@/shared/auth";
@@ -19,7 +21,9 @@ import { FIXTURE_ME, MeContext, type MeContextValue } from "./useMe";
  * The principal, from wherever this build's identity actually lives.
  *
  * FIXTURES: the fixture principal and the development role switch, exactly as
- * before. Deliberately NOT a query — a fixture pretending to be a fetch would
+ * before. On the hosted demo the chosen role is remembered in the browser
+ * alongside the demo data (`readDemoRole` is `null` everywhere else).
+ * Deliberately NOT a query — a fixture pretending to be a fetch would
  * hide that there is no session behind it.
  *
  * SUPABASE: `core.me()` for the signed-in session (018), fetched once the
@@ -50,9 +54,17 @@ export function MeProvider({ children, unlinked, loadMe }: MeProviderProps) {
 }
 
 function FixtureMeProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<Role>(FIXTURE_ME.role);
+  const [role, setRoleState] = useState<Role>(() => readDemoRole() ?? FIXTURE_ME.role);
 
-  const value = useMemo<MeContextValue>(() => ({ me: { ...FIXTURE_ME, role }, setRole }), [role]);
+  const setRole = useCallback((next: Role) => {
+    setRoleState(next);
+    writeDemoRole(next);
+  }, []);
+
+  const value = useMemo<MeContextValue>(
+    () => ({ me: { ...FIXTURE_ME, role }, setRole }),
+    [role, setRole],
+  );
 
   return <MeContext.Provider value={value}>{children}</MeContext.Provider>;
 }

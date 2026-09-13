@@ -1008,6 +1008,15 @@ export class FixtureClient {
     body: ApprovalDecideRequest,
     options: RequestOptions = {},
   ): Promise<ApprovalDecideResponse> {
+    /* 014:1287-1297 (11508ed): `core.decide_approval` refuses a hashless
+       APPROVE itself, before `app.decide_approval` looks anything up, because
+       011 compares the hash only when one is sent. Without this the hashless
+       APPROVE below reached the stale-hash branch and answered DIFF_CHANGED. */
+    if (body.decision === "APPROVE" && !body.diffHash?.trim()) {
+      throw validationFailed("an APPROVE must carry the diff hash the approver was shown", {
+        fields: [{ field: "diffHash", reason: "REQUIRED" }],
+      });
+    }
     const approval = byIdOrRef(this.#store.approvals, id);
     if (!approval) throw notFound("Approval", id);
     if ((body.decision === "REJECT" || body.decision === "REQUEST_CHANGES") && !body.note) {
@@ -1076,27 +1085,88 @@ export class FixtureClient {
     });
   }
 
-  /** §7 `409` if any id carries a monetary value, i.e. `bulkApprovable: false`. */
+  /**
+   * §7 `409` if any id carries a monetary value, i.e. `bulkApprovable: false`.
+   *
+   * 011:3407-3419 (062e5e2) mirrored here: `body.items` carries one
+   * `expectedDiffHash` per approval, because a bulk APPROVE has to enforce the
+   * same optimistic-concurrency guard `decideApproval` enforces on the single
+   * path — a hash per approval cannot travel in an array of ids. Both refusals
+   * below happen BEFORE any item is applied, in item order matching the SQL's
+   * own pre-checks: a partial bulk decide is worse than a refused one, because
+   * the approver cannot tell which half went through.
+   */
   async bulkDecideApprovals(
     body: ApprovalBulkDecideRequest,
     options: RequestOptions = {},
   ): Promise<ApprovalBulkDecideResponse> {
     return this.#write(options, body, 200, () => {
-      const rows = body.ids.map((id) => {
-        const approval = byIdOrRef(this.#store.approvals, id);
-        if (!approval) throw notFound("Approval", id);
-        return approval;
+      /* `app.bulk_decide`'s refusal order (011 at 11508ed), so a batch mixing
+         failure modes refuses on the same one on both clients:
+           empty items          3462-3468
+           duplicate ids        3474-3483
+           missing APPROVE hash 3497-3511
+           not found            3550-3556
+           not bulk-approvable  3558-3571
+           stale hash           per item, via decide_approval, from 3573
+         The idempotency check between the hash and not-found checks
+         (3514-3548) is `#write`'s, which runs it before everything here — so
+         a key reused with a different, invalid body is the one case that refuses
+         differently. The stale hash is pre-scanned rather than raised mid-loop:
+         011 relies on the transaction rolling back the items already applied,
+         and a fixture has no transaction. */
+      if (body.items.length === 0) {
+        throw validationFailed("items must be a non-empty array", {
+          reason: "INVALID_APPROVAL_IDS",
+        });
+      }
+      if (new Set(body.items.map((item) => item.approvalId)).size !== body.items.length) {
+        throw validationFailed("items must be a non-empty set of distinct approvalId values", {
+          reason: "INVALID_APPROVAL_IDS",
+        });
+      }
+      if (body.decision === "APPROVE") {
+        const missingFor = body.items
+          .filter((item) => !item.diffHash || item.diffHash.trim() === "")
+          .map((item) => item.approvalId);
+        if (missingFor.length > 0) {
+          throw validationFailed(
+            "every APPROVE item must carry the diff hash the approver was shown",
+            { fields: [{ field: "expectedDiffHash", reason: "REQUIRED" }], missingFor },
+          );
+        }
+      }
+      const rows = body.items.map((item) => {
+        const approval = byIdOrRef(this.#store.approvals, item.approvalId);
+        if (!approval) throw notFound("Approval", item.approvalId);
+        return { item, approval };
       });
-      const blocked = rows.filter((approval) => !approval.bulkApprovable);
+      const blocked = rows.filter(({ approval }) => !approval.bulkApprovable);
       if (blocked.length > 0) {
         throw new ContractError(
-          "AGENT_PAUSED",
-          "One or more selected approvals carry a monetary value and must be decided individually.",
-          { blockers: blocked.map((approval) => approval.ref) },
+          "BULK_NOT_PERMITTED",
+          "one or more approvals may not be decided in bulk",
+          {
+            notBulkApprovable: blocked.map(({ approval }) => ({
+              id: approval.id,
+              ref: approval.ref,
+              reason: approval.value ? "MONETARY_VALUE" : "MONEY_MOVING_TYPE",
+            })),
+          },
         );
       }
+      if (body.decision === "APPROVE") {
+        const stale = rows.find(({ item, approval }) => item.diffHash !== approval.diffHash);
+        if (stale) {
+          throw new ContractError("DIFF_CHANGED", "the rendered diff is stale", {
+            diffChanged: true,
+            diff: stale.approval.diff,
+            diffHash: stale.approval.diffHash,
+          });
+        }
+      }
       const decidedBy = this.#actor();
-      const results = rows.map((approval) => {
+      const results = rows.map(({ approval }) => {
         const effects: Effect[] = body.decision === "APPROVE" ? approval.diff.map(toEffect) : [];
         approval.status =
           body.decision === "APPROVE"

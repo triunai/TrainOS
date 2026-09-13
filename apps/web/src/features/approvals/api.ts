@@ -168,14 +168,19 @@ export function useBulkDecideApprovals() {
   const queryClient = useQueryClient();
 
   return useMutation<ApprovalBulkDecideResponse, ApiErrorException, ApprovalBulkDecideRequest>({
-    mutationFn: (body) =>
-      call(() =>
-        api.bulkDecideApprovals(body, {
-          /* The selection IS the subject here — there is no single record — so
-             the ids ride in the body half of the derivation. */
-          idempotencyKey: idempotencyKey("bulk", body),
-        }),
-      ),
+    /* ⚠ NO `idempotencyKey` OPTION HERE, DELIBERATELY. `key()` in the adapter is
+       `options?.idempotencyKey ?? fallback`, so passing one from this layer
+       SILENTLY REPLACES the canonical derivation rather than adding to it — and
+       the one passed here was `idempotencyKey("bulk", body)`, i.e.
+       `derivedIdempotencyKey("approval-decide", "bulk", body)`: the SINGLE
+       decide's scope, a constant subject `"bulk"` that names no record, and the
+       items in click order. Ticking A then B and B then A produced two keys, so
+       a retry after a dropped connection ran the batch a second time instead of
+       replaying it. Omitting the option lets `bulkDecideIdempotencyKey` derive
+       it from the selection as a SET, the way `app.bulk_decide` reads it
+       (011:3447). A second derivation beside the canonical one is the
+       divergence CLAUDE.md calls a defect; this is the one, removed. */
+    mutationFn: (body) => call(() => api.bulkDecideApprovals(body)),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.badges });
