@@ -1131,6 +1131,18 @@ SELECT pg_catalog.set_config('t011.perm_md_payment_record',
   pg_temp.t011_perform('PAYMENT_RECORD','INV-T011-1','{}'::jsonb,NULL,NULL)::text,true);
 RESET ROLE;
 
+
+-- A CLIENT-kind actor: the portal's shape. `app.current_actor()` takes
+-- actor_kind from the claim (002:480, "portal RPCs write CLIENT"), and a portal
+-- caller is authenticated by a share token rather than a membership, so they
+-- carry no staff role at all.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"CLIENT","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_client_archive',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
 DO $t17$
 DECLARE
   v_sales_arch jsonb := pg_catalog.current_setting('t011.perm_sales_enquiry_archive')::jsonb;
@@ -1181,6 +1193,26 @@ BEGIN
   ASSERT v_sales_pay->>'detailText' LIKE '%FORBIDDEN%',
     pg_catalog.format('T17c2 FAIL: the refusal is not coded FORBIDDEN: %s',
       COALESCE(v_sales_pay->>'detailText','<none>'));
+
+  -- (e) ⚠ A CLIENT ACTOR IS NOT REFUSED BY THIS CHECK, and the first version of
+  --     it refused every one. `app.role_permissions` has rows for the seven staff
+  --     roles and NONE for CLIENT or AGENT, so covering CLIENT alongside HUMAN
+  --     made `has_permission` false for every portal caller doing anything — a
+  --     gate that refuses everybody, which is an outage. It would have surfaced
+  --     as "the portal stopped working" on the day 018's accept path landed.
+  --     The exemption is conditional on the fact that makes it true: the moment
+  --     anybody seeds CLIENT rows, the check starts applying automatically.
+  ASSERT NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp WHERE rp.role = 'CLIENT'),
+    'T17e0 FAIL: CLIENT now holds permissions, so the conditional exemption in '
+    '011 has switched itself off and CLIENT actions are gated like HUMAN ones. '
+    'That is the intended end state — update this pin to assert the gated '
+    'behaviour rather than the exemption.';
+
+  ASSERT (pg_catalog.current_setting('t011.perm_client_archive')::jsonb ->> 'ok')::boolean,
+    pg_catalog.format('T17e FAIL: a CLIENT-initiated action was refused. CLIENT '
+      'holds no rows in app.role_permissions at all, so gating it on '
+      'has_permission refuses every portal caller doing anything: %s',
+      pg_catalog.current_setting('t011.perm_client_archive'));
 
   -- (b) a role that DOES hold the permission still gets through. ENQUIRY_ARCHIVE
   -- has no policy row at all, so this is the pure fall-through path: before the

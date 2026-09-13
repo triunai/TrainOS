@@ -1804,6 +1804,23 @@ BEGIN
   PERFORM app.complete_job(v_new, v_tenant, 't015-worker',
     pg_catalog.jsonb_build_object('ok',true), NULL);
 
+  -- T15d · AND THE REQUEST AGREES WITH THE LEDGER. The effect reaching SETTLED is
+  -- only half of "the replay worked": `core.action_requests` is what the product
+  -- reads, and its reconciliation was guarded `AND status = 'EXECUTING'` — which
+  -- the request had already left when dead-lettering moved it to
+  -- PARTIALLY_FAILED. So the effect settled, the request stayed PARTIALLY_FAILED
+  -- forever, and nothing could correct it. The first version of this pin asserted
+  -- only the effect status and would have passed against exactly that.
+  ASSERT (SELECT a.status FROM core.action_requests AS a
+           WHERE a.id = (SELECT e.action_request_id FROM app.action_effects AS e
+                          WHERE e.id = v_effect)) = 'EXECUTED',
+    pg_catalog.format('T15d FAIL: the replay settled its effect but the action '
+      'request is %s, not EXECUTED. The ledger and the request disagree, and the '
+      'request is the one the product reads.',
+      (SELECT a.status FROM core.action_requests AS a
+        WHERE a.id = (SELECT e.action_request_id FROM app.action_effects AS e
+                       WHERE e.id = v_effect)));
+
   SELECT e.status::text INTO v_status FROM app.action_effects AS e WHERE e.id = v_effect;
   ASSERT v_status = 'SETTLED',
     pg_catalog.format('T15c FAIL: the replay succeeded and the effect is %s, not '
@@ -1813,9 +1830,9 @@ BEGIN
       'left that state.', v_status);
 
   RAISE NOTICE
-    'T15 PASS - a dead-lettered effect is reopened to DISPATCHED by the replay '
-    'and reaches SETTLED when the replacement job completes, so the ledger agrees '
-    'with what actually happened.';
+    'T15 PASS - a dead-lettered effect is reopened to DISPATCHED by the replay, '
+    'reaches SETTLED when the replacement job completes, and the action request '
+    'moves off PARTIALLY_FAILED to EXECUTED — the ledger and the request agree.';
 END;
 $t15$;
 

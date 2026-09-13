@@ -2292,11 +2292,38 @@ BEGIN
   -- posted. `app.has_permission` was called exactly once in this entire file, in
   -- `decide_approval`, and 014's wrapper re-validates nothing.
   --
-  -- HUMAN and CLIENT only. An AGENT's authority is the autonomy grant and the
-  -- policy ceiling, which the sections below evaluate in full and which is a
-  -- different model — agents hold no role in `app.role_permissions`. A SYSTEM
-  -- actor is the database acting on its own behalf and has no principal to check.
-  IF v_actor_kind IN ('HUMAN','CLIENT') THEN
+  -- HUMAN always; CLIENT only once CLIENT has permissions to check (see below).
+  -- An AGENT's authority is the autonomy grant and the policy ceiling, which the
+  -- sections below evaluate in full and which is a different model — agents hold
+  -- no role in `app.role_permissions`. A SYSTEM actor is the database acting on
+  -- its own behalf and has no principal to check.
+  -- ⚠ CLIENT IS EXEMPT WHILE — AND ONLY WHILE — IT HOLDS NO PERMISSIONS.
+  --
+  -- A first version of this check covered HUMAN and CLIENT together, and that
+  -- broke every CLIENT-initiated action outright: `app.role_permissions` has rows
+  -- for the seven staff roles and NONE for CLIENT or AGENT, so `has_permission`
+  -- is false for a portal caller no matter what they are doing. A gate that
+  -- refuses everybody is not a gate, it is an outage, and it would have surfaced
+  -- as "the portal stopped working" on the day 018's accept path landed rather
+  -- than here.
+  --
+  -- The deeper reason it was wrong: `required_permission` is drawn from the STAFF
+  -- role model. A portal caller is authenticated by a share token, not by a
+  -- membership — 002:480, "portal RPCs write CLIENT" — and `app.role()` for them
+  -- is not a staff role at all. Asking `has_permission` about them is asking the
+  -- wrong table.
+  --
+  -- So the exemption is conditional on the thing that makes it true, not written
+  -- as a permanent carve-out: the moment anybody seeds CLIENT rows into
+  -- app.role_permissions, this check starts applying to CLIENT automatically and
+  -- the portal is gated by the same mechanism as everything else. Nobody has to
+  -- remember to come back and delete an exemption — which is how 017's third
+  -- provisioning trigger went unguarded and is the failure this file has now met
+  -- twice.
+  IF v_actor_kind = 'HUMAN'
+     OR (v_actor_kind = 'CLIENT'
+         AND EXISTS (SELECT 1 FROM app.role_permissions AS rp WHERE rp.role = 'CLIENT'))
+  THEN
     IF v_type.required_permission IS NULL THEN
       RAISE EXCEPTION
         'action type % has no required_permission, so who may perform it has '
@@ -3669,11 +3696,28 @@ BEGIN
     INTO v_open,v_failed
     FROM app.action_effects AS effect
    WHERE effect.action_request_id = v_effect.action_request_id;
+  -- ⚠ `PARTIALLY_FAILED` IS IN THIS LIST, AND IT WAS NOT.
+  --
+  -- The guard read `AND status = 'EXECUTING'` alone, which is correct for the
+  -- first pass and wrong for a replay. Dead-lettering an effect moves the request
+  -- to PARTIALLY_FAILED; the replay then settles that effect, `v_open` reaches 0
+  -- and `v_failed` reaches 0 — and this UPDATE matched NOTHING, because the
+  -- request had already left EXECUTING. So a successfully replayed invoice left
+  -- the effect SETTLED and the request PARTIALLY_FAILED forever, with nothing
+  -- able to correct it. Live-reproduced. The ledger and the request disagreed and
+  -- the request is the one the product reads.
+  --
+  -- EXECUTED is deliberately NOT in the list: a request that finished cleanly is
+  -- terminal, and a late report against it is a bug to surface rather than a state
+  -- to recompute. The recomputation itself is unchanged — if some effect is still
+  -- dead-lettered the request stays PARTIALLY_FAILED, it is just written again
+  -- with the same value.
   IF v_open = 0 THEN
     UPDATE core.action_requests
        SET status = CASE WHEN v_failed > 0 THEN 'PARTIALLY_FAILED' ELSE 'EXECUTED' END,
            completed_at = pg_catalog.now()
-     WHERE id = v_effect.action_request_id AND status = 'EXECUTING';
+     WHERE id = v_effect.action_request_id
+       AND status IN ('EXECUTING','PARTIALLY_FAILED');
   END IF;
 END;
 $fn$;

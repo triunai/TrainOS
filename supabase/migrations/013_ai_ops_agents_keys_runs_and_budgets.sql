@@ -1466,8 +1466,29 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 BEGIN
-  IF NEW.key_fingerprint IS NOT DISTINCT FROM OLD.key_fingerprint THEN
+  -- ⚠ SYMMETRIC. The first version fired only when the FINGERPRINT changed, so
+  -- `UPDATE core.ai_provider_keys SET key_ref = 'vault:elsewhere'` passed
+  -- untouched — and the reveal-audit trigger beside it only fires on
+  -- `last_revealed_at`, so that write left NO audit row at all. Repointing a key
+  -- row at a different vault entry while keeping the old fingerprint is the same
+  -- substitution as the one this trigger was written to stop, approached from the
+  -- other side: afterwards the row's fingerprint describes material the key_ref no
+  -- longer names, and the next reveal hands out whatever is at the new locator.
+  IF NEW.key_fingerprint IS NOT DISTINCT FROM OLD.key_fingerprint
+     AND NEW.key_ref IS NOT DISTINCT FROM OLD.key_ref THEN
     RETURN NEW;
+  END IF;
+
+  IF NEW.key_fingerprint IS NOT DISTINCT FROM OLD.key_fingerprint THEN
+    RAISE EXCEPTION
+      'IMMUTABLE_COLUMN: core.ai_provider_keys.key_ref changed while '
+      'key_fingerprint did not. The locator and the material identify the same '
+      'secret; moving one without the other points this row at a different vault '
+      'entry while still claiming the old fingerprint, and leaves no audit row '
+      'because the reveal trigger only watches last_revealed_at.'
+      USING ERRCODE = 'integrity_constraint_violation',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','IMMUTABLE_COLUMN','column','key_ref')::text;
   END IF;
 
   IF NEW.key_ref IS NOT DISTINCT FROM OLD.key_ref THEN
@@ -2215,20 +2236,27 @@ BEGIN
     v_audit_id := NULL;
   END;
 
-  -- ⚠ THESE TWO KEEP 42501 WHILE THE THIRTEEN RPC REFUSALS MOVED TO 'TRNOS',
-  -- and the difference is deliberate rather than missed. Those thirteen are
-  -- answers to a caller — FORBIDDEN, MFA_REQUIRED — and 42501 is in the web
-  -- client's UNAUTHENTICATED_CODES set, so it rendered an authorization refusal
-  -- as "Your session has expired. Sign in again." These two are trigger integrity
-  -- guards on a direct table write that no RPC path can reach; they are not a
-  -- decision about a principal, they are a statement that the write is
-  -- structurally illegal, and insufficient_privilege is the honest code for it.
+  -- ⚠ 'TRNOS' HERE TOO, AND MY EARLIER REASONING FOR KEEPING 42501 WAS WRONG.
+  --
+  -- I argued these two were trigger integrity guards "that no RPC path can
+  -- reach", so the client's code mapping could not misrender them. The re-review
+  -- showed the path: under the carried FORCE-RLS-with-no-policy residue an
+  -- authenticated caller can reach REVEAL_AUDIT_MISMATCH through
+  -- ai_provider_key_reveal itself. 42501 is in the web client's
+  -- UNAUTHENTICATED_CODES set, so it would have rendered "Your session has
+  -- expired. Sign in again." to somebody whose session is fine and whose key
+  -- audit just failed — sending them to re-login instead of to an incident.
+  --
+  -- "No RPC path reaches it" is a claim about every current and future caller of
+  -- a shared trigger, which is not a claim worth defending for the sake of a
+  -- SQLSTATE. Both raise 'TRNOS' now; the DETAIL bags already carried the real
+  -- codes, so nothing else changes.
   IF v_audit_id IS NULL THEN
     RAISE EXCEPTION
       'core.ai_provider_keys.last_revealed_at may only be written by the '
       'audited reveal path (M-10): no app.key_reveal_audit row is named for '
       'this transaction'
-      USING ERRCODE = 'insufficient_privilege',
+      USING ERRCODE = 'TRNOS',
             DETAIL  = pg_catalog.jsonb_build_object(
                         'code', 'REVEAL_AUDIT_REQUIRED')::text;
   END IF;
@@ -2244,7 +2272,7 @@ BEGIN
       'core.ai_provider_keys.last_revealed_at was bumped but audit row % is not '
       'a REVEAL of this key in this transaction. A reveal that succeeds while '
       'its audit row fails is the one case that must not be possible.', v_audit_id
-      USING ERRCODE = 'insufficient_privilege',
+      USING ERRCODE = 'TRNOS',
             DETAIL  = pg_catalog.jsonb_build_object(
                         'code', 'REVEAL_AUDIT_MISMATCH')::text;
   END IF;

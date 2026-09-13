@@ -783,6 +783,7 @@ DECLARE
   v_probe   uuid;
   v_state   text;
   v_refused boolean;
+  v_detail text;
 BEGIN
   SELECT pg_catalog.count(*)::integer INTO v_reveals
     FROM app.key_access_audit AS audit
@@ -829,8 +830,19 @@ BEGIN
        SET last_revealed_at = pg_catalog.now() - interval '48 hours'
      WHERE tenant_id = '00000013-1111-1111-1111-111111111111'
        AND provider_ref = 'prv_anthropic';
-  EXCEPTION WHEN insufficient_privilege THEN
+  -- ⚠ WHEN OTHERS plus a DETAIL check, not `WHEN insufficient_privilege`.
+  -- These two refusals moved from 42501 to 'TRNOS' when the re-review showed the
+  -- reveal path can reach them: 42501 is in the web client's
+  -- UNAUTHENTICATED_CODES set and would have rendered an audit failure as an
+  -- expired session. Catching the SQLSTATE meant this pin silently stopped
+  -- matching the moment the code changed; asserting the DETAIL code is both
+  -- stronger and stable across that.
+  EXCEPTION WHEN OTHERS THEN
     v_refused := true;
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    ASSERT v_detail LIKE '%REVEAL_AUDIT%',
+      pg_catalog.format('T6 FAIL: the last_revealed_at write was refused, but not '
+        'by the reveal-audit trigger: %s / %s', SQLSTATE, v_detail);
   END;
   ASSERT v_refused,
     'T6f FAIL (M-10): last_revealed_at was moved backwards with no audit row, '
@@ -849,8 +861,19 @@ BEGIN
        SET last_revealed_at = pg_catalog.now() - interval '48 hours'
      WHERE tenant_id = '00000013-1111-1111-1111-111111111111'
        AND provider_ref = 'prv_anthropic';
-  EXCEPTION WHEN insufficient_privilege THEN
+  -- ⚠ WHEN OTHERS plus a DETAIL check, not `WHEN insufficient_privilege`.
+  -- These two refusals moved from 42501 to 'TRNOS' when the re-review showed the
+  -- reveal path can reach them: 42501 is in the web client's
+  -- UNAUTHENTICATED_CODES set and would have rendered an audit failure as an
+  -- expired session. Catching the SQLSTATE meant this pin silently stopped
+  -- matching the moment the code changed; asserting the DETAIL code is both
+  -- stronger and stable across that.
+  EXCEPTION WHEN OTHERS THEN
     v_refused := true;
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    ASSERT v_detail LIKE '%REVEAL_AUDIT%',
+      pg_catalog.format('T6 FAIL: the last_revealed_at write was refused, but not '
+        'by the reveal-audit trigger: %s / %s', SQLSTATE, v_detail);
   END;
   PERFORM pg_catalog.set_config('app.key_reveal_audit', '', true);
   ASSERT v_refused,
@@ -1782,6 +1805,31 @@ BEGIN
       pg_catalog.format('T14g1 FAIL: the unpaired fingerprint write was refused, '
         'but not by the pairing guard: %s', SQLERRM);
   END;
+  -- T14h · AND THE OTHER DIRECTION, which the first version of the pairing
+  -- trigger did not cover: it fired only on a FINGERPRINT change, so
+  -- `SET key_ref = 'vault:elsewhere'` passed untouched — and the reveal-audit
+  -- trigger beside it only watches `last_revealed_at`, so that write left NO
+  -- audit row at all. Repointing a key row at a different vault entry while
+  -- keeping the old fingerprint is the same substitution approached from the
+  -- other side: afterwards the fingerprint describes material the locator no
+  -- longer names, and the next reveal hands out whatever is at the new one.
+  v_denied := false;
+  BEGIN
+    UPDATE core.ai_provider_keys
+       SET key_ref = 'vault:t14:elsewhere'
+     WHERE provider_ref = 'prv_t14';
+  EXCEPTION WHEN OTHERS THEN
+    v_denied := true;
+    ASSERT SQLERRM LIKE '%key_fingerprint did not%',
+      pg_catalog.format('T14h1 FAIL: the lone key_ref write was refused, but not '
+        'by the pairing guard: %s', SQLERRM);
+  END;
+  ASSERT v_denied,
+    'T14h FAIL: key_ref was moved on its own, with key_fingerprint unchanged and '
+    'no audit row written anywhere. The pairing guard must be symmetric: the '
+    'locator and the material identify one secret, and either moving without the '
+    'other is a substitution.';
+
   ASSERT v_denied,
     'T14g FAIL: key_fingerprint was changed on its own, with key_ref unchanged. '
     'Unfreezing the column to make rotation possible must not make it freely '
@@ -1791,7 +1839,8 @@ BEGIN
   RAISE NOTICE
     'T14 PASS - set, reveal, then rotate on the same provider_ref: the rotation '
     'succeeds, changes the fingerprint and the locator together, clears the '
-    'reveal stamp, and an unpaired fingerprint write is still refused.';
+    'reveal stamp, and an unpaired write of EITHER the fingerprint or the locator '
+    'alone is refused.';
 END;
 $t14$;
 
