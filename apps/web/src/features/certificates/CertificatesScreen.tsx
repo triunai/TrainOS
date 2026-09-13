@@ -154,7 +154,7 @@ export function CertificatesScreen() {
         ]}
       />
 
-      <div className="border-b border-border px-5 py-3">
+      <div className="px-5 py-3">
         <ListToolbar
           tabs={
             <PillTabGroup
