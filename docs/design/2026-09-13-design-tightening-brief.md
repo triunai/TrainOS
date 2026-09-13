@@ -72,3 +72,12 @@ Sales excellence                                        RM 67,200
 - Detail pane: keep the sequence (Enquiry → Original message → Extracted → Suggested action → Decision) but remove agent theatre: "EXTRACTED ✦ Lead Agent · 92%" → heading "Enquiry details" with a tiny "AI extracted" tag; "SUGGESTED ACTION ✦ Lead Agent · 88% · Act with approval" → "Recommended next step" + "Requires approval" subline, then the sentence. Provenance stays available in the AIChip popover, not repeated inline.
 - **Header rows align:** the list pane's filter/summary row ("Channel: WhatsApp · 3 of 3 shown") and the detail pane's header block ("Quotation request" + refs + actions) must be the same height and share the same baseline hairline, so the split reads as one composition.
 - Same principles apply to every list/master-detail screen (collections, invoices, engagements): money and dates as data columns, provenance/confidence only on exceptions.
+
+### 10a. Tab group — revised reference (11:45)
+Use the kit's own saved-view switcher form (Kit.dc.html "My open leads 48 · Unassigned 12 · Overdue follow-up 7 · +": a contained track with the selected segment as a filled surface inside it) but with the rounding pulled back hard: track radius ≈ `--radius-panel` (10px), selected segment ≈ `--radius-control` (6–8px) — **not** fully round. Keep counts inline, "+" to add a view, corporate sentence case. (User said "20–40px of rounding" — interpret as a fraction of the current full-round, i.e. modest radius; confirm on the first render.)
+
+### 12b. Sidebar amendments (11:45)
+- No « collapse chevron; keep the hairline above the footer. No rail-collapse for now.
+- Profile row (avatar · name · role) moves to the TOP of the sidebar under the wordmark, with a light/dark **toggle switch** beside it (theme is one click; not in a menu).
+- Clicking the profile opens the kit **Profile modal** exactly as drawn in Kit.dc.html ("PROFILE MODAL · 960").
+- Footer: Help & support · Shortcuts · Role drop-up (DEV) · version line.
