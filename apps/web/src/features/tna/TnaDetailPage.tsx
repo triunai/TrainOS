@@ -164,6 +164,9 @@ export function TnaDetailPage() {
       </div>
 
       <RecordHeader
+        accent
+        collapsible
+        recordType="tna"
         /* The record names itself by reference and client. The audience is a
            metric below, so putting it in the title too would say it twice. */
         title={client.data ? `${record.ref} · ${client.data.name}` : record.ref}
