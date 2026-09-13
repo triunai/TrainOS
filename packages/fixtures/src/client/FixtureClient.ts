@@ -137,6 +137,7 @@ import type { FixtureApproval } from "../data/approvals";
 import type { FixtureReceivable } from "../data/finance";
 import type { FixtureNotification } from "../data/shell";
 import type { FixtureTrainer, ProgrammeDelivery } from "../data/programmes";
+import type { FixtureTenant } from "../data/tenant";
 import { NOW, lineTotal, myr, roundHalfUpSen, sumMoney } from "../data/_helpers";
 import { approvalsSummary } from "../data/approvals";
 import { navigationFor } from "../data/shell";
@@ -396,6 +397,24 @@ export class FixtureClient {
     const me = this.#store.users.find((user) => user.id === this.#actorId);
     if (!me) throw notFound("User", this.#actorId);
     return this.#read(me);
+  }
+
+  /**
+   * The tenant record. Fixture-only, and deliberately so.
+   *
+   * §1 keeps tenancy IMPLICIT from auth — the tenant never appears in a path or
+   * a body, so the contract publishes no `Tenant` type and no endpoint that
+   * returns one. `/settings/organisation` still has to render the organisation
+   * it is configuring, and the record already exists in the store to stamp
+   * events with. This exposes that record rather than inventing a contract
+   * shape the API has decided not to have; `FixtureTenant` is a fixture type
+   * for the same reason `FixtureReceivable` and `FixtureNotification` are.
+   *
+   * TODO(contract §2): if organisation settings ever become writable, that is a
+   * real endpoint and a real contract type, and this method goes away.
+   */
+  async getTenant(): Promise<FixtureTenant> {
+    return this.#read(this.#store.tenant);
   }
 
   async getNavigation(role?: Role): Promise<NavigationTree> {
@@ -2136,6 +2155,8 @@ export class FixtureClient {
       updatedAt: NOW,
       createdBy: this.#actor() as Quotation["createdBy"],
       proposalRef: "",
+      /* Priced but not yet attached to a proposal, so the draft state. */
+      status: "DRAFT",
       rateCardVersion: this.#store.rateCard.version,
       lines: costLines,
       sellPrice,
