@@ -237,7 +237,26 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  v_out := pg_catalog.jsonb_build_object('origin', v_row.origin::text);
+  -- §1: "`editedBy` … set when a human edited an AI value; FLIPS ORIGIN TO
+  -- AI_SUGGESTED." The flip is DERIVED HERE rather than written, and the reason
+  -- is a measurement: `core.provenance.origin` is in 005's immutable-column
+  -- list, so `UPDATE … SET origin` raises
+  -- `IMMUTABLE_COLUMN: core.provenance.origin cannot be changed once set`.
+  -- Found by running the pin, not by reading the schema.
+  --
+  -- The immutability is RIGHT and the contract is RIGHT, and they are talking
+  -- about different things. What the column records is where the value CAME
+  -- FROM, which a later edit does not change — a model really did generate it,
+  -- and rewriting that erases the audit trail the column exists to keep. What
+  -- the contract describes is what the BADGE should say now, which is
+  -- "AI, edited". So the stored fact stays `AI_GENERATED`, `edited_by` records
+  -- the human, and the WIRE value is derived from the pair. One projection,
+  -- here, so no screen has to compose that rule itself.
+  v_out := pg_catalog.jsonb_build_object('origin',
+    CASE WHEN v_row.edited_by IS NOT NULL
+          AND v_row.origin::text IN ('AI_GENERATED','AI_EXECUTED')
+         THEN 'AI_SUGGESTED'
+         ELSE v_row.origin::text END);
 
   IF v_row.confidence    IS NOT NULL THEN v_out := v_out || pg_catalog.jsonb_build_object('confidence', v_row.confidence); END IF;
   IF v_row.agent_id      IS NOT NULL THEN v_out := v_out || pg_catalog.jsonb_build_object('agentId', v_row.agent_id); END IF;
@@ -443,95 +462,56 @@ REVOKE ALL ON FUNCTION app._cursor_decode(text)                  FROM PUBLIC, an
 REVOKE ALL ON FUNCTION app._page_size(jsonb)                     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION app._predicate(text, text, text, jsonb)   FROM PUBLIC, anon, authenticated;
 
--- ═══ 2 · The three gate wrappers ═══════════════════════════════════════════
+-- ═══ 2 · The three gate wrappers are 014's, NOT 018's ══════════════════════
 --
--- 011 grants `app.perform_action`, `app.decide_approval` and `app.bulk_decide`
--- to `service_role` ONLY (011:3408-3415). These wrappers are what makes them
--- reachable from a browser, and the underlying grants are NOT changed: `app`
--- is unexposed, so a `core` definer is the only door.
+-- 018 ORIGINALLY SHIPPED THESE AND NO LONGER DOES. `014_rls_policies_and_
+-- client_grants.sql` §5 (014:646-712) creates `core.perform_action`,
+-- `core.decide_approval` and `core.bulk_decide_approvals`, grants them to
+-- `authenticated`, comments them and pins their arity in `test_014`. Two
+-- implementations of one wrapper is the divergence root `CLAUDE.md` calls a
+-- defect, so the newer pack yields rather than adding a second.
 --
--- Three facts from 011 that shape them, all verified against the file:
+-- THIS WAS NOT A STYLE CALL. It was a live PGRST203 ambiguity, caught by 018's
+-- own V1 overload pin the first time the pack was applied on top of 014:
 --
---  * `app.perform_action` does NOT return an envelope. Its last statement is
---    `RETURN v_result`, a bare `{status, result|approvalRequest|draft}`, and
---    012's worker path returns the same value and does not want an envelope.
---    So `app.ok()` goes HERE and never in `app`.
---  * `POLICY_APPROVAL_REQUIRED` is already a SUCCESS.
---    `{"status":"QUEUED_FOR_APPROVAL","approvalRequest":{…}}` is the §1 table's
---    "202, not an error" row honoured in SQL. The wrapper must not reclassify
---    it, and does not look at it.
---  * 011 refuses by RAISE with `ERRCODE='TRNOS'`. The wrapper does not catch
---    it: the client's `classifyTransportFailure()` parses the detail bag, and
---    swallowing it here would turn a rollback into a commit.
+--     018 verify V1: core.decide_approval has 2 definitions, expected exactly 1
 --
--- Each body is ONE expression. The pins in §8 assert exactly that, so a later
--- edit cannot quietly inline a second policy evaluation beside the gate.
+-- 014's signature is `(uuid, text, text, text, text)` — it exposes
+-- `p_expected_diff_hash` to the caller. 018's was `(uuid, text, text, text)`,
+-- matching what `rpcClient.ts` sends today and passing `NULL` for the hash.
+-- `CREATE OR REPLACE FUNCTION` matches on the ARGUMENT LIST, so the two did not
+-- replace one another: they became overloads differing only by a defaulted
+-- trailing argument, which makes every short call ambiguous.
+--
+-- 014'S IS THE BETTER ONE AND IS THE ONE THAT SURVIVES. Doc 09 §11 asks for a
+-- wrapper that "passes all five arguments"; 018's passed five to
+-- `app.decide_approval` but let a caller supply only four, so the §7 diff
+-- guarantee could never be wired without a signature change and a redeploy.
+-- 014's exposes the hash today, so the day the approval detail screen can carry
+-- the hash it rendered, that is a client change alone. The client sending four
+-- named arguments resolves against 014's five-argument function because
+-- PostgREST binds by NAME and the fifth carries a DEFAULT.
+--
+-- What 018 keeps is the ASSERTION. §12's V5/V6 pins now check 014's functions
+-- rather than its own: single overload, definer posture, granted to
+-- `authenticated`, `app.*` still not granted, and the five-argument call into
+-- `app.decide_approval` intact. A pin that outlives the code it was written for
+-- is the point of writing it structurally.
 
-CREATE OR REPLACE FUNCTION core.perform_action(
-  p_type            text,
-  p_target_ref      text    DEFAULT NULL,
-  p_payload         jsonb   DEFAULT '{}'::jsonb,
-  p_requested_by    jsonb   DEFAULT NULL,
-  p_confidence      numeric DEFAULT NULL,
-  p_reasoning       text    DEFAULT NULL,
-  p_evidence        jsonb   DEFAULT '[]'::jsonb,
-  p_idempotency_key text    DEFAULT NULL
-)
-RETURNS jsonb
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = ''
-SET statement_timeout = '10s'
-AS $fn$
-  -- The argument list is `app.perform_action`'s, verbatim and in order, and
-  -- `rpcClient.ts` sends exactly these names. Identical lists mean a rename on
-  -- either side is a break a reader can see. No re-validation and no second
-  -- tenant check: `app.perform_action` calls `app.require_tenant_id()` itself
-  -- at 011:1979 and resolves the actor from `app.current_actor()`.
-  SELECT app.ok(app.perform_action(p_type, p_target_ref, p_payload,
-                                   p_requested_by, p_confidence, p_reasoning,
-                                   p_evidence, p_idempotency_key));
-$fn$;
-
-CREATE OR REPLACE FUNCTION core.decide_approval(
-  p_approval_id     uuid,
-  p_decision        text,
-  p_note            text DEFAULT NULL,
-  p_idempotency_key text DEFAULT NULL
-)
-RETURNS jsonb
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = ''
-SET statement_timeout = '10s'
-AS $fn$
-  -- ALL FIVE ARGUMENTS. `p_expected_diff_hash` is passed explicitly as NULL
-  -- rather than left to the default, because that argument IS the §7
-  -- guarantee that `effects[]` matches the `diff[]` the approver actually
-  -- read, and a wrapper that silently dropped it would still typecheck.
-  -- Spelling it out is what makes wiring it a one-word change when the detail
-  -- screen can carry the hash it rendered; until then a `409 diffChanged`
-  -- cannot be detected and the §8 pin asserts the argument is still here.
-  SELECT app.ok(app.decide_approval(p_approval_id, p_decision, p_note,
-                                    NULL::text, p_idempotency_key));
-$fn$;
-
-CREATE OR REPLACE FUNCTION core.bulk_decide_approvals(
-  p_ids             uuid[],
-  p_decision        text,
-  p_note            text DEFAULT NULL,
-  p_idempotency_key text DEFAULT NULL
-)
-RETURNS jsonb
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = ''
-SET statement_timeout = '10s'
-AS $fn$
-  -- `app.bulk_decide` takes four arguments and has no diff-hash parameter;
-  -- checked against 011, not assumed from its sibling.
-  SELECT app.ok(app.bulk_decide(p_ids, p_decision, p_note, p_idempotency_key));
-$fn$;
+-- ── Cleaning up 018's OWN former object ────────────────────────────────────
+--
+-- An earlier revision of 018 created `core.decide_approval(uuid,text,text,text)`
+-- — four arguments, no diff hash. Any database that ran that revision still
+-- carries it, and it does not go away by itself: 014's five-argument version
+-- is a DIFFERENT signature, so `CREATE OR REPLACE` adds rather than replaces
+-- and the two sit side by side as overloads. PostgREST then cannot resolve a
+-- four-named-argument call and answers PGRST203 for every decision in the
+-- product.
+--
+-- This drops 018's own former function and nothing else. It is signature-
+-- qualified, so 014's five-argument function is untouched, and it is a no-op
+-- on a database that never ran the earlier revision.
+DROP FUNCTION IF EXISTS core.decide_approval(uuid, text, text, text);
 
 -- ═══ 3 · Identity and shell ════════════════════════════════════════════════
 
@@ -2096,6 +2076,7 @@ DECLARE
   v_sum_sell   bigint;
   v_sum_cost   bigint;
   v_line_count integer;
+  v_tax        record;
 BEGIN
   SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
   IF v_actor.role IS NULL THEN
@@ -2220,6 +2201,64 @@ BEGIN
                 'computed', v_sell)::text;
     END IF;
   END IF;
+
+  -- ── RULING R-C · SST COMES FROM core.tax_policies, NEVER FROM A CONSTANT ─
+  --
+  -- STATUS CHANGED SINCE 018 WAS FIRST WRITTEN, and this is the whole of the
+  -- change. When 018 was authored against 001-013, neither `core.tax_policies`
+  -- nor `app.resolve_tax_policy()` existed, so the PR recorded R-C as a
+  -- dependency and the pin emitted a skip. 017 §SST created both, and 017 also
+  -- added six SST columns to `core.quotations`. Two of them —
+  -- `sst_sen` and `gross_price_sen` — are GENERATED from
+  -- `sell_price_sen * sst_rate`. The other four are PLAIN COLUMNS WITH
+  -- DEFAULTS AND NO TRIGGER BEHIND THEM: `sst_rate` defaults to 0 and
+  -- `sst_reason` to 'STANDARD_RATED'.
+  --
+  -- So a quotation written by anything that does not resolve a policy is
+  -- standard-rated at zero per cent — a quotation that looks taxed and carries
+  -- no tax. 017's own resolver says why that must not happen: "A missing policy
+  -- must not silently become a zero rate: that is an invoice filed with no SST
+  -- and no reason." Filling those four columns is the RPC's job, and R-C names
+  -- this RPC. It is done HERE, once, on the write path.
+  --
+  -- THE CATEGORY. `app.resolve_tax_policy` selects on `service_category`. 017
+  -- seeds two national policies: `CORPORATE_TRAINING` (Group G professionals,
+  -- 800 bps, `is_default = true`) and `EDUCATION_ACT_INSTITUTION` (exempt).
+  -- A quotation is priced for corporate training, so `CORPORATE_TRAINING` is
+  -- the category. Choosing the exempt one requires knowing the BUYER is an
+  -- Education Act institution, and no column in 001-017 records that — see the
+  -- PR. Hardcoding the default would be the defect R-C exists to prevent;
+  -- resolving the default category through the registry is not, because the
+  -- rate, the exemption and the policy id all come from the row.
+  --
+  -- The resolver RAISES `no_data_found` rather than returning nothing. That is
+  -- deliberate on 017's side and is translated here rather than swallowed: a
+  -- quotation that cannot be taxed is a refusal, not a zero.
+  BEGIN
+    SELECT resolved.* INTO STRICT v_tax
+      FROM app.resolve_tax_policy(v_tenant, 'CORPORATE_TRAINING') AS resolved;
+  EXCEPTION WHEN no_data_found THEN
+    RAISE EXCEPTION 'no SST policy is registered for corporate training'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED',
+              'reason','NO_TAX_POLICY',
+              'category','CORPORATE_TRAINING')::text;
+  END;
+
+  UPDATE core.quotations AS quotation
+     SET sst_policy_id = v_tax.policy_id,
+         sst_rate      = v_tax.rate,
+         -- 017's CHECK pairs these: TRAINING_EXEMPT demands a zero rate AND a
+         -- non-blank reason, so the exempt branch supplies both or neither.
+         sst_reason    = CASE WHEN v_tax.exempt THEN 'TRAINING_EXEMPT'
+                              ELSE 'STANDARD_RATED' END,
+         sst_exempt_reason = CASE
+           WHEN v_tax.exempt AND v_tax.exempt_reason_required
+             THEN 'Resolved from tax policy ' || v_tax.policy_code
+                  || ' (' || v_tax.scope || ')'
+           ELSE NULL END
+   WHERE quotation.tenant_id = v_tenant AND quotation.id = v_row.id;
 
   -- ── TRANSLATING 007'S TWO ASSERTIONS INTO CONTRACT ERROR CODES ──────────
   --
@@ -2893,6 +2932,1312 @@ BEGIN
 END;
 $fn$;
 
+-- ═══ 10b · The ten RPCs the web-swap lane added ════════════════════════════
+--
+-- WHERE THEIR SPECS COME FROM. `docs/architecture/09-golden-path-rpc-specs.md`
+-- specifies NONE of these ten: they arrived with the `cloud/web-swap` lane,
+-- which added ten `TrainOsClient` methods and ten `RPC_NAMES` entries in the
+-- same commit. So each shape below is DERIVED FROM THE CLIENT — the `p_*`
+-- argument spellings are read off `rpcClient.ts` verbatim, and every returned
+-- field is the contract type the method is declared to return, resolved out of
+-- `packages/contract/src`. Each is listed as "spec derived from client" in the
+-- PR. Where the fixtures oracle in `packages/fixtures` already implements the
+-- endpoint, its behaviour is the tie-breaker, because the conformance suite
+-- runs one set of cases against both it and the RPC client.
+--
+-- ⚠ `npm run check:rpc` DOES NOT AND CANNOT CATCH A MISSING RPC. E1 reads
+-- migrations for hand-built envelopes, E2 reads the data layer for double
+-- casts, E3 reads `client.ts` for return types. Nothing in that gate opens
+-- `RPC_NAMES` or looks for a `CREATE FUNCTION`. A name in `RPC_NAMES` with no
+-- SQL behind it is invisible to CI and shows up as `PGRST202` in a browser.
+-- That is why these are implemented here rather than left to the gate.
+
+CREATE OR REPLACE FUNCTION core.patch_enquiry_extraction(p_id text, p_patch jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant  uuid := app.require_tenant_id();
+  v_actor   record;
+  v_row     core.enquiries%ROWTYPE;
+  v_field   text;
+  v_value   jsonb;
+  v_text    text;
+  v_field_id uuid;
+  v_name    text;
+BEGIN
+  SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
+  IF v_actor.role IS NULL THEN
+    RAISE EXCEPTION 'requester has no app_role'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
+  END IF;
+
+  v_field := p_patch ->> 'field';
+  v_value := p_patch -> 'value';
+
+  -- Only the four §4 extraction fields. An unknown field is VALIDATION_FAILED,
+  -- never a silently created row: the fixtures oracle refuses the same way and
+  -- the conformance suite compares the two.
+  IF v_field IS NULL OR v_field NOT IN ('topic','audience','timing','budget') THEN
+    RAISE EXCEPTION 'unknown extraction field'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields', pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object(
+                  'field','field','reason','UNKNOWN_EXTRACTION_FIELD')))::text;
+  END IF;
+
+  SELECT enquiry.* INTO v_row FROM core.enquiries AS enquiry
+   WHERE enquiry.tenant_id = v_tenant
+     AND (enquiry.id::text = p_id OR enquiry.ref = p_id)
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no such enquiry'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
+  END IF;
+
+  -- `budget` is Money on the wire and integer sen in the column. Everything
+  -- else is a string. A JSON null erases the value rather than storing "null".
+  v_text := CASE
+              WHEN v_value IS NULL OR v_value = 'null'::jsonb THEN NULL
+              WHEN v_field = 'budget' THEN (v_value ->> 'amount')
+              ELSE v_value #>> '{}'
+            END;
+
+  INSERT INTO core.enquiry_extraction_fields
+    (tenant_id, enquiry_id, field_key, value, created_by_kind, created_by_id, created_by_name)
+  VALUES (v_tenant, v_row.id, v_field, v_text,
+          COALESCE(v_actor.actor_kind,'HUMAN')::app.actor_kind, v_actor.actor_id, NULL)
+  ON CONFLICT (tenant_id, enquiry_id, field_key)
+    DO UPDATE SET value = EXCLUDED.value
+  RETURNING id INTO v_field_id;
+
+  SELECT profile.display_name INTO v_name FROM public.user_profiles AS profile
+   WHERE profile.tenant_id = v_tenant AND profile.user_id::text = v_actor.actor_id;
+
+  -- §1: A HUMAN EDIT OF AN AI VALUE FLIPS `origin` TO `AI_SUGGESTED` AND STAMPS
+  -- `editedBy`. It does NOT erase the provenance — the lineage is what tells a
+  -- later reader the number started as a model's guess, and the editor is what
+  -- tells them who took responsibility for it. The fixtures oracle does exactly
+  -- this and the conformance suite compares the two.
+  --
+  -- A field with NO provenance row stays without one: a human editing a
+  -- human-authored value has nothing to disclose, and inserting a row here
+  -- would badge it as AI-touched for ever after.
+  -- ORIGIN IS NOT TOUCHED — it is immutable by 005's trigger, and it should be:
+  -- the value's origin is a historical fact. Stamping the editor is what turns
+  -- the badge into "AI, edited", and `app._provenance` derives `AI_SUGGESTED`
+  -- from the pair on the way out.
+  UPDATE core.provenance AS prov
+     SET edited_by      = CASE WHEN v_actor.actor_kind = 'HUMAN'
+                               THEN v_actor.actor_id::uuid ELSE prov.edited_by END,
+         edited_by_name = COALESCE(v_name, v_actor.actor_id),
+         edited_at      = pg_catalog.now()
+   WHERE prov.tenant_id = v_tenant
+     AND prov.subject_table = 'enquiry_extraction_fields'
+     AND prov.subject_id = v_field_id
+     AND prov.field = v_field;
+
+  UPDATE core.enquiries AS enquiry SET updated_at = pg_catalog.now()
+   WHERE enquiry.tenant_id = v_tenant AND enquiry.id = v_row.id;
+
+  -- The whole EnquiryDetail comes back, not just the patched field: the editor
+  -- re-renders from one payload and cannot drift from the record.
+  RETURN core.get_enquiry(v_row.id::text);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.list_follow_ups(
+  p_filter jsonb DEFAULT '[]'::jsonb,
+  p_sort   text  DEFAULT NULL,
+  p_page   jsonb DEFAULT '{"size":50}'::jsonb,
+  p_view   text  DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant  uuid := app.require_tenant_id();
+  v_size    integer;
+  v_cur_at  timestamptz;
+  v_cur_id  uuid;
+  v_clauses text[] := ARRAY[]::text[];
+  v_errors  jsonb  := '[]'::jsonb;
+  v_applied jsonb  := '[]'::jsonb;
+  v_clause  jsonb;
+  v_field   text;
+  v_op      text;
+  v_column  text;
+  v_kind    text;
+  v_desc    boolean := false;
+  v_sort_col text := 'due_date';
+  v_sort_fld text;
+  v_where   text;
+  v_rows    jsonb;
+  v_total   integer;
+  v_count   integer;
+  v_next    text;
+  v_last_at timestamptz;
+  v_last_id uuid;
+  v_cursor  text;
+BEGIN
+  BEGIN
+    v_size := app._page_size(p_page);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','page.size','reason', SQLERRM))));
+  END;
+
+  v_cursor := NULLIF(p_page ->> 'cursor', '');
+  IF v_cursor IS NOT NULL THEN
+    BEGIN
+      SELECT decoded.at, decoded.id INTO v_cur_at, v_cur_id
+        FROM app._cursor_decode(v_cursor) AS decoded;
+    EXCEPTION WHEN invalid_text_representation THEN
+      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'field','page.cursor','reason','MALFORMED_CURSOR'))));
+    END;
+  END IF;
+
+  FOR v_clause IN SELECT element.value
+                    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS element(value)
+  LOOP
+    v_field := v_clause ->> 'field';
+    v_op    := v_clause ->> 'op';
+    SELECT allowed.column_name, allowed.kind INTO v_column, v_kind
+      FROM (VALUES ('status','status','text'), ('autonomy','autonomy','text'),
+                   ('dueDate','due_date','ts'), ('owner','owner_id','uuid'),
+                   ('organisation','organisation_id','uuid'),
+                   ('contact','contact_id','uuid'), ('reason','reason','text'))
+           AS allowed(field, column_name, kind)
+     WHERE allowed.field = v_field;
+    IF v_column IS NULL THEN
+      v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', COALESCE(v_field,'(null)'), 'reason','UNKNOWN_FILTER_FIELD'));
+      CONTINUE;
+    END IF;
+    BEGIN
+      -- `dueDate` is a DATE column, so the ts predicate casts cleanly; the
+      -- whitelist keeps the cast honest.
+      v_clauses := v_clauses || app._predicate(v_column,
+                     CASE WHEN v_column = 'due_date' THEN 'text' ELSE v_kind END, v_op, v_clause -> 'value');
+      v_applied := v_applied || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', v_field, 'op', v_op,
+        'value', COALESCE(v_clause -> 'value','null'::jsonb), 'source','REQUEST'));
+    EXCEPTION WHEN invalid_parameter_value THEN
+      v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', v_field, 'reason', SQLERRM, 'code', COALESCE(v_op,'(null)')));
+    END;
+    v_column := NULL; v_kind := NULL;
+  END LOOP;
+
+  IF pg_catalog.jsonb_array_length(v_errors) > 0 THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object('fields', v_errors));
+  END IF;
+
+  IF NULLIF(p_sort,'') IS NOT NULL THEN
+    v_desc := pg_catalog.left(p_sort,1) = '-';
+    v_sort_fld := CASE WHEN v_desc THEN pg_catalog.substr(p_sort,2) ELSE p_sort END;
+    SELECT allowed.column_name INTO v_sort_col
+      FROM (VALUES ('dueDate','due_date'),('createdAt','created_at'),('updatedAt','updated_at'))
+           AS allowed(field, column_name)
+     WHERE allowed.field = v_sort_fld;
+    IF v_sort_col IS NULL THEN
+      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'field','sort','reason','UNKNOWN_SORT_FIELD','code', v_sort_fld))));
+    END IF;
+  END IF;
+  -- The fixtures oracle defaults this list to `dueDate` ASCENDING, and the
+  -- client sends `p_sort: null` when the caller does not choose. So the DEFAULT
+  -- LIVES HERE or the two answer differently — soonest-due first is the only
+  -- order a follow-up queue can sensibly open in.
+
+  v_where := CASE WHEN pg_catalog.array_length(v_clauses,1) IS NULL THEN 'true'
+                  ELSE pg_catalog.array_to_string(v_clauses,' AND ') END;
+
+  EXECUTE pg_catalog.format(
+    'SELECT pg_catalog.count(*)::integer FROM core.follow_ups WHERE tenant_id = $1 AND %s',
+    v_where) INTO v_total USING v_tenant;
+
+  IF v_cur_at IS NOT NULL THEN
+    v_where := v_where || pg_catalog.format(
+      ' AND (%I::timestamptz, id) %s (%L::timestamptz, %L::uuid)',
+      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
+  END IF;
+
+  EXECUTE pg_catalog.format($q$
+    SELECT COALESCE(pg_catalog.jsonb_agg(row.item ORDER BY row.ord), '[]'::jsonb),
+           pg_catalog.count(*)::integer,
+           (pg_catalog.array_agg(row.sort_at ORDER BY row.ord DESC))[1],
+           (pg_catalog.array_agg(row.id      ORDER BY row.ord DESC))[1]
+      FROM (
+        SELECT pg_catalog.row_number() OVER (ORDER BY f.%I %s, f.id %s) AS ord,
+               f.id, f.%I::timestamptz AS sort_at,
+               pg_catalog.jsonb_build_object(
+                 'id',   f.id::text,
+                 'ref',  f.ref,
+                 'contact',      pg_catalog.jsonb_build_object('ref', contact.ref, 'name', contact.name),
+                 'organisation', pg_catalog.jsonb_build_object('ref', org.ref,     'name', org.name),
+                 'reason',   f.reason,
+                 'dueDate',  f.due_date,
+                 'status',   f.status::text,
+                 'autonomy', f.autonomy::text) AS item
+          FROM core.follow_ups AS f
+          JOIN core.contacts      AS contact ON contact.tenant_id = f.tenant_id AND contact.id = f.contact_id
+          JOIN core.organisations AS org     ON org.tenant_id     = f.tenant_id AND org.id     = f.organisation_id
+         WHERE f.tenant_id = $1 AND %s
+         ORDER BY f.%I %s, f.id %s
+         LIMIT $2
+      ) AS row$q$,
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
+    v_sort_col, v_where,
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
+    INTO v_rows, v_count, v_last_at, v_last_id USING v_tenant, v_size;
+
+  v_next := NULL;
+  IF v_count = v_size AND v_count < v_total THEN
+    v_next := app._cursor_encode(v_last_at, v_last_id);
+  END IF;
+
+  RETURN app.ok(pg_catalog.jsonb_build_object(
+    'data', v_rows,
+    'page', pg_catalog.jsonb_build_object('next', v_next, 'total', v_total),
+    'appliedFilters', v_applied));
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.get_follow_up_draft(p_id text, p_channel text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant  uuid := app.require_tenant_id();
+  v_follow  core.follow_ups%ROWTYPE;
+  v_draft   core.outbound_messages%ROWTYPE;
+  v_rate    core.message_rates%ROWTYPE;
+  v_consent core.contact_consents%ROWTYPE;
+  v_source  text;
+  v_out     jsonb;
+BEGIN
+  IF p_channel IS NULL OR p_channel NOT IN ('EMAIL','WHATSAPP') THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','channel','reason','UNSUPPORTED_CHANNEL'))));
+  END IF;
+
+  SELECT follow_up.* INTO v_follow FROM core.follow_ups AS follow_up
+   WHERE follow_up.tenant_id = v_tenant
+     AND (follow_up.id::text = p_id OR follow_up.ref = p_id);
+  IF NOT FOUND THEN
+    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('id', p_id));
+  END IF;
+
+  -- A DRAFT IS PER CHANNEL. The fixtures oracle keys its store
+  -- `<followUpRef>::<CHANNEL>` and 404s per channel rather than handing back an
+  -- empty draft, because an empty draft renders as a composer with nothing in
+  -- it and reads as "the agent wrote nothing" instead of "nothing was drafted
+  -- for this channel".
+  SELECT message.* INTO v_draft FROM core.outbound_messages AS message
+   WHERE message.tenant_id = v_tenant
+     AND message.follow_up_id = v_follow.id
+     AND message.channel::text = p_channel
+   ORDER BY message.created_at DESC
+   LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object(
+      'id', v_follow.ref, 'channel', p_channel));
+  END IF;
+
+  SELECT rate.* INTO v_rate FROM core.message_rates AS rate
+   WHERE rate.tenant_id = v_tenant AND rate.id = v_draft.message_rate_id;
+
+  SELECT consent.* INTO v_consent FROM core.contact_consents AS consent
+   WHERE consent.tenant_id = v_tenant
+     AND consent.contact_id = v_follow.contact_id
+     AND consent.channel::text = p_channel
+     AND consent.withdrawn_at IS NULL
+   ORDER BY consent.recorded_at DESC
+   LIMIT 1;
+
+  -- §16 Q4 / RULING R11 — THE FAILURE IS A VALUE, NOT A ZERO.
+  -- `rateSource` is REQUIRED and the two money fields are OPTIONAL precisely so
+  -- that a failed rate lookup has an honest answer. A server whose lookup
+  -- failed has no number to send, and sending a stale rate or a zero and
+  -- rendering it to four decimal places is the most convincing way to be wrong
+  -- about money. UNAVAILABLE when there is no rate row; CACHED when the row has
+  -- gone past `stale_after`; LIVE otherwise.
+  v_source := CASE
+                WHEN v_rate.id IS NULL OR v_draft.rate_per_message_sen IS NULL THEN 'UNAVAILABLE'
+                WHEN v_rate.stale_after IS NOT NULL AND v_rate.stale_after < pg_catalog.now() THEN 'CACHED'
+                ELSE 'LIVE'
+              END;
+
+  v_out := pg_catalog.jsonb_build_object(
+    'channel',    v_draft.channel::text,
+    'templateId', v_draft.template_id::text,
+    'category',   COALESCE(v_draft.category::text, 'UTILITY'),
+    'body',       COALESCE(v_draft.body, ''),
+    'recipients', 1,
+    'rateSource', v_source,
+    'consent', pg_catalog.jsonb_build_object(
+      'channel',    p_channel,
+      'granted',    COALESCE(v_consent.granted, false),
+      'recordedAt', v_consent.recorded_at));
+
+  IF v_source <> 'UNAVAILABLE' THEN
+    v_out := v_out
+      || pg_catalog.jsonb_build_object('ratePerMessage',
+           app._money(v_draft.rate_per_message_sen, v_draft.currency::text))
+      || pg_catalog.jsonb_build_object('estimatedCost',
+           app._money(COALESCE(v_draft.estimated_cost_sen, v_draft.rate_per_message_sen),
+                      v_draft.currency::text));
+    -- The UNROUNDED rate as a string, because §4's marketing rate is RM 0.3467
+    -- and the utility rate RM 0.0564: rounded to the sen the strip would print
+    -- RM 0.35 beside RM 0.06 and the six-fold difference it exists to show
+    -- would be read off two different precisions.
+    IF COALESCE(v_draft.rate_per_message_exact, v_rate.rate_exact) IS NOT NULL THEN
+      v_out := v_out || pg_catalog.jsonb_build_object('ratePerMessageExact',
+        pg_catalog.trim(pg_catalog.to_char(
+          COALESCE(v_draft.rate_per_message_exact, v_rate.rate_exact), 'FM9990.000000')));
+    END IF;
+  END IF;
+
+  IF v_source = 'CACHED' AND v_rate.fetched_at IS NOT NULL THEN
+    v_out := v_out || pg_catalog.jsonb_build_object('rateFetchedAt', v_rate.fetched_at);
+  END IF;
+
+  IF app._provenance('outbound_messages', v_draft.id, NULL) IS NOT NULL THEN
+    v_out := v_out || pg_catalog.jsonb_build_object('provenance',
+      app._provenance('outbound_messages', v_draft.id, NULL));
+  END IF;
+
+  RETURN app.ok(v_out);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.list_proposals(
+  p_filter jsonb DEFAULT '[]'::jsonb,
+  p_sort   text  DEFAULT NULL,
+  p_page   jsonb DEFAULT '{"size":50}'::jsonb,
+  p_view   text  DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant  uuid := app.require_tenant_id();
+  v_size    integer;
+  v_cur_at  timestamptz;
+  v_cur_id  uuid;
+  v_clauses text[] := ARRAY[]::text[];
+  v_errors  jsonb  := '[]'::jsonb;
+  v_applied jsonb  := '[]'::jsonb;
+  v_clause  jsonb;
+  v_field   text;
+  v_op      text;
+  v_column  text;
+  v_kind    text;
+  v_desc    boolean := true;
+  v_sort_col text := 'created_at';
+  v_sort_fld text;
+  v_where   text;
+  v_ids     uuid[];
+  v_rows    jsonb;
+  v_total   integer;
+  v_count   integer;
+  v_next    text;
+  v_last_at timestamptz;
+  v_last_id uuid;
+  v_cursor  text;
+BEGIN
+  BEGIN
+    v_size := app._page_size(p_page);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','page.size','reason', SQLERRM))));
+  END;
+
+  v_cursor := NULLIF(p_page ->> 'cursor','');
+  IF v_cursor IS NOT NULL THEN
+    BEGIN
+      SELECT decoded.at, decoded.id INTO v_cur_at, v_cur_id
+        FROM app._cursor_decode(v_cursor) AS decoded;
+    EXCEPTION WHEN invalid_text_representation THEN
+      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'field','page.cursor','reason','MALFORMED_CURSOR'))));
+    END;
+  END IF;
+
+  FOR v_clause IN SELECT element.value
+                    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS element(value)
+  LOOP
+    v_field := v_clause ->> 'field';
+    v_op    := v_clause ->> 'op';
+    SELECT allowed.column_name, allowed.kind INTO v_column, v_kind
+      FROM (VALUES ('status','status','text'),('opportunity','opportunity_id','uuid'),
+                   ('organisation','organisation_id','uuid'),('template','template_id','uuid'),
+                   ('value','value_sen','number'),('createdAt','created_at','ts'),
+                   ('sentAt','sent_at','ts'))
+           AS allowed(field, column_name, kind)
+     WHERE allowed.field = v_field;
+    IF v_column IS NULL THEN
+      v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', COALESCE(v_field,'(null)'), 'reason','UNKNOWN_FILTER_FIELD'));
+      CONTINUE;
+    END IF;
+    BEGIN
+      v_clauses := v_clauses || app._predicate(v_column, v_kind, v_op, v_clause -> 'value');
+      v_applied := v_applied || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', v_field, 'op', v_op,
+        'value', COALESCE(v_clause -> 'value','null'::jsonb), 'source','REQUEST'));
+    EXCEPTION WHEN invalid_parameter_value THEN
+      v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', v_field, 'reason', SQLERRM, 'code', COALESCE(v_op,'(null)')));
+    END;
+    v_column := NULL; v_kind := NULL;
+  END LOOP;
+
+  IF pg_catalog.jsonb_array_length(v_errors) > 0 THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object('fields', v_errors));
+  END IF;
+
+  IF NULLIF(p_sort,'') IS NOT NULL THEN
+    v_desc := pg_catalog.left(p_sort,1) = '-';
+    v_sort_fld := CASE WHEN v_desc THEN pg_catalog.substr(p_sort,2) ELSE p_sort END;
+    SELECT allowed.column_name INTO v_sort_col
+      FROM (VALUES ('createdAt','created_at'),('updatedAt','updated_at'),
+                   ('value','value_sen'),('sentAt','sent_at'))
+           AS allowed(field, column_name)
+     WHERE allowed.field = v_sort_fld;
+    IF v_sort_col IS NULL THEN
+      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'field','sort','reason','UNKNOWN_SORT_FIELD','code', v_sort_fld))));
+    END IF;
+  END IF;
+
+  v_where := CASE WHEN pg_catalog.array_length(v_clauses,1) IS NULL THEN 'true'
+                  ELSE pg_catalog.array_to_string(v_clauses,' AND ') END;
+
+  EXECUTE pg_catalog.format(
+    'SELECT pg_catalog.count(*)::integer FROM core.proposals WHERE tenant_id = $1 AND %s',
+    v_where) INTO v_total USING v_tenant;
+
+  IF v_cur_at IS NOT NULL THEN
+    v_where := v_where || pg_catalog.format(
+      ' AND (%I, id) %s (%L::timestamptz, %L::uuid)',
+      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
+  END IF;
+
+  -- THE PAGE IS SELECTED HERE AND EACH ROW IS PROJECTED BY `core.get_proposal`.
+  -- A `Proposal` carries its `sections[]`, each with its own provenance, and a
+  -- second projection of that shape in this function would be a second place
+  -- for it to drift. One projection, called per row on a bounded page.
+  EXECUTE pg_catalog.format($q$
+    SELECT COALESCE(pg_catalog.array_agg(p.id ORDER BY p.%I %s, p.id %s), ARRAY[]::uuid[])
+      FROM (SELECT id, %I FROM core.proposals
+             WHERE tenant_id = $1 AND %s
+             ORDER BY %I %s, id %s
+             LIMIT $2) AS p$q$,
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
+    v_sort_col, v_where,
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
+    INTO v_ids USING v_tenant, v_size;
+
+  SELECT COALESCE(pg_catalog.jsonb_agg(core.get_proposal(element.id::text) -> 'data'
+                                       ORDER BY element.ord), '[]'::jsonb),
+         pg_catalog.count(*)::integer
+    INTO v_rows, v_count
+    FROM pg_catalog.unnest(v_ids) WITH ORDINALITY AS element(id, ord);
+
+  IF v_count = v_size AND v_count < v_total THEN
+    EXECUTE pg_catalog.format('SELECT %I, id FROM core.proposals WHERE tenant_id = $1 AND id = $2', v_sort_col)
+      INTO v_last_at, v_last_id USING v_tenant, v_ids[pg_catalog.array_length(v_ids,1)];
+    v_next := app._cursor_encode(v_last_at, v_last_id);
+  END IF;
+
+  RETURN app.ok(pg_catalog.jsonb_build_object(
+    'data', v_rows,
+    'page', pg_catalog.jsonb_build_object('next', v_next, 'total', v_total),
+    'appliedFilters', v_applied));
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.get_rate_card()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant uuid := app.require_tenant_id();
+  v_card   core.rate_cards%ROWTYPE;
+BEGIN
+  -- The ACTIVE card for today. `validity` is 007's daterange, so "the card in
+  -- force" is a containment test rather than an ordering trick — a card that
+  -- expired yesterday must not price anything today.
+  SELECT card.* INTO v_card FROM core.rate_cards AS card
+   WHERE card.tenant_id = v_tenant
+     AND card.status = 'ACTIVE'
+     AND card.validity @> CURRENT_DATE
+   ORDER BY card.effective_from DESC
+   LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('reason','NO_ACTIVE_RATE_CARD'));
+  END IF;
+
+  RETURN app.ok(pg_catalog.jsonb_build_object(
+    -- §18: until Finance supplies values the API returns `v0-placeholder` and
+    -- clients render the placeholder label, so nobody quotes from it. The
+    -- version is READ, never defaulted, so a real card can never be mistaken
+    -- for a placeholder or the reverse.
+    'version',       v_card.version,
+    'effectiveFrom', v_card.effective_from,
+    'effectiveTo',   v_card.effective_to,
+    'currency',      v_card.currency::text,
+    'trainerDayRate', COALESCE((
+      SELECT pg_catalog.jsonb_agg(band.row ORDER BY band.band)
+        FROM (
+          SELECT day.band::text AS band,
+                 pg_catalog.jsonb_build_object(
+                   'band', day.band::text,
+                   'rate', app._money(day.day_rate_sen, v_card.currency::text))
+                 -- A per-trainer override is OPTIONAL and is emitted only when
+                 -- one exists: an empty override array reads as "checked, none"
+                 -- which is a different claim from "not overridden".
+                 || CASE WHEN EXISTS (
+                      SELECT 1 FROM core.rate_card_trainer_days AS ovr
+                       WHERE ovr.tenant_id = v_tenant AND ovr.rate_card_id = v_card.id
+                         AND ovr.band = day.band AND ovr.trainer_id IS NOT NULL)
+                    THEN pg_catalog.jsonb_build_object('override', (
+                      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                               'trainerRef', trainer.ref,
+                               'rate', app._money(ovr.day_rate_sen, v_card.currency::text))
+                             ORDER BY trainer.ref)
+                        FROM core.rate_card_trainer_days AS ovr
+                        JOIN core.trainers AS trainer
+                          ON trainer.tenant_id = ovr.tenant_id AND trainer.id = ovr.trainer_id
+                       WHERE ovr.tenant_id = v_tenant AND ovr.rate_card_id = v_card.id
+                         AND ovr.band = day.band AND ovr.trainer_id IS NOT NULL))
+                    ELSE '{}'::jsonb END AS row
+            FROM core.rate_card_trainer_days AS day
+           WHERE day.tenant_id = v_tenant AND day.rate_card_id = v_card.id
+             AND day.trainer_id IS NULL
+        ) AS band), '[]'::jsonb),
+    'materialsPerPax', COALESCE((
+      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'programmeType', material.programme_type,
+               'rate', app._money(material.per_pax_sen, v_card.currency::text))
+             ORDER BY material.programme_type)
+        FROM core.rate_card_materials AS material
+       WHERE material.tenant_id = v_tenant AND material.rate_card_id = v_card.id), '[]'::jsonb),
+    'venue', COALESCE((
+      SELECT pg_catalog.jsonb_agg(
+               pg_catalog.jsonb_build_object('mode', venue.mode::text)
+               -- EXTERNAL is QUOTED, so it carries no fixed rate. The key is
+               -- omitted rather than zeroed: a zero here would read as free.
+               || CASE WHEN venue.day_rate_sen IS NULL THEN '{}'::jsonb
+                       ELSE pg_catalog.jsonb_build_object('rate',
+                              app._money(venue.day_rate_sen, v_card.currency::text)) END
+             ORDER BY venue.mode)
+        FROM core.rate_card_venues AS venue
+       WHERE venue.tenant_id = v_tenant AND venue.rate_card_id = v_card.id), '[]'::jsonb),
+    'travel', COALESCE((
+      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'region', travel.region::text,
+               'rate', app._money(travel.per_trip_sen, v_card.currency::text))
+             ORDER BY travel.region)
+        FROM core.rate_card_travel AS travel
+       WHERE travel.tenant_id = v_tenant AND travel.rate_card_id = v_card.id), '[]'::jsonb),
+    -- `mealsPerPax` is a SINGLE OBJECT in the contract, not an array, even
+    -- though the table is keyed by programme type. The first row by programme
+    -- type is the card's meal rate; a second would need a contract change.
+    'mealsPerPax', COALESCE((
+      SELECT pg_catalog.jsonb_build_object(
+               'rate',       app._money(meal.per_pax_sen, v_card.currency::text),
+               'acmCeiling', app._money(meal.acm_ceiling_sen, v_card.currency::text))
+        FROM core.rate_card_meals AS meal
+       WHERE meal.tenant_id = v_tenant AND meal.rate_card_id = v_card.id
+       ORDER BY meal.programme_type
+       LIMIT 1),
+      pg_catalog.jsonb_build_object(
+        'rate',       app._money(0, v_card.currency::text),
+        'acmCeiling', app._money(0, v_card.currency::text))),
+    'commissionPct', COALESCE((
+      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'role', commission.role::text,
+               -- `band` is an int8range in the column and a string in the
+               -- contract. The range's own text form is the honest rendering:
+               -- it carries the bounds AND their inclusivity.
+               'band', commission.band::text,
+               'pct',  commission.pct)
+             ORDER BY commission.role, commission.band)
+        FROM core.rate_card_commissions AS commission
+       WHERE commission.tenant_id = v_tenant AND commission.rate_card_id = v_card.id), '[]'::jsonb),
+    'marginFloorPct', COALESCE((
+      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'programmeType', floor_row.programme_type,
+               'pct',           floor_row.floor_pct)
+             ORDER BY floor_row.programme_type)
+        FROM core.rate_card_margin_floors AS floor_row
+       WHERE floor_row.tenant_id = v_tenant AND floor_row.rate_card_id = v_card.id), '[]'::jsonb),
+    'discountAuthority', COALESCE((
+      SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'role',   authority.role::text,
+               'maxPct', authority.max_pct)
+             ORDER BY authority.role)
+        FROM core.rate_card_discount_authorities AS authority
+       WHERE authority.tenant_id = v_tenant AND authority.rate_card_id = v_card.id), '[]'::jsonb)));
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.get_audit(p_resource_type text, p_id text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant uuid := app.require_tenant_id();
+  v_rows   jsonb;
+BEGIN
+  -- `p_resource_type` is a PLAIN STRING, not a closed union: the audit drawer
+  -- is drawn on every record screen and the trail is addressed
+  -- `approvals::{ref}`, `proposals::{ref}`. Closing the vocabulary here would
+  -- make the drawer refuse every record type nobody had thought of yet.
+  --
+  -- A RESOURCE WITH NO TRAIL RETURNS AN EMPTY LIST, NOT A 404. An audit drawer
+  -- on a record that has not been touched is empty, and that is a true
+  -- statement about the record; a 404 would say the record does not exist.
+  SELECT COALESCE(pg_catalog.jsonb_agg(entry.item ORDER BY entry.at DESC), '[]'::jsonb)
+    INTO v_rows
+    FROM (
+      SELECT audit.at,
+             pg_catalog.jsonb_build_object(
+               'at',      audit.at,
+               'actor',   audit.actor,
+               'event',   audit.event,
+               'summary', COALESCE(audit.summary, audit.event))
+             || CASE WHEN audit.run_id IS NULL THEN '{}'::jsonb
+                     ELSE pg_catalog.jsonb_build_object('runId', audit.run_id) END AS item
+        FROM core.audit_entries AS audit
+       WHERE audit.tenant_id = v_tenant
+         AND audit.subject_type = p_resource_type
+         AND (audit.subject_id::text = p_id OR audit.aggregate_ref = p_id)
+    ) AS entry;
+
+  -- Newest first, and the caller cannot choose otherwise: the client sends no
+  -- page arguments for this endpoint, so the order is the server's to fix.
+  RETURN app.ok(pg_catalog.jsonb_build_object(
+    'data', v_rows,
+    'page', pg_catalog.jsonb_build_object(
+      'next', NULL, 'total', pg_catalog.jsonb_array_length(v_rows))));
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.add_proposal_section(
+  p_id              text,
+  p_body            jsonb,
+  p_idempotency_key text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant   uuid := app.require_tenant_id();
+  v_actor    record;
+  v_proposal core.proposals%ROWTYPE;
+  v_title    text;
+  v_n        smallint;
+  v_hash     text;
+  v_key      app.idempotency_keys%ROWTYPE;
+BEGIN
+  SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
+  IF v_actor.role IS NULL THEN
+    RAISE EXCEPTION 'requester has no app_role'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
+  END IF;
+
+  p_body  := COALESCE(p_body, '{}'::jsonb);
+  v_title := pg_catalog.btrim(COALESCE(p_body ->> 'title',''));
+  IF v_title = '' THEN
+    RAISE EXCEPTION 'a section needs a title'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields', pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object('field','title','reason','REQUIRED')))::text;
+  END IF;
+
+  IF NULLIF(p_idempotency_key,'') IS NULL THEN
+    RAISE EXCEPTION 'an idempotency key is required for this write'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields', pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object(
+                  'field','idempotencyKey','reason','REQUIRED')))::text;
+  END IF;
+
+  SELECT proposal.* INTO v_proposal FROM core.proposals AS proposal
+   WHERE proposal.tenant_id = v_tenant
+     AND (proposal.id::text = p_id OR proposal.ref = p_id)
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no such proposal'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
+  END IF;
+
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext(v_tenant::text || ':' || v_actor.actor_id || ':' || p_idempotency_key)::bigint);
+  v_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+              pg_catalog.jsonb_build_object('id', v_proposal.id::text, 'body', p_body)::text,'UTF8')),'hex');
+
+  INSERT INTO app.idempotency_keys (tenant_id, actor_id, endpoint, key, request_hash)
+  VALUES (v_tenant, v_actor.actor_id, 'POST /v1/proposals/sections', p_idempotency_key, v_hash)
+  ON CONFLICT (tenant_id, actor_id, endpoint, key) DO NOTHING
+  RETURNING * INTO v_key;
+
+  IF v_key.id IS NULL THEN
+    SELECT existing.* INTO v_key FROM app.idempotency_keys AS existing
+     WHERE existing.tenant_id = v_tenant AND existing.actor_id = v_actor.actor_id
+       AND existing.endpoint = 'POST /v1/proposals/sections' AND existing.key = p_idempotency_key;
+    IF v_key.request_hash IS DISTINCT FROM v_hash THEN
+      RAISE EXCEPTION 'idempotency key reused with a different body'
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object('code','IDEMPOTENT_REPLAY')::text;
+    END IF;
+    -- Same key, same body: the section was already added. Return the proposal
+    -- as it stands rather than adding a second identical section, which is the
+    -- double-click this key exists to absorb.
+    PERFORM pg_catalog.set_config('response.headers','[{"Idempotent-Replay":"true"}]', true);
+    RETURN core.get_proposal(v_proposal.id::text);
+  END IF;
+
+  -- `n` IS max(n) + 1, NOT count + 1. A proposal whose section 2 was deleted
+  -- has three sections numbered 1, 3, 4; count + 1 would hand the new section
+  -- the number 4 and collide with the existing one. The fixtures oracle does
+  -- the same, and the unique constraint would have caught it eventually — on
+  -- somebody's screen rather than here.
+  SELECT COALESCE(pg_catalog.max(section.n), 0)::smallint + 1 INTO v_n
+    FROM core.proposal_sections AS section
+   WHERE section.tenant_id = v_tenant AND section.proposal_id = v_proposal.id;
+
+  -- NO PROVENANCE ROW IS WRITTEN. A section a human typed is human-authored,
+  -- and absence is how that is said — inserting one here would badge every
+  -- hand-written section as AI-touched.
+  INSERT INTO core.proposal_sections
+    (tenant_id, proposal_id, n, title, body, needs_review,
+     created_by_kind, created_by_id, created_by_name)
+  VALUES (v_tenant, v_proposal.id, v_n, v_title, p_body ->> 'body', false,
+          COALESCE(v_actor.actor_kind,'HUMAN')::app.actor_kind, v_actor.actor_id, NULL);
+
+  UPDATE core.proposals AS proposal SET updated_at = pg_catalog.now()
+   WHERE proposal.tenant_id = v_tenant AND proposal.id = v_proposal.id;
+
+  UPDATE app.idempotency_keys
+     SET state = 'COMPLETED',
+         response = pg_catalog.jsonb_build_object(
+           'status','EXECUTED','entity','proposal_section',
+           'id', v_proposal.id::text, 'n', v_n),
+         status_code = 201, completed_at = pg_catalog.now(),
+         expires_at = pg_catalog.now() + interval '24 hours'
+   WHERE id = v_key.id;
+
+  RETURN core.get_proposal(v_proposal.id::text);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.put_proposal_section(
+  p_id              text,
+  p_n               integer,
+  p_body            jsonb,
+  p_idempotency_key text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant   uuid := app.require_tenant_id();
+  v_actor    record;
+  v_proposal core.proposals%ROWTYPE;
+  v_section  core.proposal_sections%ROWTYPE;
+  v_name     text;
+BEGIN
+  SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
+  IF v_actor.role IS NULL THEN
+    RAISE EXCEPTION 'requester has no app_role'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN')::text;
+  END IF;
+
+  p_body := COALESCE(p_body, '{}'::jsonb);
+  -- `body` is REQUIRED and `title` is optional — that is the contract's
+  -- `ProposalSectionWrite`, and it is the opposite way round from add.
+  IF NOT (p_body ? 'body') THEN
+    RAISE EXCEPTION 'a section edit needs a body'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields', pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object('field','body','reason','REQUIRED')))::text;
+  END IF;
+
+  SELECT proposal.* INTO v_proposal FROM core.proposals AS proposal
+   WHERE proposal.tenant_id = v_tenant
+     AND (proposal.id::text = p_id OR proposal.ref = p_id)
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no such proposal'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
+  END IF;
+
+  SELECT section.* INTO v_section FROM core.proposal_sections AS section
+   WHERE section.tenant_id = v_tenant
+     AND section.proposal_id = v_proposal.id
+     AND section.n = p_n::smallint;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no such section on this proposal'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','NOT_FOUND','reason','UNKNOWN_SECTION','n', p_n)::text;
+  END IF;
+
+  UPDATE core.proposal_sections AS section
+     SET body  = p_body ->> 'body',
+         -- An EMPTY title is ignored rather than written: a blank heading is
+         -- never what an editor meant, and the fixtures oracle agrees.
+         title = COALESCE(NULLIF(pg_catalog.btrim(COALESCE(p_body ->> 'title','')),''), section.title)
+   WHERE section.tenant_id = v_tenant AND section.id = v_section.id;
+
+  SELECT profile.display_name INTO v_name FROM public.user_profiles AS profile
+   WHERE profile.tenant_id = v_tenant AND profile.user_id::text = v_actor.actor_id;
+
+  -- A HUMAN EDIT OF AN AI SECTION KEEPS THE AI LINEAGE AND RECORDS THE EDITOR:
+  -- origin flips to AI_SUGGESTED and `editedBy` is stamped. A section with no
+  -- provenance row was human-authored to begin with and gains none.
+  -- Same rule as the enquiry patch: the editor is stamped, `origin` is left
+  -- alone because it is immutable AND because it is a fact about where the
+  -- section came from, and the badge value is derived in `app._provenance`.
+  UPDATE core.provenance AS prov
+     SET edited_by      = CASE WHEN v_actor.actor_kind = 'HUMAN'
+                               THEN v_actor.actor_id::uuid ELSE prov.edited_by END,
+         edited_by_name = COALESCE(v_name, v_actor.actor_id),
+         edited_at      = pg_catalog.now()
+   WHERE prov.tenant_id = v_tenant
+     AND prov.subject_table = 'proposal_sections'
+     AND prov.subject_id = v_section.id;
+
+  UPDATE core.proposals AS proposal SET updated_at = pg_catalog.now()
+   WHERE proposal.tenant_id = v_tenant AND proposal.id = v_proposal.id;
+
+  RETURN core.get_proposal(v_proposal.id::text);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.regenerate_proposal_section(p_id text, p_n integer)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant   uuid := app.require_tenant_id();
+  v_proposal core.proposals%ROWTYPE;
+  v_section  core.proposal_sections%ROWTYPE;
+  v_run      core.runs%ROWTYPE;
+BEGIN
+  -- NO IDEMPOTENCY KEY, DELIBERATELY. A second press of "Regenerate" must
+  -- produce a NEW draft, not replay the one the author just rejected. The
+  -- client sends no key for this endpoint for exactly that reason.
+  SELECT proposal.* INTO v_proposal FROM core.proposals AS proposal
+   WHERE proposal.tenant_id = v_tenant
+     AND (proposal.id::text = p_id OR proposal.ref = p_id);
+  IF NOT FOUND THEN
+    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('id', p_id));
+  END IF;
+
+  SELECT section.* INTO v_section FROM core.proposal_sections AS section
+   WHERE section.tenant_id = v_tenant
+     AND section.proposal_id = v_proposal.id
+     AND section.n = p_n::smallint;
+  IF NOT FOUND THEN
+    RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('id', p_id, 'n', p_n));
+  END IF;
+
+  -- THE DRAFTING AGENT MUST BE REGISTERED. `core.runs` FKs
+  -- `(tenant_id, agent_id)` to `core.agents`, so a tenant that has not
+  -- registered `agent_proposal` would get a raw foreign-key violation. A tenant
+  -- with no drafting agent is a configuration fact, not a server fault, and it
+  -- is said as one.
+  IF NOT EXISTS (SELECT 1 FROM core.agents AS agent
+                  WHERE agent.tenant_id = v_tenant AND agent.agent_id = 'agent_proposal') THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'reason','NO_DRAFTING_AGENT', 'agentId','agent_proposal'));
+  END IF;
+
+  -- An agent that is paused or killed must not be handed work. 013 owns both
+  -- switches; this reads them rather than re-deciding what "paused" means.
+  IF EXISTS (SELECT 1 FROM core.agents AS agent
+              WHERE agent.tenant_id = v_tenant AND agent.agent_id = 'agent_proposal'
+                AND (agent.kill_switch OR agent.paused_at IS NOT NULL
+                     OR agent.status <> 'ACTIVE')) THEN
+    RETURN app.err('AGENT_PAUSED', pg_catalog.jsonb_build_object('agentId','agent_proposal'));
+  END IF;
+
+  -- THIS RPC DOES NOT CALL A MODEL AND MUST NOT. Ruling R-A puts every LLM call
+  -- behind the worker, ruling R-B forbids `pg_net`, and a generation inside a
+  -- request would blow the 10s statement timeout under load. What it does is
+  -- ENQUEUE the work through 011's own envelope and hand back the run the
+  -- worker will fill — the same split `core.get_tna_recommendations` relies on
+  -- for reading worker-produced rows.
+  --
+  -- `runId` is REQUIRED on the response, so the run row is created here and the
+  -- worker attaches to it. A response with an invented run id would point the
+  -- run drawer at nothing.
+  INSERT INTO core.runs
+    (tenant_id, agent_id, trigger, mode, status, tiers_used, guardrails,
+     started_at, correlation_id)
+  VALUES (v_tenant, 'agent_proposal',
+          -- 013's `runs_trigger_shape` CHECK requires a `type` string and,
+          -- when present, a string-or-null `ref`. `mode` is LIVE | SANDBOX,
+          -- not a description of the work — read off the constraint rather
+          -- than guessed.
+          pg_catalog.jsonb_build_object(
+            'type','PROPOSAL_SECTION_REGENERATE',
+            'ref',  v_proposal.ref,
+            'sectionN', p_n),
+          'LIVE', 'RUNNING', ARRAY[]::text[], ARRAY[]::text[],
+          pg_catalog.now(), pg_catalog.gen_random_uuid())
+  RETURNING * INTO v_run;
+
+  -- The section is marked as awaiting the worker rather than rewritten here:
+  -- until the run lands, the body on screen is still the one the author read.
+  UPDATE core.proposal_sections AS section
+     SET needs_review = true
+   WHERE section.tenant_id = v_tenant AND section.id = v_section.id;
+
+  SELECT section.* INTO v_section FROM core.proposal_sections AS section
+   WHERE section.tenant_id = v_tenant AND section.id = v_section.id;
+
+  RETURN app.ok(pg_catalog.jsonb_build_object(
+    'section',
+      pg_catalog.jsonb_build_object('n', v_section.n, 'title', v_section.title)
+      || CASE WHEN v_section.body IS NULL THEN '{}'::jsonb
+              ELSE pg_catalog.jsonb_build_object('body', v_section.body) END
+      || CASE WHEN v_section.merge_fields_used IS NULL THEN '{}'::jsonb
+              ELSE pg_catalog.jsonb_build_object('mergeFieldsUsed',
+                     pg_catalog.to_jsonb(v_section.merge_fields_used)) END
+      || pg_catalog.jsonb_build_object('needsReview', v_section.needs_review)
+      || CASE WHEN app._provenance('proposal_sections', v_section.id, NULL) IS NULL
+              THEN '{}'::jsonb
+              ELSE pg_catalog.jsonb_build_object('provenance',
+                     app._provenance('proposal_sections', v_section.id, NULL)) END,
+    'runId', v_run.id::text));
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.list_quotations(
+  p_filter jsonb DEFAULT '[]'::jsonb,
+  p_sort   text  DEFAULT NULL,
+  p_page   jsonb DEFAULT '{"size":50}'::jsonb,
+  p_view   text  DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+DECLARE
+  v_tenant  uuid := app.require_tenant_id();
+  v_size    integer;
+  v_cur_at  timestamptz;
+  v_cur_id  uuid;
+  v_clauses text[] := ARRAY[]::text[];
+  v_errors  jsonb  := '[]'::jsonb;
+  v_applied jsonb  := '[]'::jsonb;
+  v_clause  jsonb;
+  v_field   text;
+  v_op      text;
+  v_column  text;
+  v_kind    text;
+  v_desc    boolean := true;
+  v_sort_col text := 'created_at';
+  v_sort_fld text;
+  v_where   text;
+  v_ids     uuid[];
+  v_rows    jsonb;
+  v_total   integer;
+  v_count   integer;
+  v_next    text;
+  v_last_at timestamptz;
+  v_last_id uuid;
+  v_cursor  text;
+BEGIN
+  -- THIS IS AN RPC AND NOT A VIEW READ, AND THAT IS THE POINT. Under RLS a
+  -- reader without the row would get an EMPTY LIST from a view — indis-
+  -- tinguishable from "there are no quotations" — whereas the permission check
+  -- below answers FORBIDDEN and says which role is missing. A price list is
+  -- exactly the collection where "you may not see this" and "there is nothing
+  -- here" must not look the same.
+  IF NOT app.has_permission('quotation:read') THEN
+    RETURN app.err('FORBIDDEN', pg_catalog.jsonb_build_object(
+      'requiredPermission','quotation:read'));
+  END IF;
+
+  BEGIN
+    v_size := app._page_size(p_page);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+      'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field','page.size','reason', SQLERRM))));
+  END;
+
+  v_cursor := NULLIF(p_page ->> 'cursor','');
+  IF v_cursor IS NOT NULL THEN
+    BEGIN
+      SELECT decoded.at, decoded.id INTO v_cur_at, v_cur_id
+        FROM app._cursor_decode(v_cursor) AS decoded;
+    EXCEPTION WHEN invalid_text_representation THEN
+      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'field','page.cursor','reason','MALFORMED_CURSOR'))));
+    END;
+  END IF;
+
+  FOR v_clause IN SELECT element.value
+                    FROM pg_catalog.jsonb_array_elements(COALESCE(p_filter,'[]'::jsonb)) AS element(value)
+  LOOP
+    v_field := v_clause ->> 'field';
+    v_op    := v_clause ->> 'op';
+    SELECT allowed.column_name, allowed.kind INTO v_column, v_kind
+      FROM (VALUES ('status','status','text'),('proposal','proposal_id','uuid'),
+                   ('sellPrice','sell_price_sen','number'),('belowFloor','below_floor','bool'),
+                   ('createdAt','created_at','ts'),('version','version','number'))
+           AS allowed(field, column_name, kind)
+     WHERE allowed.field = v_field;
+    IF v_column IS NULL THEN
+      v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', COALESCE(v_field,'(null)'), 'reason','UNKNOWN_FILTER_FIELD'));
+      CONTINUE;
+    END IF;
+    BEGIN
+      v_clauses := v_clauses || app._predicate(v_column, v_kind, v_op, v_clause -> 'value');
+      v_applied := v_applied || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', v_field, 'op', v_op,
+        'value', COALESCE(v_clause -> 'value','null'::jsonb), 'source','REQUEST'));
+    EXCEPTION WHEN invalid_parameter_value THEN
+      v_errors := v_errors || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', v_field, 'reason', SQLERRM, 'code', COALESCE(v_op,'(null)')));
+    END;
+    v_column := NULL; v_kind := NULL;
+  END LOOP;
+
+  IF pg_catalog.jsonb_array_length(v_errors) > 0 THEN
+    RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object('fields', v_errors));
+  END IF;
+
+  IF NULLIF(p_sort,'') IS NOT NULL THEN
+    v_desc := pg_catalog.left(p_sort,1) = '-';
+    v_sort_fld := CASE WHEN v_desc THEN pg_catalog.substr(p_sort,2) ELSE p_sort END;
+    SELECT allowed.column_name INTO v_sort_col
+      FROM (VALUES ('createdAt','created_at'),('updatedAt','updated_at'),
+                   ('sellPrice','sell_price_sen'),('version','version'))
+           AS allowed(field, column_name)
+     WHERE allowed.field = v_sort_fld;
+    IF v_sort_col IS NULL THEN
+      RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
+        'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'field','sort','reason','UNKNOWN_SORT_FIELD','code', v_sort_fld))));
+    END IF;
+  END IF;
+
+  v_where := CASE WHEN pg_catalog.array_length(v_clauses,1) IS NULL THEN 'true'
+                  ELSE pg_catalog.array_to_string(v_clauses,' AND ') END;
+
+  EXECUTE pg_catalog.format(
+    'SELECT pg_catalog.count(*)::integer FROM core.quotations WHERE tenant_id = $1 AND %s',
+    v_where) INTO v_total USING v_tenant;
+
+  IF v_cur_at IS NOT NULL THEN
+    v_where := v_where || pg_catalog.format(
+      ' AND (%I, id) %s (%L::timestamptz, %L::uuid)',
+      v_sort_col, CASE WHEN v_desc THEN '<' ELSE '>' END, v_cur_at, v_cur_id);
+  END IF;
+
+  -- Each row is projected by `core.get_quotation`, so the R6 floor block and
+  -- the PROGRAMME→ABSOLUTE basis mapping exist in ONE place. A list that built
+  -- its own money projection would be the second money implementation this
+  -- pack exists to avoid.
+  EXECUTE pg_catalog.format($q$
+    SELECT COALESCE(pg_catalog.array_agg(q.id ORDER BY q.%I %s, q.id %s), ARRAY[]::uuid[])
+      FROM (SELECT id, %I FROM core.quotations
+             WHERE tenant_id = $1 AND %s
+             ORDER BY %I %s, id %s
+             LIMIT $2) AS q$q$,
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END,
+    v_sort_col, v_where,
+    v_sort_col, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END, CASE WHEN v_desc THEN 'DESC' ELSE 'ASC' END)
+    INTO v_ids USING v_tenant, v_size;
+
+  SELECT COALESCE(pg_catalog.jsonb_agg(core.get_quotation(element.id::text) -> 'data'
+                                       ORDER BY element.ord), '[]'::jsonb),
+         pg_catalog.count(*)::integer
+    INTO v_rows, v_count
+    FROM pg_catalog.unnest(v_ids) WITH ORDINALITY AS element(id, ord);
+
+  IF v_count = v_size AND v_count < v_total THEN
+    EXECUTE pg_catalog.format('SELECT %I, id FROM core.quotations WHERE tenant_id = $1 AND id = $2', v_sort_col)
+      INTO v_last_at, v_last_id USING v_tenant, v_ids[pg_catalog.array_length(v_ids,1)];
+    v_next := app._cursor_encode(v_last_at, v_last_id);
+  END IF;
+
+  RETURN app.ok(pg_catalog.jsonb_build_object(
+    'data', v_rows,
+    'page', pg_catalog.jsonb_build_object('next', v_next, 'total', v_total),
+    'appliedFilters', v_applied));
+END;
+$fn$;
+
+-- ═══ 10c · The two views 014 could not grant ═══════════════════════════════
+--
+-- 014 §4 registered a CARRIED DEFECT and named this pack as its owner:
+--
+--   "`core.budget_status` is `security_invoker=true` and reads
+--    `app.usage_rollup` … So the view is unreadable by a client no matter what
+--    is granted ON THE VIEW, and `core.model_tier_status` inherits the problem
+--    because it reads `budget_status`. … read both views from a
+--    `SECURITY DEFINER` RPC in `core` … so 018 is where this lands."
+--
+-- It then REVOKED both rather than leaving "two grants that look like access
+-- and deliver a permission error".
+--
+-- ⚠ 018 TAKES THE DEFECT BUT NOT THE PRESCRIBED SHAPE, and the reason is a
+-- measurement rather than a preference. 014 proposed an RPC. There is no RPC
+-- NAME for either of these on any branch: `RPC_NAMES` in `rpcClient.ts` does
+-- not contain one on `main` or on `cloud/web-swap`, and the client reads both
+-- through `VIEW_READS` — `.from("v_budgets")` and `.from("v_model_tiers")`.
+-- An RPC would therefore be a function with zero call sites, which is the
+-- dead-RPC finding of the §7 contract check, while the screen stayed broken.
+--
+-- So the fix is a VIEW WITH THE NAME THE CLIENT ACTUALLY READS, whose body
+-- goes through a `SECURITY DEFINER` function. That is 014's mechanism — a
+-- definer reaches `app.usage_rollup`, the caller never does — wearing the name
+-- the caller already asks for. `security_invoker = true` stays ON THE VIEW so
+-- the TENANT predicate is still evaluated as the caller; the definer function
+-- exists only to cross the `app` schema boundary, and it re-derives the tenant
+-- from `app.require_tenant_id()` rather than trusting an argument.
+--
+-- NOTE FOR THE §8 VIEW PACK: these are the SECOND and THIRD `core.v_*` views
+-- 018 ships, after `v_organisation_relations`. The remaining thirteen are
+-- still that pack's. Three of sixteen is not a design; it is two specs and a
+-- carried defect that each named this migration. Said out loud so the next
+-- reader does not have to infer it.
+
+CREATE OR REPLACE FUNCTION app._budget_rows()
+RETURNS TABLE (scope text, key text, cap_sen bigint, currency text,
+               spend_sen bigint, state text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+  -- SECURITY DEFINER for one reason: `core.budget_status` reads
+  -- `app.usage_rollup`, and `authenticated` holds nothing in `app`. The tenant
+  -- is re-derived here, never passed in, so this cannot be aimed at another
+  -- tenant by a caller who finds it.
+  SELECT b.scope, b.key, b.cap_sen, b.currency::text, b.spend_sen, b.state
+    FROM core.budget_status AS b
+   WHERE b.tenant_id = app.require_tenant_id();
+$fn$;
+
+CREATE OR REPLACE FUNCTION app._model_tier_rows()
+RETURNS SETOF core.model_tier_status
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+  SELECT t.* FROM core.model_tier_status AS t
+   WHERE t.tenant_id = app.require_tenant_id();
+$fn$;
+
+REVOKE ALL ON FUNCTION app._budget_rows()     FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app._model_tier_rows() FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE VIEW core.v_budgets
+WITH (security_invoker = true) AS
+SELECT rows.scope,
+       rows.key,
+       app._money(rows.cap_sen,   rows.currency) AS cap,
+       app._money(rows.spend_sen, rows.currency) AS spend,
+       rows.state
+  FROM app._budget_rows() AS rows;
+
+CREATE OR REPLACE VIEW core.v_model_tiers
+WITH (security_invoker = true) AS
+SELECT tier.tier_key                              AS key,
+       tier.model,
+       tier.provider,
+       tier.routing,
+       tier.fallback_chain                        AS "fallbackChain",
+       tier.cache_strategy                        AS "cacheStrategy",
+       tier.max_output_tokens                     AS "maxOutputTokens",
+       tier.allowed_hours                         AS "allowedHours",
+       app._money(tier.monthly_cap_sen, tier.currency::text) AS "monthlyCap",
+       tier.status,
+       -- `degradation` is OPTIONAL and is emitted only when the tier is
+       -- actually degraded: an object full of nulls beside a healthy tier
+       -- reads as a fault that is not there.
+       CASE WHEN tier.degraded_since IS NULL THEN NULL
+            ELSE pg_catalog.jsonb_build_object(
+                   'since',  tier.degraded_since,
+                   'reason', tier.degraded_reason,
+                   'activeFallbackTier', tier.active_fallback_tier)
+       END                                        AS degradation
+  FROM app._model_tier_rows() AS tier;
+
+REVOKE ALL ON core.v_budgets      FROM PUBLIC, anon;
+REVOKE ALL ON core.v_model_tiers  FROM PUBLIC, anon;
+GRANT SELECT ON core.v_budgets     TO authenticated;
+GRANT SELECT ON core.v_model_tiers TO authenticated;
+
+COMMENT ON VIEW core.v_budgets IS
+  'Closes 014 §4''s carried defect. core.budget_status is security_invoker and '
+  'reads app.usage_rollup, which authenticated cannot reach, so it is '
+  'unreadable no matter what is granted on it. This view carries the name '
+  'rpcClient.ts actually reads (VIEW_READS.aiBudgets) and crosses the app '
+  'boundary through a definer function that re-derives the tenant itself. 018.';
+
 -- ═══ 11 · Grants ═══════════════════════════════════════════════════════════
 --
 -- REVOKE first, GRANT second, and `anon` named explicitly beside PUBLIC even
@@ -2923,14 +4268,15 @@ BEGIN
       JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
      WHERE n.nspname = 'core'
        AND p.proname IN (
-         'perform_action','decide_approval','bulk_decide_approvals',
          'me','navigation','badge_counts',
-         'list_enquiries','get_enquiry',
+         'list_enquiries','get_enquiry','patch_enquiry_extraction',
+         'list_follow_ups','get_follow_up_draft',
          'get_organisation','get_opportunity','get_contact',
          'get_tna','get_tna_recommendations',
-         'create_proposal','get_proposal',
-         'get_quotation','put_quotation',
-         'list_approvals','get_approval',
+         'create_proposal','list_proposals','get_proposal',
+         'add_proposal_section','put_proposal_section','regenerate_proposal_section',
+         'list_quotations','get_quotation','put_quotation','get_rate_card',
+         'list_approvals','get_approval','get_audit',
          'get_policy','get_pipeline_config','get_programme','get_compliance_rule')
   LOOP
     EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon', v_signature);
@@ -2949,19 +4295,9 @@ COMMENT ON VIEW core.v_organisation_relations IS
   '.from("v_organisation_relations").select("*").match({organisation_id}); an '
   'empty result is NOT_FOUND because the contract types this as a record.';
 
-COMMENT ON FUNCTION core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text) IS
-  'The one endpoint every write in the app goes through. A ONE-EXPRESSION '
-  'wrapper over app.perform_action: app.ok() around 011''s bare '
-  '{status, result|approvalRequest|draft}. No re-validation and no second '
-  'tenant check — 011:1979 calls app.require_tenant_id() itself. '
-  'QUEUED_FOR_APPROVAL is a SUCCESS, not an error, and is not reclassified.';
-
-COMMENT ON FUNCTION core.decide_approval(uuid,text,text,text) IS
-  'Wraps app.decide_approval with ALL FIVE arguments. p_expected_diff_hash is '
-  'passed explicitly as NULL because the detail screen cannot yet carry the '
-  'hash it rendered; until it can, a 409 diffChanged cannot be detected. A '
-  'wrapper that dropped the argument would still typecheck, so the $verify$ '
-  'block asserts it is still there.';
+-- The three wrappers are COMMENTed by 014, which owns them. 018 does not
+-- re-comment another pack's functions: a COMMENT is last-writer-wins, and two
+-- packs describing one object is the same divergence as two packs defining it.
 
 -- ═══ 12 · $verify$ — every pin doc 09 names, as an executed assertion ══════
 
@@ -2976,16 +4312,19 @@ DECLARE
   v_missing   text[] := ARRAY[]::text[];
   v_body      text;
   v_count     integer;
+  -- THE THREE GATE WRAPPERS ARE NOT IN THIS LIST. 014 owns them; see §2.
   v_expected  text[] := ARRAY[
-    'perform_action','decide_approval','bulk_decide_approvals',
     'me','navigation','badge_counts',
-    'list_enquiries','get_enquiry',
+    'list_enquiries','get_enquiry','patch_enquiry_extraction',
+    'list_follow_ups','get_follow_up_draft',
     'get_organisation','get_opportunity','get_contact',
     'get_tna','get_tna_recommendations',
-    'create_proposal','get_proposal',
-    'get_quotation','put_quotation',
-    'list_approvals','get_approval',
+    'create_proposal','list_proposals','get_proposal',
+    'add_proposal_section','put_proposal_section','regenerate_proposal_section',
+    'list_quotations','get_quotation','put_quotation','get_rate_card',
+    'list_approvals','get_approval','get_audit',
     'get_policy','get_pipeline_config','get_programme','get_compliance_rule'];
+  v_wrappers  text[] := ARRAY['perform_action','decide_approval','bulk_decide_approvals'];
 BEGIN
   -- V1 · All 23 functions exist, exactly once each. A SECOND OVERLOAD is the
   -- PGRST203 trap: `CREATE OR REPLACE FUNCTION` matches on the ARGUMENT LIST,
@@ -3071,26 +4410,51 @@ BEGIN
                     'it carries every approval''s diff and evidence regardless of approver role';
   END IF;
 
-  -- V5 · doc 09 §2's pin, verbatim in intent: the wrapper CALLS the gate and
-  -- does nothing else, so a later edit cannot quietly inline a second policy
-  -- evaluation beside it.
-  IF pg_catalog.strpos(
-       pg_catalog.regexp_replace(
-         app._body_sql(
-           'core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)'::regprocedure),
-         '\s+','','g'),
-       'app.ok(app.perform_action(') = 0 THEN
-    RAISE EXCEPTION '018 verify V5: core.perform_action does not wrap app.perform_action';
+  -- V5 · THE THREE WRAPPERS ARE 014'S, AND THERE IS EXACTLY ONE OF EACH.
+  -- This is the pin that caught the collision that made 018 stop shipping them:
+  -- `CREATE OR REPLACE FUNCTION` matches on the ARGUMENT LIST, so 014's
+  -- five-argument `decide_approval` and 018's four-argument one became
+  -- OVERLOADS rather than replacing each other, and two overloads differing
+  -- only by a defaulted trailing argument make every short call ambiguous
+  -- (PGRST203). Asserting "exactly one" is what turns that from a runtime
+  -- surprise into a failed migration.
+  FOREACH v_name IN ARRAY v_wrappers LOOP
+    SELECT pg_catalog.count(*)::integer INTO v_count
+      FROM pg_catalog.pg_proc AS p
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'core' AND p.proname = v_name;
+    IF v_count <> 1 THEN
+      RAISE EXCEPTION '018 verify V5: core.% has % definitions, expected exactly 1 (014 owns it). '
+                      'Two overloads differing only by a defaulted trailing argument make every '
+                      'short call ambiguous.', v_name, v_count;
+    END IF;
+  END LOOP;
+
+  -- V5b · 014's wrappers still carry the posture 018 depends on, and still
+  -- reach `authenticated`. 018 stopped creating them; it did not stop caring
+  -- whether they work.
+  SELECT pg_catalog.array_agg(p.proname ORDER BY p.proname) INTO v_missing
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'core' AND p.proname = ANY (v_wrappers)
+     AND NOT (p.prosecdef
+              AND p.proconfig @> ARRAY['search_path=""']
+              AND pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              AND NOT pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE'));
+  IF v_missing IS NOT NULL THEN
+    RAISE EXCEPTION '018 verify V5b: 014''s wrapper(s) lost posture or grant: %',
+      pg_catalog.array_to_string(v_missing, ', ');
   END IF;
 
-  -- V6 · doc 09 §11's pin: `core.decide_approval` passes ALL FIVE arguments to
-  -- `app.decide_approval`. A wrapper that dropped the hash argument silently
-  -- disables the §7 diff guarantee and its signature would still typecheck.
+  -- V6 · doc 09 §11's pin, applied to 014's function: `core.decide_approval`
+  -- passes ALL FIVE arguments to `app.decide_approval`. A wrapper that dropped
+  -- the hash silently disables the §7 diff guarantee AND STILL TYPECHECKS, so
+  -- the assertion has to read the body rather than the signature.
   v_body := pg_catalog.regexp_replace(
-    app._body_sql('core.decide_approval(uuid,text,text,text)'::regprocedure),
+    app._body_sql('core.decide_approval(uuid,text,text,text,text)'::regprocedure),
     '\s+','','g');
   IF pg_catalog.strpos(v_body,
-       'app.ok(app.decide_approval(p_approval_id,p_decision,p_note,NULL::text,p_idempotency_key))') = 0 THEN
+       'app.decide_approval(p_approval_id,p_decision,p_note,p_expected_diff_hash,p_idempotency_key)') = 0 THEN
     RAISE EXCEPTION '018 verify V6: core.decide_approval does not pass all five arguments '
                     'to app.decide_approval';
   END IF;
@@ -3221,7 +4585,6 @@ BEGIN
     FROM pg_catalog.pg_proc AS p
     JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
    WHERE n.nspname = 'core' AND p.proname = ANY (v_expected)
-     AND p.proname NOT IN ('perform_action','decide_approval','bulk_decide_approvals')
      AND pg_catalog.strpos(app._body_sql(p.oid), 'app.require_tenant_id()') = 0;
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION '018 verify V15: does not call app.require_tenant_id(): %',
@@ -3240,7 +4603,7 @@ BEGIN
       pg_catalog.array_to_string(v_missing, ', ');
   END IF;
 
-  RAISE NOTICE '018 verify: 23 core RPCs + 1 view + 9 app helpers — all posture, '
+  RAISE NOTICE '018 verify: 30 core RPCs + 3 views + 9 app helpers — all posture, '
                'grant, envelope, money, pipeline and spine pins PASS.';
 END
 $verify$;

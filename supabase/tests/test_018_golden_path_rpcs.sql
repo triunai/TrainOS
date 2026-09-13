@@ -61,19 +61,13 @@ VALUES
   ('11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','Mei Ling','mei@example.test','en-MY','Asia/Kuala_Lumpur','LIGHT'),
   ('99999999-9999-4999-8999-999999999999','88888888-8888-4888-8888-888888888888','Intruder','intruder@other.test','en-MY','Asia/Kuala_Lumpur','LIGHT');
 
-INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width,gapless)
-SELECT t.id, spec.prefix, spec.entity, spec.dated, 4, false
-  FROM public.tenants t,
-       (VALUES ('ORG','organisations',false),('ENQ','enquiries',true),
-               ('OPP','opportunities',true),('TNA','tnas',true),
-               ('PRO','proposals',true),('QUO','quotations',true),
-               ('CON','contacts',false),('PRG','programmes',false),
-               ('APV','approval_requests',true),('ACT','action_requests',true),
-               ('DRF','suggested_drafts',true),('TPL','templates',false),
-               ('ENG','engagements',true),('INV','invoices',true),
-               ('PIP','pipelines',false),('SVW','saved_views',false),
-               ('TRN','trainers',false),('HPK','hrdc_packets',true),
-               ('RUN','runs',true)) AS spec(prefix,entity,dated);
+-- NO `core.ref_formats` SEED HERE ANY MORE. When 018 was written against
+-- 001-013 this file had to insert 19 format rows by hand or die on the first
+-- INSERT with "no ref_format for prefix ORG in this tenant". 016 now derives
+-- every prefix from the `core.assign_ref` triggers themselves and seeds them
+-- from `trg_tenants_seed_ref_formats` on `public.tenants`, so inserting them
+-- here is a duplicate-key error rather than a fixture. The tenant INSERTs above
+-- provision themselves.
 
 -- Pipeline configuration. STAGE NAMES AND ORDER LIVE HERE, which is the whole
 -- point of T9: the nav and the config endpoint must render these rows and not
@@ -239,6 +233,15 @@ INSERT INTO core.template_sections (tenant_id,template_id,n,title,ai_enabled,def
 VALUES ('11111111-1111-4111-8111-111111111111','c3333333-0000-4000-8000-000000000001',1,'Understanding',true,'Draft one'),
        ('11111111-1111-4111-8111-111111111111','c3333333-0000-4000-8000-000000000001',2,'Approach',true,'Draft two');
 
+-- 013 FKs core.runs(tenant_id, agent_id) to core.agents, so the drafting agent
+-- has to exist before a regenerate can enqueue a run. Registering it here is a
+-- fixture, not a workaround: a tenant with no drafting agent genuinely cannot
+-- regenerate, and T26 asserts that refusal separately.
+INSERT INTO core.agents
+  (tenant_id, agent_id, name, status, principal_user_id, scopes, kill_switch, escalation_ladder)
+VALUES ('11111111-1111-4111-8111-111111111111','agent_proposal','Proposal Agent','ACTIVE',
+        '22222222-2222-4222-8222-222222222222', ARRAY['proposal:write'], false, ARRAY[]::text[]);
+
 INSERT INTO core.rate_cards
   (id,tenant_id,version,currency,status,effective_from,created_by_kind,created_by_id)
 VALUES ('d4444444-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','2026.1','MYR','ACTIVE',
@@ -257,8 +260,16 @@ DO $banner$ BEGIN RAISE NOTICE '════════ T0 · THE 014 ORDERING 
 -- owner is not BYPASSRLS, FORCE ROW LEVEL SECURITY with zero policies makes
 -- every read in 018 return ZERO ROWS — silently, as an empty list.
 DO $t0$
-DECLARE v_forced_no_policy integer;
+DECLARE v_forced_no_policy integer; v_policies integer;
 BEGIN
+  -- 014 IS NOW IN THE BASELINE and this assertion changed meaning because of
+  -- it. While 018 was being written against 001-013, every table in `core` was
+  -- FORCE RLS with ZERO policies, so every read in the pack would have returned
+  -- zero rows on any project whose definer owner is not BYPASSRLS — silently,
+  -- as an empty list. That was the single largest caveat on the pack.
+  --
+  -- 014 §2 applies tenant policies to every `core` relation carrying
+  -- `tenant_id`. This now asserts the hazard is CLOSED rather than reporting it.
   SELECT pg_catalog.count(*)::integer INTO v_forced_no_policy
     FROM pg_catalog.pg_class AS c
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
@@ -266,48 +277,76 @@ BEGIN
      AND c.relforcerowsecurity
      AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy AS p WHERE p.polrelid = c.oid);
 
+  SELECT pg_catalog.count(*)::integer INTO v_policies
+    FROM pg_catalog.pg_policy AS p
+    JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'core';
+
   IF v_forced_no_policy > 0 THEN
-    RAISE NOTICE 'T0 DEPENDENCY: % core tables are FORCE RLS with NO POLICY. 014 has not '
-                 'been applied to this database. Every assertion below therefore passes '
-                 'only because this cluster''s definer owner carries BYPASSRLS. '
-                 '018 MUST NOT be applied to a hosted project before 014.',
-                 v_forced_no_policy;
-  ELSE
-    RAISE NOTICE 'T0 PASS: every core table with FORCE RLS carries at least one policy '
-                 '(014 is applied).';
+    RAISE EXCEPTION
+      'T0: % core tables are FORCE RLS with NO POLICY. 014 is not applied to '
+      'this database, and 018 must not be applied before it — every read in the '
+      'pack would return zero rows on a project whose owner lacks BYPASSRLS.',
+      v_forced_no_policy;
   END IF;
+  RAISE NOTICE 'T0 PASS: 014 is applied — % policies on core, and every '
+               'FORCE-RLS table carries at least one. The ordering hazard that '
+               'shipped with the first revision of this pack is closed.', v_policies;
 
   IF NOT (SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER) THEN
-    RAISE NOTICE 'T0b: the current user does NOT carry BYPASSRLS, so the reads below are '
-                 'a genuine test of the policy layer.';
+    RAISE NOTICE 'T0b: the current user does NOT carry BYPASSRLS, so the reads below '
+                 'genuinely exercise 014''s policy layer.';
   ELSE
-    RAISE NOTICE 'T0b CAVEAT: the current user carries BYPASSRLS. RLS is not being '
-                 'exercised by this run.';
+    RAISE NOTICE 'T0b CAVEAT: the current user carries BYPASSRLS, so this run does not '
+                 'exercise the policies themselves — only that they exist. T23 measures '
+                 'the mechanism instead.';
   END IF;
 END
 $t0$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ T1 · RULING R-C · no tax policy exists, and none is invented ════════'; END $banner$;
 DO $t1$
+DECLARE v_rate numeric; v_code text; v_exempt boolean;
 BEGIN
-  IF pg_catalog.to_regclass('core.tax_policies') IS NOT NULL THEN
-    RAISE EXCEPTION 'T1: core.tax_policies now exists — 018 was written on the finding '
-                    'that it does not. Re-check the quotation SST path.';
+  -- STATUS CHANGED. When 018 was written against 001-013, neither
+  -- `core.tax_policies` nor `app.resolve_tax_policy()` existed, so this
+  -- assertion could not be made and the pin emitted a skip saying so. 017
+  -- created both. R-C is now LIVE and this is the assertion it asked for.
+  IF pg_catalog.to_regclass('core.tax_policies') IS NULL THEN
+    RAISE EXCEPTION 'T1: core.tax_policies is missing; 017 is not applied.';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p
-               JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
-              WHERE n.nspname = 'app' AND p.proname = 'resolve_tax_policy') THEN
-    RAISE EXCEPTION 'T1b: app.resolve_tax_policy now exists — wire core.put_quotation to it.';
+  IF pg_catalog.to_regproc('app.resolve_tax_policy') IS NULL THEN
+    RAISE EXCEPTION 'T1b: app.resolve_tax_policy() is missing; 017 is not applied.';
   END IF;
-  RAISE NOTICE 'T1 SKIPPED-BY-DEPENDENCY: neither core.tax_policies nor '
-               'app.resolve_tax_policy() exists in 001-013, so the SST assertion ruling '
-               'R-C asks for CANNOT BE MADE. 018 invents neither. It also does not need '
-               'them: the contract''s Quotation carries no tax field — SST lives on '
-               'core.invoices.sst_rate, which is 010''s. Re-open this assertion when a '
-               'later pack adds the table and the resolver.';
-  IF pg_catalog.to_regclass('core.tenant_tax_profiles') IS NULL THEN
-    RAISE EXCEPTION 'T1c: core.tenant_tax_profiles is missing; doc 09 §10 names it.';
+
+  -- The registry answers for the category a training quotation is priced under.
+  SELECT resolved.rate, resolved.policy_code, resolved.exempt
+    INTO v_rate, v_code, v_exempt
+    FROM app.resolve_tax_policy(
+           '11111111-1111-4111-8111-111111111111', 'CORPORATE_TRAINING') AS resolved;
+  IF v_code IS NULL THEN
+    RAISE EXCEPTION 'T1c: no tax policy resolved for CORPORATE_TRAINING';
   END IF;
+  IF v_rate IS NULL OR v_rate <= 0 THEN
+    RAISE EXCEPTION 'T1d: CORPORATE_TRAINING resolved to a zero rate (%), which is the '
+                    'silent-zero 017 says must never happen', v_rate;
+  END IF;
+
+  -- A MISSING POLICY MUST RAISE, NOT RETURN ZERO. 017: "that is an invoice
+  -- filed with no SST and no reason." Asserted by asking for a category that
+  -- is not registered.
+  BEGIN
+    PERFORM app.resolve_tax_policy(
+      '11111111-1111-4111-8111-111111111111', 'NO_SUCH_CATEGORY');
+    RAISE EXCEPTION 'T1e: an unregistered tax category returned instead of raising';
+  EXCEPTION WHEN no_data_found THEN
+    NULL;  -- expected
+  END;
+
+  RAISE NOTICE 'T1 PASS: ruling R-C is live — policy % resolves CORPORATE_TRAINING at %, '
+               'and an unregistered category raises rather than becoming a zero.',
+               v_code, v_rate;
 END
 $t1$;
 
@@ -1082,63 +1121,97 @@ $t15$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ T16 · The three wrappers widen no identity ════════'; END $banner$;
 DO $t16$
-DECLARE v_def text;
+DECLARE v_def text; v_n integer;
 BEGIN
-  -- doc 09 §2's pin: the body CALLS the gate and does nothing else, so a later
-  -- edit cannot quietly inline a second policy evaluation beside it.
+  -- THE WRAPPERS ARE 014'S. 018 shipped them in its first revision and stopped:
+  -- 014 §5 creates all three, and two implementations of one wrapper became
+  -- OVERLOADS rather than replacing each other, because CREATE OR REPLACE
+  -- matches on the argument list. This section now asserts 014's, because 018
+  -- still depends on them even though it no longer writes them.
+
+  -- EXACTLY ONE OF EACH. Two overloads differing only by a defaulted trailing
+  -- argument make every short call ambiguous (PGRST203), and the client sends
+  -- four named arguments to a function that declares five.
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'core' AND p.proname = 'decide_approval';
+  IF v_n <> 1 THEN
+    RAISE EXCEPTION 'T16a: core.decide_approval has % definitions, expected 1', v_n;
+  END IF;
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'core' AND p.proname IN ('perform_action','bulk_decide_approvals');
+  IF v_n <> 2 THEN
+    RAISE EXCEPTION 'T16b: expected exactly one perform_action and one bulk_decide_approvals, found %', v_n;
+  END IF;
+
+  -- 018 MUST NOT HAVE RE-CREATED THEM. If 018's four-argument
+  -- decide_approval is back, the collision is back with it.
+  IF pg_catalog.to_regprocedure('core.decide_approval(uuid,text,text,text)') IS NOT NULL THEN
+    RAISE EXCEPTION 'T16c: 018''s four-argument decide_approval exists again — '
+                    'that is the PGRST203 overload this pack removed';
+  END IF;
+
+  -- The gate is still one call, with no second policy evaluation beside it.
   v_def := pg_catalog.regexp_replace(
     app._body_sql('core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)'::regprocedure),
     '\s+','','g');
   IF pg_catalog.strpos(v_def, 'app.ok(app.perform_action(') = 0 THEN
-    RAISE EXCEPTION 'T16a: core.perform_action does not wrap app.perform_action';
+    RAISE EXCEPTION 'T16d: core.perform_action does not wrap app.perform_action';
   END IF;
   IF pg_catalog.strpos(v_def, 'core.action_policies') > 0
      OR pg_catalog.strpos(v_def, 'core.autonomy_grants') > 0 THEN
-    RAISE EXCEPTION 'T16b: the wrapper reads the policy tables — a second policy '
+    RAISE EXCEPTION 'T16e: the wrapper reads the policy tables — a second policy '
                     'evaluation has been inlined beside the gate';
   END IF;
 
-  -- doc 09 §11's pin: ALL FIVE arguments. A wrapper that dropped the hash
-  -- argument silently disables the §7 diff guarantee AND STILL TYPECHECKS.
+  -- ALL FIVE ARGUMENTS, and 014's version exposes the hash to the CALLER,
+  -- which 018's four-argument version could not. The §7 diff guarantee is a
+  -- client change away rather than a migration away.
   v_def := pg_catalog.regexp_replace(
-    app._body_sql('core.decide_approval(uuid,text,text,text)'::regprocedure), '\s+','','g');
+    app._body_sql('core.decide_approval(uuid,text,text,text,text)'::regprocedure), '\s+','','g');
   IF pg_catalog.strpos(v_def,
-       'app.decide_approval(p_approval_id,p_decision,p_note,NULL::text,p_idempotency_key)') = 0 THEN
-    RAISE EXCEPTION 'T16c: core.decide_approval does not pass five arguments';
+       'app.decide_approval(p_approval_id,p_decision,p_note,p_expected_diff_hash,p_idempotency_key)') = 0 THEN
+    RAISE EXCEPTION 'T16f: core.decide_approval does not pass five arguments';
   END IF;
 
-  -- THE SPLIT IS INTACT. Granting the app functions to `authenticated` to make
-  -- a wrapper work is the exact failure the core/app split exists to prevent.
+  -- THE SPLIT IS INTACT.
   IF pg_catalog.has_function_privilege('authenticated',
        'app.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)'::regprocedure,'EXECUTE') THEN
-    RAISE EXCEPTION 'T16d: app.perform_action was granted to authenticated';
+    RAISE EXCEPTION 'T16g: app.perform_action was granted to authenticated';
   END IF;
   IF NOT pg_catalog.has_function_privilege('authenticated',
        'core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)'::regprocedure,'EXECUTE') THEN
-    RAISE EXCEPTION 'T16e: authenticated cannot call the wrapper';
+    RAISE EXCEPTION 'T16h: authenticated cannot call the wrapper';
   END IF;
   IF pg_catalog.has_table_privilege('authenticated','core.v_approval_requests','SELECT') THEN
-    RAISE EXCEPTION 'T16f: core.v_approval_requests was granted to authenticated — it '
-                    'carries every approval''s diff and evidence regardless of role';
+    RAISE EXCEPTION 'T16i: core.v_approval_requests was granted to authenticated';
   END IF;
-  RAISE NOTICE 'T16 PASS: wrappers are one call each, five arguments preserved, the '
-               'core/app split and the approval view''s revocation both intact.';
+  RAISE NOTICE 'T16 PASS: 014 owns the three wrappers, exactly one of each, five arguments '
+               'preserved, 018''s former overload gone, and the core/app split intact.';
 END
 $t16$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ T17 · Posture, off pg_proc — not read off the DDL ════════'; END $banner$;
 DO $t17$
+-- The three gate wrappers are NOT in this list: 014 owns them and T16 checks
+-- them. This is 018's own surface.
 DECLARE v_bad text[]; v_names text[] := ARRAY[
-  'perform_action','decide_approval','bulk_decide_approvals','me','navigation','badge_counts',
-  'list_enquiries','get_enquiry','get_organisation','get_opportunity','get_contact','get_tna',
-  'get_tna_recommendations','create_proposal','get_proposal','get_quotation','put_quotation',
-  'list_approvals','get_approval','get_policy','get_pipeline_config','get_programme',
-  'get_compliance_rule'];
+  'me','navigation','badge_counts',
+  'list_enquiries','get_enquiry','patch_enquiry_extraction',
+  'list_follow_ups','get_follow_up_draft',
+  'get_organisation','get_opportunity','get_contact',
+  'get_tna','get_tna_recommendations',
+  'create_proposal','list_proposals','get_proposal',
+  'add_proposal_section','put_proposal_section','regenerate_proposal_section',
+  'list_quotations','get_quotation','put_quotation','get_rate_card',
+  'list_approvals','get_approval','get_audit',
+  'get_policy','get_pipeline_config','get_programme','get_compliance_rule'];
 BEGIN
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'core' AND p.proname = ANY (v_names)) <> 23 THEN
-    RAISE EXCEPTION 'T17a: expected exactly 23 functions, found %',
+       WHERE n.nspname = 'core' AND p.proname = ANY (v_names)) <> 30 THEN
+    RAISE EXCEPTION 'T17a: expected exactly 30 functions, found %',
       (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p
          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'core' AND p.proname = ANY (v_names));
@@ -1213,7 +1286,7 @@ BEGIN
   IF v_bad IS NOT NULL THEN
     RAISE EXCEPTION 'T17g: a tenant argument appears on: %', pg_catalog.array_to_string(v_bad,', ');
   END IF;
-  RAISE NOTICE 'T17 PASS: 23 functions, definer, search_path="" exactly, 10s timeout, one '
+  RAISE NOTICE 'T17 PASS: 30 functions, definer, search_path="" exactly, 10s timeout, one '
                'overload each, granted to authenticated only, no tenant argument.';
 END
 $t17$;
@@ -1331,6 +1404,11 @@ DECLARE v_calls text[] := ARRAY[
   'SELECT core.list_approvals()',
   'SELECT core.get_programme(''b2222222-0000-4000-8000-000000000001'')',
   'SELECT core.get_pipeline_config(''OPPORTUNITY'')',
+  'SELECT core.list_follow_ups()',
+  'SELECT core.list_proposals()',
+  'SELECT core.list_quotations()',
+  'SELECT core.get_rate_card()',
+  'SELECT core.get_audit(''proposals'',''PRO-2026-0001'')',
   'SELECT core.get_enquiry(''no-such-thing'')',
   'SELECT core.get_policy(''no-such-thing'')',
   'SELECT core.get_compliance_rule(''no-such-thing'')'];
@@ -1350,7 +1428,7 @@ BEGIN
       RAISE EXCEPTION 'T20b: % returned both data and error', v_name;
     END IF;
   END LOOP;
-  RAISE NOTICE 'T20 PASS: all 16 probed calls return exactly {success,data} or {success,error}.';
+  RAISE NOTICE 'T20 PASS: all 21 probed calls return exactly {success,data} or {success,error}.';
 END
 $t20$;
 
@@ -1371,10 +1449,10 @@ BEGIN
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname = 'app' AND p.proname IN
          ('_money','_actor','_provenance','_provenanced','_cursor_encode','_cursor_decode',
-          '_page_size','_predicate','_body_sql')) <> 9 THEN
-    RAISE EXCEPTION 'T21b: expected 9 app._* helpers from 018';
+          '_page_size','_predicate','_body_sql','_budget_rows','_model_tier_rows')) <> 11 THEN
+    RAISE EXCEPTION 'T21b: expected 11 app._* helpers from 018';
   END IF;
-  RAISE NOTICE 'T21 PASS: 9 internal helpers exist and none is callable by anon or authenticated.';
+  RAISE NOTICE 'T21 PASS: 11 internal helpers exist and none is callable by anon or authenticated.';
 END
 $t21$;
 
@@ -1411,6 +1489,427 @@ BEGIN
   RAISE NOTICE 'T22 PASS: a value carrying SQL stays a value; in/between behave.';
 END
 $t22$;
+
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T23 · SST comes from the registry, never from a constant ════════'; END $banner$;
+DO $t23$
+DECLARE v jsonb; v_q core.quotations%ROWTYPE; v_prop uuid; v_quote uuid;
+BEGIN
+  SELECT id INTO v_prop FROM core.proposals
+   WHERE tenant_id = '11111111-1111-4111-8111-111111111111' LIMIT 1;
+  INSERT INTO core.quotations
+    (tenant_id, proposal_id, rate_card_id, pax, version, programme_floor_price_sen,
+     floor_margin_rate, status, created_by_kind, created_by_id)
+  VALUES ('11111111-1111-4111-8111-111111111111', v_prop,
+          'd4444444-0000-4000-8000-000000000001', 40, 3, 100000, 0.3000,
+          'DRAFT','HUMAN','22222222-2222-4222-8222-222222222222')
+  RETURNING id INTO v_quote;
+
+  -- 017 added six SST columns to core.quotations. `sst_rate` DEFAULTS TO 0 and
+  -- `sst_reason` to 'STANDARD_RATED', and NOTHING in 001-017 populates them —
+  -- there is no trigger. A quotation written without resolving a policy is
+  -- therefore standard-rated at zero per cent: a quotation that looks taxed and
+  -- carries no tax. Ruling R-C says the RPC closes that, and this asserts it.
+  SELECT quotation.* INTO v_q FROM core.quotations AS quotation WHERE quotation.id = v_quote;
+  IF v_q.sst_rate <> 0 THEN
+    RAISE EXCEPTION 'T23a: the fixture did not start from 017''s zero default';
+  END IF;
+
+  v := core.put_quotation(v_quote::text,
+    '{"lines":[{"item":"Trainer days","qty":1,"basis":"PER_DAY",
+                "rate":{"amount":500000,"currency":"MYR"},
+                "total":{"amount":500000,"currency":"MYR"},"isCost":false}]}'::jsonb,
+    'sst-key-1');
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T23b: %', v; END IF;
+
+  SELECT quotation.* INTO v_q FROM core.quotations AS quotation WHERE quotation.id = v_quote;
+  IF v_q.sst_policy_id IS NULL THEN
+    RAISE EXCEPTION 'T23c: no tax policy was recorded on the quotation — the rate '
+                    'cannot be traced back to a registry row';
+  END IF;
+  IF v_q.sst_rate <> 0.08 THEN
+    RAISE EXCEPTION 'T23d: sst_rate is %, expected the registry''s 0.08', v_q.sst_rate;
+  END IF;
+  IF v_q.sst_reason <> 'STANDARD_RATED' THEN
+    RAISE EXCEPTION 'T23e: sst_reason is %', v_q.sst_reason;
+  END IF;
+  -- `sst_sen` and `gross_price_sen` are 017's GENERATED columns. 018 writes the
+  -- rate and 007/017 do the arithmetic — no money is multiplied in this pack.
+  IF v_q.sst_sen <> app.round_half_up_sen(500000::numeric * 0.08) THEN
+    RAISE EXCEPTION 'T23f: sst_sen % is not the generated rounding of sell x rate', v_q.sst_sen;
+  END IF;
+  IF v_q.gross_price_sen <> v_q.sell_price_sen + v_q.sst_sen THEN
+    RAISE EXCEPTION 'T23g: gross is not net plus tax';
+  END IF;
+  RAISE NOTICE 'T23 PASS: put_quotation resolved SST through app.resolve_tax_policy — '
+               'policy recorded, rate 0.08 from the registry, sst_sen and gross generated.';
+END
+$t23$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T24 · patch_enquiry_extraction — an edit discloses itself ════════'; END $banner$;
+DO $t24$
+DECLARE v jsonb; d jsonb; v_prov jsonb;
+BEGIN
+  v := core.patch_enquiry_extraction('ddddddd1-0000-4000-8000-000000000001',
+         '{"field":"topic","value":"Delegation and feedback"}'::jsonb);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T24a: %', v; END IF;
+  d := v -> 'data';
+  IF d #>> '{extraction,topic,value}' <> 'Delegation and feedback' THEN
+    RAISE EXCEPTION 'T24b: the value did not change: %', d #> '{extraction,topic}';
+  END IF;
+
+  -- A HUMAN EDIT OF AN AI VALUE FLIPS origin TO AI_SUGGESTED AND STAMPS
+  -- editedBy. The lineage is what tells a later reader the number started as a
+  -- model's guess; the editor is who took responsibility for it.
+  v_prov := d #> '{extraction,topic,provenance}';
+  IF v_prov ->> 'origin' <> 'AI_SUGGESTED' THEN
+    RAISE EXCEPTION 'T24c: origin is % after a human edit, expected AI_SUGGESTED',
+      v_prov ->> 'origin';
+  END IF;
+  IF NOT (v_prov ? 'editedBy') THEN
+    RAISE EXCEPTION 'T24d: no editedBy was stamped on an edited AI value';
+  END IF;
+  IF v_prov #>> '{editedBy,name}' <> 'Alex Selvarajah' THEN
+    RAISE EXCEPTION 'T24e: editedBy names the wrong person: %', v_prov -> 'editedBy';
+  END IF;
+  -- The AI lineage SURVIVES the edit rather than being erased.
+  IF NOT (v_prov ? 'confidence') OR NOT (v_prov ? 'model') THEN
+    RAISE EXCEPTION 'T24f: the edit erased the model lineage: %', v_prov;
+  END IF;
+
+  -- A HUMAN-AUTHORED FIELD GAINS NO PROVENANCE. `audience` never had a row;
+  -- editing it must not invent one and badge it as AI-touched for ever after.
+  v := core.patch_enquiry_extraction('ENQ-2026-0001',
+         '{"field":"audience","value":"Senior line managers"}'::jsonb);
+  IF (v #> '{data,extraction,audience}') ? 'provenance' THEN
+    RAISE EXCEPTION 'T24g: editing a human field invented a provenance row';
+  END IF;
+
+  -- `budget` is Money on the wire and integer sen in the column.
+  v := core.patch_enquiry_extraction('ENQ-2026-0001',
+         '{"field":"budget","value":{"amount":5500000,"currency":"MYR"}}'::jsonb);
+  IF (v #>> '{data,extraction,budget,value,amount}')::bigint <> 5500000 THEN
+    RAISE EXCEPTION 'T24h: budget did not round-trip as Money: %',
+      v #> '{data,extraction,budget,value}';
+  END IF;
+
+  -- An unknown field is refused, not silently created.
+  BEGIN
+    PERFORM core.patch_enquiry_extraction('ENQ-2026-0001','{"field":"nope","value":"x"}'::jsonb);
+    RAISE EXCEPTION 'T24i: an unknown extraction field was accepted';
+  EXCEPTION WHEN sqlstate 'TRNOS' THEN NULL;
+  END;
+  RAISE NOTICE 'T24 PASS: edit flips origin to AI_SUGGESTED with editedBy, keeps the model '
+               'lineage, invents nothing on human fields, round-trips Money, refuses junk.';
+END
+$t24$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T25 · follow-ups and the rate that may be unavailable ════════'; END $banner$;
+DO $t25$
+DECLARE v jsonb; d jsonb; v_fu uuid; v_msg uuid;
+BEGIN
+  INSERT INTO core.follow_ups
+    (id, tenant_id, organisation_id, contact_id, reason, due_date, status, autonomy,
+     owner_id, created_by_kind, created_by_id)
+  VALUES ('c0000001-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+          'bbbbbbb1-0000-4000-8000-000000000001','ccccccc1-0000-4000-8000-000000000001',
+          'Proposal sent, no reply', CURRENT_DATE + 1, 'DUE','SUGGEST',
+          '22222222-2222-4222-8222-222222222222','HUMAN','22222222-2222-4222-8222-222222222222'),
+         ('c0000001-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111',
+          'bbbbbbb1-0000-4000-8000-000000000001','ccccccc1-0000-4000-8000-000000000001',
+          'Quotation expiring', CURRENT_DATE - 1, 'OVERDUE','SUGGEST',
+          '22222222-2222-4222-8222-222222222222','HUMAN','22222222-2222-4222-8222-222222222222');
+
+  v := core.list_follow_ups();
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T25a: %', v; END IF;
+  d := v -> 'data';
+  IF (d #>> '{page,total}')::integer <> 2 THEN
+    RAISE EXCEPTION 'T25b: expected 2 follow-ups, got %', d #> '{page,total}';
+  END IF;
+  -- SOONEST DUE FIRST. The fixtures oracle defaults this queue to dueDate
+  -- ascending and the client sends p_sort null, so the default has to live in
+  -- SQL or the two answer differently.
+  IF d #>> '{data,0,reason}' <> 'Quotation expiring' THEN
+    RAISE EXCEPTION 'T25c: the queue did not open soonest-due-first: %', d #> '{data,0}';
+  END IF;
+  IF NOT (d #> '{data,0}' ?& ARRAY['id','ref','contact','organisation','reason','dueDate','status','autonomy']) THEN
+    RAISE EXCEPTION 'T25d: FollowUp is incomplete: %', d #> '{data,0}';
+  END IF;
+  IF d #>> '{data,0,contact,name}' <> 'Siti Rahman' THEN
+    RAISE EXCEPTION 'T25e: the contact did not resolve';
+  END IF;
+
+  -- A draft with NO rate row: rateSource must be UNAVAILABLE and the two money
+  -- fields must be ABSENT. §16 Q4 / ruling R11 — the failure is a value, not a
+  -- zero, and a stale rate rendered to four decimals is the most convincing way
+  -- to be wrong about money.
+  INSERT INTO core.outbound_messages
+    (id, tenant_id, purpose, channel, template_id, category, contact_id, to_address,
+     follow_up_id, body, status, currency, created_by_kind, created_by_id)
+  VALUES ('c0000002-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+          'FOLLOWUP','EMAIL','c3333333-0000-4000-8000-000000000001','UTILITY',
+          'ccccccc1-0000-4000-8000-000000000001','siti@chrome.test',
+          'c0000001-0000-4000-8000-000000000001','Dear Siti, following up.','DRAFT','MYR',
+          'AGENT','agent:followup')
+  RETURNING id INTO v_msg;
+
+  d := core.get_follow_up_draft('c0000001-0000-4000-8000-000000000001','EMAIL') -> 'data';
+  IF d ->> 'rateSource' <> 'UNAVAILABLE' THEN
+    RAISE EXCEPTION 'T25f: rateSource is % with no rate row, expected UNAVAILABLE',
+      d ->> 'rateSource';
+  END IF;
+  IF d ? 'ratePerMessage' OR d ? 'estimatedCost' THEN
+    RAISE EXCEPTION 'T25g: a money field was emitted with no rate behind it: %', d;
+  END IF;
+  IF NOT (d ?& ARRAY['channel','templateId','category','body','recipients','rateSource','consent']) THEN
+    RAISE EXCEPTION 'T25h: MessageDraft is missing a required key: %', d;
+  END IF;
+  -- Consent travels with the draft: EMAIL was granted in the fixtures.
+  IF (d #> '{consent,granted}') <> 'true'::jsonb THEN
+    RAISE EXCEPTION 'T25i: consent did not resolve for the channel: %', d -> 'consent';
+  END IF;
+
+  -- A DRAFT IS PER CHANNEL: WhatsApp has none, and that is a 404 rather than an
+  -- empty composer.
+  IF core.get_follow_up_draft('c0000001-0000-4000-8000-000000000001','WHATSAPP')
+       #>> '{error,code}' <> 'NOT_FOUND' THEN
+    RAISE EXCEPTION 'T25j: a channel with no draft did not 404';
+  END IF;
+  IF core.get_follow_up_draft('c0000001-0000-4000-8000-000000000001','CARRIER_PIGEON')
+       #>> '{error,code}' <> 'VALIDATION_FAILED' THEN
+    RAISE EXCEPTION 'T25k: an unsupported channel was accepted';
+  END IF;
+  RAISE NOTICE 'T25 PASS: queue opens soonest-due-first, draft is per channel, and a missing '
+               'rate is UNAVAILABLE with the money keys ABSENT rather than zeroed.';
+END
+$t25$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T26 · proposal sections — add, edit, regenerate ════════'; END $banner$;
+DO $t26$
+DECLARE v jsonb; d jsonb; v_prop text; v_run text; v_before integer;
+BEGIN
+  SELECT ref INTO v_prop FROM core.proposals
+   WHERE tenant_id = '11111111-1111-4111-8111-111111111111' LIMIT 1;
+
+  v := core.list_proposals();
+  IF (v #>> '{data,page,total}')::integer < 1 THEN
+    RAISE EXCEPTION 'T26a: list_proposals found nothing';
+  END IF;
+  -- Each row is the full Proposal, projected by core.get_proposal, so sections
+  -- and their provenance exist in ONE place rather than two.
+  IF NOT (v #> '{data,data,0}' ?& ARRAY['sections','value','marginRate','opportunityRef']) THEN
+    RAISE EXCEPTION 'T26b: a list row is not a full Proposal: %', v #> '{data,data,0}';
+  END IF;
+
+  SELECT pg_catalog.count(*)::integer INTO v_before FROM core.proposal_sections
+   WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
+
+  v := core.add_proposal_section(v_prop, '{"title":"Investment","body":"Draft"}'::jsonb, 'sec-key-1');
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T26c: %', v; END IF;
+  IF pg_catalog.jsonb_array_length(v #> '{data,sections}') <> v_before + 1 THEN
+    RAISE EXCEPTION 'T26d: the section was not added';
+  END IF;
+  -- `n` is max(n)+1. A blank title is refused.
+  IF (v #>> '{data,sections,2,n}')::int <> 3 THEN
+    RAISE EXCEPTION 'T26e: n is %, expected max(n)+1 = 3', v #> '{data,sections,2,n}';
+  END IF;
+  -- A HAND-WRITTEN SECTION GETS NO PROVENANCE ROW: absence is how "a human
+  -- wrote this" is said.
+  IF (v #> '{data,sections,2}') ? 'provenance' THEN
+    RAISE EXCEPTION 'T26f: a hand-added section was badged with provenance';
+  END IF;
+
+  -- A replay returns the proposal and adds no second section.
+  v := core.add_proposal_section(v_prop, '{"title":"Investment","body":"Draft"}'::jsonb, 'sec-key-1');
+  IF pg_catalog.jsonb_array_length(v #> '{data,sections}') <> v_before + 1 THEN
+    RAISE EXCEPTION 'T26g: a replay added a SECOND identical section';
+  END IF;
+
+  BEGIN
+    PERFORM core.add_proposal_section(v_prop, '{"title":"   "}'::jsonb, 'sec-key-2');
+    RAISE EXCEPTION 'T26h: a blank title was accepted';
+  EXCEPTION WHEN sqlstate 'TRNOS' THEN NULL;
+  END;
+
+  -- Editing section 1, which HAS a provenance row in the fixtures? It does not,
+  -- so this asserts the human-authored path stays human-authored.
+  v := core.put_proposal_section(v_prop, 1, '{"body":"Rewritten by hand"}'::jsonb, 'put-key-1');
+  IF v #>> '{data,sections,0,body}' <> 'Rewritten by hand' THEN
+    RAISE EXCEPTION 'T26i: the body did not change';
+  END IF;
+  -- An EMPTY title is ignored rather than written: a blank heading is never
+  -- what an editor meant.
+  v := core.put_proposal_section(v_prop, 1, '{"body":"Again","title":""}'::jsonb, 'put-key-2');
+  IF v #>> '{data,sections,0,title}' <> 'Understanding' THEN
+    RAISE EXCEPTION 'T26j: an empty title overwrote a real one: %', v #> '{data,sections,0,title}';
+  END IF;
+  BEGIN
+    PERFORM core.put_proposal_section(v_prop, 99, '{"body":"x"}'::jsonb, 'put-key-3');
+    RAISE EXCEPTION 'T26k: an unknown section number was accepted';
+  EXCEPTION WHEN sqlstate 'TRNOS' THEN NULL;
+  END;
+
+  -- REGENERATE ENQUEUES, IT DOES NOT GENERATE. Ruling R-A puts every model call
+  -- behind the worker and R-B forbids pg_net; a generation inside a request
+  -- would blow the 10s timeout. The run row is real so the run drawer has
+  -- something to point at.
+  v := core.regenerate_proposal_section(v_prop, 1);
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T26l: %', v; END IF;
+  IF NOT (v -> 'data' ?& ARRAY['section','runId']) THEN
+    RAISE EXCEPTION 'T26m: the regenerate response is not {section, runId}: %', v -> 'data';
+  END IF;
+  v_run := v #>> '{data,runId}';
+  IF NOT EXISTS (SELECT 1 FROM core.runs WHERE id = v_run::uuid) THEN
+    RAISE EXCEPTION 'T26n: runId points at no run row — the run drawer would open on nothing';
+  END IF;
+  IF (v #> '{data,section,needsReview}') <> 'true'::jsonb THEN
+    RAISE EXCEPTION 'T26o: the section was not flagged as awaiting the worker';
+  END IF;
+  -- A SECOND press produces a NEW run, not a replay of the rejected one.
+  IF (core.regenerate_proposal_section(v_prop, 1) #>> '{data,runId}') = v_run THEN
+    RAISE EXCEPTION 'T26p: regenerate replayed the run the author just rejected';
+  END IF;
+  RAISE NOTICE 'T26 PASS: add uses max(n)+1 and writes no provenance, replay adds nothing, '
+               'empty title ignored, regenerate enqueues a real run and never replays.';
+END
+$t26$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T27 · list_quotations refuses rather than returning empty ════════'; END $banner$;
+DO $t27$
+DECLARE v jsonb;
+BEGIN
+  v := core.list_quotations();
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T27a: SALES was refused: %', v; END IF;
+  IF (v #>> '{data,page,total}')::integer < 1 THEN
+    RAISE EXCEPTION 'T27b: no quotations listed';
+  END IF;
+  -- Each row is projected by core.get_quotation, so the R6 floor block and the
+  -- PROGRAMME -> ABSOLUTE mapping exist once.
+  IF NOT (v #> '{data,data,0}' ?& ARRAY['absoluteFloorPrice','marginFloorPrice','bindingFloorBasis']) THEN
+    RAISE EXCEPTION 'T27c: a list row is missing the R6 floor block';
+  END IF;
+  IF (v #>> '{data,data,0,bindingFloorBasis}') NOT IN ('ABSOLUTE','MARGIN') THEN
+    RAISE EXCEPTION 'T27d: a list row leaked 007''s PROGRAMME spelling';
+  END IF;
+
+  -- THE WHOLE REASON THIS IS AN RPC AND NOT A VIEW READ. Under RLS a reader
+  -- without the permission would get an EMPTY LIST from a view —
+  -- indistinguishable from "there are no quotations". OPS does not hold
+  -- quotation:read, so it must get FORBIDDEN and be told which permission is
+  -- missing. A price list is exactly the collection where "you may not see
+  -- this" and "there is nothing here" must not look the same.
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    pg_catalog.json_build_object('sub','33333333-3333-4333-8333-333333333333',
+      'tenant_id','11111111-1111-4111-8111-111111111111',
+      'app_role','OPS','actor_kind','HUMAN','role','authenticated')::text, true);
+  v := core.list_quotations();
+  IF v -> 'success' <> 'false'::jsonb OR v #>> '{error,code}' <> 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'T27e: OPS got % instead of FORBIDDEN — an empty list and a refusal '
+                    'are not the same answer', v;
+  END IF;
+  IF v #>> '{error,details,requiredPermission}' <> 'quotation:read' THEN
+    RAISE EXCEPTION 'T27f: the refusal does not say which permission is missing: %', v;
+  END IF;
+  IF v ? 'data' THEN RAISE EXCEPTION 'T27g: a refusal carried a data key'; END IF;
+
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    pg_catalog.json_build_object('sub','22222222-2222-4222-8222-222222222222',
+      'tenant_id','11111111-1111-4111-8111-111111111111',
+      'app_role','SALES','actor_kind','HUMAN','role','authenticated')::text, true);
+  RAISE NOTICE 'T27 PASS: SALES lists with the R6 block on every row; OPS is refused '
+               'FORBIDDEN naming quotation:read rather than handed an empty list.';
+END
+$t27$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T28 · rate card and audit ════════'; END $banner$;
+DO $t28$
+DECLARE v jsonb; d jsonb;
+BEGIN
+  v := core.get_rate_card();
+  IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T28a: %', v; END IF;
+  d := v -> 'data';
+  IF NOT (d ?& ARRAY['version','effectiveFrom','effectiveTo','currency','trainerDayRate',
+                     'materialsPerPax','venue','travel','mealsPerPax','commissionPct',
+                     'marginFloorPct','discountAuthority']) THEN
+    RAISE EXCEPTION 'T28b: RateCard is incomplete: %', d;
+  END IF;
+  -- `mealsPerPax` is a SINGLE OBJECT, not an array, even though the table is
+  -- keyed by programme type.
+  IF pg_catalog.jsonb_typeof(d -> 'mealsPerPax') <> 'object' THEN
+    RAISE EXCEPTION 'T28c: mealsPerPax is not a single object: %', d -> 'mealsPerPax';
+  END IF;
+  IF d ->> 'version' <> '2026.1' THEN
+    RAISE EXCEPTION 'T28d: the version was defaulted rather than read: %', d ->> 'version';
+  END IF;
+
+  -- AN AUDIT DRAWER ON AN UNTOUCHED RECORD IS EMPTY, NOT MISSING. A 404 here
+  -- would say the record does not exist.
+  v := core.get_audit('proposals','PRO-9999-9999');
+  IF v -> 'success' <> 'true'::jsonb THEN
+    RAISE EXCEPTION 'T28e: an empty audit trail returned an error: %', v;
+  END IF;
+  IF pg_catalog.jsonb_array_length(v #> '{data,data}') <> 0 THEN
+    RAISE EXCEPTION 'T28f: expected an empty trail';
+  END IF;
+  IF NOT ((v #> '{data,page}') ? 'next') THEN
+    RAISE EXCEPTION 'T28g: page.next is absent rather than present-and-null';
+  END IF;
+  RAISE NOTICE 'T28 PASS: rate card complete with mealsPerPax a single object and the '
+               'version read not defaulted; an untouched record has an empty trail, not a 404.';
+END
+$t28$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T29 · the two views 014 could not grant ════════'; END $banner$;
+DO $t29$
+DECLARE v_cols text[];
+BEGIN
+  -- 014 REVOKED core.budget_status and core.model_tier_status because both are
+  -- security_invoker and read app.usage_rollup, which authenticated cannot
+  -- reach — so they were unreadable no matter what was granted ON them.
+  IF pg_catalog.has_table_privilege('authenticated','core.budget_status','SELECT') THEN
+    RAISE EXCEPTION 'T29a: core.budget_status was granted to authenticated — that is the '
+                    'grant 014 refused to make because it looks like access and delivers '
+                    'a permission error';
+  END IF;
+
+  -- 018's replacements carry the names rpcClient.ts ACTUALLY reads
+  -- (VIEW_READS.aiBudgets = v_budgets, aiTiers = v_model_tiers) and are
+  -- readable, because the body crosses the app boundary through a definer.
+  IF NOT pg_catalog.has_table_privilege('authenticated','core.v_budgets','SELECT') THEN
+    RAISE EXCEPTION 'T29b: authenticated still cannot read core.v_budgets';
+  END IF;
+  IF NOT pg_catalog.has_table_privilege('authenticated','core.v_model_tiers','SELECT') THEN
+    RAISE EXCEPTION 'T29c: authenticated still cannot read core.v_model_tiers';
+  END IF;
+  IF pg_catalog.has_table_privilege('anon','core.v_budgets','SELECT')
+     OR pg_catalog.has_table_privilege('anon','core.v_model_tiers','SELECT') THEN
+    RAISE EXCEPTION 'T29d: anon can read the AI budget views';
+  END IF;
+
+  -- security_invoker stays ON the view: the tenant predicate is still evaluated
+  -- as the caller, and the definer function exists only to cross into `app`.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname='core' AND c.relname='v_budgets'
+                   AND c.reloptions @> ARRAY['security_invoker=true']) THEN
+    RAISE EXCEPTION 'T29e: core.v_budgets is not security_invoker';
+  END IF;
+
+  -- The columns are the contract's Budget, in camelCase where the contract is.
+  SELECT pg_catalog.array_agg(a.attname ORDER BY a.attname) INTO v_cols
+    FROM pg_catalog.pg_attribute a
+   WHERE a.attrelid = 'core.v_budgets'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF v_cols <> ARRAY['cap','key','scope','spend','state'] THEN
+    RAISE EXCEPTION 'T29f: v_budgets does not match the contract Budget: %', v_cols;
+  END IF;
+
+  PERFORM 1 FROM core.v_budgets;
+  PERFORM 1 FROM core.v_model_tiers;
+  RAISE NOTICE 'T29 PASS: 014''s carried defect is closed — the ungrantable views stay '
+               'revoked and v_budgets/v_model_tiers are readable under the names the '
+               'client asks for.';
+END
+$t29$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
