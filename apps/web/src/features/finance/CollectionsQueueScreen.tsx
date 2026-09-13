@@ -36,6 +36,7 @@ import {
   humanise,
   type Column,
   type Density,
+  type StatusTone,
   type FilterChipModel,
   type LadderRung,
 } from "@/shared/components/kit";
@@ -102,6 +103,34 @@ function rungsFor(rules: CollectionRule[], stage: string | undefined): LadderRun
   }));
 }
 
+/**
+ * How overdue an invoice is, as a chip tone, FROM THE LADDER.
+ *
+ * `Receivable` carries no severity — the contract sends `daysOverdue` and the
+ * stage, and nothing that grades them — so this screen has to decide. It used
+ * to decide with `daysOverdue >= 60 ? danger : >= 30 ? warning : neutral`,
+ * which is two thresholds invented here for a cadence the business configures
+ * in Settings and this screen ALREADY READS through `GET /v1/collections/rules`.
+ * Change the ladder to chase at 20 and 45 days and the chips went on answering
+ * for 30 and 60.
+ *
+ * So the rungs grade it. Past a rung that needs a named role's approval — the
+ * trading hold at day 75 is the one the fixture draws — is DANGER, because the
+ * ladder itself says a human with authority now owns the account. Past any
+ * other rung is WARNING. Short of every rung is NEUTRAL: the invoice is late
+ * but the agent's cadence has not escalated it yet.
+ *
+ * Neutral is also the answer while the rules are still loading or have failed,
+ * which is deliberate. A tone invented from a day count during a failed read is
+ * the `Organisation360Page` defect `registers.ts` records, arriving by a
+ * different door.
+ */
+function overdueTone(daysOverdue: number, rules: CollectionRule[]): StatusTone {
+  const passed = rules.filter((rule) => daysOverdue >= rule.afterDays);
+  if (passed.length === 0) return "neutral";
+  return passed.some((rule) => rule.requiresApprovalFromRole) ? "danger" : "warning";
+}
+
 export function CollectionsQueueScreen() {
   /* The crumb is the PATH. "Overdue" was a third crumb naming the default tab,
      which is a filter this screen owns and not a route anyone can navigate to. */
@@ -120,6 +149,10 @@ export function CollectionsQueueScreen() {
   const [outcome, setOutcome] = useState<ActionResponse | undefined>(undefined);
 
   const rows = useMemo(() => queue.data?.data ?? [], [queue.data]);
+
+  /* The configured cadence, read once. Empty while the rules load or fail,
+     which `overdueTone` reads as "nothing has escalated yet". */
+  const ladder = useMemo(() => rules.data?.data ?? [], [rules.data]);
 
   const selected = useMemo(() => {
     const explicit = rows.find((row) => row.invoiceRef === selectedRef);
@@ -172,9 +205,7 @@ export function CollectionsQueueScreen() {
       width: "88px",
       sortable: true,
       accessor: (row) => (
-        <StatusChip
-          tone={row.daysOverdue >= 60 ? "danger" : row.daysOverdue >= 30 ? "warning" : "neutral"}
-        >
+        <StatusChip tone={overdueTone(row.daysOverdue, ladder)}>
           {`${row.daysOverdue} days`}
         </StatusChip>
       ),
@@ -366,6 +397,7 @@ export function CollectionsQueueScreen() {
               draft={hasDraft ? draft.data : undefined}
               loading={hasDraft && draft.isPending}
               channel={channel ?? draft.data?.channel ?? "EMAIL"}
+              ladder={ladder}
               onChannel={setChannel}
               onOpenInvoice={() => navigate(`${INVOICES_PATH}/${selected.invoiceRef}`)}
             />
@@ -407,6 +439,7 @@ function DraftPanel({
   draft,
   loading,
   channel,
+  ladder,
   onChannel,
   onOpenInvoice,
 }: {
@@ -414,6 +447,8 @@ function DraftPanel({
   draft: MessageDraft | undefined;
   loading: boolean;
   channel: MessageChannel;
+  /** The configured rungs, so the panel's chip grades the same way the row does. */
+  ladder: CollectionRule[];
   onChannel: (channel: MessageChannel) => void;
   onOpenInvoice: () => void;
 }) {
@@ -423,7 +458,7 @@ function DraftPanel({
       title={row.invoiceRef}
       actions={
         <div className="flex items-center gap-2">
-          <StatusChip tone={row.daysOverdue >= 60 ? "danger" : "warning"}>
+          <StatusChip tone={overdueTone(row.daysOverdue, ladder)}>
             {`${row.daysOverdue} days overdue`}
           </StatusChip>
           <SecondaryButton onClick={onOpenInvoice}>Open invoice</SecondaryButton>

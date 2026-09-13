@@ -1,5 +1,6 @@
 import type { ClaimPacket, HRDCScheme, HrdcDeadline, RequiredDocument } from "@trainos/contract";
 import type { StatusTone } from "@/shared/components/kit";
+import { SEVERITY_TONE } from "@/features/hrdc";
 import { hrdcDocumentLabel } from "./labels";
 
 /**
@@ -22,13 +23,13 @@ import { hrdcDocumentLabel } from "./labels";
  * 180-day one is not — and `statusTone.ts` already carries the note about
  * `Organisation360Page` having derived urgency from the day count and getting
  * it wrong. Deriving it a second time here would reintroduce exactly that.
+ *
+ * The map MOVED to `features/hrdc/tone.ts` and is re-exported here so no call
+ * site changes. It went down rather than up because this feature already
+ * imports `@/features/hrdc` for the packet path, so defining it here and
+ * reading it there would be a cycle, and `no-circular` is an error.
  */
-export const SEVERITY_TONE: Record<string, StatusTone> = {
-  INFO: "neutral",
-  WARN: "warning",
-  DANGER: "danger",
-  ALERT: "danger",
-};
+export { SEVERITY_TONE };
 
 export interface DeadlineRow extends HrdcDeadline {
   id: string;

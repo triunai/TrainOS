@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
+import { fixtureClient, forbidden } from "@trainos/fixtures";
 import userEvent from "@testing-library/user-event";
 import { INVOICE_OVERDUE } from "@trainos/contract";
 import { CollectionsQueueScreen } from "../CollectionsQueueScreen";
@@ -231,6 +232,68 @@ describe("M13-S05 · collections queue", () => {
       "data-trail",
       "Finance › Collections",
     );
+  });
+
+  it("grades overdue from the CONFIGURED ladder, not from hardcoded day counts", async () => {
+    /* THE POINT OF THIS TEST is the second render, not the first. Against the
+       shipped ladder the old `>= 60 ? danger : >= 30 ? warning` arithmetic and
+       the configured grading agree on every fixture row, so a test that only
+       read the default cadence would pass against the bug it was written for.
+
+       So the cadence is MOVED. The trading hold — the rung carrying
+       `requiresApprovalFromRole`, which is what makes a row danger — is pulled
+       down from day 75 to day 20. Every overdue row in the fixture is past day
+       20, so under the configuration every one of them is now danger, and under
+       the old hardcoded thresholds the 34-day row would still be a warning. */
+    const original = fixtureClient.getCollectionRules.bind(fixtureClient);
+    vi.spyOn(fixtureClient, "getCollectionRules").mockImplementation((async () => {
+      const answer = await original();
+      return {
+        ...answer,
+        data: answer.data.map((rule) =>
+          rule.requiresApprovalFromRole ? { ...rule, afterDays: 20 } : rule,
+        ),
+      };
+    }) as never);
+
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+    await userEvent.click(screen.getByRole("tab", { name: /^All/ }));
+
+    const table = await screen.findByRole("table", { name: "Overdue receivables" });
+
+    /* 34 days is past the moved rung, so it follows the configuration to danger
+       rather than staying on the arithmetic's warning. */
+    await waitFor(() => {
+      expect(within(table).getByText("34 days").className).toContain("danger");
+    });
+    expect(within(table).getByText("78 days").className).toContain("danger");
+
+    vi.restoreAllMocks();
+  });
+
+  it("does not invent an urgency while the ladder is still loading or has failed", async () => {
+    /* Neutral, not a tone derived from the day count. `registers.ts` records
+       Organisation360Page deriving urgency from a day count and getting it
+       wrong; a failed rules read must not reintroduce it by another door. */
+    vi.spyOn(fixtureClient, "getCollectionRules").mockRejectedValue(
+      forbidden("You may not read the collection rules.") as never,
+    );
+
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
+
+    await screen.findByRole("heading", { name: "Collections" });
+    await userEvent.click(screen.getByRole("tab", { name: /^All/ }));
+
+    const table = await screen.findByRole("table", { name: "Overdue receivables" });
+    await waitFor(() => {
+      const chip = within(table).getByText("78 days");
+      expect(chip.className).not.toContain("danger");
+      expect(chip.className).not.toContain("warning");
+    });
+
+    vi.restoreAllMocks();
   });
 
   it("says the SEARCH is empty rather than claiming the bucket is clear", async () => {

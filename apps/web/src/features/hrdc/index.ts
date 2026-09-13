@@ -6,6 +6,7 @@
  * field — is the feature's own business and is deliberately not exported.
  */
 
+export { SEVERITY_TONE, severityTone } from "./tone";
 export { ClaimPacketScreen } from "./ClaimPacketScreen";
 export { RulesRegistryScreen } from "./RulesRegistryScreen";
 export { RuleChangeReviewScreen } from "./RuleChangeReviewScreen";
