@@ -43,7 +43,14 @@ function Box({ done }: { done: boolean }) {
       aria-label={done ? "done" : "not done"}
       className={cn(
         "mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px]",
-        done ? "bg-ink text-on-primary" : "border border-border-strong bg-card",
+        /* The tick is `canvas`, not `on-primary`. `on-primary` is the label
+           colour for a SOLID PRIMARY button, and it is near-white in BOTH
+           themes because the blue accent never carries dark text. On an
+           ink-filled box that is correct in light and invisible in dark, where
+           `ink` is itself near-white — a white tick on a white square. `canvas`
+           inverts with the theme against `ink`, so the tick contrasts in both.
+           Found on M09-S02 in dark mode by the engagements screens. */
+        done ? "bg-ink text-canvas" : "border border-border-strong bg-card",
       )}
     >
       {done ? <span aria-hidden="true">✓</span> : null}

@@ -53,4 +53,20 @@ describe("DocumentChecklistRow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Attach" }));
     expect(onAttach).toHaveBeenCalled();
   });
+
+  /*
+   * A white tick on a white box. `on-primary` is the label colour for a solid
+   * PRIMARY button and is near-white in both themes, because the blue accent
+   * never carries dark text; on an ink-filled box that is invisible in dark,
+   * where ink is itself near-white. `canvas` is the pair that inverts with the
+   * theme. Regression found on M09-S02 in dark mode.
+   */
+  it("gives the done tick a fill that inverts with the theme", () => {
+    render(<ChecklistRow label="Attendance locked" done />);
+
+    const box = screen.getByRole("img", { name: "done" });
+    expect(box.className).toContain("bg-ink");
+    expect(box.className).toContain("text-canvas");
+    expect(box.className).not.toContain("text-on-primary");
+  });
 });
