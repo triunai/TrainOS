@@ -28,6 +28,7 @@
     "@types/node": "^22",
     "tsx": "^4.19.2",
     "typescript": "^5",
-    "vitest": "^2"
+    "vite": "^7.1.13",
+    "vitest": "^3.2.7"
   }
 }
