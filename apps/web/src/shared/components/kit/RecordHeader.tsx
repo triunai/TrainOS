@@ -69,7 +69,16 @@ export interface RecordHeaderProps {
    * inside it. Row 3 is still row 3; only its rendering is delegated.
    */
   metricsCard?: ReactNode;
-  /** The lifecycle chain, between the metrics and the tabs. Variant A only. */
+  /**
+   * The lifecycle chain, between the metrics and the tabs.
+   *
+   * On an `accent` header it renders BELOW the card, on the page surface, at
+   * the card's own width — never inside the blue. The stepper's whole grammar
+   * is colour and shape per stage (done solid, current ringed, blocked amber,
+   * failed slashed red, the ✦ on an AI-advanced stage), and on a saturated
+   * ground every one of those collapses to the same white. A stepper that
+   * cannot tell its stages apart is not a stepper, so it keeps its own surface.
+   */
   stepper?: ReactNode;
   /** Turn off the condensed bar where the page does not scroll. */
   withoutCondensed?: boolean;
@@ -172,7 +181,7 @@ export function RecordHeader({
 
   /* The part that collapses. The title row and the meta line never do. */
   const body =
-    metricsCard || (metrics && metrics.length > 0) || stepper ? (
+    metricsCard || (metrics && metrics.length > 0) ? (
       <div className={cn("flex flex-col", accent ? "gap-3.5 pt-3.5" : "gap-3.5")}>
         {/* One hairline, then the strip. On the card it is white at 15%: a
             `--divider` grey over saturated blue reads as a seam between two
@@ -185,17 +194,6 @@ export function RecordHeader({
           (metrics && metrics.length > 0 ? (
             <MetricStrip cells={metrics} variant={accent ? "accent" : "default"} bare={accent} />
           ) : null)}
-
-        {stepper ? (
-          <div
-            className={cn(
-              "pt-3.5",
-              accent ? "border-t border-[rgb(var(--on-accent)/0.18)]" : "border-t border-divider",
-            )}
-          >
-            {stepper}
-          </div>
-        ) : null}
       </div>
     ) : null;
 
@@ -206,7 +204,10 @@ export function RecordHeader({
 
   /* Collapsed, the card keeps the title row and the meta line and loses its
      bottom padding, so it shrinks rather than leaving a blue band of nothing. */
-  const showCard = accent && (expanded || !disclosable || !plainWhenCollapsed);
+  /* `Boolean(...)`, not `accent && ...`: the latter is `boolean | undefined`,
+     which the context provider types reject and which blocks the strict
+     allowlist for every file that imports this one. */
+  const showCard = Boolean(accent && (expanded || !disclosable || !plainWhenCollapsed));
 
   const header = (
     <header
@@ -225,7 +226,7 @@ export function RecordHeader({
         showCard && !expanded && "pb-4",
         /* The card is a card: it needs air on all four sides, and the content
            below it must not butt against its bottom edge. */
-        accent && "mx-5 mb-5 mt-4",
+        accent && "mx-5 mb-5 mt-2.5",
         className,
       )}
     >
@@ -250,8 +251,12 @@ export function RecordHeader({
                 controls={bodyId}
                 label="the record detail"
                 tone={showCard ? "onAccent" : "ink"}
+                /* 36px, the height of the buttons beside it. At the kit's
+                   default 28px it read as decoration rather than a control and
+                   was easy to miss with a real pointer — which is exactly how
+                   it was reported: "the click does not open it". */
                 className={cn(
-                  "rounded-pill border",
+                  "h-9 w-9 rounded-pill border",
                   showCard
                     ? "border-[rgb(var(--on-accent)/0.45)]"
                     : "border-border text-ink-secondary",
@@ -288,12 +293,21 @@ export function RecordHeader({
           body
         )
       ) : null}
+
+      {/* Unchanged for a plain header: the chain sits under the metrics, inside
+          the header, exactly where it always did. Only the accent card sends it
+          out, and only because the blue erases its stage colours. */}
+      {!accent && stepper ? <div className="border-t border-divider pt-3.5">{stepper}</div> : null}
     </header>
   );
 
   return (
     <>
       {accent ? <OnAccentProvider value={showCard}>{header}</OnAccentProvider> : header}
+
+      {/* Outside the provider on purpose: the stepper reads `useOnAccent` like
+          everything else, and the answer here has to be "no". */}
+      {accent && stepper ? <div className="mx-5 mb-5 -mt-1">{stepper}</div> : null}
 
       <div ref={sentinel} aria-hidden="true" className="h-px" />
 

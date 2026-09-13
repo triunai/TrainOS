@@ -115,10 +115,13 @@ export function ApprovalDetail() {
 
   /* The trail names the record; RecordHeader names the subject. The two say
      different things on purpose, so neither repeats the other. */
+  /* The trail is the PATH and stops at the list. CLAUDE.md: record identity
+     appears once per page and RecordHeader owns it — the ref is already in the
+     card's mono line, and a third copy in the topbar is the duplication the
+     rule exists to stop. */
   useBreadcrumb([
     { label: "Home", href: "/" },
     { label: "Approvals", href: APPROVALS_PATH },
-    { label: approval.data?.ref ?? ref },
   ]);
 
   const detail = approval.data;
@@ -360,6 +363,26 @@ export function ApprovalDetail() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* Above the card, not inside the rail. A back link is a statement about
+          where this page sits, so it belongs on the page surface and at the
+          page's width — putting it in the rail made it look like the rail's
+          heading and gave the queue a header block aligned to nothing. The
+          position rides along as a muted suffix rather than as its own row. */}
+      <div className="flex items-baseline gap-2 px-5 pt-4">
+        <button
+          type="button"
+          onClick={() => navigate(APPROVALS_PATH)}
+          className="text-[12px] text-primary-hover hover:underline"
+        >
+          ← Approval inbox
+        </button>
+        {position >= 0 ? (
+          <span className="font-mono text-[11px] text-ink-muted">
+            {position + 1} of {queueRows.length}
+          </span>
+        ) : null}
+      </div>
+
       <RecordHeader
         accent
         collapsible
@@ -409,21 +432,6 @@ export function ApprovalDetail() {
       <div className="flex min-h-0 flex-1 flex-wrap items-start gap-0">
         {/* ---- Queue rail ------------------------------------------------ */}
         <aside className="flex w-[248px] shrink-0 flex-col gap-3 border-r border-divider px-5 pb-5">
-          <div className="flex items-baseline justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => navigate(APPROVALS_PATH)}
-              className="text-[12px] text-primary-hover hover:underline"
-            >
-              ← Approval inbox
-            </button>
-            {position >= 0 ? (
-              <span className="font-mono text-[11px] text-ink-muted">
-                {position + 1} of {queueRows.length}
-              </span>
-            ) : null}
-          </div>
-
           <ul className="flex flex-col">
             {queueRows.map((row) => {
               const current = row.ref === detail.ref;

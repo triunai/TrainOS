@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { RecordHeader, CondensedRecordHeader } from "@/shared/components/kit/RecordHeader";
-import { PrimaryButton, SecondaryButton } from "@/shared/components/kit/Button";
+import { DangerButton, PrimaryButton, SecondaryButton } from "@/shared/components/kit/Button";
 import { StatusChip } from "@/shared/components/kit/StatusChip";
 
 describe("RecordHeader", () => {
@@ -176,6 +176,91 @@ describe("RecordHeader accent", () => {
     expect(container.querySelector("header")?.className).toContain("surface-accent-gradient");
   });
 
+  it("toggles open and shut on every click, not just the first", () => {
+    /* Reported as "the click does not open it". The mechanism was sound; the
+       target was 28px among 36px buttons and a real pointer missed it. This
+       asserts the round trip so a regression in either direction fails. */
+    const { container } = render(
+      <RecordHeader
+        accent
+        collapsible
+        recordType="approval"
+        title="Send proposal"
+        metrics={[{ label: "Value", value: "RM 18,500" }]}
+      />,
+    );
+
+    const region = container.querySelector("[data-open]") as HTMLElement;
+    const chevron = () => screen.getByRole("button", { name: /the record detail$/ });
+
+    expect(chevron()).toHaveAttribute("aria-expanded", "true");
+    expect(region.dataset.open).toBe("true");
+
+    fireEvent.click(chevron());
+    expect(chevron()).toHaveAttribute("aria-expanded", "false");
+    expect(region.dataset.open).toBe("false");
+
+    fireEvent.click(chevron());
+    expect(chevron()).toHaveAttribute("aria-expanded", "true");
+    expect(region.dataset.open).toBe("true");
+
+    fireEvent.click(chevron());
+    expect(region.dataset.open).toBe("false");
+
+    /* And it is the size of the controls beside it, not the kit default. */
+    expect(chevron().className).toContain("h-9");
+  });
+
+  it("sends the stepper out of the card, where its stage colours survive", () => {
+    const { container } = render(
+      <RecordHeader
+        accent
+        title="Aurora Manufacturing Sdn Bhd"
+        metrics={[{ label: "Lifetime value", value: "RM 214,300" }]}
+        stepper={<div data-testid="stepper">Enquiry → TNA → Proposal</div>}
+      />,
+    );
+
+    const stepper = screen.getByTestId("stepper");
+    /* Not on the blue: every stage would read the same white. */
+    expect(stepper.closest("header")).toBeNull();
+    expect(stepper.closest("[class*='surface-accent-gradient']")).toBeNull();
+    /* But still at the card's width, directly beneath it. */
+    const header = container.querySelector("header") as HTMLElement;
+    expect(header.compareDocumentPosition(stepper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the stepper inside a plain header, where it always was", () => {
+    render(
+      <RecordHeader
+        title="Aurora Manufacturing Sdn Bhd"
+        metrics={[{ label: "Lifetime value", value: "RM 214,300" }]}
+        stepper={<div data-testid="stepper">Enquiry → TNA → Proposal</div>}
+      />,
+    );
+    expect(screen.getByTestId("stepper").closest("header")).not.toBeNull();
+  });
+
+  it("gives a destructive action on the card an outline, not a ghost or a fill", () => {
+    render(
+      <RecordHeader
+        accent
+        title="Send proposal"
+        actions={<DangerButton>Reject</DangerButton>}
+        primaryAction={<PrimaryButton>Approve</PrimaryButton>}
+      />,
+    );
+
+    const reject = screen.getByRole("button", { name: "Reject" });
+    /* A 1px rule is a non-text affordance at a 3:1 floor, which this colour
+       clears on the ramp; red as a LABEL cannot reach 4.5:1 on this blue. */
+    expect(reject.className).toContain("border-[rgb(var(--danger-on-accent))]");
+    expect(reject.className).toContain("text-[rgb(var(--on-accent))]");
+    expect(reject.className).not.toContain("bg-danger");
+    /* Same geometry as the button beside it, so nothing shifts. */
+    expect(reject.className).toContain("py-2");
+  });
+
   it("drops to the plain surface when collapsed, if the screen asks", () => {
     const { container } = render(
       <RecordHeader
@@ -239,19 +324,5 @@ describe("RecordHeader accent", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Show the record detail" })).toBeInTheDocument();
-  });
-
-  it("takes a stepper inside the card, for the Organisation 360 config", () => {
-    render(
-      <RecordHeader
-        accent
-        title="Aurora Manufacturing Sdn Bhd"
-        metrics={[{ label: "Lifetime value", value: "RM 214,300" }]}
-        stepper={<div data-testid="stepper">Enquiry → TNA → Proposal</div>}
-      />,
-    );
-
-    const stepper = screen.getByTestId("stepper");
-    expect(stepper.closest("header")?.className).toContain("surface-accent-gradient");
   });
 });

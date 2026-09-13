@@ -36,13 +36,16 @@ const KIND = {
  * One geometry with `KIND`, so a button does not move by a pixel when a header
  * gains or loses its accent. Only the ink changes.
  *
- * The three actions escalate by WEIGHT here, not by hue: ghost, then
- * white-outlined, then solid white. `danger` deliberately resolves to the same
- * treatment as `ghost` — the artboard draws Reject in pale red, but no red
- * reaches 4.5:1 on this blue (#FFDEDB, already almost white, peaks at 3.63:1),
- * so the label would be decoration a reader cannot rely on. Position and
- * wording carry the destructiveness; the red is earned in the confirm step,
- * which is what this file's own contract has always said.
+ * The four kinds keep one geometry, so nothing moves by a pixel when a header
+ * gains or loses its accent.
+ *
+ * `danger` carries the destructive signal in its BORDER, not its label and not
+ * a fill. The artboard draws Reject as pale red type, which cannot work: no red
+ * reaches 4.5:1 as text on this blue (#FFDEDB, already almost white, peaks at
+ * 3.63:1). A 1px rule is a non-text affordance at a 3:1 floor, which
+ * `--danger-on-accent` clears everywhere on the ramp, so the outline says
+ * "destructive" and white type says the rest. The red FILL is still earned in
+ * the confirm step, which is what this file's contract has always said.
  *
  * The solid button's label is `--accent-ink` rather than `--primary`, because
  * `--primary` theme-swaps and its dark value reads 3.53:1 on white.
@@ -55,7 +58,7 @@ const ACCENT_KIND = {
   ghost:
     "border-transparent bg-transparent px-3.5 py-2 font-medium text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--on-accent)/0.14)] disabled:text-[rgb(var(--on-accent)/0.45)]",
   danger:
-    "border-transparent bg-transparent px-3.5 py-2 font-medium text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--on-accent)/0.14)] disabled:text-[rgb(var(--on-accent)/0.45)]",
+    "border-[rgb(var(--danger-on-accent))] bg-transparent px-3.5 py-2 font-medium text-[rgb(var(--on-accent))] hover:bg-[rgb(var(--danger-on-accent)/0.18)] disabled:border-[rgb(var(--danger-on-accent)/0.4)] disabled:text-[rgb(var(--on-accent)/0.45)]",
 } as const;
 
 export type ButtonKind = keyof typeof KIND;

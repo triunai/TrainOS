@@ -139,6 +139,18 @@
      red fill is earned in the confirm step rather than spent on the trigger. */
   --accent-ink: 15 47 168; /* #0F2FA8 */
 
+  /* The destructive outline ON the accent card. A 1px rule, never a fill, and
+     the label beside it stays white.
+
+     The artboard draws Reject as a pale red LABEL, which cannot work: no red
+     reaches 4.5:1 as text on this blue (#FFDEDB, already almost white, peaks at
+     3.63:1). A 1px border is a non-text affordance and CLAUDE.md sets that floor
+     at 3:1, which is reachable — #FFB3AE measures 3.08:1 at the ramp's electric
+     midpoint and 3.67:1 at its violet end, so it clears everywhere the button
+     can sit. The destructiveness is carried by the outline; the reading is
+     carried by white type. Status colour still never becomes a fill. */
+  --danger-on-accent: 255 179 174; /* #FFB3AE */
+
   /* ---- Status (chips ONLY — status colour never leaves a chip) -------- */
   --success: 43 113 83; /* #2B7153 */
   --success-fill: 236 246 240; /* #ECF6F0 */

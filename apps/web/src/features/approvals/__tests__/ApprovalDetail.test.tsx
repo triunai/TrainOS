@@ -13,8 +13,12 @@ import userEvent from "@testing-library/user-event";
 import { APPROVAL_AURORA } from "@trainos/contract";
 import { fixtureClient } from "@trainos/fixtures";
 import { ApprovalDetail } from "../ApprovalDetail";
-import { APPROVAL_DETAIL_PATTERN, approvalPath } from "../paths";
-import { renderScreen, resetFixtures } from "./harness";
+import { APPROVAL_DETAIL_PATTERN, APPROVALS_PATH, approvalPath } from "../paths";
+import { render } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { BreadcrumbProvider, useBreadcrumbTrail } from "@/shared/components/layout";
+import { renderScreen, resetFixtures, testQueryClient } from "./harness";
 
 const renderDetail = (ref: string = APPROVAL_AURORA) =>
   renderScreen(<ApprovalDetail />, {
@@ -142,13 +146,19 @@ describe("M02-S02 approval detail", () => {
   it("keeps the queue rail in step with the inbox", async () => {
     renderDetail();
 
-    const rail = await screen.findByText("← Approval inbox");
-    const aside = rail.closest("aside") as HTMLElement;
+    /* The back link and the position sit ABOVE the card now, on the page
+       surface — a back link is a statement about where the page sits, not the
+       queue's heading. The rail below starts with its first item and carries no
+       header block. */
+    const back = await screen.findByRole("button", { name: "← Approval inbox" });
+    expect(back.closest("aside")).toBeNull();
+    expect(screen.getByText(/of 7$/)).toBeInTheDocument();
 
-    /* Seven pending approvals, and this one is positioned within them — the
-       rail reads the same grouped list the inbox does. */
-    expect(within(aside).getByText(/of 7$/)).toBeInTheDocument();
-    expect(within(aside).getByText(/Discount below floor/)).toBeInTheDocument();
+    /* Seven pending approvals, and the rail reads the same grouped list the
+       inbox does. */
+    const aside = screen.getByText(/Discount below floor/).closest("aside") as HTMLElement;
+    expect(aside).not.toBeNull();
+    expect(within(aside).queryByText(/of 7$/)).toBeNull();
   });
 
   /* Tightening brief §15a, prototyped on this screen first. */
@@ -196,6 +206,38 @@ describe("M02-S02 approval detail", () => {
     );
     expect(screen.getByText(/APV-2026-0771 · PRO-2026-0184/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  it("declares a trail that is the path, and stops at the list", async () => {
+    /* The harness renders the screen without the shell, so the trail is read
+       where it is DECLARED rather than where the topbar paints it. */
+    function TrailProbe() {
+      const trail = useBreadcrumbTrail();
+      return (
+        <div data-testid="trail">{trail.map((c) => `${c.label}|${c.href ?? ""}`).join(" › ")}</div>
+      );
+    }
+
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <MemoryRouter initialEntries={[approvalPath(APPROVAL_AURORA)]}>
+          <BreadcrumbProvider>
+            <TrailProbe />
+            <Routes>
+              <Route path={APPROVAL_DETAIL_PATTERN} element={<ApprovalDetail />} />
+            </Routes>
+          </BreadcrumbProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Why this needs you");
+
+    /* Home › Approvals, and nothing after it. The record's ref is NOT a crumb:
+       RecordHeader owns identity and the ref is already in the card's mono
+       line, so a third copy in the topbar is the duplication the rule exists to
+       stop. Both crumbs carry an href, so both navigate. */
+    expect(screen.getByTestId("trail")).toHaveTextContent(`Home|/ › Approvals|${APPROVALS_PATH}`);
   });
 
   it("explains a missing approval instead of rendering an empty record", async () => {
