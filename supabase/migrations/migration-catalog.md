@@ -786,6 +786,15 @@ to have rewritten (the rollback's post-condition and the rollback pin's R3a) —
 `has_table_privilege`; five line citations were off by one to two lines; two references pointed
 at a `§7` that does not exist. All corrected.
 
+**⚠ THE SECOND REVIEWER SLOT IS OWED, NOT FILLED.** The gate's D-012 rule is that BOTH reviewers
+land. Only one did against the fixes. Codex `gpt-5.6-sol` was dispatched at the same time as the
+thermonuclear pass and came back hard quota-blocked: *"usage limit … try again at Sep 14th, 2026
+12:29 AM."* No verdict was substituted for it. What is specifically unreviewed is the thing Codex
+is best at and the structural pass is worst at: the CONSUMER TRACE — every caller of everything the
+diff touches, across `apps/**` and `packages/**` as well as `supabase/**`. `npm run check:rpc`
+reports 4 pass / 0 broken and no file outside `supabase/` and `scripts/` is modified, which bounds
+the risk but does not discharge the trace. **Owner: re-run after the quota resets.**
+
 **FOUND BY EXECUTING THE ROLLBACK, not by either reviewer.** A third destroyed grant of the same
 class as CRIT-2: `001:232` grants `USAGE ON SCHEMA core` to `anon`, `authenticated` **and**
 `service_role`. 014's header claimed `anon` "never had USAGE on `core` to begin with" and the
