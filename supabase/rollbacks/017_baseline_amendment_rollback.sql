@@ -82,7 +82,11 @@ BEGIN
   IF pg_catalog.to_regclass('core.evaluation_responses') IS NOT NULL THEN
     SELECT pg_catalog.count(*) INTO v_bad
       FROM core.evaluation_responses
-     WHERE overall_score IS NOT NULL AND pg_catalog.scale(overall_score) > 2;
+     WHERE overall_score IS NOT NULL
+       -- The VALUE, not the type's scale: after 017 the column is numeric(4,3),
+       -- so scale() is 3 for every row and a scale test refuses any database
+       -- holding a single response, including 0.450.
+       AND overall_score IS DISTINCT FROM pg_catalog.round(overall_score, 2);
     IF v_bad > 0 THEN
       RAISE EXCEPTION
         'ROLLBACK 017 refused: % evaluation response(s) hold an overall_score with '
@@ -202,6 +206,11 @@ ALTER TABLE core.contact_consents DROP COLUMN IF EXISTS purpose;
 ALTER TABLE core.contact_consents DROP COLUMN IF EXISTS notice_version;
 
 -- ── 6 · SST columns, BEFORE the table they reference ────────────────────────
+-- The resolver trigger first (017:725, 017:794-796). Left behind, it survives
+-- the column drops and every quotation INSERT/UPDATE then fails with
+-- `record "new" has no field "sst_reason"`.
+DROP TRIGGER IF EXISTS trg_quotations_resolve_sst ON core.quotations;
+DROP FUNCTION IF EXISTS core.resolve_quotation_sst();
 ALTER TABLE core.quotations DROP CONSTRAINT IF EXISTS quotations_exempt_needs_reason;
 ALTER TABLE core.quotations DROP CONSTRAINT IF EXISTS quotations_sst_exempt_has_no_rate;
 ALTER TABLE core.quotations DROP CONSTRAINT IF EXISTS quotations_sst_reason_check;
@@ -267,7 +276,8 @@ BEGIN
 
   IF pg_catalog.to_regproc('app.resolve_tax_policy') IS NOT NULL
      OR pg_catalog.to_regproc('core.retrieve_knowledge') IS NOT NULL
-     OR pg_catalog.to_regproc('app.seed_compliance_check_keys') IS NOT NULL THEN
+     OR pg_catalog.to_regproc('app.seed_compliance_check_keys') IS NOT NULL
+     OR pg_catalog.to_regproc('core.resolve_quotation_sst') IS NOT NULL THEN
     RAISE EXCEPTION 'ROLLBACK 017 incomplete: a 017 function survives';
   END IF;
 

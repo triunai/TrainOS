@@ -236,6 +236,64 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA core   REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA core   REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 
+-- ─── 1c · Hosted Supabase: the Data API auto-expose defaults ────────────────
+--
+-- Unlike the PUBLIC revokes above, THESE take, because on hosted Supabase there
+-- is a real pg_default_acl row to revoke from. Hosted ships (read from the
+-- project, 2026-09-14) default privileges for owner `postgres` IN SCHEMA public:
+-- ALL on tables, EXECUTE on functions and USAGE/SELECT/UPDATE on sequences to
+-- anon, authenticated and service_role. Left in place, 002's public tables are
+-- created with anon holding ALL on them and 014's verify aborts on the grant it
+-- was written to refuse. REVOKE ALL, not the four DML privileges: revoking only
+-- SELECT/INSERT/UPDATE/DELETE leaves TRUNCATE, REFERENCES and TRIGGER behind,
+-- and 014 aborts on TRUNCATE instead (measured, docs/reviews/2026-09-13-pr6-final.md §5).
+--
+-- service_role is revoked too. The design grants it one object at a time (012,
+-- 013) and every pin was measured without these defaults; keeping them for
+-- service_role would hand it table rights no migration intended.
+--
+-- No FOR ROLE: like every line above this binds to the migration role, which
+-- is `postgres` on hosted. Guarded per role so a bare Postgres without the
+-- Supabase roles is a no-op. The assertion after it fails 001 closed if any
+-- default grant to the three roles survives for the migration role in a schema
+-- 002-019 create objects in (public, core, app) or in a schema-less (global)
+-- entry, before a single table exists. Hosted also ships postgres-owned
+-- defaults IN SCHEMA storage; nothing here creates objects there, they are
+-- Supabase's to keep, and an unscoped check refused to apply on them.
+DO $hosted_default_acl$
+DECLARE
+  v_role     text;
+  v_leftover text;
+BEGIN
+  FOREACH v_role IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = v_role) THEN
+      EXECUTE pg_catalog.format(
+        'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %I', v_role);
+      EXECUTE pg_catalog.format(
+        'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM %I', v_role);
+      EXECUTE pg_catalog.format(
+        'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I', v_role);
+    END IF;
+  END LOOP;
+
+  SELECT pg_catalog.string_agg(
+           COALESCE(namespace.nspname, '(global)') || ':' || acl.defaclobjtype::text
+             || ':' || pg_catalog.pg_get_userbyid(item.grantee), ', ')
+    INTO v_leftover
+    FROM pg_catalog.pg_default_acl AS acl
+    LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = acl.defaclnamespace
+    CROSS JOIN LATERAL pg_catalog.aclexplode(acl.defaclacl) AS item
+   WHERE acl.defaclrole = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+     AND (acl.defaclnamespace = 0 OR namespace.nspname IN ('public','core','app'))
+     AND item.grantee IN (SELECT oid FROM pg_catalog.pg_roles
+                           WHERE rolname IN ('anon','authenticated','service_role'));
+  IF v_leftover IS NOT NULL THEN
+    RAISE EXCEPTION '001: default privileges still grant the API roles: %. '
+      'Every table 002-017 creates would be born exposed.', v_leftover;
+  END IF;
+END;
+$hosted_default_acl$;
+
 -- ─── 2 · Extensions ─────────────────────────────────────────────────────────
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto   WITH SCHEMA extensions;
@@ -270,11 +328,14 @@ CREATE EXTENSION IF NOT EXISTS vector     WITH SCHEMA extensions;
 GRANT USAGE ON SCHEMA cron TO postgres;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
 
-COMMENT ON SCHEMA cron IS
-  'pg_cron''s own schema. Created by the extension, not by TrainOS. Every TrainOS '
-  'job is scheduled in 015 and named there; cron.job is the inventory. '
-  'cron.job_run_details is reaped by 015 - Postgres does not clean it up and it '
-  'grows without bound (critic C-07).';
+-- No COMMENT ON SCHEMA cron: on hosted Supabase the `cron` schema is owned by
+-- supabase_admin and the migration role `postgres` is not superuser, so the
+-- statement fails with 42501 "must be owner of schema cron". The note it
+-- carried, kept here instead:
+--   pg_cron's own schema. Created by the extension, not by TrainOS. Every
+--   TrainOS job is scheduled in 015 and named there; cron.job is the inventory.
+--   cron.job_run_details is reaped by 015 - Postgres does not clean it up and
+--   it grows without bound (critic C-07).
 
 -- ─── 3 · Shared trigger functions ───────────────────────────────────────────
 

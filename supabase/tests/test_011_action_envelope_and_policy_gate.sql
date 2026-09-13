@@ -1132,16 +1132,28 @@ SELECT pg_catalog.set_config('t011.perm_md_payment_record',
 RESET ROLE;
 
 
--- A CLIENT-kind actor: the portal's shape. `app.current_actor()` takes
--- actor_kind from the claim (002:480, "portal RPCs write CLIENT"), and a portal
--- caller is authenticated by a share token rather than a membership, so they
--- carry no staff role at all.
+-- A CLIENT-kind actor with a CLIENT role: exactly what app.principal_claims
+-- (002) emits for a membership with role = CLIENT, actor_kind = CLIENT. The role
+-- must be CLIENT, not a staff role — a CLIENT fixture carrying app_role MD holds
+-- enquiry:archive through MD and cannot tell a gated CLIENT from an exempt one.
 SELECT pg_catalog.set_config('request.jwt.claims',
-  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"CLIENT","aal":"aal1"}',true);
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"CLIENT","actor_kind":"CLIENT","aal":"aal1"}',true);
 SET LOCAL ROLE service_role;
 SELECT pg_catalog.set_config('t011.perm_client_archive',
   pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
 RESET ROLE;
+
+-- The same CLIENT, now holding the one permission a money-moving type needs, at
+-- aal1. Seeded inside this transaction and removed straight after. It must be
+-- refused AAL2_REQUIRED: holding the permission is not a second factor.
+INSERT INTO app.role_permissions (role, permission)
+SELECT 'CLIENT', t.required_permission FROM app.action_types AS t
+ WHERE t.key = 'INVOICE_PUSH';
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_client_money_aal1',
+  pg_temp.t011_perform('INVOICE_PUSH','INV-NOT-REACHED','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+DELETE FROM app.role_permissions WHERE role = 'CLIENT';
 
 DO $t17$
 DECLARE
@@ -1194,25 +1206,30 @@ BEGIN
     pg_catalog.format('T17c2 FAIL: the refusal is not coded FORBIDDEN: %s',
       COALESCE(v_sales_pay->>'detailText','<none>'));
 
-  -- (e) ⚠ A CLIENT ACTOR IS NOT REFUSED BY THIS CHECK, and the first version of
-  --     it refused every one. `app.role_permissions` has rows for the seven staff
-  --     roles and NONE for CLIENT or AGENT, so covering CLIENT alongside HUMAN
-  --     made `has_permission` false for every portal caller doing anything — a
-  --     gate that refuses everybody, which is an outage. It would have surfaced
-  --     as "the portal stopped working" on the day 018's accept path landed.
-  --     The exemption is conditional on the fact that makes it true: the moment
-  --     anybody seeds CLIENT rows, the check starts applying automatically.
-  ASSERT NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp WHERE rp.role = 'CLIENT'),
-    'T17e0 FAIL: CLIENT now holds permissions, so the conditional exemption in '
-    '011 has switched itself off and CLIENT actions are gated like HUMAN ones. '
-    'That is the intended end state — update this pin to assert the gated '
-    'behaviour rather than the exemption.';
+  -- (e) A CLIENT ACTOR IS GATED EXACTLY LIKE A HUMAN ONE, and fails closed.
+  --     An earlier 011 exempted CLIENT while app.role_permissions held no CLIENT
+  --     row; a CLIENT principal at aal1 then executed staff actions with no
+  --     permission check. CLIENT holds no permissions, so it is refused.
+  ASSERT NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp
+                      WHERE rp.role = 'CLIENT' AND rp.permission = 'enquiry:archive'),
+    'T17e0 FAIL: CLIENT holds enquiry:archive, so T17e below cannot show a '
+    'refusal. Pick an action type CLIENT does not hold.';
 
-  ASSERT (pg_catalog.current_setting('t011.perm_client_archive')::jsonb ->> 'ok')::boolean,
-    pg_catalog.format('T17e FAIL: a CLIENT-initiated action was refused. CLIENT '
-      'holds no rows in app.role_permissions at all, so gating it on '
-      'has_permission refuses every portal caller doing anything: %s',
+  ASSERT NOT (pg_catalog.current_setting('t011.perm_client_archive')::jsonb ->> 'ok')::boolean
+     AND pg_catalog.current_setting('t011.perm_client_archive')::jsonb ->> 'detailText'
+         LIKE '%FORBIDDEN%enquiry:archive%',
+    pg_catalog.format('T17e FAIL: a CLIENT principal with no permissions was not '
+      'refused ENQUIRY_ARCHIVE as FORBIDDEN enquiry:archive. A CLIENT that skips '
+      'the permission check executes any action type whose policy does not match: %s',
       pg_catalog.current_setting('t011.perm_client_archive'));
+
+  ASSERT NOT (pg_catalog.current_setting('t011.perm_client_money_aal1')::jsonb ->> 'ok')::boolean
+     AND (pg_catalog.current_setting('t011.perm_client_money_aal1')::jsonb ->> 'detailText')::jsonb
+         ->> 'reason' = 'AAL2_REQUIRED',
+    pg_catalog.format('T17e2 FAIL: a CLIENT holding the permission for a '
+      'money-moving action was not refused AAL2_REQUIRED at aal1. H-05 must cover '
+      'CLIENT as it covers HUMAN: %s',
+      pg_catalog.current_setting('t011.perm_client_money_aal1'));
 
   -- (b) a role that DOES hold the permission still gets through. ENQUIRY_ARCHIVE
   -- has no policy row at all, so this is the pure fall-through path: before the
@@ -1227,8 +1244,9 @@ BEGIN
   RAISE NOTICE
     'T17 PASS - every active action type names a permission some role holds, a '
     'SALES principal is refused PAYMENT_RECORD with the missing permission named, '
-    'and an MD still performs ENQUIRY_ARCHIVE through the no-policy path that '
-    'used to be open to everyone.';
+    'an MD still performs ENQUIRY_ARCHIVE through the no-policy path that used to '
+    'be open to everyone, and a CLIENT is refused both without the permission and, '
+    'holding it, at aal1 on a money-moving type.';
 END;
 $t17$;
 
