@@ -49,6 +49,34 @@ export const ACTOR_FOR_ROLE: Readonly<Record<Role, string>> = {
 };
 
 /**
+ * How long the fixture client should pretend a round trip takes, in ms.
+ *
+ * The client's own default is 120ms, and the app was paying it on EVERY read.
+ * Measured on the rail: a nav click to Engagements cost 158ms and flashed
+ * `LoadingState` before the screen appeared; with the simulation off the same
+ * click costs 26ms and never shows the fallback. Twelve reads on one screen
+ * pay it twelve times. That is the whole of the "clicking between nav items
+ * feels laggy" report.
+ *
+ * The simulation is NOT deleted, because it is how the loading and error
+ * surfaces stay reachable by hand — `?latency=120` restores the client's own
+ * default, and any other number is honoured as given. It is simply not the
+ * price of every navigation any more.
+ *
+ * Read from the URL rather than held in state, the same way the record card
+ * reads `?gradient=alt`: there is nothing to subscribe to and nothing to leak,
+ * and a reload is the toggle.
+ */
+export function simulatedLatencyMs(): number {
+  if (typeof window === "undefined") return 0;
+  const raw = new URLSearchParams(window.location.search).get("latency");
+  if (raw === null) return 0;
+  if (raw === "") return 120;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 120;
+}
+
+/**
  * The default is the singleton rather than `null`.
  *
  * A missing provider therefore behaves exactly as production does instead of
@@ -83,8 +111,14 @@ export function ApiProvider({ children, client = fixtureClient }: ApiProviderPro
   const { me } = useMe();
   const queryClient = useQueryClient();
   const actorId = ACTOR_FOR_ROLE[me.role];
+  const latencyMs = simulatedLatencyMs();
 
   if (client.actorId !== actorId) client.signInAs(actorId);
+  /* In RENDER for the same reason the sign-in is: an effect runs after this
+     provider's children have mounted, and a child's `queryFn` fires from its
+     own mount effect, which is BEFORE a parent effect. Set from an effect, the
+     first screen of every session would still pay the simulated round trip. */
+  if (client.latencyMs !== latencyMs) client.setLatency(latencyMs);
 
   const previous = useRef(actorId);
   useEffect(() => {

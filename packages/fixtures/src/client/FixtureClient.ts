@@ -320,6 +320,16 @@ export class FixtureClient {
     this.#latencyMs = latencyMs;
   }
 
+  /**
+   * Symmetric with `actorId`, and for the same reason: a caller that keeps the
+   * client in step with something else needs to ask what it is currently set to
+   * so it can skip the write. Without it the only way to be sure is to call
+   * `setLatency` on every render.
+   */
+  get latencyMs(): number {
+    return this.#latencyMs;
+  }
+
   /** Rebuilds the store from the seed data and drops every subscription. */
   reset(): void {
     this.#store = createStore();
