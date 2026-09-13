@@ -22,6 +22,7 @@ import {
   PrimaryButton,
   RecordHeader,
   RefChip,
+  SPLIT_HEADER_HEIGHT,
   SecondaryButton,
   StatusChip,
   describeActionError,
@@ -58,24 +59,6 @@ const CHANNEL_LABEL: Record<EnquiryChannel, string> = {
 
 /** The "all open" pill the saved views do not carry: no filter, everything. */
 const ALL_TAB = "view_all";
-
-/**
- * The height BOTH panes' header blocks are pinned to, so the split reads as one
- * composition rather than two stacked screens (tightening brief §16, "header
- * rows align ... the same height and share the same baseline hairline").
- *
- * 72px, from the M03-S01 artboard (Kit.dc.html `proof-m03s01`): its detail
- * header is `padding:16px 20px` around a 16px title, a 4px gap and a 12px mono
- * meta line — a 70px block plus its 1px hairline — rounded up to the pack's 8px
- * grid. The list pane's filter row is the shorter of the two in the artboard
- * (44px), so matching on the list pane's height instead would mean squeezing
- * the detail title and its refs line, which is the content that actually needs
- * the room. The taller block sets the height; the shorter one centres inside it.
- *
- * `border-box` is the app-wide default, so the hairline is INSIDE these 72px
- * and both panes' bottom edges land on the same pixel.
- */
-const SPLIT_HEADER_HEIGHT = "h-[72px]";
 
 function pageFor(views: SavedView[], activeId: string): PageRequest | undefined {
   if (activeId === ALL_TAB) return undefined;

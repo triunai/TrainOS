@@ -10,9 +10,12 @@ import {
   ErrorState,
   ExceptionBanner,
   Fab,
+  FilterBar,
   LoadingState,
   PillTabGroup,
   PrimaryButton,
+  RecordHeader,
+  SPLIT_HEADER_HEIGHT,
   SecondaryButton,
   StatusChip,
   WhatsAppCostStrip,
@@ -22,6 +25,7 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
+import { cn } from "@/shared/lib/utils";
 import { readableMessage, toApiError, useActor } from "@/shared/api";
 import { useEnquiryAction, useFollowUpDraft, useFollowUps } from "./api";
 
@@ -160,16 +164,22 @@ export function FollowUpQueuePage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2.5 px-5 pb-3 pt-3">
-        <h1 className="text-[22px] font-semibold tracking-[-0.015em]">Follow-up queue</h1>
-        <StatusChip tone="info">{`My accounts · ${counts.ALL}`}</StatusChip>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <SecondaryButton>Rules</SecondaryButton>
-          <SecondaryButton>Export</SecondaryButton>
-        </div>
-      </div>
+      {/* Same ruling as the inbox: a list screen's header is a RecordHeader
+          with no `recordRef` and no condensed bar, and the context count is a
+          meta line rather than a chip. */}
+      <RecordHeader
+        withoutCondensed
+        title="Follow-up queue"
+        meta={[`My accounts · ${counts.ALL}`]}
+        actions={
+          <>
+            <SecondaryButton>Rules</SecondaryButton>
+            <SecondaryButton>Export</SecondaryButton>
+          </>
+        }
+      />
 
-      <div className="px-5 pb-2.5">
+      <div className="px-5 pb-4">
         <PillTabGroup
           tabs={TABS.map((entry) => ({ ...entry, count: counts[entry.id] }))}
           activeId={tab}
@@ -185,56 +195,79 @@ export function FollowUpQueuePage() {
       <div className="flex min-h-0 flex-1">
         <section
           aria-label="Follow-up queue"
-          className="w-[560px] shrink-0 overflow-auto border-r border-divider"
+          className="flex w-[560px] shrink-0 flex-col border-r border-divider"
         >
-          {queue.isPending ? (
-            <LoadingState rows={6} label="Loading the follow-up queue" />
-          ) : queue.isError ? (
-            <ErrorState
-              title="The queue did not load"
-              error={toApiError(queue.error)}
-              onRetry={() => void queue.refetch()}
-            />
-          ) : (
-            <DataTable
-              label="Follow-ups"
-              columns={columns}
-              rows={rows}
-              rowKey={(row) => row.id}
-              onRowClick={(row) => {
-                setSelectedId(row.id);
-                clearOutcome();
-              }}
-              /* Highlight only — no checkbox column. `onSelectionChange` is
+          {/* The list pane had NO header block at all: the table's sticky head
+              started flush at the top of the split while the draft pane's
+              header sat below its parent's padding, so the two sides began at
+              different heights and no hairline ran across the seam. It gets the
+              same summary row the enquiry inbox has, at the kit's shared
+              master/detail height. */}
+          <FilterBar
+            filters={[]}
+            shown={rows.length}
+            total={counts.ALL}
+            className={cn(
+              SPLIT_HEADER_HEIGHT,
+              "shrink-0 flex-nowrap overflow-hidden border-b border-divider py-0",
+            )}
+          />
+
+          <div className="min-h-0 flex-1 overflow-auto">
+            {queue.isPending ? (
+              <LoadingState rows={6} label="Loading the follow-up queue" />
+            ) : queue.isError ? (
+              <ErrorState
+                title="The queue did not load"
+                error={toApiError(queue.error)}
+                onRetry={() => void queue.refetch()}
+              />
+            ) : (
+              <DataTable
+                label="Follow-ups"
+                columns={columns}
+                rows={rows}
+                rowKey={(row) => row.id}
+                onRowClick={(row) => {
+                  setSelectedId(row.id);
+                  clearOutcome();
+                }}
+                /* Highlight only — no checkbox column. `onSelectionChange` is
                  deliberately absent, which is what keeps the table unselectable
                  while still marking the row whose draft is on the right. */
-              selectedKeys={selected ? new Set([selected.id]) : undefined}
-              empty={
-                <EmptyState
-                  title="Nothing to chase"
-                  description="No follow-up in this filter. Everything here has been worked or is not due yet."
-                />
-              }
-            />
-          )}
+                selectedKeys={selected ? new Set([selected.id]) : undefined}
+                empty={
+                  <EmptyState
+                    title="Nothing to chase"
+                    description="No follow-up in this filter. Everything here has been worked or is not due yet."
+                  />
+                }
+              />
+            )}
+          </div>
         </section>
 
-        <section aria-label="Draft" className="flex min-w-0 flex-1 flex-col gap-4 px-5 py-4">
-          {!selected ? (
-            <EmptyState
-              title="Nothing selected"
-              description="Pick a row to read the draft the Follow-up Agent prepared for it."
-            />
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h2 className="text-[16px] font-semibold">
+        <section aria-label="Draft" className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* The header block renders whether or not a row is selected, so the
+              hairline runs across the seam even on an empty right pane. */}
+          <div
+            className={cn(
+              SPLIT_HEADER_HEIGHT,
+              "flex shrink-0 items-center gap-2.5 overflow-hidden border-b border-divider px-5",
+            )}
+          >
+            {selected ? (
+              <>
+                {/* `truncate` and `flex-nowrap` are the two rules the shared
+                    height depends on: this row used to wrap its buttons and
+                    grow, which is what put the two panes at different heights. */}
+                <h2 className="min-w-0 truncate text-[16px] font-semibold">
                   {selected.contact.name} · {selected.organisation.name}
                 </h2>
                 <StatusChip tone={FOLLOW_UP_TONE[selected.status]}>
                   Due <DateText value={selected.dueDate} />
                 </StatusChip>
-                <div className="ml-auto flex flex-wrap items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   <SecondaryButton>Edit draft</SecondaryButton>
                   <PrimaryButton
                     onClick={send}
@@ -243,100 +276,114 @@ export function FollowUpQueuePage() {
                     Send
                   </PrimaryButton>
                 </div>
-              </div>
+              </>
+            ) : null}
+          </div>
 
-              {draft.isPending ? (
-                <LoadingState rows={4} label="Loading the draft" />
-              ) : draft.isError ? (
-                <ErrorState
-                  title="The draft did not load"
-                  error={toApiError(draft.error)}
-                  onRetry={() => void draft.refetch()}
-                />
-              ) : draft.data ? (
-                <>
-                  {consentBlocked ? (
-                    <ExceptionBanner
-                      severity="DANGER"
-                      title="No PDPA consent on file for this channel"
-                      subtitle={`${selected.contact.name} has not consented to ${TITLE_CHANNEL[draft.data.channel]}. Sending is blocked until consent is recorded.`}
-                    />
-                  ) : null}
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-5 py-4">
+            {!selected ? (
+              <EmptyState
+                title="Nothing selected"
+                description="Pick a row to read the draft the Follow-up Agent prepared for it."
+              />
+            ) : (
+              <>
+                {draft.isPending ? (
+                  <LoadingState rows={4} label="Loading the draft" />
+                ) : draft.isError ? (
+                  <ErrorState
+                    title="The draft did not load"
+                    error={toApiError(draft.error)}
+                    onRetry={() => void draft.refetch()}
+                  />
+                ) : draft.data ? (
+                  <>
+                    {consentBlocked ? (
+                      <ExceptionBanner
+                        severity="DANGER"
+                        title="No PDPA consent on file for this channel"
+                        subtitle={`${selected.contact.name} has not consented to ${TITLE_CHANNEL[draft.data.channel]}. Sending is blocked until consent is recorded.`}
+                      />
+                    ) : null}
 
-                  <div className="overflow-hidden rounded-control border border-primary-border">
-                    <div className="flex items-center gap-2 border-b border-primary-border bg-ai-tint px-3 py-2">
-                      <AIChip provenance={draft.data.provenance} label="Follow-up Agent · draft" />
-                      <span className="ml-auto text-[12px] text-primary-hover">
-                        Act on your click
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col gap-3 p-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <PillTabGroup
-                          tabs={[
-                            { id: "WHATSAPP", label: "WhatsApp" },
-                            { id: "EMAIL", label: "Email" },
-                          ]}
-                          activeId={channel}
-                          onSelect={(id) => setChannel(id as "WHATSAPP" | "EMAIL")}
-                          label="Draft channel"
+                    <div className="overflow-hidden rounded-control border border-primary-border">
+                      <div className="flex items-center gap-2 border-b border-primary-border bg-ai-tint px-3 py-2">
+                        <AIChip
+                          provenance={draft.data.provenance}
+                          label="Follow-up Agent · draft"
                         />
-                        <span className="ml-auto font-mono text-[12px] text-ink-muted">
-                          {draft.data.templateId}
+                        <span className="ml-auto text-[12px] text-primary-hover">
+                          Act on your click
                         </span>
                       </div>
 
-                      <p className="whitespace-pre-wrap rounded-control border border-border bg-card p-3 text-[13px] leading-[1.6] text-ink">
-                        {draft.data.body}
-                      </p>
+                      <div className="flex flex-col gap-3 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <PillTabGroup
+                            tabs={[
+                              { id: "WHATSAPP", label: "WhatsApp" },
+                              { id: "EMAIL", label: "Email" },
+                            ]}
+                            activeId={channel}
+                            onSelect={(id) => setChannel(id as "WHATSAPP" | "EMAIL")}
+                            label="Draft channel"
+                          />
+                          <span className="ml-auto font-mono text-[12px] text-ink-muted">
+                            {draft.data.templateId}
+                          </span>
+                        </div>
 
-                      {draft.data.channel === "WHATSAPP" ? (
-                        <WhatsAppCostStrip
-                          category={draft.data.category}
-                          templateLabel={draft.data.templateId}
-                          recipients={draft.data.recipients}
-                          ratePerMessage={draft.data.ratePerMessage}
-                          ratePerMessageExact={draft.data.ratePerMessageExact}
-                          estimatedCost={draft.data.estimatedCost}
-                          alternative={draft.data.alternativeCategoryRate}
-                        />
-                      ) : null}
+                        <p className="whitespace-pre-wrap rounded-control border border-border bg-card p-3 text-[13px] leading-[1.6] text-ink">
+                          {draft.data.body}
+                        </p>
 
-                      <p className="text-[12px] text-ink-secondary">
-                        Consent on file: {TITLE_CHANNEL[draft.data.channel]}{" "}
-                        {draft.data.consent.granted ? "✓" : "✕"}
-                        {draft.data.consent.recordedAt ? (
-                          <>
-                            {" "}
-                            · PDPA recorded <DateText value={draft.data.consent.recordedAt} />
-                          </>
-                        ) : (
-                          " · no PDPA record"
-                        )}
-                      </p>
+                        {draft.data.channel === "WHATSAPP" ? (
+                          <WhatsAppCostStrip
+                            category={draft.data.category}
+                            templateLabel={draft.data.templateId}
+                            recipients={draft.data.recipients}
+                            ratePerMessage={draft.data.ratePerMessage}
+                            ratePerMessageExact={draft.data.ratePerMessageExact}
+                            estimatedCost={draft.data.estimatedCost}
+                            alternative={draft.data.alternativeCategoryRate}
+                          />
+                        ) : null}
+
+                        <p className="text-[12px] text-ink-secondary">
+                          Consent on file: {TITLE_CHANNEL[draft.data.channel]}{" "}
+                          {draft.data.consent.granted ? "✓" : "✕"}
+                          {draft.data.consent.recordedAt ? (
+                            <>
+                              {" "}
+                              · PDPA recorded <DateText value={draft.data.consent.recordedAt} />
+                            </>
+                          ) : (
+                            " · no PDPA record"
+                          )}
+                        </p>
+                      </div>
                     </div>
-                  </div>
 
-                  <ActionOutcome
-                    response={response}
-                    error={failure}
-                    subject={`Follow-up · ${selected.contact.name}`}
-                    onDismiss={clearOutcome}
-                  />
+                    <ActionOutcome
+                      response={response}
+                      error={failure}
+                      subject={`Follow-up · ${selected.contact.name}`}
+                      onDismiss={clearOutcome}
+                    />
 
-                  <section className="flex flex-col gap-2.5">
-                    <h3 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
-                      Why now
-                    </h3>
-                    <p className="text-[13px] leading-[1.6] text-ink-secondary">
-                      {selected.reason}
-                    </p>
-                  </section>
-                </>
-              ) : null}
-            </>
-          )}
+                    <section className="flex flex-col gap-2.5">
+                      <h3 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                        Why now
+                      </h3>
+                      <p className="text-[13px] leading-[1.6] text-ink-secondary">
+                        {selected.reason}
+                      </p>
+                    </section>
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
         </section>
       </div>
 
