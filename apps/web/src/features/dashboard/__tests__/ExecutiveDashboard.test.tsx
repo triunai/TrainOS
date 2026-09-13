@@ -8,13 +8,14 @@
  * "Open approvals" is the only primary, and no money moves here.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
+import { ApiErrorException, transportError } from "@/shared/api";
 import { ExecutiveDashboard } from "../ExecutiveDashboard";
 import { DASHBOARD_PATH } from "../paths";
 
@@ -153,5 +154,72 @@ describe("M01-S01 executive dashboard", () => {
     expect(await screen.findByText(/Proposals sent vs won · 6 months/)).toBeInTheDocument();
     expect(await screen.findByText("52 sent")).toBeInTheDocument();
     expect(screen.getByText("17 won")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The landing route against a database that does not serve the dashboard yet.
+ *
+ * `/dashboard` is where sign-in lands, and in supabase mode neither the
+ * dashboard read nor the proposals report has an endpoint. The page must still
+ * be a page: the header and its one primary, the approvals the database CAN
+ * list, and one quiet banner naming what is missing — not an error, not a retry
+ * and not a blank screen.
+ */
+describe("M01-S01 executive dashboard · endpoints not deployed", () => {
+  const undeployed = (method: string) =>
+    Promise.reject(
+      new ApiErrorException(
+        transportError(
+          "NOT_DEPLOYED",
+          `${method}() is not implemented by the Supabase client yet.`,
+        ),
+      ),
+    );
+
+  beforeEach(() => {
+    resetStore();
+    fixtureClient.setLatency(0);
+    resetPrimaries();
+    vi.spyOn(fixtureClient, "getExecutiveDashboard").mockImplementation(() =>
+      undeployed("getExecutiveDashboard"),
+    );
+    vi.spyOn(fixtureClient, "getProposalsVsWon").mockImplementation(() =>
+      undeployed("getProposalsVsWon"),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the header, lists pending approvals from the approvals read, and names the rest", async () => {
+    const listApprovals = vi.spyOn(fixtureClient, "listApprovals");
+    renderDashboard();
+
+    expect(await screen.findByText("Part of this page is not available here yet")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open approvals" })).toBeVisible();
+
+    /* The rail is real data from a read the database does serve. */
+    expect(await screen.findByText(/Discount below floor/)).toBeInTheDocument();
+    expect(listApprovals).toHaveBeenCalledWith(
+      expect.objectContaining({ filter: [{ field: "status", op: "eq", value: "PENDING" }] }),
+    );
+
+    /* A report that could not be read is not "no proposals". */
+    expect(screen.queryByText("No proposals in this window")).toBeNull();
+    expect(screen.queryByText("Autonomy mix")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByText(/could not be loaded/)).toBeNull();
+  });
+
+  it("does not ask for the fallback approvals when the dashboard answers", async () => {
+    vi.mocked(fixtureClient.getExecutiveDashboard).mockRestore();
+    const listApprovals = vi.spyOn(fixtureClient, "listApprovals");
+    renderDashboard();
+
+    expect(await screen.findByText("Open pipeline")).toBeInTheDocument();
+    expect(listApprovals).not.toHaveBeenCalled();
   });
 });

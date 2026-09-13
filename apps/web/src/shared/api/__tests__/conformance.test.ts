@@ -12,7 +12,7 @@ import {
 import { ContractError, createFixtureClient, isContractError } from "@trainos/fixtures";
 
 import { createRpcApiClient, type ApiClient } from "../apiClient";
-import { isDomainError } from "../errors";
+import { isDomainError, toApiError } from "../errors";
 import { classifyTransportFailure, createRpcClient, unwrapEnvelope } from "../rpcClient";
 import { __setTransportForTests } from "../supabase";
 import { oracleTransport, toPageRequest, type Args, type Oracle } from "./oracleTransport";
@@ -178,11 +178,18 @@ describe("the two clients answer the same", () => {
     expect(thrown).toBeInstanceOf(Error);
   });
 
-  /** An endpoint with no RPC at all fails by name rather than answering empty. */
-  it("an unimplemented method rejects by name", async () => {
+  /**
+   * An endpoint with no RPC at all fails by name rather than answering empty —
+   * and as NOT_DEPLOYED, so the screen draws the not-available state rather
+   * than a retryable "Something went wrong". The name rides on the ApiError's
+   * message; the exception's own message is the reader's sentence.
+   */
+  it("an unimplemented method rejects by name, as not deployed", async () => {
     const thrown = await rpc.getExecutiveDashboard().catch((e: unknown) => e);
     expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toContain("getExecutiveDashboard()");
+    const error = toApiError(thrown);
+    expect(error).toMatchObject({ kind: "transport", code: "NOT_DEPLOYED" });
+    expect(error.message).toContain("getExecutiveDashboard()");
   });
 });
 

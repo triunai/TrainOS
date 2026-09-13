@@ -14,7 +14,7 @@ import type {
 import { ContractError, EventBus, paginate, type FixtureClient } from "@trainos/fixtures";
 
 import type { TrainOsClient } from "./client";
-import { ApiErrorException, type Result } from "./errors";
+import { ApiErrorException, transportError, type Result } from "./errors";
 import {
   bulkDecideIdempotencyKey,
   derivedIdempotencyKey,
@@ -291,6 +291,12 @@ function controls() {
  * returning an empty list — a silent empty list looks like "no records" and
  * ships as a bug, while "not implemented by the Supabase client" is something
  * a reader can act on.
+ *
+ * The trap fails as `NOT_DEPLOYED`, the code a missing PostgREST function gets.
+ * It is the same fact one step earlier — this environment does not serve the
+ * endpoint — and as a bare `Error` it became a transport `UNKNOWN`, which every
+ * screen drew as "Something went wrong. Try again." over a feature that has not
+ * shipped. The method name stays in the message for whoever reads the cause.
  */
 export function createRpcApiClient(rpc: TrainOsClient = createRpcClient()): ApiClient {
   const methods = adapters(rpc);
@@ -303,9 +309,13 @@ export function createRpcApiClient(rpc: TrainOsClient = createRpcClient()): ApiC
       if (property in methods) return methods[property];
       return () =>
         Promise.reject(
-          new Error(
-            `${property}() is not implemented by the Supabase client yet. ` +
-              "Its RPC is specified in docs/architecture/09-golden-path-rpc-specs.md.",
+          new ApiErrorException(
+            transportError(
+              "NOT_DEPLOYED",
+              `${property}() is not implemented by the Supabase client yet. ` +
+                "Its RPC is specified in docs/architecture/09-golden-path-rpc-specs.md.",
+              { status: 404 },
+            ),
           ),
         );
     },
