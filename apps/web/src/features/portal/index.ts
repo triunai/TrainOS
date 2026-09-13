@@ -13,10 +13,4 @@ export { ClientProposalPage } from "./ClientProposalPage";
 export { AcceptancePanel, type AcceptancePanelProps } from "./AcceptancePanel";
 export { CommentThread, type CommentThreadProps } from "./CommentThread";
 export { InvestmentPanel, ProposalSections } from "./ProposalSections";
-export {
-  asApiError,
-  portalKeys,
-  useAcceptPortalProposal,
-  useAddPortalComment,
-  usePortalProposal,
-} from "./api";
+export { portalKeys, useAcceptPortalProposal, useAddPortalComment, usePortalProposal } from "./api";

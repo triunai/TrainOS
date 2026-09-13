@@ -8,7 +8,6 @@ import {
   USER_SITI,
   TRAINER_FARAH,
 } from "@trainos/contract";
-import { isContractError } from "@trainos/fixtures";
 import { queryKeys, useApi } from "@/shared/api";
 
 /**
@@ -26,17 +25,6 @@ import { queryKeys, useApi } from "@/shared/api";
  * client is the boundary; this only decides whether to draw the button.
  */
 export const canEditCatalogue = (role: Role): boolean => role === "ADMIN";
-
-/** A contract error's code, or null when the failure was not a refusal. */
-export function errorCodeOf(error: unknown): string | null {
-  return isContractError(error) ? error.code : null;
-}
-
-export function errorMessageOf(error: unknown): string {
-  if (isContractError(error)) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong.";
-}
 
 export function useProgrammes(page?: PageRequest) {
   const client = useApi();

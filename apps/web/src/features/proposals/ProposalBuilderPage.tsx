@@ -24,15 +24,15 @@ import {
   PROPOSAL_TONE,
   ProvenancePanel,
   RecordHeader,
+  RefusalBanner,
   SecondaryButton,
   StatusChip,
   type MetricCellProps,
 } from "@/shared/components/kit";
-import { toApiError } from "@/shared/api";
+import { readableMessage, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
-  errorMessageOf,
   useApproval,
   useEditSection,
   useAddSection,
@@ -183,11 +183,7 @@ export function ProposalBuilderPage() {
 
         {send.isError ? (
           <div className="px-5 pb-4">
-            <ExceptionBanner
-              severity="DANGER"
-              title="The send was refused"
-              subtitle={errorMessageOf(send.error)}
-            />
+            <RefusalBanner title="The send was refused" error={toApiError(send.error)} />
           </div>
         ) : null}
 
@@ -418,7 +414,7 @@ function SectionRail({
         </SecondaryButton>
         {addError ? (
           <span role="alert" className="text-[11px] text-danger">
-            {errorMessageOf(addError)}
+            {readableMessage(toApiError(addError))}
           </span>
         ) : null}
       </form>
@@ -497,13 +493,7 @@ function SectionEditor({
         </div>
       </div>
 
-      {error ? (
-        <ExceptionBanner
-          severity="DANGER"
-          title="That change did not apply"
-          subtitle={errorMessageOf(error)}
-        />
-      ) : null}
+      {error ? <RefusalBanner title="That change did not apply" error={toApiError(error)} /> : null}
 
       {editing ? (
         <textarea

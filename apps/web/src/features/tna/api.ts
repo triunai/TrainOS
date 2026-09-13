@@ -8,7 +8,6 @@ import {
   USER_KHAIRUL,
   USER_SITI,
 } from "@trainos/contract";
-import { isContractError } from "@trainos/fixtures";
 import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
 
 /**
@@ -17,16 +16,6 @@ import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
  * The client and the principal come from `useApi()` and `useActor()` in
  * `shared/api`. This file holds only what is specific to the TNA.
  */
-
-export function errorCodeOf(error: unknown): string | null {
-  return isContractError(error) ? error.code : null;
-}
-
-export function errorMessageOf(error: unknown): string {
-  if (isContractError(error)) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong.";
-}
 
 export function useTna(id: string | undefined) {
   const client = useApi();

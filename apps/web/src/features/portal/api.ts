@@ -5,8 +5,7 @@ import type {
   PortalCommentRequest,
   PortalProposal,
 } from "@trainos/contract";
-import { isContractError } from "@trainos/fixtures";
-import { domainErrorFromEnvelope, transportError, useApi, type ApiError } from "@/shared/api";
+import { useApi, type ApiError } from "@/shared/api";
 
 /**
  * The portal's data boundary.
@@ -21,13 +20,6 @@ import { domainErrorFromEnvelope, transportError, useApi, type ApiError } from "
  * domain refusal (a revoked or expired token) out of the "something went wrong"
  * bucket where a retry button would be offered for a fact.
  */
-/** A thrown fixture error, in the shape `ErrorState` and `readableMessage` read. */
-export function asApiError(thrown: unknown): ApiError {
-  if (isContractError(thrown)) return domainErrorFromEnvelope(thrown.toEnvelope());
-  if (thrown instanceof Error) return transportError("UNKNOWN", thrown.message, { cause: thrown });
-  return transportError("UNKNOWN", "Unknown error", { cause: thrown });
-}
-
 export const portalKeys = {
   all: ["portal"] as const,
   proposal: (token: string) => ["portal", "proposal", token] as const,

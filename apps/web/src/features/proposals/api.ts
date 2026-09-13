@@ -48,16 +48,6 @@ export type ActionPayload<P> = P & Record<string, unknown>;
 
 /* ---- Error helpers --------------------------------------------------- */
 
-export function errorCodeOf(error: unknown): string | null {
-  return isContractError(error) ? error.code : null;
-}
-
-export function errorMessageOf(error: unknown): string {
-  if (isContractError(error)) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong.";
-}
-
 /**
  * The `FLOOR_PRICE_BREACH` detail bag, as `client/pricing.ts` builds it. Both
  * floors and the binding basis travel with the refusal, so the worksheet can

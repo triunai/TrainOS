@@ -25,6 +25,7 @@ import {
   MoneyText,
   PrimaryButton,
   RecordHeader,
+  RefusalBanner,
   SecondaryButton,
   StatusChip,
   type Column,
@@ -34,7 +35,6 @@ import { isDomainError, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
-  errorMessageOf,
   floorBreachOf,
   useApplyQuotation,
   useQuotation,
@@ -178,11 +178,7 @@ export function CostingWorksheetPage() {
 
         {apply.isError && !breach ? (
           <div className="px-5 pb-4">
-            <ExceptionBanner
-              severity="DANGER"
-              title="The price was not applied"
-              subtitle={errorMessageOf(apply.error)}
-            />
+            <RefusalBanner title="The price was not applied" error={toApiError(apply.error)} />
           </div>
         ) : null}
 

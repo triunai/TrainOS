@@ -22,12 +22,10 @@ import {
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
-import { toApiError } from "@/shared/api";
+import { isDomainError, readableMessage, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   canEditCatalogue,
-  errorCodeOf,
-  errorMessageOf,
   useEditProgramme,
   useEngagementsForProgramme,
   useProgramme,
@@ -292,6 +290,7 @@ function metricsFor(programme: Programme, poolSize: number): MetricCellProps[] {
  */
 function EditProgrammeAction({ programme, role }: { programme: Programme; role: Role }) {
   const edit = useEditProgramme(programme.ref);
+  const editFailure = toApiError(edit.error);
 
   if (!canEditCatalogue(role)) return null;
 
@@ -306,9 +305,12 @@ function EditProgrammeAction({ programme, role }: { programme: Programme; role: 
       </PrimaryButton>
       {edit.isError ? (
         <span role="alert" className="text-[11px] text-danger">
-          {errorCodeOf(edit.error) === "FORBIDDEN"
+          {/* Against the typed DomainError, not a helper that widened the
+              contract's ErrorCode to `string` — a renamed code would have
+              compiled clean and silently stopped matching. */}
+          {isDomainError(editFailure) && editFailure.code === "FORBIDDEN"
             ? "Editing the catalogue is restricted to Admin and L&D."
-            : errorMessageOf(edit.error)}
+            : readableMessage(editFailure)}
         </span>
       ) : null}
     </div>

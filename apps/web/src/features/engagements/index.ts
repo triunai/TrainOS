@@ -27,7 +27,6 @@ export {
   type ParticipantDay,
 } from "./attendanceModel";
 export {
-  asApiError,
   blockersOf,
   engagementKeys,
   useAttendance,

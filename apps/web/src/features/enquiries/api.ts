@@ -15,7 +15,6 @@ import {
   USER_KHAIRUL,
   USER_SITI,
 } from "@trainos/contract";
-import { isContractError } from "@trainos/fixtures";
 import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
 
 /**
@@ -27,17 +26,6 @@ import { queryKeys, useAction, useActor, useApi } from "@/shared/api";
  * answer as Amirah and a role-gated refusal would never be reachable from the
  * UI.
  */
-
-/** A contract error's code, or null when the failure was not a refusal. */
-export function errorCodeOf(error: unknown): string | null {
-  return isContractError(error) ? error.code : null;
-}
-
-export function errorMessageOf(error: unknown): string {
-  if (isContractError(error)) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong.";
-}
 
 /* ---- §2 saved views (the inbox's pill tabs) ------------------------- */
 

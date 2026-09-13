@@ -18,15 +18,8 @@ import type {
   Participant,
   PipelineConfig,
 } from "@trainos/contract";
-import { isContractError, type EngagementProjection } from "@trainos/fixtures";
-import {
-  domainErrorFromEnvelope,
-  stableIdempotencyKey,
-  transportError,
-  useActor,
-  useApi,
-  type ApiError,
-} from "@/shared/api";
+import { type EngagementProjection } from "@trainos/fixtures";
+import { stableIdempotencyKey, useActor, useApi, type ApiError } from "@/shared/api";
 
 /**
  * The engagements data boundary — M09-S02 and M10-S06.
@@ -48,13 +41,6 @@ import {
  *    rather than zeroing it, so the type is optional and the screen renders the
  *    panel only when the projection carries one.
  */
-
-/** A thrown fixture error, in the shape `ErrorState` and `readableMessage` read. */
-export function asApiError(thrown: unknown): ApiError {
-  if (isContractError(thrown)) return domainErrorFromEnvelope(thrown.toEnvelope());
-  if (thrown instanceof Error) return transportError("UNKNOWN", thrown.message, { cause: thrown });
-  return transportError("UNKNOWN", "Unknown error", { cause: thrown });
-}
 
 /** `details.blockers[]` off a refusal, or an empty list when it carries none. */
 export function blockersOf(error: ApiError): string[] {

@@ -25,9 +25,9 @@ import {
   toast,
   type Column,
 } from "@/shared/components/kit";
+import { toApiError } from "@/shared/api";
 import { useBreadcrumb } from "@/shared/components/layout";
 import {
-  asApiError,
   useAttendanceDays,
   useComplianceChecks,
   useEngagement,
@@ -88,7 +88,7 @@ export function EngagementDetailPage() {
     return (
       <ErrorState
         title="This engagement could not be opened"
-        error={asApiError(engagement.error)}
+        error={toApiError(engagement.error)}
       />
     );
   }
@@ -208,7 +208,7 @@ export function EngagementDetailPage() {
               {...(closeOut.error
                 ? {
                     error: describeActionError(
-                      asApiError(closeOut.error),
+                      toApiError(closeOut.error),
                       `${record.ref} could not be closed out`,
                     ),
                   }
@@ -314,7 +314,7 @@ function ChecksCard({ id }: { id: string }) {
 
   if (checks.isPending) return <LoadingState rows={3} label="Loading the rule checks" />;
   if (checks.isError || !checks.data) {
-    return <ErrorState title="Rule checks are unavailable" error={asApiError(checks.error)} />;
+    return <ErrorState title="Rule checks are unavailable" error={toApiError(checks.error)} />;
   }
 
   const { summary, checks: rows, ruleResolution } = checks.data;

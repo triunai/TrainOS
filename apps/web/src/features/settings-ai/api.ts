@@ -24,26 +24,7 @@ import type {
   RoutingResponse,
   UsageResponse,
 } from "@trainos/contract";
-import { isContractError } from "@trainos/fixtures";
-import {
-  domainErrorFromEnvelope,
-  queryKeys,
-  transportError,
-  useApi,
-  type ApiError,
-} from "@/shared/api";
-
-/**
- * `ContractError` → the scaffold's `ApiError`.
- *
- * DUPLICATED in `features/agents/api.ts` and `features/knowledge/api.ts`.
- * It belongs in `shared/api`; reported to the team lead.
- */
-export function toApiError(thrown: unknown): ApiError {
-  if (isContractError(thrown)) return domainErrorFromEnvelope(thrown.toEnvelope());
-  const message = thrown instanceof Error ? thrown.message : "Unknown error";
-  return transportError("UNKNOWN", message, { cause: thrown });
-}
+import { queryKeys, toApiError, useApi, type ApiError } from "@/shared/api";
 
 /**
  * Keys for the §17 AI-ops surface.

@@ -21,9 +21,9 @@ import {
   toast,
   type Column,
 } from "@/shared/components/kit";
+import { toApiError } from "@/shared/api";
 import { useBreadcrumb } from "@/shared/components/layout";
 import {
-  asApiError,
   useAttendanceDays,
   useCaptureAttendance,
   useEngagement,
@@ -91,7 +91,7 @@ export function AttendanceCapturePage() {
     return (
       <ErrorState
         title="This engagement could not be opened"
-        error={asApiError(engagement.error)}
+        error={toApiError(engagement.error)}
       />
     );
   }
@@ -100,7 +100,7 @@ export function AttendanceCapturePage() {
     return (
       <ErrorState
         title="No attendance sheet has been created yet"
-        {...(failure ? { error: asApiError(failure.error) } : {})}
+        {...(failure ? { error: toApiError(failure.error) } : {})}
       />
     );
   }
@@ -190,7 +190,7 @@ export function AttendanceCapturePage() {
             {...(action.error
               ? {
                   error: describeActionError(
-                    asApiError(action.error),
+                    toApiError(action.error),
                     `Day ${sheet.day} was not updated`,
                   ),
                 }
@@ -203,7 +203,7 @@ export function AttendanceCapturePage() {
         {capture.error ? (
           <ActionOutcome
             error={describeActionError(
-              asApiError(capture.error),
+              toApiError(capture.error),
               `Attendance on day ${sheet.day} was not captured`,
             )}
             subject={`Capture on day ${sheet.day}`}

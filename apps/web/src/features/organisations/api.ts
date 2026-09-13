@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { isContractError } from "@trainos/fixtures";
 import { queryKeys, useApi } from "@/shared/api";
 
 /**
@@ -8,16 +7,6 @@ import { queryKeys, useApi } from "@/shared/api";
  * The client and the principal come from `useApi()` and `useActor()` in
  * `shared/api`. This file holds only what is specific to organisations.
  */
-
-export function errorCodeOf(error: unknown): string | null {
-  return isContractError(error) ? error.code : null;
-}
-
-export function errorMessageOf(error: unknown): string {
-  if (isContractError(error)) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong.";
-}
 
 export function useOrganisation(id: string | undefined) {
   const client = useApi();

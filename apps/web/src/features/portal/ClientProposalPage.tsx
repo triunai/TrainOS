@@ -16,10 +16,11 @@ import {
   humanise,
   toast,
 } from "@/shared/components/kit";
+import { toApiError } from "@/shared/api";
 import { AcceptancePanel } from "./AcceptancePanel";
 import { CommentThread } from "./CommentThread";
 import { InvestmentPanel, ProposalSections } from "./ProposalSections";
-import { asApiError, useAcceptPortalProposal, useAddPortalComment, usePortalProposal } from "./api";
+import { useAcceptPortalProposal, useAddPortalComment, usePortalProposal } from "./api";
 
 /**
  * M07-S07 · the client-facing proposal page, at the public route `/p/:token`.
@@ -71,7 +72,7 @@ export function ClientProposalPage() {
       ) : proposal.isError || !data ? (
         <ErrorState
           title="This proposal link cannot be opened"
-          error={asApiError(proposal.error)}
+          error={toApiError(proposal.error)}
           description="The link may have expired or been withdrawn. Contact the person who sent it to you for a new one."
         />
       ) : (
@@ -123,7 +124,7 @@ export function ClientProposalPage() {
               <AcceptancePanel
                 acceptance={data.acceptance}
                 busy={accept.isPending}
-                {...(accept.error ? { error: asApiError(accept.error) } : {})}
+                {...(accept.error ? { error: toApiError(accept.error) } : {})}
                 onAccept={(body) =>
                   accept.mutate(body, {
                     onSuccess: (result) =>
@@ -143,7 +144,7 @@ export function ClientProposalPage() {
                 comments={data.comments}
                 defaultAuthor={data.acceptance?.acceptedBy ?? ""}
                 busy={comment.isPending}
-                {...(comment.error ? { error: asApiError(comment.error) } : {})}
+                {...(comment.error ? { error: toApiError(comment.error) } : {})}
                 onPost={(body) => comment.mutate(body)}
               />
 
