@@ -1680,4 +1680,111 @@ BEGIN
 END;
 $t13$;
 
+
+-- ─── T14 · CRIT · a key that was revealed can still be rotated ──────────────
+-- The finding, reproduced live before it was fixed: `ai_provider_key_set` ->
+-- `ai_provider_key_reveal` -> `ai_provider_key_rotate` on one provider_ref
+-- raised, permanently, for any key that had ever been revealed — which is
+-- precisely the key a security team needs to rotate. TWO independent triggers
+-- blocked it and the second was only visible once the first was fixed:
+--
+--   1. `app.require_reveal_audit` short-circuited only on
+--      `NEW.last_revealed_at IS NOT DISTINCT FROM OLD`. Rotation CLEARS that
+--      stamp (the 24-hour ceiling is per key material, and rotation issues new
+--      material), so the clear read as an unaudited write and raised
+--      42501 REVEAL_AUDIT_REQUIRED.
+--   2. `key_fingerprint` was in the table's frozen-column set, so rotation's own
+--      `key_fingerprint = p_fingerprint` raised IMMUTABLE_COLUMN — for EVERY key,
+--      revealed or not. Rotation had never worked at all.
+--
+-- No pin caught either, because T11c only exercises the `authenticated`-role
+-- refusal and this file never ran a successful rotate. That is the gap this test
+-- closes: the happy path of a security control nobody had executed.
+DO $t14$
+DECLARE
+  v_set    jsonb;
+  v_rev    jsonb;
+  v_rot    jsonb;
+  v_before bytea;
+  v_after  bytea;
+  v_ref    text;
+  v_stamp  timestamptz;
+  v_denied boolean := false;
+BEGIN
+  PERFORM pg_temp.t013_claims(
+    '00000013-0000-0000-0000-0000000000a1',
+    '00000013-1111-1111-1111-111111111111', 'ADMIN', 'HUMAN',
+    '00000013-5e55-0000-0000-000000000001', 'aal2');
+
+  v_set := public.ai_provider_key_set(
+    'prv_t14','OPENAI','T14 key','sk-'||pg_catalog.repeat('*',12)||'AAAA',
+    pg_catalog.sha256('t14-first'::bytea),'vault:t14:1',ARRAY['MID'],
+    'ap-southeast-1','CLIENT_ACCOUNT',NULL,NULL);
+  ASSERT v_set IS NOT NULL, 'T14 SETUP FAIL: ai_provider_key_set returned nothing.';
+
+  SELECT key_fingerprint INTO v_before FROM core.ai_provider_keys
+   WHERE provider_ref = 'prv_t14';
+
+  -- REVEAL FIRST. That is the whole finding: an unrevealed key rotated fine in
+  -- theory (it did not — see 2 above — but the reveal is what made it permanent),
+  -- and this ordering is the one a rotation actually follows.
+  v_rev := public.ai_provider_key_reveal(
+    'prv_t14','scheduled rotation after a suspected exposure','t14-req-1');
+  ASSERT v_rev IS NOT NULL, 'T14a FAIL: the reveal itself failed.';
+
+  SELECT last_revealed_at INTO v_stamp FROM core.ai_provider_keys
+   WHERE provider_ref = 'prv_t14';
+  ASSERT v_stamp IS NOT NULL,
+    'T14b FAIL: the reveal did not stamp last_revealed_at, so the rotate below '
+    'would not be exercising the blocked path at all.';
+
+  -- THE ROTATION. Against the pre-fix SQL this raises
+  -- 42501 REVEAL_AUDIT_REQUIRED, and with only the first fix applied it raises
+  -- IMMUTABLE_COLUMN on key_fingerprint.
+  v_rot := public.ai_provider_key_rotate(
+    'prv_t14','sk-'||pg_catalog.repeat('*',12)||'BBBB',
+    pg_catalog.sha256('t14-second'::bytea),'vault:t14:2','t14-req-2');
+  ASSERT v_rot IS NOT NULL, 'T14c FAIL: ai_provider_key_rotate returned nothing.';
+
+  SELECT key_fingerprint, key_ref, last_revealed_at
+    INTO v_after, v_ref, v_stamp
+    FROM core.ai_provider_keys WHERE provider_ref = 'prv_t14';
+
+  ASSERT v_after IS DISTINCT FROM v_before,
+    'T14d FAIL: the rotation did not change key_fingerprint, so the row still '
+    'identifies the old material and "rotated" is a claim about nothing.';
+  ASSERT v_ref = 'vault:t14:2',
+    pg_catalog.format('T14e FAIL: key_ref is %s, not the new locator.', v_ref);
+  ASSERT v_stamp IS NULL,
+    'T14f FAIL: last_revealed_at survived the rotation. The 24-hour ceiling is '
+    'per key material; carrying the old stamp onto new material would block the '
+    'first legitimate reveal of the key that was just issued.';
+
+  -- T14g · AND THE GUARD THAT REPLACED THE FROZEN COLUMN STILL BITES. A
+  -- fingerprint may move only with its locator; moving it alone points the row at
+  -- a different secret while still naming the old vault entry.
+  BEGIN
+    UPDATE core.ai_provider_keys
+       SET key_fingerprint = pg_catalog.sha256('t14-third'::bytea)
+     WHERE provider_ref = 'prv_t14';
+  EXCEPTION WHEN OTHERS THEN
+    v_denied := true;
+    ASSERT SQLERRM LIKE '%key_ref did not%',
+      pg_catalog.format('T14g1 FAIL: the unpaired fingerprint write was refused, '
+        'but not by the pairing guard: %s', SQLERRM);
+  END;
+  ASSERT v_denied,
+    'T14g FAIL: key_fingerprint was changed on its own, with key_ref unchanged. '
+    'Unfreezing the column to make rotation possible must not make it freely '
+    'writable — a fingerprint that moves without its locator is either half a '
+    'rotation or somebody swapping material outside ai_provider_key_rotate.';
+
+  RAISE NOTICE
+    'T14 PASS - set, reveal, then rotate on the same provider_ref: the rotation '
+    'succeeds, changes the fingerprint and the locator together, clears the '
+    'reveal stamp, and an unpaired fingerprint write is still refused.';
+END;
+$t14$;
+
+
 ROLLBACK;

@@ -1439,8 +1439,64 @@ COMMENT ON TABLE core.ai_provider_keys IS
   'column list is exactly the set whose name matches key/secret/token, so a '
   'fourth one cannot appear without failing the migration.';
 
+-- ⚠ `key_fingerprint` IS NOT IN THE IMMUTABLE SET, AND IT USED TO BE.
+--
+-- A rotation issues NEW key material, so its fingerprint differs by definition —
+-- that is what a fingerprint is for. Freezing the column therefore made
+-- `ai_provider_key_rotate` impossible: its own UPDATE writes
+-- `key_fingerprint = p_fingerprint` and was refused with IMMUTABLE_COLUMN,
+-- permanently, for every key. Reproduced live on a clean 001-017 database; no pin
+-- caught it because `test_013` T11c only exercises the `authenticated`-role
+-- refusal and never a successful rotate. Rotation has never worked.
+--
+-- The column is not simply unfrozen. The protection it was reaching for is real —
+-- nobody should be able to point a key row at different material without going
+-- through the rotate path — and it is re-expressed below as the thing that is
+-- actually true of a rotation: the fingerprint may change ONLY when `key_ref`,
+-- the vault locator, changes in the same statement. `key_ref` was never in the
+-- frozen list (rotate writes it too), which is what made the list inconsistent
+-- with itself and hid the defect: one half of "the material changed" was frozen
+-- and the other was not.
 SELECT app.finalise_table('core','ai_provider_keys',false,NULL,
-  ARRAY['provider_ref','provider','key_fingerprint','added_by','added_at']);
+  ARRAY['provider_ref','provider','added_by','added_at']);
+
+CREATE OR REPLACE FUNCTION app.enforce_key_material_pairing()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF NEW.key_fingerprint IS NOT DISTINCT FROM OLD.key_fingerprint THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.key_ref IS NOT DISTINCT FROM OLD.key_ref THEN
+    RAISE EXCEPTION
+      'IMMUTABLE_COLUMN: core.ai_provider_keys.key_fingerprint changed while '
+      'key_ref did not. A fingerprint identifies the key material; changing it '
+      'alone points this row at a different secret while still naming the old '
+      'vault locator, which is either a rotation that forgot half of itself or '
+      'somebody swapping material without going through ai_provider_key_rotate.'
+      USING ERRCODE = 'integrity_constraint_violation',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','IMMUTABLE_COLUMN','column','key_fingerprint')::text;
+  END IF;
+
+  RETURN NEW;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.enforce_key_material_pairing() FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION app.enforce_key_material_pairing() IS
+  'core.ai_provider_keys: key_fingerprint may change only when key_ref changes in '
+  'the same statement, which is what a rotation is. Replaces freezing the column '
+  'outright, which made rotation impossible for every key. 013.';
+
+DROP TRIGGER IF EXISTS ai_provider_keys_material_pairing ON core.ai_provider_keys;
+CREATE TRIGGER ai_provider_keys_material_pairing
+  BEFORE UPDATE ON core.ai_provider_keys
+  FOR EACH ROW EXECUTE FUNCTION app.enforce_key_material_pairing();
 
 CREATE INDEX ai_provider_keys_status_idx
   ON core.ai_provider_keys (tenant_id, status, provider);
@@ -2122,6 +2178,33 @@ DECLARE
   v_audit_id uuid;
 BEGIN
   IF NEW.last_revealed_at IS NOT DISTINCT FROM OLD.last_revealed_at THEN
+    RETURN NEW;
+  END IF;
+
+  -- ⚠ A ROTATION IS NOT A REVEAL, AND THIS TRIGGER USED TO DISAGREE.
+  --
+  -- `ai_provider_key_rotate` issues new key material and CLEARS `last_revealed_at`,
+  -- because the 24-hour reveal ceiling is per key material and the previous
+  -- reveal no longer constrains the new one. That clear is a write to this column,
+  -- so the check below demanded an `app.key_reveal_audit` GUC that `rotate` has no
+  -- reason to set — and raised REVEAL_AUDIT_REQUIRED. Permanently, for any key
+  -- that had ever been revealed, which is exactly the key a security team needs to
+  -- rotate. Reproduced live: set -> reveal -> rotate on one provider_ref gives
+  --   42501  core.ai_provider_keys.last_revealed_at may only be written by the
+  --          audited reveal path (M-10) ... {"code":"REVEAL_AUDIT_REQUIRED"}
+  -- and `test_013` never caught it because T11c only exercises the `authenticated`
+  -- role refusal, never a successful rotate.
+  --
+  -- The exemption is narrow on purpose. It is not "any NULL write": it is a write
+  -- that CLEARS the stamp AND changes the key material in the same statement.
+  -- Nothing about that shape can leak a secret — the column is being emptied, not
+  -- filled, and the row is getting a new `key_ref` — whereas the attack this
+  -- trigger exists to stop is a caller BUMPING the stamp to move the ceiling
+  -- without leaving an audit row. Clearing the stamp without changing the material
+  -- is still refused, because that is the shape of somebody resetting the ceiling.
+  IF NEW.last_revealed_at IS NULL
+     AND NEW.key_ref IS DISTINCT FROM OLD.key_ref
+     AND NEW.key_fingerprint IS DISTINCT FROM OLD.key_fingerprint THEN
     RETURN NEW;
   END IF;
 

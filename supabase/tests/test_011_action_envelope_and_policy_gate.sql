@@ -861,11 +861,11 @@ BEGIN
       -- one of them is the envelope's own bookkeeping.
       IF v_role = 'anon' THEN
         ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
-          pg_catalog.format('T14a FAIL: %s has SELECT on %s',v_role,v_relation);
+          pg_catalog.format('T16a FAIL: %s has SELECT on %s',v_role,v_relation);
       ELSIF v_relation = 'core.v_approval_requests'::regclass
          OR v_relation::text LIKE 'app.%' THEN
         ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
-          pg_catalog.format('T14a FAIL: %s has SELECT on %s, which 014 '
+          pg_catalog.format('T16a FAIL: %s has SELECT on %s, which 014 '
             'deliberately leaves ungranted',v_role,v_relation);
       END IF;
       ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'INSERT')
@@ -893,7 +893,7 @@ BEGIN
            'expire_suggested_drafts','enqueue_jury','enqueue_jury_samples'])
     LOOP
       ASSERT NOT pg_catalog.has_function_privilege(v_role,v_function,'EXECUTE'),
-        pg_catalog.format('T14b FAIL: %s has EXECUTE on %s',v_role,v_function);
+        pg_catalog.format('T16b FAIL: %s has EXECUTE on %s',v_role,v_function);
     END LOOP;
   END LOOP;
 
@@ -902,5 +902,236 @@ BEGIN
   RAISE NOTICE 'T14 PASS - zero client SELECT/EXECUTE grants on every 011 object.';
 END;
 $t1_t13_t14$;
+
+
+-- ─── T16 · CRIT · a dispatched external effect becomes a claimable job ─────
+-- The finding: `app.apply_effects` wrote every EXTERNAL effect `DISPATCHED` and
+-- stopped. `app.enqueue_effect_jobs` (012) is what turns a dispatched effect
+-- into an `app.outbox` row the Node worker can claim, and a repo-wide grep found
+-- its only caller anywhere — apps/, packages/, every migration and rollback —
+-- was `test_012` itself. So every PROPOSAL_SEND, INVOICE_PUSH, REMINDER_SEND and
+-- BROADCAST_SEND reported success, moved its action to EXECUTING, and waited
+-- forever for a job that was never created. Nothing alarms on it: `DISPATCHED`
+-- is a healthy-looking status and no timeout watches it.
+--
+-- This pin walks the whole seam rather than asserting the call exists: perform an
+-- action that plans an external effect, then CLAIM the job as the worker does.
+-- A pin that only checked `app.outbox` had a row would pass against a row the
+-- worker could never take.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.seam_action',
+  pg_temp.t011_perform('PROPOSAL_SEND','PRO-T011-5','{"channel":"EMAIL"}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+-- PROPOSAL_SEND is policy-gated, so the action queues rather than executing.
+-- APPROVING it is what reaches app.apply_effects at all — which is the point:
+-- the seam being tested is downstream of the approval, and an approved action
+-- that produces no job is the exact silent failure this pin exists for.
+SELECT pg_catalog.set_config('t011.seam_approval_id',(
+  SELECT approval.id::text FROM core.approval_requests AS approval
+   WHERE approval.target_ref = 'PRO-T011-5'
+   ORDER BY approval.created_at DESC LIMIT 1),true);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.seam_decide',
+  pg_temp.t011_decide(pg_catalog.current_setting('t011.seam_approval_id')::uuid,
+    'APPROVE',NULL)::text,true);
+RESET ROLE;
+
+DO $t16$
+DECLARE
+  v_res     jsonb := pg_catalog.current_setting('t011.seam_action')::jsonb;
+  v_req     uuid;
+  v_effects integer;
+  v_jobs    integer;
+  v_claimed_n integer;
+  v_status  text;
+BEGIN
+  ASSERT (v_res->>'ok')::boolean,
+    pg_catalog.format('T16 SETUP FAIL: the action did not succeed, so there is '
+      'no dispatched effect to follow: %s', v_res::text);
+  ASSERT (pg_catalog.current_setting('t011.seam_decide')::jsonb ->> 'ok')::boolean,
+    pg_catalog.format('T16 SETUP FAIL: the approval was not granted, so '
+      'apply_effects never ran: %s', pg_catalog.current_setting('t011.seam_decide'));
+
+  SELECT id, status INTO v_req, v_status
+    FROM core.action_requests
+   WHERE target_ref = 'PRO-T011-5'
+   ORDER BY created_at DESC LIMIT 1;
+  ASSERT v_req IS NOT NULL, 'T16 SETUP FAIL: no action_request was written.';
+
+  SELECT pg_catalog.count(*) INTO v_effects
+    FROM app.action_effects
+   WHERE action_request_id = v_req AND kind = 'EXTERNAL' AND status = 'DISPATCHED';
+  ASSERT v_effects > 0,
+    pg_catalog.format('T16 SETUP FAIL: PROPOSAL_SEND planned %s dispatched '
+      'external effects. If this action type stopped planning one, this pin is '
+      'measuring nothing and needs a different action type.', v_effects);
+
+  -- T14a · THE JOB EXISTS. Against the pre-fix SQL this is zero, and everything
+  -- above it still passes — which is exactly why the defect survived 13 green
+  -- pins.
+  SELECT pg_catalog.count(*) INTO v_jobs
+    FROM app.outbox
+   WHERE action_request_id = v_req;
+  ASSERT v_jobs = v_effects,
+    pg_catalog.format('T16a FAIL: %s external effect(s) were dispatched and %s '
+      'job(s) exist. app.apply_effects marks effects DISPATCHED; nothing sends '
+      'them unless app.enqueue_effect_jobs turns them into outbox rows. A '
+      'DISPATCHED effect with no job is an email the customer never gets, with no '
+      'error anywhere.', v_effects, v_jobs);
+
+  -- T14b · and the action is EXECUTING, not EXECUTED: work is outstanding.
+  ASSERT v_status = 'EXECUTING',
+    pg_catalog.format('T16b FAIL: the action is %s with an external effect '
+      'outstanding.', v_status);
+
+  -- T16c · THE WORKER CAN ACTUALLY TAKE IT. The half a row-count cannot prove:
+  -- a row in app.outbox the worker cannot claim is the same outage, one
+  -- indirection further down. claim_jobs returns SETOF app.outbox, so this counts
+  -- the rows it handed out that belong to this action.
+  SET LOCAL ROLE service_role;
+  SELECT pg_catalog.count(*) INTO v_claimed_n
+    FROM app.claim_jobs('t016-worker', NULL, NULL, 10, interval '60 seconds', 100) AS j
+   WHERE j.action_request_id = v_req;
+  RESET ROLE;
+
+  ASSERT v_claimed_n = v_effects,
+    pg_catalog.format('T16c FAIL: app.claim_jobs handed out %s of this action''s '
+      '%s job(s). A queued job the worker cannot claim never sends either.',
+      v_claimed_n, v_effects);
+
+  RAISE NOTICE
+    'T16 PASS - a HUMAN PROPOSAL_SEND plans % external effect(s), each becomes an '
+    'app.outbox row, the action sits at EXECUTING, and the worker''s own '
+    'app.claim_jobs takes the work.', v_effects;
+END;
+$t16$;
+
+
+
+-- ─── T17 · HIGH · a HUMAN with no permission cannot perform an action ──────
+-- The finding: `core.action_policies` decides whether an action needs APPROVAL,
+-- and it was ALSO, accidentally, the only thing between a caller and execution.
+-- Where no policy row matched — three of the 22 action types have none at all for
+-- a freshly provisioned tenant, and any type's conditions can exclude a case —
+-- dispatch fell through to a bare EXECUTING with no permission check anywhere in
+-- 011. `app.has_permission` was called exactly once in the whole file, inside
+-- decide_approval, and 014's wrapper re-validates nothing.
+--
+-- Four ways, because "gated" has four halves and checking one proves nothing
+-- about the others:
+--   (a) a role WITHOUT the permission is refused          — the finding
+--   (b) a role WITH it is admitted                        — not an outage
+--   (c) the refusal names the permission                  — actionable, not opaque
+--   (d) every active action type carries one              — no 23rd type slips in
+--
+-- ENQUIRY_ARCHIVE is one of the three with no policy row at all, so it exercises
+-- the pure fall-through. PAYMENT_RECORD is the review's own worked example and is
+-- money-moving, so it also proves the new check runs BEFORE the aal2 gate rather
+-- than hiding behind it.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_sales_enquiry_archive',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_sales_payment_record',
+  pg_temp.t011_perform('PAYMENT_RECORD','INV-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_md_enquiry_archive',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-000000000001"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.perm_md_payment_record',
+  pg_temp.t011_perform('PAYMENT_RECORD','INV-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+DO $t17$
+DECLARE
+  v_sales_arch jsonb := pg_catalog.current_setting('t011.perm_sales_enquiry_archive')::jsonb;
+  v_md_arch    jsonb := pg_catalog.current_setting('t011.perm_md_enquiry_archive')::jsonb;
+  v_sales_pay  jsonb := pg_catalog.current_setting('t011.perm_sales_payment_record')::jsonb;
+  v_bad        text;
+BEGIN
+  -- (d) first: if a type has no required_permission the rest proves nothing.
+  SELECT pg_catalog.string_agg(t.key, ', ' ORDER BY t.key) INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.active AND t.required_permission IS NULL;
+  ASSERT v_bad IS NULL,
+    pg_catalog.format('T17d FAIL: active action type(s) with no '
+      'required_permission: %s. On the HUMAN path that used to mean "anyone".', v_bad);
+
+  SELECT pg_catalog.string_agg(t.key, ', ' ORDER BY t.key) INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.active
+     AND NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp
+                      WHERE rp.permission = t.required_permission);
+  ASSERT v_bad IS NULL,
+    pg_catalog.format('T17d2 FAIL: action type(s) requiring a permission no role '
+      'holds: %s. That is an outage, not a gate.', v_bad);
+
+  -- (a) SALES does not hold enquiry:archive... it does, scope-narrowed, so the
+  -- probe that matters here is payment:record, which SALES genuinely lacks.
+  ASSERT NOT (v_sales_pay->>'ok')::boolean,
+    pg_catalog.format('T17a FAIL: a SALES principal performed PAYMENT_RECORD. '
+      '002 gives payment:record to FINANCE, MD and ADMIN and not to SALES, and '
+      'before this check the only thing that would have stopped them was a policy '
+      'row happening to match — which for an amount nothing conditions on, it does '
+      'not. The payment posts. Result: %s', v_sales_pay::text);
+
+  -- (c) and the refusal says what is missing.
+  ASSERT v_sales_pay->>'detailText' LIKE '%payment:record%',
+    pg_catalog.format('T17c FAIL: the refusal does not name the permission the '
+      'caller lacks, so the only way to find out is to read 011: %s',
+      COALESCE(v_sales_pay->>'detailText','<none>'));
+
+  -- T17c3 · AND IT DOES NOT LEAK THE PAYLOAD SCHEMA. The first version of the
+  -- check sat after payload validation, so an unauthorized SALES probe came back
+  -- with {"field":"amount","reason":"REQUIRED"} — the shape of an action they may
+  -- not perform, handed to them by the refusal itself.
+  ASSERT v_sales_pay->>'detailText' NOT LIKE '%VALIDATION_FAILED%',
+    pg_catalog.format('T17c3 FAIL: an unauthorized caller was told what the '
+      'payload requires before being told they may not call it: %s',
+      v_sales_pay->>'detailText');
+  ASSERT v_sales_pay->>'detailText' LIKE '%FORBIDDEN%',
+    pg_catalog.format('T17c2 FAIL: the refusal is not coded FORBIDDEN: %s',
+      COALESCE(v_sales_pay->>'detailText','<none>'));
+
+  -- (b) a role that DOES hold the permission still gets through. ENQUIRY_ARCHIVE
+  -- has no policy row at all, so this is the pure fall-through path: before the
+  -- fix it executed for everyone, and after it must still execute for the right
+  -- someone.
+  ASSERT (v_md_arch->>'ok')::boolean,
+    pg_catalog.format('T17b FAIL: an MD, who holds enquiry:archive, was refused '
+      'ENQUIRY_ARCHIVE. Default-deny must not become deny-all: the three action '
+      'types with no policy row would then be unperformable by anybody. %s',
+      v_md_arch::text);
+
+  RAISE NOTICE
+    'T17 PASS - every active action type names a permission some role holds, a '
+    'SALES principal is refused PAYMENT_RECORD with the missing permission named, '
+    'and an MD still performs ENQUIRY_ARCHIVE through the no-policy path that '
+    'used to be open to everyone.';
+END;
+$t17$;
+
 
 ROLLBACK;

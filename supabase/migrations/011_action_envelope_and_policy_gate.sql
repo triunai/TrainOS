@@ -1963,6 +1963,40 @@ BEGIN
        AND effect.kind = 'EXTERNAL'
        AND effect.status = 'DISPATCHED'
   ) THEN
+    -- ⚠ AND NOW ACTUALLY HAND THEM TO THE WORKER. This call is the seam between
+    -- the envelope and the queue, and until it was added NOTHING CROSSED IT.
+    --
+    -- `apply_effects` marked every EXTERNAL effect `DISPATCHED` and stopped there.
+    -- `app.enqueue_effect_jobs` (012) is what turns a dispatched effect into a row
+    -- in `app.outbox` for the Node worker to claim, and a repo-wide grep found its
+    -- only caller anywhere — `apps/`, `packages/`, every migration and rollback —
+    -- was `test_012`. So every PROPOSAL_SEND, INVOICE_PUSH, REMINDER_SEND and
+    -- BROADCAST_SEND reported success, moved the action to EXECUTING, and then
+    -- waited forever for a job nobody had created. Silently: `DISPATCHED` is a
+    -- perfectly healthy-looking status and no timeout watches it.
+    --
+    -- WHY A FORWARD REFERENCE IS SAFE HERE, stated because it looks wrong. 011 is
+    -- applied before 012, so `app.enqueue_effect_jobs` does not exist when this
+    -- function is CREATEd. plpgsql resolves calls at EXECUTION time, not at
+    -- creation, so that is legal — and the explicit existence check below turns
+    -- the one case where it would matter, an 011-only database actually running an
+    -- external action, into a sentence instead of `function does not exist`.
+    -- The alternative — re-creating this function at the end of 012 — would put
+    -- one function's real body in two files, which is the drift this pack's own
+    -- rules are written against.
+    IF pg_catalog.to_regprocedure('app.enqueue_effect_jobs(uuid,uuid)') IS NULL THEN
+      RAISE EXCEPTION
+        'app.enqueue_effect_jobs is absent, so % external effect(s) on action % '
+        'would be marked DISPATCHED and never sent. 012 creates it; this database '
+        'has 011 without 012.',
+        (SELECT pg_catalog.count(*) FROM app.action_effects AS e
+          WHERE e.action_request_id = v_request.id AND e.kind = 'EXTERNAL'),
+        v_request.id
+        USING ERRCODE = 'undefined_function';
+    END IF;
+
+    PERFORM app.enqueue_effect_jobs(v_request.id, v_request.tenant_id);
+
     UPDATE core.action_requests SET status = 'EXECUTING'
      WHERE id = v_request.id;
   ELSE
@@ -1970,8 +2004,108 @@ BEGIN
        SET status = 'EXECUTED', completed_at = pg_catalog.now()
      WHERE id = v_request.id;
   END IF;
+
+  -- T8 · CLEAR THE APPLIER GUC. `app.effect_applier` names the in-flight action
+  -- request and is what `enforce_state_transition` reads to authorize a gated
+  -- write. It was set once and never cleared — harmless under PostgREST's
+  -- one-RPC-per-transaction model, and a real residue inside `app.bulk_decide`'s
+  -- loop, where the SECOND approval's effects would run with the FIRST one's
+  -- applier still named. Transaction-local, so this costs nothing and removes the
+  -- whole class.
+  PERFORM pg_catalog.set_config('app.effect_applier', '', true);
 END;
 $fn$;
+
+-- ═══ 7b · WHO MAY PERFORM AN ACTION AT ALL ═════════════════════════════════
+--
+-- THE DEFECT THIS CLOSES. `app.has_permission` was called exactly ONCE in all of
+-- 011, inside `decide_approval`. On the HUMAN path, if no `core.action_policies`
+-- row matched, dispatch fell through to a bare `EXECUTING` with NO PERMISSION
+-- CHECK OF ANY KIND. A SALES principal could execute `PAYMENT_RECORD` against an
+-- invoice whose outstanding amount happened to satisfy no policy condition, and
+-- the payment posted. Three action types have no policy row at all for a freshly
+-- provisioned tenant — measured, not assumed: `ENQUIRY_ARCHIVE`,
+-- `OPPORTUNITY_CONVERT` and `TNA_RECOMMENDATION_ACCEPT` — so for those the
+-- fall-through was not an edge case, it was the only path. 014's wrapper
+-- re-validates nothing, so nothing downstream closed it either.
+--
+-- WHY A COLUMN AND NOT A HARDCODED CASE. 002 already wrote the whole permission
+-- catalogue and 014's gates already read it through `app.has_permission`. A CASE
+-- here would be a second copy of an authorization model that exists, which is the
+-- drift this repo's rules are written against. The column makes the answer data,
+-- visible in one query, and seeded beside the action types it describes.
+--
+-- EVERY ACTIVE TYPE MUST CARRY ONE. The verify block below refuses a NULL, so a
+-- 23rd action type cannot be added without somebody deciding who may perform it —
+-- which is the question that went unasked for all 22 of these.
+ALTER TABLE app.action_types
+  ADD COLUMN IF NOT EXISTS required_permission text;
+
+UPDATE app.action_types AS t SET required_permission = m.perm
+  FROM (VALUES
+    ('PROPOSAL_SEND',              'proposal:send'),
+    ('QUOTATION_APPLY',            'quotation:apply'),
+    ('DISCOUNT_APPROVE',           'discount:approve'),
+    ('INVOICE_CREATE',             'invoice:create'),
+    ('INVOICE_PUSH',               'invoice:push'),
+    ('PAYMENT_RECORD',             'payment:record'),
+    ('ENQUIRY_ARCHIVE',            'enquiry:archive'),
+    ('OPPORTUNITY_CONVERT',        'enquiry:convert'),
+    ('TNA_RECOMMENDATION_ACCEPT',  'tna:recommendation:accept'),
+    ('TRAINER_BOOK',               'trainer:book'),
+    ('ATTENDANCE_APPROVE',         'attendance:approve'),
+    ('ATTENDANCE_UNLOCK',          'attendance:unlock'),
+    ('ENGAGEMENT_CLOSE_OUT',       'engagement:close_out'),
+    ('HRDC_PACKET_MARK_SUBMITTED', 'hrdc:mark_submitted'),
+    ('RULE_CHANGE_APPROVE',        'compliance:rule:approve'),
+    ('FOLLOWUP_SEND',              'followup:send'),
+    ('REMINDER_SEND',              'collection:remind'),
+    ('BROADCAST_SEND',             'broadcast:send'),
+    ('AGENT_PAUSE',                'agent:pause'),
+    ('AGENT_AUTONOMY_CHANGE',      'agent:autonomy'),
+    ('BUDGET_CAP_RAISE',           'ai:budget:raise'),
+    ('ACCOUNT_TRADING_HOLD',       'organisation:write')
+  ) AS m(key, perm)
+ WHERE t.key = m.key
+   AND t.required_permission IS DISTINCT FROM m.perm;
+
+DO $req_perm$
+DECLARE v_bad text;
+BEGIN
+  -- Every active type has one.
+  SELECT pg_catalog.string_agg(t.key, ', ' ORDER BY t.key) INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.active AND t.required_permission IS NULL;
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      '011: action type(s) with no required_permission: %. Every action a human '
+      'can perform needs somebody to have decided who may perform it; a NULL here '
+      'is that decision going unmade, and the HUMAN path used to treat it as '
+      '"anyone".', v_bad;
+  END IF;
+
+  -- And every one names a permission 002 actually issued. A typo would produce an
+  -- action nobody can perform, which reads as very secure and is an outage.
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format('%s -> %s', t.key, t.required_permission), ', ' ORDER BY t.key)
+    INTO v_bad
+    FROM app.action_types AS t
+   WHERE t.required_permission IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM app.role_permissions AS rp
+                      WHERE rp.permission = t.required_permission);
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      '011: action type(s) naming a permission no role holds: %. That is an action '
+      'nobody can perform, which is an outage wearing security''s clothes.', v_bad;
+  END IF;
+END;
+$req_perm$;
+
+COMMENT ON COLUMN app.action_types.required_permission IS
+  'The app.role_permissions key a HUMAN or CLIENT actor must hold to perform this '
+  'action. Checked by app.perform_action BEFORE dispatch, independently of whether '
+  'any core.action_policies row matches — the policy gate decides whether an action '
+  'needs APPROVAL, never whether this caller may ask for it at all. 011.';
 
 -- ═══ 8 · The action envelope ════════════════════════════════════════════════
 
@@ -2130,6 +2264,49 @@ BEGIN
             DETAIL = pg_catalog.jsonb_build_object(
               'code','VALIDATION_FAILED','fields',pg_catalog.jsonb_build_array(
                 pg_catalog.jsonb_build_object('field','type','reason','UNKNOWN_ACTION_TYPE')))::text;
+  END IF;
+
+  -- ⚠ GUARD c2 · MAY THIS ACTOR PERFORM THIS ACTION AT ALL. Checked HERE —
+  -- immediately after the action type is known and BEFORE the payload is
+  -- validated — because the two questions are different, only one of them was
+  -- being asked, and answering the other one first tells an unauthorized caller
+  -- which fields the action takes. An earlier draft of this block sat after guard
+  -- d and the pin caught it: a SALES principal probing PAYMENT_RECORD got back
+  -- `{"field":"amount","reason":"REQUIRED"}`, which is the payload schema, from a
+  -- call they were never allowed to make.
+  --
+  -- `core.action_policies` decides whether an action needs APPROVAL. It was also,
+  -- accidentally, the only thing standing between a caller and execution: if no
+  -- policy row MATCHED — either because the type has none (three of the 22 have
+  -- none for a freshly provisioned tenant, measured) or because its conditions
+  -- excluded this case — dispatch fell through to a bare EXECUTING with no
+  -- permission check anywhere in 011. A SALES principal could run PAYMENT_RECORD
+  -- against an invoice whose amount satisfied no condition, and the payment
+  -- posted. `app.has_permission` was called exactly once in this entire file, in
+  -- `decide_approval`, and 014's wrapper re-validates nothing.
+  --
+  -- HUMAN and CLIENT only. An AGENT's authority is the autonomy grant and the
+  -- policy ceiling, which the sections below evaluate in full and which is a
+  -- different model — agents hold no role in `app.role_permissions`. A SYSTEM
+  -- actor is the database acting on its own behalf and has no principal to check.
+  IF v_actor_kind IN ('HUMAN','CLIENT') THEN
+    IF v_type.required_permission IS NULL THEN
+      RAISE EXCEPTION
+        'action type % has no required_permission, so who may perform it has '
+        'never been decided', v_type.key
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','FORBIDDEN','reason','NO_REQUIRED_PERMISSION')::text;
+    END IF;
+
+    IF NOT app.has_permission(v_type.required_permission) THEN
+      RAISE EXCEPTION
+        'this principal may not perform %', v_type.key
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','FORBIDDEN',
+                'requiredPermission', v_type.required_permission)::text;
+    END IF;
   END IF;
 
   -- Guard d: validate the schema before using it. The explicit assertion is
