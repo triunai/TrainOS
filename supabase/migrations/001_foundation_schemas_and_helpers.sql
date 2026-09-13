@@ -255,8 +255,11 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA core   REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 -- No FOR ROLE: like every line above this binds to the migration role, which
 -- is `postgres` on hosted. Guarded per role so a bare Postgres without the
 -- Supabase roles is a no-op. The assertion after it fails 001 closed if any
--- default grant to the three roles survives for the migration role in any
--- schema, including a schema-less (global) entry, before a single table exists.
+-- default grant to the three roles survives for the migration role in a schema
+-- 002-019 create objects in (public, core, app) or in a schema-less (global)
+-- entry, before a single table exists. Hosted also ships postgres-owned
+-- defaults IN SCHEMA storage; nothing here creates objects there, they are
+-- Supabase's to keep, and an unscoped check refused to apply on them.
 DO $hosted_default_acl$
 DECLARE
   v_role     text;
@@ -281,6 +284,7 @@ BEGIN
     LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = acl.defaclnamespace
     CROSS JOIN LATERAL pg_catalog.aclexplode(acl.defaclacl) AS item
    WHERE acl.defaclrole = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+     AND (acl.defaclnamespace = 0 OR namespace.nspname IN ('public','core','app'))
      AND item.grantee IN (SELECT oid FROM pg_catalog.pg_roles
                            WHERE rolname IN ('anon','authenticated','service_role'));
   IF v_leftover IS NOT NULL THEN
