@@ -234,6 +234,22 @@ export interface FixtureClientConfig {
 const sleep = (ms: number): Promise<void> =>
   ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Deep copy for the read/write response boundary: what every read serves and
+ * every write's inbound payload gets run through, so a caller can never hold
+ * a reference into the live store.
+ *
+ * `structuredClone` rather than a JSON round-trip: `putAiRouting` clears a
+ * staged edit with an explicit `staged: undefined`, and `JSON.stringify`
+ * drops undefined-valued keys entirely, which would silently turn that clear
+ * into a no-op. `structuredClone` keeps the key. Falls back to the JSON
+ * round-trip only if a test runtime lacks `structuredClone` — every fixture
+ * is JSON-safe by construction (see `store.ts`'s own `clone`), so that
+ * fallback is safe everywhere except the one undefined-clearing idiom above.
+ */
+const cloneValue = <T>(value: T): T =>
+  typeof structuredClone === "function" ? structuredClone(value) : (JSON.parse(JSON.stringify(value)) as T);
+
 /** Every calendar day in an inclusive `YYYY-MM-DD` range. */
 const datesBetween = (from: DateOnly, to: DateOnly): DateOnly[] => {
   const days: DateOnly[] = [];
@@ -341,7 +357,7 @@ export class FixtureClient {
   async #read<T>(value: T, status = 200): Promise<T> {
     await sleep(this.#latencyMs);
     this.#lastMeta = { status, headers: {} };
-    return value;
+    return cloneValue(value);
   }
 
   /**
@@ -354,7 +370,7 @@ export class FixtureClient {
     const key = options.idempotencyKey;
     if (!key) {
       this.#lastMeta = { status, headers: {} };
-      return run();
+      return cloneValue(run());
     }
     const bodyHash = stableStringify(body);
     const seen = this.#store.idempotency.get(key);
@@ -367,12 +383,12 @@ export class FixtureClient {
         );
       }
       this.#lastMeta = { status: 200, headers: { [IDEMPOTENT_REPLAY_HEADER]: "true" } };
-      return seen.response as T;
+      return cloneValue(seen.response as T);
     }
     const response = run();
-    this.#store.idempotency.set(key, { bodyHash, response, at: NOW });
+    this.#store.idempotency.set(key, { bodyHash, response: cloneValue(response), at: NOW });
     this.#lastMeta = { status, headers: {} };
-    return response;
+    return cloneValue(response);
   }
 
   /**
@@ -478,9 +494,9 @@ export class FixtureClient {
     await sleep(this.#latencyMs);
     const view = this.#store.savedViews.find((candidate) => candidate.id === id);
     if (!view) throw notFound("Saved view", id);
-    Object.assign(view, body);
+    Object.assign(view, cloneValue(body));
     this.#lastMeta = { status: 200, headers: {} };
-    return view;
+    return cloneValue(view);
   }
 
   async deleteView(id: string): Promise<void> {
@@ -545,7 +561,7 @@ export class FixtureClient {
     const field = enquiry.extraction[patch.field];
     if (!field) throw validationFailed(`Unknown extraction field ${String(patch.field)}.`);
     const actor = this.#actor();
-    (field as { value: unknown }).value = patch.value;
+    (field as { value: unknown }).value = cloneValue(patch.value);
     field.provenance = {
       ...(field.provenance ?? { origin: "AI_SUGGESTED" }),
       origin: "AI_SUGGESTED",
@@ -553,7 +569,7 @@ export class FixtureClient {
     };
     enquiry.updatedAt = NOW;
     this.#lastMeta = { status: 200, headers: {} };
-    return enquiry;
+    return cloneValue(enquiry);
   }
 
   async listFollowUps(page?: PageRequest): Promise<ListResponse<FollowUp>> {
@@ -629,7 +645,7 @@ export class FixtureClient {
     const opportunity = byIdOrRef(this.#store.opportunities, id);
     if (!opportunity) throw notFound("Opportunity", id);
     const fromStage = opportunity.stage;
-    Object.assign(opportunity, patch);
+    Object.assign(opportunity, cloneValue(patch));
     opportunity.updatedAt = NOW;
     if (patch.stage && patch.stage !== fromStage) {
       this.events.emit(
@@ -640,7 +656,7 @@ export class FixtureClient {
       );
     }
     this.#lastMeta = { status: 200, headers: {} };
-    return opportunity;
+    return cloneValue(opportunity);
   }
 
   /* ---------------------------------------------------------------- *
@@ -711,10 +727,10 @@ export class FixtureClient {
         requiredRole: "ADMIN",
       });
     }
-    Object.assign(programme, body);
+    Object.assign(programme, cloneValue(body));
     programme.updatedAt = NOW;
     this.#lastMeta = { status: 200, headers: {} };
-    return programme;
+    return cloneValue(programme);
   }
 
   async listTrainers(page?: PageRequest): Promise<ListResponse<FixtureTrainer>> {
@@ -822,7 +838,7 @@ export class FixtureClient {
     };
     proposal.updatedAt = NOW;
     this.#lastMeta = { status: 200, headers: {} };
-    return proposal;
+    return cloneValue(proposal);
   }
 
   async regenerateProposalSection(id: string, n: number): Promise<ProposalSectionRegenerateResponse> {
@@ -858,7 +874,7 @@ export class FixtureClient {
       NOW,
     );
     this.#lastMeta = { status: 200, headers: {} };
-    return { section, runId };
+    return cloneValue({ section, runId });
   }
 
   async getProposalPreview(id: string, format: "HTML" | "PDF" = "HTML"): Promise<ProposalPreview> {
@@ -917,7 +933,7 @@ export class FixtureClient {
     const quotation = byIdOrRef(this.#store.quotations, id);
     if (!quotation) throw notFound("Quotation", id);
     if (body.lines) {
-      quotation.lines = body.lines;
+      quotation.lines = cloneValue(body.lines);
       quotation.directCost = myr(
         body.lines.reduce((total: number, line: QuotationLine) => total + line.total.amount, 0),
       );
@@ -935,7 +951,7 @@ export class FixtureClient {
     quotation.commission = myr(Math.round(sellPrice.amount * quotation.commissionRate));
     quotation.updatedAt = NOW;
     this.#lastMeta = { status: 200, headers: {} };
-    return withFloors(quotation, programme);
+    return cloneValue(withFloors(quotation, programme));
   }
 
   #programmeForQuotation(quotation: Quotation): Programme | undefined {
@@ -1236,7 +1252,7 @@ export class FixtureClient {
     sheet.summary.presentAm = sheet.rows.filter((candidate) => candidate.am.present).length;
     sheet.summary.presentPm = sheet.rows.filter((candidate) => candidate.pm.present).length;
     this.#lastMeta = { status: 200, headers: {} };
-    return sheet;
+    return cloneValue(sheet);
   }
 
   async exportAttendance(id: string, format = "HRDC"): Promise<AttendanceExport> {
@@ -1306,7 +1322,7 @@ export class FixtureClient {
       );
     }
     this.#lastMeta = { status: 200, headers: {} };
-    return packet;
+    return cloneValue(packet);
   }
 
   async exportClaimPacket(id: string): Promise<HrdcPacketExport> {
@@ -1478,7 +1494,7 @@ export class FixtureClient {
     }
     grant.level = body.level;
     this.#lastMeta = { status: 200, headers: {} };
-    return agent;
+    return cloneValue(agent);
   }
 
   async pauseAgent(id: string, body: AgentPauseRequest, options: RequestOptions = {}): Promise<Agent> {
@@ -1546,7 +1562,7 @@ export class FixtureClient {
       NOW,
     );
     this.#lastMeta = { status: 202, headers: {} };
-    return retry;
+    return cloneValue(retry);
   }
 
   async deadLetterRun(
@@ -1626,7 +1642,7 @@ export class FixtureClient {
     if (!proposal) throw notFound("Portal proposal for token", token);
     proposal.comments.push({ author: body.author, authorKind: "CLIENT", at: NOW, body: body.body });
     this.#lastMeta = { status: 201, headers: {} };
-    return proposal;
+    return cloneValue(proposal);
   }
 
   /** §11 idempotent by token: a second accept returns the original acceptance. */
@@ -1687,7 +1703,7 @@ export class FixtureClient {
       NOW,
     );
     this.#lastMeta = { status: 200, headers: {} };
-    return tna;
+    return cloneValue(tna);
   }
 
   /** §11 the accounting callback, idempotent on `provider + documentId + state`. */
@@ -1721,7 +1737,7 @@ export class FixtureClient {
     }
     this.events.publish("invoices", { invoiceRef: invoice.ref, syncState: payload.state });
     this.#lastMeta = { status: 200, headers: {} };
-    return invoice;
+    return cloneValue(invoice);
   }
 
   /* ---------------------------------------------------------------- *
@@ -1739,9 +1755,9 @@ export class FixtureClient {
     if (roleFor(this.#actorId) !== "ADMIN") {
       throw forbidden("Tier configuration is restricted to ADMIN.", { requiredRole: "ADMIN" });
     }
-    Object.assign(tier, body);
+    Object.assign(tier, cloneValue(body));
     this.#lastMeta = { status: 200, headers: {} };
-    return tier;
+    return cloneValue(tier);
   }
 
   async getAiRouting(): Promise<RoutingResponse> {
@@ -1759,12 +1775,12 @@ export class FixtureClient {
     }
     for (const entry of entries) {
       const existing = this.#store.routingEntries.find((row) => row.actionType === entry.actionType);
-      if (existing) Object.assign(existing, entry);
-      else this.#store.routingEntries.push(entry);
+      if (existing) Object.assign(existing, cloneValue(entry));
+      else this.#store.routingEntries.push(cloneValue(entry));
     }
     this.#store.routingUnsavedChanges = 0;
     this.#lastMeta = { status: 200, headers: {} };
-    return { data: this.#store.routingEntries, unsavedChanges: 0 };
+    return { data: cloneValue(this.#store.routingEntries), unsavedChanges: 0 };
   }
 
   /* ---------------------------------------------------------------- *
@@ -1823,7 +1839,7 @@ export class FixtureClient {
     delete provider.invalidSince;
     delete provider.activeFallbackTier;
     this.#lastMeta = { status: 200, headers: {} };
-    return provider;
+    return cloneValue(provider);
   }
 
   /** §17 returns the key once and writes `ProviderKeyRevealed`. */
@@ -1909,7 +1925,7 @@ export class FixtureClient {
     if (body.cap.amount > budget.cap.amount && roleFor(this.#actorId) !== "MD") {
       throw forbidden("Raising a spend cap is decided by the MD.", { requiredRole: "MD" });
     }
-    budget.cap = body.cap;
+    budget.cap = cloneValue(body.cap);
     budget.state =
       budget.spend.amount >= budget.cap.amount
         ? "PAUSED"
@@ -1917,7 +1933,7 @@ export class FixtureClient {
           ? "NEAR"
           : "WITHIN";
     this.#lastMeta = { status: 200, headers: {} };
-    return budget;
+    return cloneValue(budget);
   }
 
   /* ---------------------------------------------------------------- *
@@ -1937,19 +1953,19 @@ export class FixtureClient {
   /** DECISIONS §3 — a new rule loads as PROPOSED until compliance verifies it. */
   async createComplianceRule(body: Omit<ComplianceRule, "status">): Promise<ComplianceRule> {
     await sleep(this.#latencyMs);
-    const rule: ComplianceRule = { ...body, status: "PROPOSED", verifiedBy: null, verifiedAt: null };
+    const rule: ComplianceRule = { ...cloneValue(body), status: "PROPOSED", verifiedBy: null, verifiedAt: null };
     this.#store.complianceRules.push(rule);
     this.#lastMeta = { status: 201, headers: {} };
-    return rule;
+    return cloneValue(rule);
   }
 
   async putComplianceRule(id: string, body: Partial<ComplianceRule>): Promise<ComplianceRule> {
     await sleep(this.#latencyMs);
     const rule = this.#store.complianceRules.find((candidate) => candidate.id === id);
     if (!rule) throw notFound("Compliance rule", id);
-    Object.assign(rule, body);
+    Object.assign(rule, cloneValue(body));
     this.#lastMeta = { status: 200, headers: {} };
-    return rule;
+    return cloneValue(rule);
   }
 
   async listRuleChanges(page?: PageRequest): Promise<ListResponse<RuleChangeSet>> {
@@ -2036,12 +2052,12 @@ export class FixtureClient {
       lastCheckedAt: NOW,
       monitorStatus: "WATCHING",
       contentHash: "sha256:pending",
-      retrievalScopes: body.retrievalScopes,
+      retrievalScopes: cloneValue(body.retrievalScopes),
       ruleChangeSetId: null,
     };
     this.#store.knowledgeSources.push(source);
     this.#lastMeta = { status: 201, headers: {} };
-    return source;
+    return cloneValue(source);
   }
 
   async checkKnowledgeSource(id: string): Promise<KnowledgeSourceCheckResponse> {
@@ -2183,11 +2199,21 @@ export class FixtureClient {
     );
 
     if (input.sections && input.sections.length > 0) {
-      proposal.sections = input.sections.map((section, index) => ({
+      const sections = input.sections.map((section, index) => ({
         n: index + 1,
         title: section.heading,
         body: section.body,
       }));
+      /* `createProposal` now hands back a copy, not the store's own row (the
+         read/write boundary clones), so the sections have to land on the
+         actual stored proposal explicitly — `proposal` below is just mirrored
+         to match, since it is what this method returns. */
+      const stored = byIdOrRef(this.#store.proposals, proposal.ref);
+      if (stored) {
+        stored.sections = cloneValue(sections);
+        stored.updatedAt = NOW;
+      }
+      proposal.sections = sections;
       proposal.updatedAt = NOW;
     }
 

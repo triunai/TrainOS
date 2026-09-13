@@ -286,7 +286,6 @@ describe("isContractError", () => {
 describe("adding a proposal section", () => {
   it("appends after the highest existing section number", async () => {
     const before = await api.getProposal(PROPOSAL_AURORA);
-    /** Snapshot the numbers, not the object: reads return live store references. */
     const highest = Math.max(...before.sections.map((section) => section.n));
     const countBefore = before.sections.length;
 
@@ -301,18 +300,21 @@ describe("adding a proposal section", () => {
     expect(after.sections).toHaveLength(countBefore + 1);
   });
 
-  it("hands back a live store reference, not a snapshot", async () => {
+  it("hands back an independent copy: an earlier read never sees a later write", async () => {
     /**
-     * Worth pinning because it differs from an HTTP client, which returns a
-     * fresh object per call. A caller holding an earlier read sees later
-     * writes through it.
+     * Worth pinning because it used to be the opposite, on purpose: `#read`
+     * handed back the store's own object, so a caller holding an earlier
+     * read saw later writes through it — exactly the shape of bug that made
+     * a React Query cache look unchanged after an action actually changed
+     * the record. `#read`/`#write` now clone at the boundary.
      */
     const first = await api.getProposal(PROPOSAL_AURORA);
     const second = await api.getProposal(PROPOSAL_AURORA);
-    expect(first).toBe(second);
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
 
     await api.addProposalSection(PROPOSAL_AURORA, { title: "Terms" });
-    expect(first.sections.at(-1)?.title).toBe("Terms");
+    expect(first.sections.at(-1)?.title).not.toBe("Terms");
   });
 
   it("leaves the new section without provenance, because a person wrote it", async () => {

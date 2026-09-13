@@ -37,19 +37,19 @@ describe("getTenant", () => {
   });
 
   /**
-   * Pinned because it is surprising, not because it is desirable.
-   *
-   * `#read` hands back the stored object itself — `getMe`, `getBadges` and
-   * every other read do the same — so a caller that mutates the result has
-   * edited the store for everyone until `reset()`. A screen must treat the
-   * response as read-only. Asserting it here means that the day reads start
-   * cloning, this test fails and the change is made deliberately rather than
-   * discovered later through a screen that quietly stopped corrupting data.
+   * `#read` clones at the boundary — `getMe`, `getBadges` and every other
+   * read do the same — so a caller that mutates a response can never corrupt
+   * the store or a later reader's copy. This used to pin the opposite as a
+   * documented surprise: `#read` handed back the stored object itself, which
+   * meant a row cached by React Query mutated under it the moment any write
+   * touched the same record, and a refetch reported "no change". Two lanes
+   * hit that independently; this now pins the fix instead.
    */
-  it("hands back the stored record itself, as every other read does", async () => {
+  it("returns a fresh copy on every read, not the stored record itself", async () => {
     const first = await api.getTenant();
     const second = await api.getTenant();
-    expect(second).toBe(first);
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
   });
 });
 
