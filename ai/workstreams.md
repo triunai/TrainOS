@@ -180,6 +180,20 @@ single most important ordering constraint on the whole hosted-apply path.**
 Follow-up slice requested for `lane/rpc-018`: PR #5's ten new RPC names,
 rebase on `cloud/migrations`, and the pipeline stage seed.
 
+⚠ **Found while double-checking this commit, not reported by any lane:
+migration 014's actual SQL files are now sitting in the repo tree on
+`main`, landed via PR #12 (the review), separate from and despite PR #6
+being unmerged and BLOCKED.** `git show 02240e6 --stat` (PR #12's merge
+commit) confirms it added `supabase/migrations/014_....sql` (949 lines),
+`supabase/rollbacks/014_..._rollback.sql` (208 lines), and edited SIX
+earlier test files (004, 009, 010, 011, 012, 013) — these are almost
+certainly the "nineteen edits to earlier pins" mentioned two updates ago.
+This is reasonable as review evidence — the review needed the actual file
+to run G6 against — but it means **014's file now exists on `main` even
+though it is BLOCKED and PR #6 has not merged.** Nobody should read the
+file's presence in `supabase/migrations/` as approval to apply it; the
+BLOCK verdict above is what governs, not the file's location.
+
 **018 scope grew 19:35+:** PR #5 (`cloud/web-swap`) found ten feature calls
 with no `TrainOsClient` method and added them to `RPC_NAMES` in
 `apps/web/src/shared/api/rpcClient.ts` without SQL behind them —

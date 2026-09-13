@@ -156,7 +156,11 @@ into the kit per CLAUDE.md's consolidation rule once merged.
 
 **014 is BLOCKED by the D-012 review** (two CRITICAL security findings,
 confirmed) and 015–017 are unreviewed — this now gates everything else in
-the migration line, ahead of R-F. Four items still need the user: exposing
+the migration line, ahead of R-F. **014's SQL file itself is now on `main`
+regardless** (landed via PR #12's merge as review evidence, confirmed via
+`git show 02240e6 --stat`), separate from PR #6, which is still open and
+unmerged — its presence in `supabase/migrations/` is not approval; the
+BLOCK verdict governs. Four items still need the user: exposing
 `core` in the dashboard (R-F, **confirmed still not exposed** by a direct
 `PGRST106` probe at 19:5x), n8n in the proposal, and the four UI rulings
 tracked in `ai/resume-brief.md`. Branch protection on `main` cannot be set
