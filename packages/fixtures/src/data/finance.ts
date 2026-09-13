@@ -34,7 +34,12 @@ import {
   USER_JASON,
 } from "@trainos/contract";
 import { AGENT_COLLECTIONS } from "./agents-ids";
-import { ENGAGEMENT_MERIDIAN, ENGAGEMENT_SUTERA, ENGAGEMENT_WINDOW_CLOSING } from "./engagements";
+import {
+  ENGAGEMENT_AURORA_AT_RISK,
+  ENGAGEMENT_MERIDIAN,
+  ENGAGEMENT_SUTERA,
+  ENGAGEMENT_WINDOW_CLOSING,
+} from "./engagements";
 import { ORG_KENANGA, ORG_MERIDIAN, ORG_SUTERA } from "./organisations";
 import { actorFor } from "./tenant";
 import { entity, myr, sumMoney } from "./_helpers";
@@ -48,6 +53,8 @@ export const INVOICE_KENANGA_OPEN = "INV-2026-0305";
 export const INVOICE_KENANGA_RECENT = "INV-2026-0301";
 /** The stale Sutera invoice that carries the ladder past its last rung. */
 export const INVOICE_SUTERA_STALE = "INV-2026-0244";
+/** Aurora's spring cohort, paid in June — the tax invoice its claim packet cites. */
+export const INVOICE_AURORA_SPRING = "INV-2026-0212";
 
 /** §9 `GET /v1/invoices/{id}`. */
 export const invoices: Invoice[] = [
@@ -273,6 +280,34 @@ export const invoices: Invoice[] = [
     sync: { state: "VALIDATED", provider: "ACCOUNTING", uin: "MY-2026-XXXXXXXX-0244", lastAttemptAt: "2026-07-20T09:05:00+08:00" },
     syncLog: [{ at: "2026-07-20T09:05:00+08:00", state: "VALIDATED", detail: "MyInvois validation returned UIN" }],
     payments: [],
+  },
+  {
+    ...entity(INVOICE_AURORA_SPRING, "2026-05-20T09:00:00+08:00", "2026-06-20T14:00:00+08:00", actorFor(USER_JASON)),
+    organisationRef: ORG_AURORA,
+    engagementRef: ENGAGEMENT_AURORA_AT_RISK,
+    status: "PAID",
+    issuedAt: "2026-05-20T09:00:00+08:00",
+    dueAt: "2026-06-19",
+    termsDays: 30,
+    lines: [
+      {
+        description: "Leading Through Change · 2-day programme",
+        detail: "16–17 May 2026 · Aurora HQ Shah Alam",
+        qty: 1,
+        unit: myr(1850000),
+        amount: myr(1850000),
+      },
+    ],
+    subtotal: myr(1850000),
+    sst: myr(0),
+    sstReason: "TRAINING_EXEMPT",
+    total: myr(1850000),
+    outstanding: myr(0),
+    sync: { state: "VALIDATED", provider: "ACCOUNTING", uin: "MY-2026-XXXXXXXX-0212", lastAttemptAt: "2026-05-20T09:05:00+08:00" },
+    syncLog: [{ at: "2026-05-20T09:05:00+08:00", state: "VALIDATED", detail: "MyInvois validation returned UIN" }],
+    payments: [
+      { id: "pay_0212_1", at: "2026-06-20T14:00:00+08:00", amount: myr(1850000), method: "BANK_TRANSFER", reference: "FT26062011884" },
+    ],
   },
   {
     ...entity(INVOICE_KENANGA_PAID, "2026-05-25T09:00:00+08:00", "2026-06-25T14:00:00+08:00", actorFor(USER_JASON)),

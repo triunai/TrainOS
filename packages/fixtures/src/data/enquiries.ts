@@ -28,6 +28,7 @@ import {
   FOLLOW_UP_AURORA,
   INVOICE_OVERDUE,
   ORG_AURORA,
+  PROGRAMME_DATA_LITERACY,
   PROGRAMME_LEADING_CHANGE,
   PROPOSAL_AURORA,
   RUN_CLASSIFY,
@@ -36,6 +37,7 @@ import {
   TEMPLATE_TNA,
   USER_AMIRAH,
 } from "@trainos/contract";
+import { PROGRAMME_SAFETY, PROGRAMME_SALES_EXCELLENCE } from "./programmes";
 import {
   CONTACT_FARIDAH,
   CONTACT_GANESH,
@@ -94,6 +96,8 @@ interface EnquirySpec {
   topic: string | null;
   audience: string | null;
   timing: string | null;
+  /** The agent's proposed next step, which is what M03-S01's primary acts on. */
+  suggestion?: { programmeId: string; value: Money; summary: string; confidence: number };
 }
 
 /** Builds the repetitive inbox rows. The Aurora row is written out in full below. */
@@ -122,6 +126,26 @@ const buildEnquiry = (spec: EnquirySpec): EnquiryDetail => ({
       : null,
   assignedTo: spec.assignedTo ? actorFor(spec.assignedTo) : null,
   body: spec.body,
+  ...(spec.suggestion
+    ? {
+        suggestedAction: {
+          type: "OPPORTUNITY_CONVERT" as const,
+          autonomy: "ACT_WITH_APPROVAL" as const,
+          summary: spec.suggestion.summary,
+          payload: {
+            value: spec.suggestion.value,
+            questionnaireTemplateId: TEMPLATE_TNA,
+            programmeId: spec.suggestion.programmeId,
+          },
+          provenance: {
+            origin: "AI_SUGGESTED" as const,
+            confidence: spec.suggestion.confidence,
+            agentId: AGENT_LEAD,
+            runId: RUN_CLASSIFY,
+          },
+        },
+      }
+    : {}),
   extraction: {
     topic: { value: spec.topic, provenance: classified(spec.confidence) },
     audience: { value: spec.audience, provenance: classified(spec.confidence) },
@@ -273,6 +297,12 @@ export const enquiries: EnquiryDetail[] = [
     topic: "Sales excellence",
     audience: "48 store managers",
     timing: "2027-01",
+    suggestion: {
+      programmeId: PROGRAMME_SALES_EXCELLENCE,
+      value: myr(6720000),
+      summary: "Convert to an opportunity at RM 67,200, attach a TNA, shortlist PRG-0009",
+      confidence: 0.88,
+    },
   }),
   buildEnquiry({
     ref: "ENQ-2026-0927",
@@ -295,6 +325,12 @@ export const enquiries: EnquiryDetail[] = [
     topic: "Data literacy",
     audience: "22 planners",
     timing: "2026-12",
+    suggestion: {
+      programmeId: PROGRAMME_DATA_LITERACY,
+      value: myr(4200000),
+      summary: "Convert to an opportunity at RM 42,000, attach a TNA, shortlist PRG-0044",
+      confidence: 0.85,
+    },
   }),
   buildEnquiry({
     ref: "ENQ-2026-0925",
@@ -316,6 +352,12 @@ export const enquiries: EnquiryDetail[] = [
     topic: "Safety leadership",
     audience: "35 supervisors",
     timing: "2027-02",
+    suggestion: {
+      programmeId: PROGRAMME_SAFETY,
+      value: myr(2730000),
+      summary: "Convert to an opportunity at RM 27,300, attach a TNA, shortlist PRG-0022",
+      confidence: 0.79,
+    },
   }),
   buildEnquiry({
     ref: "ENQ-2026-0923",

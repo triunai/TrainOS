@@ -50,6 +50,10 @@ export const ENGAGEMENT_MERIDIAN = "ENG-0228";
 export const ENGAGEMENT_SUTERA = "ENG-0203";
 /** Delivered in May 2026 — its six-month claim window closes on 17 Nov. */
 export const ENGAGEMENT_WINDOW_CLOSING = "ENG-0189";
+/** Aurora's lost deal: a repeat client, so the TNA was skipped. */
+export const ENGAGEMENT_AURORA_LOST = "ENG-0176";
+/** Aurora's May delivery, whose claim window also closes on 17 Nov. */
+export const ENGAGEMENT_AURORA_AT_RISK = "ENG-0187";
 
 /** The thirty registered participants, PAR-1182 through PAR-1211. */
 const participantRoster: ReadonlyArray<readonly [name: string, department: string]> = [
@@ -426,6 +430,81 @@ export const engagements: Engagement[] = [
       syncState: "VALIDATED",
       trainerPayable: myr(720000),
       realisedMarginRate: 0.46,
+    },
+    ruleSetVersion: RULE_SET_2026_06_15,
+  },
+  {
+    ...entity(ENGAGEMENT_AURORA_LOST, "2026-02-10T09:00:00+08:00", "2026-03-20T16:00:00+08:00", actorFor(USER_SITI)),
+    title: "Conflict to Collaboration — Aurora supervisors",
+    organisationRef: ORG_AURORA,
+    programmeRef: PROGRAMME_CONFLICT,
+    status: "CANCELLED",
+    venue: "Aurora HQ Shah Alam",
+    dates: ["2026-04-02"],
+    owner: actorFor(USER_SITI),
+    value: myr(980000),
+    metrics: {
+      participants: 0,
+      attended: 0,
+      attendanceRate: 0,
+      trainer: { ref: TRAINER_FARAH_REF, name: "Farah Aziz" },
+      claimCompleteness: 0,
+    },
+    lifecycle: [
+      { key: "WON", state: "FAILED", note: "Lost on price to an in-house facilitator" },
+      { key: "TRAINER_CONFIRMED", state: "SKIPPED" },
+      { key: "SCHEDULED", state: "SKIPPED" },
+      { key: "REGISTERED", state: "SKIPPED" },
+      { key: "DELIVERED", state: "SKIPPED" },
+      { key: "ATTENDANCE_LOCKED", state: "SKIPPED" },
+      { key: "HRDC_CLAIM", state: "SKIPPED" },
+      { key: "INVOICED", state: "SKIPPED" },
+      { key: "PAID", state: "SKIPPED" },
+    ],
+    checklist: [],
+    sessions: [],
+    finance: { invoiceRef: null, syncState: "NOT_SENT", trainerPayable: myr(0), realisedMarginRate: 0 },
+  },
+  {
+    ...entity(ENGAGEMENT_AURORA_AT_RISK, "2026-03-02T09:00:00+08:00", "2026-05-18T09:00:00+08:00", actorFor(USER_SITI)),
+    title: "Leading Through Change — Aurora spring cohort",
+    organisationRef: ORG_AURORA,
+    programmeRef: PROGRAMME_LEADING_CHANGE,
+    status: "DELIVERED",
+    venue: "Aurora HQ Shah Alam",
+    dates: ["2026-05-16", "2026-05-17"],
+    owner: actorFor(USER_SITI),
+    value: myr(1850000),
+    metrics: {
+      participants: 26,
+      attended: 26,
+      attendanceRate: 1,
+      trainer: { ref: TRAINER_FARAH_REF, name: "Farah Aziz" },
+      claimCompleteness: 1,
+    },
+    lifecycle: [
+      { key: "WON", state: "DONE", at: "2026-03-02" },
+      { key: "TRAINER_CONFIRMED", state: "DONE", at: "2026-03-06" },
+      { key: "SCHEDULED", state: "DONE" },
+      { key: "REGISTERED", state: "DONE" },
+      { key: "DELIVERED", state: "DONE", at: "2026-05-17" },
+      { key: "ATTENDANCE_LOCKED", state: "DONE", at: "2026-05-18" },
+      /** Complete and unfiled: the only thing left is a human on eTRIS, and the window closes on 17 Nov. */
+      { key: "HRDC_CLAIM", state: "CURRENT", note: "Claim window closes 17 Nov" },
+      { key: "INVOICED", state: "DONE", ref: "INV-2026-0212" },
+      { key: "PAID", state: "DONE", at: "2026-06-20" },
+    ],
+    checklist: [
+      { key: "TRAINER_LETTER", label: "Trainer engagement letter", done: true },
+      { key: "EVALUATION_SUMMARY", label: "Evaluation summary compiled", done: true },
+      { key: "CERTIFICATES_ISSUED", label: "Certificates issued", done: true },
+    ],
+    sessions: [],
+    finance: {
+      invoiceRef: "INV-2026-0212",
+      syncState: "VALIDATED",
+      trainerPayable: myr(960000),
+      realisedMarginRate: 0.41,
     },
     ruleSetVersion: RULE_SET_2026_06_15,
   },

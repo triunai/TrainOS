@@ -46,7 +46,7 @@ import {
   USER_JASON,
 } from "@trainos/contract";
 import { AGENT_COMPLIANCE } from "./agents-ids";
-import { ENGAGEMENT_WINDOW_CLOSING } from "./engagements";
+import { ENGAGEMENT_AURORA_AT_RISK, ENGAGEMENT_WINDOW_CLOSING } from "./engagements";
 import { ORG_KENANGA } from "./organisations";
 import { myr } from "./_helpers";
 
@@ -171,6 +171,48 @@ export const claimPackets: ClaimPacket[] = [
     ],
   },
   {
+    id: "pkt_0187",
+    engagementRef: ENGAGEMENT_AURORA_AT_RISK,
+    organisationRef: ORG_AURORA,
+    scheme: "SBL_KHAS",
+    employerCode: HRDC_EMPLOYER_CODE,
+    claimValue: myr(1850000),
+    levyAvailable: myr(6100000),
+    /** Complete; the only thing outstanding is a human filing it on eTRIS. */
+    completeness: 1,
+    status: "READY",
+    deadlineAt: "2026-11-17T23:59:59+08:00",
+    daysRemaining: 3,
+    deadlineSeverity: "DANGER",
+    requiredDocuments: [
+      {
+        type: "ATTENDANCE_SHEET",
+        label: "Attendance sheet",
+        status: "PRESENT",
+        ref: `${ENGAGEMENT_AURORA_AT_RISK}/attendance`,
+        meta: "Locked 18 May · 26/26 present",
+      },
+      { type: "TRAINER_TTT_CERT", status: "PRESENT", ref: TTT_FARAH, meta: "Valid to 30 Jun 2027" },
+      { type: "TAX_INVOICE", status: "PRESENT", ref: "INV-2026-0212", meta: "MyInvois validated" },
+      { type: "EVALUATION_SUMMARY", status: "PRESENT", meta: "26 of 26 responses collected" },
+      { type: "TRAINING_SCHEDULE", status: "PRESENT" },
+    ],
+    grant: {
+      reference: "GRT-2026-68110",
+      submittedAt: "2026-03-10T09:00:00+08:00",
+      approvedAt: "2026-03-24T00:00:00+08:00",
+    },
+    submission: null,
+    submissionLog: [
+      {
+        at: "2026-05-18T09:00:00+08:00",
+        actor: { kind: "AGENT", id: AGENT_COMPLIANCE, name: "Compliance Agent" },
+        event: "PACKET_ASSEMBLED",
+        completeness: 1,
+      },
+    ],
+  },
+  {
     id: "pkt_0189",
     engagementRef: ENGAGEMENT_WINDOW_CLOSING,
     organisationRef: ORG_KENANGA,
@@ -216,6 +258,14 @@ export const claimPackets: ClaimPacket[] = [
 
 /** §9 `GET /v1/hrdc/deadlines` — what the compliance badge counts. */
 export const hrdcDeadlines: HrdcDeadline[] = [
+  {
+    engagementRef: ENGAGEMENT_AURORA_AT_RISK,
+    organisationRef: ORG_AURORA,
+    deadlineAt: "2026-11-17T23:59:59+08:00",
+    daysRemaining: 3,
+    status: "AT_RISK",
+    severity: "DANGER",
+  },
   {
     engagementRef: ENGAGEMENT_WINDOW_CLOSING,
     organisationRef: ORG_KENANGA,
