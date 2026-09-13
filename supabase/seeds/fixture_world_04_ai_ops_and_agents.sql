@@ -9,12 +9,14 @@
 --     -f supabase/seeds/fixture_world_03_delivery_compliance_finance.sql \
 --     -f supabase/seeds/fixture_world_04_ai_ops_and_agents.sql
 --
--- Targets migrations 001-017 (and 018 when it merges). It provisions through
--- 016's own seeders, so it does NOT run against a database at 013 or earlier.
+-- Targets migrations 001-017 (and 018 when it merges): the tenant is
+-- provisioned by app.provision_tenant() from 016, so this does NOT run
+-- against a database at 013 or earlier.
 --
 -- Idempotent: every statement is an upsert guarded by an IS DISTINCT FROM
 -- comparison, so a second run of an unchanged seed performs zero updates and
--- leaves every updated_at where it was. Iterating a fixture never needs a wipe.
+-- leaves every updated_at where it was. Iterating a fixture never needs a wipe,
+-- with two exceptions named in supabase/seeds/README.md.
 --
 -- One of the four parts of the TrainOS fixture world. The parts are in
 -- foreign-key order and must be run in order:

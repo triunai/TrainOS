@@ -46,69 +46,56 @@ export const actorColumns = (
 /**
  * Provisioning the fixture tenant.
  *
- * 016 owns what a new tenant gets: `app.seed_ref_formats()` derives one
- * `core.ref_formats` row per `core.assign_ref` trigger, `app.seed_action_policies()`
- * writes the policy gate's twenty-two rows, and `app.seed_compliance_check_keys()`
- * writes the three HRD Corp check keys. All three run as AFTER INSERT triggers on
- * `public.tenants`, and all three are idempotent.
+ * 016 owns what a new tenant gets, and this calls it: `app.provision_tenant()`
+ * inserts the row and lets three AFTER INSERT triggers seed it —
+ * `app.seed_ref_formats()` derives one `core.ref_formats` row per
+ * `core.assign_ref` trigger, `app.seed_action_policies()` writes the policy
+ * gate's twenty-two rows, `app.seed_compliance_check_keys()` writes the HRD Corp
+ * check keys — and then refuses to return a tenant that has no ref formats or no
+ * action policies.
  *
- * The seed does NOT call `app.provision_tenant()`, and the reason is one line of
- * 016: that function allocates the id itself (`INSERT INTO public.tenants (slug,
- * name, timezone) ... RETURNING id`). The fixture world needs a FIXED tenant id —
- * seeds/README.md requires it, and the RPC tests and every screenshot quote it —
- * and there is no way to hand one in. Re-pointing the row afterwards is not an
- * option either: `core.ref_formats`, `core.action_policies` and `core.check_keys`
- * already reference it by then and none of those foreign keys is ON UPDATE CASCADE.
+ * `p_id` is why this is one call rather than a reimplementation. The fixture
+ * world needs a FIXED tenant id: seeds/README.md requires it, and the RPC tests
+ * and every screenshot quote it. 016 originally allocated the id itself, and
+ * re-pointing the row afterwards is not available — `core.ref_formats`,
+ * `core.action_policies` and `core.check_keys` reference it by then and none of
+ * those foreign keys is ON UPDATE CASCADE. The migrations lane added the
+ * parameter (016, commit 564dd64) rather than let a seed re-implement half of
+ * provisioning, which would have rotted the day 018 provisions a fourth table.
  *
- * So the row is inserted with its id, which fires exactly the three triggers
- * provisioning relies on; then the three seeders are called by name, so a disabled
- * or dropped trigger cannot produce a tenant that looks provisioned; then
- * `app.provision_tenant()`'s own two refusals are reproduced here. Everything 016
- * does, in other words, except choosing the id.
- *
- * The migrations lane has been asked for `p_id uuid DEFAULT NULL` on
- * `app.provision_tenant()`. When it lands this whole block becomes one PERFORM.
+ * Everything after the call is the fixture's own detail: `locale` and the
+ * company's founding date are not provisioning's to know, and the guarded UPDATE
+ * keeps them in step with the fixture without touching a row that already agrees.
  */
 const provisionSql = (): string =>
-  `-- Tenant, provisioned through 016's own seeders.
+  `-- Tenant, provisioned by 016.
 DO $provision$
 DECLARE
-  v_tenant   CONSTANT uuid := '${TENANT_UUID}';
-  v_formats  integer;
-  v_policies integer;
+  v_tenant CONSTANT uuid := '${TENANT_UUID}';
+  v_id     uuid;
 BEGIN
-  INSERT INTO public.tenants (id, slug, name, status, timezone, locale, created_at)
-  VALUES (v_tenant, '${TENANT_SLUG}', ${lit(fx.tenant.name)}, 'ACTIVE',
-          ${lit(fx.tenant.timezone)}, ${lit(fx.tenant.locale)}, ${lit(TENANT_CREATED_AT)})
-  ON CONFLICT (id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.tenants WHERE id = v_tenant) THEN
+    v_id := app.provision_tenant(
+              ${lit(TENANT_SLUG)}, ${lit(fx.tenant.name)}, ${lit(fx.tenant.timezone)}, v_tenant);
+    IF v_id IS DISTINCT FROM v_tenant THEN
+      RAISE EXCEPTION
+        'fixture_world: app.provision_tenant returned %, not the id it was given. '
+        'Every row in this seed carries the fixed id as a literal.', v_id;
+    END IF;
+  END IF;
 
-  -- Re-runnable in the same sense as every other statement in this pack: an
-  -- unchanged fixture updates nothing.
+  -- The fixture's own detail, and re-runnable in the same sense as every other
+  -- statement in this pack: an unchanged fixture updates nothing.
   UPDATE public.tenants
-     SET name = ${lit(fx.tenant.name)},
-         status = 'ACTIVE',
-         timezone = ${lit(fx.tenant.timezone)},
-         locale = ${lit(fx.tenant.locale)}
+     SET name       = ${lit(fx.tenant.name)},
+         status     = 'ACTIVE',
+         timezone   = ${lit(fx.tenant.timezone)},
+         locale     = ${lit(fx.tenant.locale)},
+         created_at = ${lit(TENANT_CREATED_AT)}
    WHERE id = v_tenant
-     AND (name, status, timezone, locale)
-         IS DISTINCT FROM (${lit(fx.tenant.name)}, 'ACTIVE', ${lit(fx.tenant.timezone)}, ${lit(fx.tenant.locale)});
-
-  PERFORM app.seed_ref_formats(v_tenant);
-  PERFORM app.seed_action_policies(v_tenant);
-  PERFORM app.seed_compliance_check_keys(v_tenant);
-
-  SELECT count(*) INTO v_formats FROM core.ref_formats WHERE tenant_id = v_tenant;
-  IF v_formats = 0 THEN
-    RAISE EXCEPTION
-      'fixture_world: tenant % has no ref_formats, so every ref''d table is unwritable', v_tenant;
-  END IF;
-
-  SELECT count(*) INTO v_policies FROM core.action_policies WHERE tenant_id = v_tenant;
-  IF v_policies = 0 THEN
-    RAISE EXCEPTION
-      'fixture_world: tenant % has no action_policies, so every action would fall '
-      'through the policy gate with nothing to evaluate', v_tenant;
-  END IF;
+     AND (name, status, timezone, locale, created_at)
+         IS DISTINCT FROM (${lit(fx.tenant.name)}, 'ACTIVE', ${lit(fx.tenant.timezone)},
+                           ${lit(fx.tenant.locale)}, ${lit(TENANT_CREATED_AT)}::timestamptz);
 END
 $provision$;`;
 
@@ -224,12 +211,15 @@ const trainersSql = (): string =>
     note: [
       "Four trainers. TRN-0007 is Farah Aziz, who also holds a TRAINER membership.",
       "--",
-      "-- hrd_tdf is written FALSE on all four, and three of them are TDF-accredited in",
-      "-- the fixture world. 017's trainers_hrd_tdf_needs_expiry refuses `hrd_tdf = true`",
-      "-- without hrd_tdf_valid_to, and the fixture carries no TDF expiry and no TDF",
-      "-- reference -- tttRef and tttValidTo are a different accreditation and using them",
-      "-- here would be inventing a date an auditor could act on. A wrong boolean that",
-      "-- the pin asserts and the PR names beats a fabricated expiry. See T2h.",
+      "-- hrd_tdf_valid_to is a FIXTURE CONVENTION, not a fact the fixture world states.",
+      "-- 017 requires an expiry wherever hrd_tdf is true, because an accredited trainer",
+      "-- with no expiry is the row that keeps getting scheduled after the accreditation",
+      "-- lapses. The fixture gives one expiry per trainer -- the TTT certificate's --",
+      "-- and the same three trainers hold both accreditations, so the seed reuses it",
+      "-- rather than inventing a second date. See T2h, which pins the convention so that",
+      "-- real TDF dates arriving in the fixture fail rather than sit unnoticed.",
+      "-- hrd_tdf_ref stays NULL: a registry number is the one thing that would be",
+      "-- fabricated evidence rather than fixture detail.",
     ].join("\n"),
     rows: fx.trainers.map((trainer) => ({
       id: uuidFor(trainer.id),
@@ -244,9 +234,10 @@ const trainersSql = (): string =>
       ttt_certified: trainer.tttCertified,
       ttt_ref: trainer.tttRef,
       ttt_valid_to: trainer.tttValidTo,
-      // See the note above: the fixture says `trainer.hrdTdf` for three of these.
-      hrd_tdf: false,
-      hrd_tdf_valid_to: null,
+      hrd_tdf: trainer.hrdTdf,
+      // See the note above. Every TDF-accredited trainer in the fixture world is
+      // also TTT-certified, so this is never null where the CHECK needs a value.
+      hrd_tdf_valid_to: trainer.hrdTdf ? trainer.tttValidTo : null,
       hrd_tdf_ref: null,
       rating: trainer.rating,
       status: "ACTIVE",

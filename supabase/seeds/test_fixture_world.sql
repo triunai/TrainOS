@@ -191,22 +191,41 @@ BEGIN
     RAISE EXCEPTION 'T2g FAIL: the seed allocated % ref sequence(s); every ref must be explicit', v_count;
   END IF;
 
-  -- A gap pinned on purpose, like T5. 017's trainers_hrd_tdf_needs_expiry refuses
-  -- hrd_tdf = true without hrd_tdf_valid_to, and the fixture world carries the
-  -- accreditation with no expiry and no TDF reference. All four trainers are
-  -- therefore seeded as not accredited, which is wrong and deliberately visible:
-  -- when the fixture grows the dates, or the constraint learns to accept an
-  -- import, this assertion fails and the seed has to stop saying false.
+  -- A convention pinned on purpose. 017 requires an expiry wherever hrd_tdf is
+  -- true; the fixture world states the accreditation and no date for it, so the
+  -- seed reuses the trainer's TTT expiry and says so. Three of four are
+  -- accredited, none has lapsed at the fixture clock, and every TDF expiry still
+  -- equals the TTT one -- the last of which fails the moment somebody gives the
+  -- fixture real TDF dates, which is the point.
   SELECT count(*) INTO v_count
     FROM core.trainers WHERE tenant_id = v_tenant AND hrd_tdf;
-  IF v_count <> 0 THEN
+  IF v_count <> 3 THEN
     RAISE EXCEPTION
-      'T2h FAIL (good news): % trainer(s) now carry HRD Corp TDF accreditation. '
-      'The fixture world says three of four are accredited; if the expiry dates '
-      'now exist, seed the real value and replace this assertion.', v_count;
+      'T2h FAIL: % trainer(s) carry HRD Corp TDF accreditation, expected 3', v_count;
   END IF;
 
-  RAISE NOTICE 'T2 PASS - 6 organisations, 6 contacts, 5 programmes, 4 trainers, 9 pipeline steps, 0 refs burned, 0 TDF claims.';
+  SELECT count(*) INTO v_count
+    FROM core.trainers
+   WHERE tenant_id = v_tenant AND hrd_tdf
+     AND (hrd_tdf_valid_to IS NULL OR hrd_tdf_valid_to <= DATE '2026-11-14');
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION
+      'T2i FAIL: % accredited trainer(s) have no TDF expiry or a lapsed one at the '
+      'fixture clock. 017 exists to stop a lapsed trainer being scheduled.', v_count;
+  END IF;
+
+  SELECT count(*) INTO v_count
+    FROM core.trainers
+   WHERE tenant_id = v_tenant AND hrd_tdf
+     AND hrd_tdf_valid_to IS DISTINCT FROM ttt_valid_to;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION
+      'T2j FAIL (good news): % trainer(s) now carry a TDF expiry of their own. The '
+      'seed has been reusing the TTT date as a convention; if the fixture world now '
+      'states real TDF dates, drop the convention and this assertion with it.', v_count;
+  END IF;
+
+  RAISE NOTICE 'T2 PASS - 6 organisations, 6 contacts, 5 programmes, 4 trainers, 9 pipeline steps, 0 refs burned, 3 unlapsed TDF accreditations.';
 END;
 $t2$;
 

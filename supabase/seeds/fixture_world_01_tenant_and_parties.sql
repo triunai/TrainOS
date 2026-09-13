@@ -9,12 +9,14 @@
 --     -f supabase/seeds/fixture_world_03_delivery_compliance_finance.sql \
 --     -f supabase/seeds/fixture_world_04_ai_ops_and_agents.sql
 --
--- Targets migrations 001-017 (and 018 when it merges). It provisions through
--- 016's own seeders, so it does NOT run against a database at 013 or earlier.
+-- Targets migrations 001-017 (and 018 when it merges): the tenant is
+-- provisioned by app.provision_tenant() from 016, so this does NOT run
+-- against a database at 013 or earlier.
 --
 -- Idempotent: every statement is an upsert guarded by an IS DISTINCT FROM
 -- comparison, so a second run of an unchanged seed performs zero updates and
--- leaves every updated_at where it was. Iterating a fixture never needs a wipe.
+-- leaves every updated_at where it was. Iterating a fixture never needs a wipe,
+-- with two exceptions named in supabase/seeds/README.md.
 --
 -- One of the four parts of the TrainOS fixture world. The parts are in
 -- foreign-key order and must be run in order:
@@ -55,45 +57,34 @@
 
 -- Tenant ──────────────────────────────────────────────────────────────────
 
--- Tenant, provisioned through 016's own seeders.
+-- Tenant, provisioned by 016.
 DO $provision$
 DECLARE
-  v_tenant   CONSTANT uuid := 'acade111-0000-4000-8000-000000000001';
-  v_formats  integer;
-  v_policies integer;
+  v_tenant CONSTANT uuid := 'acade111-0000-4000-8000-000000000001';
+  v_id     uuid;
 BEGIN
-  INSERT INTO public.tenants (id, slug, name, status, timezone, locale, created_at)
-  VALUES (v_tenant, 'akademi-perdana', 'Akademi Perdana Sdn Bhd', 'ACTIVE',
-          'Asia/Kuala_Lumpur', 'en-MY', '2022-01-04T09:00:00+08:00')
-  ON CONFLICT (id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.tenants WHERE id = v_tenant) THEN
+    v_id := app.provision_tenant(
+              'akademi-perdana', 'Akademi Perdana Sdn Bhd', 'Asia/Kuala_Lumpur', v_tenant);
+    IF v_id IS DISTINCT FROM v_tenant THEN
+      RAISE EXCEPTION
+        'fixture_world: app.provision_tenant returned %, not the id it was given. '
+        'Every row in this seed carries the fixed id as a literal.', v_id;
+    END IF;
+  END IF;
 
-  -- Re-runnable in the same sense as every other statement in this pack: an
-  -- unchanged fixture updates nothing.
+  -- The fixture's own detail, and re-runnable in the same sense as every other
+  -- statement in this pack: an unchanged fixture updates nothing.
   UPDATE public.tenants
-     SET name = 'Akademi Perdana Sdn Bhd',
-         status = 'ACTIVE',
-         timezone = 'Asia/Kuala_Lumpur',
-         locale = 'en-MY'
+     SET name       = 'Akademi Perdana Sdn Bhd',
+         status     = 'ACTIVE',
+         timezone   = 'Asia/Kuala_Lumpur',
+         locale     = 'en-MY',
+         created_at = '2022-01-04T09:00:00+08:00'
    WHERE id = v_tenant
-     AND (name, status, timezone, locale)
-         IS DISTINCT FROM ('Akademi Perdana Sdn Bhd', 'ACTIVE', 'Asia/Kuala_Lumpur', 'en-MY');
-
-  PERFORM app.seed_ref_formats(v_tenant);
-  PERFORM app.seed_action_policies(v_tenant);
-  PERFORM app.seed_compliance_check_keys(v_tenant);
-
-  SELECT count(*) INTO v_formats FROM core.ref_formats WHERE tenant_id = v_tenant;
-  IF v_formats = 0 THEN
-    RAISE EXCEPTION
-      'fixture_world: tenant % has no ref_formats, so every ref''d table is unwritable', v_tenant;
-  END IF;
-
-  SELECT count(*) INTO v_policies FROM core.action_policies WHERE tenant_id = v_tenant;
-  IF v_policies = 0 THEN
-    RAISE EXCEPTION
-      'fixture_world: tenant % has no action_policies, so every action would fall '
-      'through the policy gate with nothing to evaluate', v_tenant;
-  END IF;
+     AND (name, status, timezone, locale, created_at)
+         IS DISTINCT FROM ('Akademi Perdana Sdn Bhd', 'ACTIVE', 'Asia/Kuala_Lumpur',
+                           'en-MY', '2022-01-04T09:00:00+08:00'::timestamptz);
 END
 $provision$;
 
@@ -179,18 +170,21 @@ WHERE (target.tenant_id, target.name, target.manager_user_id)
 
 -- Four trainers. TRN-0007 is Farah Aziz, who also holds a TRAINER membership.
 --
--- hrd_tdf is written FALSE on all four, and three of them are TDF-accredited in
--- the fixture world. 017's trainers_hrd_tdf_needs_expiry refuses `hrd_tdf = true`
--- without hrd_tdf_valid_to, and the fixture carries no TDF expiry and no TDF
--- reference -- tttRef and tttValidTo are a different accreditation and using them
--- here would be inventing a date an auditor could act on. A wrong boolean that
--- the pin asserts and the PR names beats a fabricated expiry. See T2h.
+-- hrd_tdf_valid_to is a FIXTURE CONVENTION, not a fact the fixture world states.
+-- 017 requires an expiry wherever hrd_tdf is true, because an accredited trainer
+-- with no expiry is the row that keeps getting scheduled after the accreditation
+-- lapses. The fixture gives one expiry per trainer -- the TTT certificate's --
+-- and the same three trainers hold both accreditations, so the seed reuses it
+-- rather than inventing a second date. See T2h, which pins the convention so that
+-- real TDF dates arriving in the fixture fail rather than sit unnoticed.
+-- hrd_tdf_ref stays NULL: a registry number is the one thing that would be
+-- fabricated evidence rather than fixture detail.
 INSERT INTO core.trainers AS target
   (id, tenant_id, ref, name, email, phone, user_id, band, day_rate_override_sen, ttt_certified, ttt_ref, ttt_valid_to, hrd_tdf, hrd_tdf_valid_to, hrd_tdf_ref, rating, status, created_at, created_by_kind, created_by_id, created_by_name)
 VALUES
-  ('0b54f9a4-0d8c-59d9-b39a-1ada4dea58db', 'acade111-0000-4000-8000-000000000001', 'TRN-0007', 'Farah Aziz', 'farah.aziz@akademiperdana.my', NULL, 'acade111-0001-4000-8000-000000000007', 'A', NULL, TRUE, 'TTT-2019-4471', '2027-06-30', FALSE, NULL, NULL, 4.7, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
-  ('1baefe97-f97b-50a1-ba80-55ecfc180eb7', 'acade111-0000-4000-8000-000000000001', 'TRN-0012', 'Daniel Wong', 'daniel.wong@akademiperdana.my', NULL, NULL, 'A', NULL, TRUE, 'TTT-2021-8830', '2028-01-31', FALSE, NULL, NULL, 4.4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
-  ('ad2d1197-0023-5fe3-a16b-cac09ad90f95', 'acade111-0000-4000-8000-000000000001', 'TRN-0019', 'Lee Chin Hoe', 'lee.chinhoe@akademiperdana.my', NULL, NULL, 'B', NULL, TRUE, 'TTT-2022-1174', '2027-11-30', FALSE, NULL, NULL, 4.2, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('0b54f9a4-0d8c-59d9-b39a-1ada4dea58db', 'acade111-0000-4000-8000-000000000001', 'TRN-0007', 'Farah Aziz', 'farah.aziz@akademiperdana.my', NULL, 'acade111-0001-4000-8000-000000000007', 'A', NULL, TRUE, 'TTT-2019-4471', '2027-06-30', TRUE, '2027-06-30', NULL, 4.7, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('1baefe97-f97b-50a1-ba80-55ecfc180eb7', 'acade111-0000-4000-8000-000000000001', 'TRN-0012', 'Daniel Wong', 'daniel.wong@akademiperdana.my', NULL, NULL, 'A', NULL, TRUE, 'TTT-2021-8830', '2028-01-31', TRUE, '2028-01-31', NULL, 4.4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('ad2d1197-0023-5fe3-a16b-cac09ad90f95', 'acade111-0000-4000-8000-000000000001', 'TRN-0019', 'Lee Chin Hoe', 'lee.chinhoe@akademiperdana.my', NULL, NULL, 'B', NULL, TRUE, 'TTT-2022-1174', '2027-11-30', TRUE, '2027-11-30', NULL, 4.2, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
   ('31bd1a52-678b-57a4-bdde-aefb0db000fc', 'acade111-0000-4000-8000-000000000001', 'TRN-0024', 'Noora Idris', 'noora.idris@akademiperdana.my', NULL, NULL, 'C', NULL, FALSE, NULL, NULL, FALSE, NULL, NULL, 4, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar')
 ON CONFLICT (id) DO UPDATE SET
   tenant_id = EXCLUDED.tenant_id,

@@ -67,21 +67,33 @@ const GENERATED_BY =
  * one part should not have to find another to learn what tenant it lands in or
  * how it is meant to be run.
  */
-const header = (title: string, extra: string[] = []): string =>
+/**
+ * The shared header.
+ *
+ * `run` is the command for THIS file. The wipe passes its own: a header that
+ * printed the seed command as well would put the two side by side in the one
+ * file whose whole job is to delete, which is the wrong thing to have under a
+ * cursor at 2am.
+ */
+const header = (title: string, extra: string[] = [], run: string[] = RUN_COMMAND): string =>
   [
     `-- ${title}`,
     "--",
     `-- Tenant: ${TENANT_SLUG} (Akademi Perdana Sdn Bhd), id ${TENANT_UUID}`,
     "--",
-    "-- Run (all four parts, one transaction, from the repo root):",
-    ...RUN_COMMAND.map((line) => `--   ${line}`),
+    run.length > 1
+      ? "-- Run (all four parts, one transaction, from the repo root):"
+      : "-- Run (from the repo root):",
+    ...run.map((line) => `--   ${line}`),
     "--",
-    "-- Targets migrations 001-017 (and 018 when it merges). It provisions through",
-    "-- 016's own seeders, so it does NOT run against a database at 013 or earlier.",
+    "-- Targets migrations 001-017 (and 018 when it merges): the tenant is",
+    "-- provisioned by app.provision_tenant() from 016, so this does NOT run",
+    "-- against a database at 013 or earlier.",
     "--",
     "-- Idempotent: every statement is an upsert guarded by an IS DISTINCT FROM",
     "-- comparison, so a second run of an unchanged seed performs zero updates and",
-    "-- leaves every updated_at where it was. Iterating a fixture never needs a wipe.",
+    "-- leaves every updated_at where it was. Iterating a fixture never needs a wipe,",
+    "-- with two exceptions named in supabase/seeds/README.md.",
     "--",
     ...extra.flatMap((line) => (line === "" ? ["--"] : [`-- ${line}`])),
     ...(extra.length ? ["--"] : []),
@@ -194,10 +206,7 @@ const wipeFile = (): string => {
       "",
       "Normal iteration does NOT need this. The seed upserts; wipe only when you want",
       "to prove the seed builds from nothing, or to hand the database back empty.",
-      "",
-      "Run:",
-      `  psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/${WIPE}`,
-    ]),
+    ], [`psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/${WIPE}`]),
     suspendSql(suspend, "DISABLE"),
     "",
     "-- Cut the mutual references first; see UNLINK_BEFORE_DELETE in the generator.",
@@ -254,7 +263,9 @@ const main = (): void => {
 
   if (check) {
     if (drifted > 0) {
-      console.error(`\n${drifted} file(s) out of date. Run: npm run seed:emit -w packages/fixtures`);
+      console.error(
+        `\n${drifted} file(s) out of date. Run: npx tsx packages/fixtures/scripts/emit-seed.ts`,
+      );
       process.exit(1);
     }
     console.log("seeds match the fixtures");

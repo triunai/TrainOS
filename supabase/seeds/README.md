@@ -57,3 +57,18 @@ with literal expected numbers, because a pin that derives its expectations from
 the thing it is checking is not a pin. Its header states the run command: the
 seed is re-applied ahead of it in the same transaction, and T0 reads
 `pg_stat_xact_all_tables` to prove that second run moved zero rows.
+
+### The two tables a re-run does not update
+
+The seed upserts, so changing a fixture value and re-running is normally enough.
+Two tables are the exception, and both are exceptions on purpose:
+
+| table | emitted as | why |
+|---|---|---|
+| `core.payments` | `ON CONFLICT (id) DO NOTHING` | `core.payment_reject_mutation()` refuses any UPDATE or DELETE. A payment is a record of money that arrived; correcting one is a reversal, not an edit. |
+| `core.run_events` | `ON CONFLICT (tenant_id, run_id, seq) DO NOTHING` | A run's trace is what happened. Rewriting an escalation or a policy halt after the fact makes the trace evidence of nothing. |
+
+Change a payment amount or a run event in the fixtures and the re-run will
+silently keep the old row. Run `fixture_world_wipe.sql` first, then re-seed. The
+pin does not catch this: a `DO NOTHING` that skipped a changed row reports zero
+rows affected, which is exactly what T0 is looking for.
