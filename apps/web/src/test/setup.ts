@@ -1,8 +1,17 @@
 // Global test setup. jest-dom matchers (toBeInTheDocument, etc.) plus a
 // cleanup after every test so rendered trees do not leak between cases.
-import "@testing-library/jest-dom/vitest";
+//
+// The matchers are registered by hand rather than through the
+// `@testing-library/jest-dom/vitest` side-effect entry. That entry does its own
+// `import "vitest"`, resolved from wherever jest-dom itself was hoisted to —
+// the workspace root — while vitest 3 installs one copy per workspace because
+// of its optional peers. Registering from here resolves both packages from
+// apps/web, where both exist.
+import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, expect } from "vitest";
+
+expect.extend(jestDomMatchers);
 
 // next-themes reads window.matchMedia at mount to resolve the "system" theme.
 // jsdom does not implement it, so the stub has to live in global setup rather
