@@ -18,6 +18,7 @@ import {
   RecordHeader,
   RefusalBanner,
   RUN_TONE,
+  RunEventRow,
   RunStepRow,
   SecondaryButton,
   StateCardPanel,
@@ -27,7 +28,6 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useAgentRegistry, useDeadLetterRun, useRetryRun, useRun, useRuns } from "./api";
-import { RunEventRow } from "./RunEventRow";
 import { RunNowPanel } from "./RunNowPanel";
 import { AGENT_REGISTRY_PATH, RUNS_PATH, runTracePath } from "./paths";
 

@@ -175,6 +175,7 @@ export {
 } from "./ProposedActionCard";
 export { AgentRunCard, type AgentRunCardProps } from "./AgentRunCard";
 export { RunStepRow, type RunStepRowProps } from "./RunStepRow";
+export { RunEventRow, type RunEventRowProps } from "./RunEventRow";
 export { CommandPalette, type CommandPaletteProps } from "./CommandPalette";
 export { Drawer, type DrawerProps } from "./Drawer";
 export { ConfirmDialog, type ConfirmDialogProps } from "./ConfirmDialog";

@@ -59,6 +59,12 @@ import { joinAttendance, markLabel, type ParticipantAttendance } from "./attenda
 const TAB_IDS = ["overview", "sessions", "participants", "hrdc", "finance"] as const;
 type TabId = (typeof TAB_IDS)[number];
 
+/**
+ * The one stage this screen refers to by name, and it refers to it through the
+ * pipeline rather than to the record directly. See the note at its use.
+ */
+const ATTENDANCE_LOCKED_STAGE = "ATTENDANCE_LOCKED";
+
 export function EngagementDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -94,6 +100,20 @@ export function EngagementDetailPage() {
   }
 
   const blockedStep = record.lifecycle.find((step) => step.state === "BLOCKED");
+
+  /* The attendance metric's sub-line carries WHEN the sheet was locked, which
+     means naming one stage. CLAUDE.md forbids hardcoding stage names and order,
+     so the stage is resolved through the pipeline configuration and the word
+     printed is the configured LABEL: rename the stage and the screen follows;
+     remove it and the sub-line disappears rather than silently never matching,
+     which is what a raw `find(key === "ATTENDANCE_LOCKED")` against the record
+     did. The key itself is still a literal because `LifecycleStep.key` is typed
+     `string` in the contract — a named constant is as close as this file can
+     get until that enum exists. */
+  const lockedStage = pipeline.data?.stages.find((stage) => stage.key === ATTENDANCE_LOCKED_STAGE);
+  const lockedAt = lockedStage
+    ? record.lifecycle.find((step) => step.key === lockedStage.key)?.at
+    : undefined;
   const sheetData = sheets.flatMap((query) => (query.data ? [query.data] : []));
   const roster = joinAttendance(sheetData);
   const exceptions = roster.filter((row) => row.status !== "COMPLETE");
@@ -166,12 +186,8 @@ export function EngagementDetailPage() {
           {
             label: "Attendance",
             value: `${Math.round(record.metrics.attendanceRate * 100)}%`,
-            ...(record.lifecycle.find((step) => step.key === "ATTENDANCE_LOCKED")?.at
-              ? {
-                  sub: `locked ${formatDate(
-                    record.lifecycle.find((step) => step.key === "ATTENDANCE_LOCKED")?.at,
-                  )}`,
-                }
+            ...(lockedStage && lockedAt
+              ? { sub: `${lockedStage.label.toLowerCase()} ${formatDate(lockedAt)}` }
               : {}),
             onDrill: () => navigate(`/training/participants/${record.ref}/attendance`),
           },

@@ -1,17 +1,17 @@
-import type { RunEvent, RunEventType } from "@trainos/contract";
-import { AI_GLYPH, DateText, humanise } from "@/shared/components/kit";
+import type { RunEvent, RunEventType, TierKey } from "@trainos/contract";
+import { DateText } from "./DateText";
+import { humanise, tierLabel } from "./format";
+import { AI_GLYPH } from "./tokens";
 import { cn } from "@/shared/lib/utils";
 
 /**
  * One row of a run's event log — M18-S04's "Events" block.
  *
- * BELONGS IN THE KIT. §4 names "event rows" as a component of M18-S04 and the
- * kit barrel has no equivalent: `RunStepRow` renders a tool call and
- * `TraceTreeNode` renders a node, and an event is neither. It is written here
- * so the screen can ship, with the same grammar `TraceTreeNode` and
- * `RunStepRow` already use — glyph carries the status, the detail line carries
- * the numbers, the timestamp is right-aligned mono — so the three read as
- * siblings. Prop shape sent to the `kit` agent; migrate and delete this file.
+ * §4 names "event rows" as a component of M18-S04, and it uses the same grammar
+ * `TraceTreeNode` and `RunStepRow` already do — glyph carries the status, the
+ * detail line carries the numbers, the timestamp is right-aligned mono — so the
+ * three read as siblings. It lived in `features/agents` with a note saying it
+ * belonged here.
  *
  * `detail` is a per-type bag in the contract, so the summary is written once
  * per type here rather than by the screen. A screen formatting an escalation's
@@ -33,11 +33,18 @@ const GLYPH: Record<RunEventType, { mark: string; className: string }> = {
   BUDGET_EXCEEDED: { mark: "!", className: "text-danger" },
 };
 
+/** A tier key off the untyped `detail` bag, through the kit's own formatter. */
+function escalationTier(value: unknown): string {
+  return typeof value === "string" ? tierLabel(value as TierKey) : "—";
+}
+
 function title(event: RunEvent): string {
   const detail = event.detail;
   switch (event.type) {
     case "ESCALATION":
-      return `Escalated ${tier(detail.from)} → ${tier(detail.to)}`;
+      /* `detail` is an untyped bag in the contract, so the tier keys are
+         narrowed here rather than trusted. */
+      return `Escalated ${escalationTier(detail.from)} → ${escalationTier(detail.to)}`;
     case "JURY":
       return `Jury: ${detail.quorum ?? "?"} of ${detail.of ?? "?"} agree`;
     case "TRUNCATION":
@@ -99,10 +106,6 @@ function summary(event: RunEvent): string {
     default:
       return "";
   }
-}
-
-function tier(value: unknown): string {
-  return typeof value === "string" ? value.replace(/_(\d)$/, "-$1").replace(/_/g, " ") : "—";
 }
 
 export interface RunEventRowProps {
