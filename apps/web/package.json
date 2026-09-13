@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "typecheck:strict": "tsc -p tsconfig.strict.json --noEmit",
     "test": "vitest run",
+    "check:barrels": "node scripts/check-barrels.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "bundle:analyze": "vite-bundle-visualizer",

@@ -37,6 +37,7 @@
     "bundle:analyze": "npm run bundle:analyze -w apps/web",
     "sast": "semgrep scan --config .semgrep/rules.yml",
     "lint:sql": "node scripts/check-sql-parse.mjs",
+    "check:barrels": "npm run check:barrels -w apps/web",
     "check:rpc": "node scripts/check-rpc-contract.mjs",
     "check:grants": "node scripts/check-grants.mjs",
     "prepare": "lefthook install"

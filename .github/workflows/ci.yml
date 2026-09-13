@@ -162,6 +162,21 @@ jobs:
       - run: npm ci
       - run: npm run arch:graph
 
+  barrels:
+    # BLOCKING, and deliberately NOT folded into `arch` — that job is
+    # `continue-on-error: true`, so a barrel exporting a file nobody committed
+    # would be reported and then waved through. R10: a gate that cannot say no
+    # is not a gate.
+    name: Barrel exports are tracked
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run check:barrels
+
   sql-parse:
     # BLOCKING. A migration or test pin that does not parse is not a migration
     # or a pin. Gates like the typechecks — not advisory tier.
@@ -259,6 +274,7 @@ jobs:
         build,
         test,
         arch,
+        barrels,
         rpc-contract,
         grant-hygiene,
         sql-parse,
@@ -282,6 +298,7 @@ jobs:
           echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Vitest (unit) | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Architecture boundaries | ${{ needs.arch.result }} (advisory) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Barrel exports tracked | ${{ needs.barrels.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| RPC contract | ${{ needs.rpc-contract.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Grant hygiene | ${{ needs.grant-hygiene.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SQL parse | ${{ needs.sql-parse.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -312,6 +329,7 @@ jobs:
           contains(fromJSON('["failure","cancelled","skipped"]'), needs.typecheck-strict.result) ||
           contains(fromJSON('["failure","cancelled","skipped"]'), needs.build.result) ||
           contains(fromJSON('["failure","cancelled","skipped"]'), needs.test.result) ||
+          contains(fromJSON('["failure","cancelled","skipped"]'), needs.barrels.result) ||
           contains(fromJSON('["failure","cancelled","skipped"]'), needs.secrets-scan.result) ||
           contains(fromJSON('["failure","cancelled","skipped"]'), needs.sast-semgrep.result) ||
           contains(fromJSON('["failure","cancelled"]'), needs.detect.result) ||
