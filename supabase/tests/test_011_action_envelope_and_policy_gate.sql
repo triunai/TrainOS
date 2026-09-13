@@ -1,0 +1,876 @@
+-- ============================================================================
+-- PIN 011 · action_envelope_and_policy_gate
+-- ============================================================================
+--
+-- Run against the complete 001-011 set. Ends in ROLLBACK.
+--   psql "$DATABASE_URL" -f supabase/tests/test_011_action_envelope_and_policy_gate.sql
+--
+-- T1  Exact object, seed, enum, trigger, view and search_path inventory.
+-- T2  HUMAN: EXECUTED/202, QUEUED/202, and SUGGESTED unreachable.
+-- T3  AGENT: AUTONOMOUS executes, ACT_WITH_APPROVAL queues, SUGGEST drafts,
+--     and missing grant is exact OBSERVE denial.
+-- T4  SYSTEM executes and policy evaluation is skipped.
+-- T5  Idempotent replay returns the original body with HTTP 200 (M-21).
+-- T6  Self-approval and NULL requester both fail GOV-03 (H-03).
+-- T7  NULL app_role fails before role authorisation (H-04).
+-- T8  Money-moving perform and decide both require verified AAL2 (H-05).
+-- T9  A queued request and a sibling-row request cannot open a gate (H-07).
+-- T10 An agent cannot grant itself autonomy even beside a permissive policy
+--     (H-02), and a NULL ceiling fails closed (M-12).
+-- T11 Unknown effect status raises at the shared enum boundary (R14).
+-- T12 A malformed payload_schema raises rather than validating all payloads
+--     (N-03).
+-- T13 Every sweep is bounded/skip-locked, the approval view is invoker-rights,
+--     tenant timezone arithmetic is present, and app USAGE survives (H-10,
+--     H-13, M-02, M-04, M-13).
+-- T14 No anon/authenticated SELECT or EXECUTE privilege exists on any 011
+--     object, including the entry functions (C-04 residue).
+--
+-- RPC PROBE SHAPE. app.perform_action/decide_approval/report_effect_result have
+-- intentionally no authenticated EXECUTE before 014. The task's request to run
+-- them under authenticated therefore contradicts C-04's required zero-EXECUTE
+-- state. The pin uses the production service_role entry privilege while keeping
+-- the JWT identity HUMAN/AGENT/SYSTEM, rather than manufacturing a definer
+-- bridge or a temporary authenticated grant. Temporary SECURITY INVOKER adapters
+-- catch and park each one-statement result in transaction-local GUCs. Assertions
+-- run only after RESET ROLE, because direct reads of the forced-RLS, REVOKE-ALL
+-- gate tables would fail at the grant layer before reaching their subject.
+-- ============================================================================
+
+BEGIN;
+
+SET LOCAL plpgsql.check_asserts = on;
+
+DO $canary$
+BEGIN
+  BEGIN
+    ASSERT false, 'canary';
+    RAISE EXCEPTION 'test_011 SETUP FAILURE: plpgsql.check_asserts is off';
+  EXCEPTION WHEN assert_failure THEN NULL;
+  END;
+END;
+$canary$;
+
+DO $setup$
+BEGIN
+  IF pg_catalog.to_regclass('core.action_requests') IS NULL
+     OR pg_catalog.to_regclass('core.state_transitions') IS NULL
+     OR pg_catalog.to_regtype('app.effect_status') IS NULL THEN
+    RAISE EXCEPTION 'test_011 SETUP FAILURE: migration 011 is missing or partial';
+  END IF;
+END;
+$setup$;
+
+-- ─── Real auth and domain fixtures ─────────────────────────────────────────
+
+INSERT INTO auth.users (id,email) VALUES
+  ('00000011-0000-0000-0000-0000000000a1','t011-sales@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a2','t011-manager-1@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a3','t011-manager-2@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a4','t011-finance@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a5','t011-agent@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a6','t011-observer@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a7','t011-no-role@example.invalid'),
+  ('00000011-0000-0000-0000-0000000000a8','t011-system@example.invalid');
+
+INSERT INTO public.tenants (id,slug,name,timezone) VALUES
+  ('00000011-1111-1111-1111-111111111111','t011-alpha','T011 Alpha','Asia/Kuala_Lumpur');
+
+INSERT INTO public.memberships
+  (tenant_id,user_id,role,actor_kind,agent_id,status,is_default)
+VALUES
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a1',
+   'SALES','HUMAN',NULL,'ACTIVE',true),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a2',
+   'SALES_MANAGER','HUMAN',NULL,'ACTIVE',true),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a3',
+   'SALES_MANAGER','HUMAN',NULL,'ACTIVE',true),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a4',
+   'FINANCE','HUMAN',NULL,'ACTIVE',true),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a5',
+   'AGENT','AGENT','agent_t011','ACTIVE',true),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a6',
+   'AGENT','AGENT','agent_observe_t011','ACTIVE',true),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a8',
+   'OPS','HUMAN',NULL,'ACTIVE',true);
+
+INSERT INTO public.user_profiles (tenant_id,user_id,display_name) VALUES
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a1','T011 Sales'),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a2','T011 Manager One'),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a3','T011 Manager Two'),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a4','T011 Finance'),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a5','T011 Agent'),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a6','T011 Observer'),
+  ('00000011-1111-1111-1111-111111111111','00000011-0000-0000-0000-0000000000a8','T011 System');
+
+INSERT INTO core.ref_formats (tenant_id,prefix,entity,dated,width) VALUES
+  ('00000011-1111-1111-1111-111111111111','ACT','action_requests',true,4),
+  ('00000011-1111-1111-1111-111111111111','APV','approval_requests',true,4),
+  ('00000011-1111-1111-1111-111111111111','DRF','suggested_drafts',true,4);
+
+INSERT INTO core.organisations (id,tenant_id,ref,name,owner_id) VALUES
+  ('00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-1111-1111-1111-111111111111',
+   'ORG-T011','T011 Manufacturing','00000011-0000-0000-0000-0000000000a1');
+INSERT INTO core.templates (id,tenant_id,ref,template_type,label,status) VALUES
+  ('00000011-dddd-dddd-dddd-ddddddddddd1','00000011-1111-1111-1111-111111111111',
+   'TPL-T011','PROPOSAL','T011 Proposal','ACTIVE');
+INSERT INTO core.opportunities
+  (id,tenant_id,ref,organisation_id,owner_id,stage,value_sen)
+VALUES
+  ('00000011-cccc-cccc-cccc-ccccccccccc1','00000011-1111-1111-1111-111111111111',
+   'OPP-T011','00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+   '00000011-0000-0000-0000-0000000000a1','NEW',1850000);
+
+INSERT INTO core.proposals
+  (id,tenant_id,ref,opportunity_id,organisation_id,template_id,status,value_sen)
+VALUES
+  ('00000011-eeee-eeee-eeee-eeeeeeeeeee1','00000011-1111-1111-1111-111111111111',
+   'PRO-T011-1','00000011-cccc-cccc-cccc-ccccccccccc1',
+   '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000),
+  ('00000011-eeee-eeee-eeee-eeeeeeeeeee2','00000011-1111-1111-1111-111111111111',
+   'PRO-T011-2','00000011-cccc-cccc-cccc-ccccccccccc1',
+   '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000),
+  ('00000011-eeee-eeee-eeee-eeeeeeeeeee3','00000011-1111-1111-1111-111111111111',
+   'PRO-T011-3','00000011-cccc-cccc-cccc-ccccccccccc1',
+   '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000),
+  ('00000011-eeee-eeee-eeee-eeeeeeeeeee4','00000011-1111-1111-1111-111111111111',
+   'PRO-T011-4','00000011-cccc-cccc-cccc-ccccccccccc1',
+   '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000),
+  ('00000011-eeee-eeee-eeee-eeeeeeeeeee5','00000011-1111-1111-1111-111111111111',
+   'PRO-T011-5','00000011-cccc-cccc-cccc-ccccccccccc1',
+   '00000011-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000011-dddd-dddd-dddd-ddddddddddd1','DRAFT',1850000);
+
+INSERT INTO core.enquiries
+  (id,tenant_id,ref,channel,status,received_at,subject)
+VALUES
+  ('00000011-ffff-ffff-ffff-fffffffffff1','00000011-1111-1111-1111-111111111111',
+   'ENQ-T011-1','EMAIL','OPEN',pg_catalog.now(),'Human execution'),
+  ('00000011-ffff-ffff-ffff-fffffffffff2','00000011-1111-1111-1111-111111111111',
+   'ENQ-T011-2','EMAIL','OPEN',pg_catalog.now(),'Agent execution'),
+  ('00000011-ffff-ffff-ffff-fffffffffff3','00000011-1111-1111-1111-111111111111',
+   'ENQ-T011-3','EMAIL','OPEN',pg_catalog.now(),'System execution'),
+  ('00000011-ffff-ffff-ffff-fffffffffff4','00000011-1111-1111-1111-111111111111',
+   'ENQ-T011-4','EMAIL','OPEN',pg_catalog.now(),'Idempotent execution'),
+  ('00000011-ffff-ffff-ffff-fffffffffff5','00000011-1111-1111-1111-111111111111',
+   'ENQ-T011-5','EMAIL','OPEN',pg_catalog.now(),'Observe denial');
+
+SELECT pg_catalog.set_config('request.jwt.claims','',true);
+INSERT INTO core.autonomy_grants
+  (tenant_id,agent_id,action_type,level,approver_role,min_confidence,granted_by)
+VALUES
+  ('00000011-1111-1111-1111-111111111111','agent_t011','ENQUIRY_ARCHIVE',
+   'AUTONOMOUS',NULL,0.700,'t011-fixture'),
+  ('00000011-1111-1111-1111-111111111111','agent_t011','PROPOSAL_SEND',
+   'ACT_WITH_APPROVAL','SALES_MANAGER',0.700,'t011-fixture'),
+  ('00000011-1111-1111-1111-111111111111','agent_t011','FOLLOWUP_SEND',
+   'SUGGEST','SALES_MANAGER',0.700,'t011-fixture');
+
+-- ─── Temporary RPC adapters ────────────────────────────────────────────────
+
+CREATE FUNCTION pg_temp.t011_perform(
+  p_type text,p_target text,p_payload jsonb,p_confidence numeric,p_idempotency text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_body jsonb; v_detail text;
+BEGIN
+  BEGIN
+    v_body := app.perform_action(
+      p_type,p_target,p_payload,NULL,p_confidence,NULL,'[]'::jsonb,p_idempotency);
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',true,'http',pg_catalog.current_setting('response.status',true),'body',v_body);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
+CREATE FUNCTION pg_temp.t011_decide(p_id uuid,p_decision text,p_note text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_body jsonb; v_detail text;
+BEGIN
+  BEGIN
+    v_body := app.decide_approval(p_id,p_decision,p_note,NULL,NULL);
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',true,'http',pg_catalog.current_setting('response.status',true),'body',v_body);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
+CREATE FUNCTION pg_temp.t011_report(p_id bigint,p_status text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_detail text;
+BEGIN
+  BEGIN
+    EXECUTE 'SELECT app.report_effect_result($1,$2::app.effect_status,$3,$4)'
+      USING p_id,p_status,'{}'::jsonb,NULL::jsonb;
+    RETURN pg_catalog.jsonb_build_object('ok',true);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
+-- ─── T2 · HUMAN matrix ─────────────────────────────────────────────────────
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.human_executed',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-1','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.human_queued',
+  pg_temp.t011_perform('PROPOSAL_SEND','PRO-T011-1','{"channel":"EMAIL"}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+DO $t2$
+DECLARE v_exec jsonb := pg_catalog.current_setting('t011.human_executed')::jsonb;
+        v_queue jsonb := pg_catalog.current_setting('t011.human_queued')::jsonb;
+BEGIN
+  ASSERT v_exec = pg_catalog.jsonb_build_object(
+    'ok',true,'http','202','body',pg_catalog.jsonb_build_object(
+      'status','EXECUTED','result',pg_catalog.jsonb_build_object(
+        'effects',pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'op','UPDATE','entity','Enquiry','ref','ENQ-T011-1',
+          'description','Archive the enquiry'))))),
+    pg_catalog.format('T2a FAIL: HUMAN execution response was %s',v_exec);
+  ASSERT (SELECT enquiry.status FROM core.enquiries AS enquiry
+           WHERE enquiry.id = '00000011-ffff-ffff-ffff-fffffffffff1') = 'ARCHIVED',
+    'T2b FAIL: HUMAN EXECUTED did not archive the exact enquiry';
+  ASSERT v_queue ->> 'http' = '202'
+     AND v_queue #>> '{body,status}' = 'QUEUED_FOR_APPROVAL'
+     AND v_queue #>> '{body,approvalRequest,policyId}' = 'APV-01'
+     AND v_queue #>> '{body,approvalRequest,assignedTo,id}' =
+         '00000011-0000-0000-0000-0000000000a2',
+    pg_catalog.format('T2c FAIL: HUMAN queued response was %s',v_queue);
+  ASSERT (SELECT proposal.status FROM core.proposals AS proposal
+           WHERE proposal.id = '00000011-eeee-eeee-eeee-eeeeeeeeeee1') = 'DRAFT',
+    'T2d FAIL: queued proposal changed before approval';
+  ASSERT (SELECT pg_catalog.count(*) FROM core.action_requests AS request
+           WHERE request.requested_by_kind = 'HUMAN' AND request.status = 'SUGGESTED') = 0,
+    'T2e FAIL: HUMAN reached the SUGGESTED branch';
+  RAISE NOTICE 'T2 PASS - HUMAN EXECUTED/202 and QUEUED/202; SUGGESTED is unreachable.';
+END;
+$t2$;
+
+-- ─── T3 · AGENT matrix ─────────────────────────────────────────────────────
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a5","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"AGENT","actor_kind":"AGENT","agent_id":"agent_t011","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.agent_executed',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-2','{}'::jsonb,0.900,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a5","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"AGENT","actor_kind":"AGENT","agent_id":"agent_t011","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.agent_queued',
+  pg_temp.t011_perform('PROPOSAL_SEND','PRO-T011-2','{"channel":"EMAIL","runId":"run_t011"}'::jsonb,0.820,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a5","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"AGENT","actor_kind":"AGENT","agent_id":"agent_t011","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.agent_suggested',
+  pg_temp.t011_perform('FOLLOWUP_SEND','FUP-T011-NONE',
+    '{"channel":"EMAIL","body":"Suggested follow-up","runId":"run_t011"}'::jsonb,
+    0.880,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a6","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"AGENT","actor_kind":"AGENT","agent_id":"agent_observe_t011","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.agent_observe',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-5','{}'::jsonb,0.950,NULL)::text,true);
+RESET ROLE;
+
+DO $t3$
+DECLARE v_exec jsonb := pg_catalog.current_setting('t011.agent_executed')::jsonb;
+        v_queue jsonb := pg_catalog.current_setting('t011.agent_queued')::jsonb;
+        v_suggest jsonb := pg_catalog.current_setting('t011.agent_suggested')::jsonb;
+        v_observe jsonb := pg_catalog.current_setting('t011.agent_observe')::jsonb;
+BEGIN
+  ASSERT v_exec ->> 'http' = '202' AND v_exec #>> '{body,status}' = 'EXECUTED',
+    pg_catalog.format('T3a FAIL: AGENT AUTONOMOUS was %s',v_exec);
+  ASSERT (SELECT request.requested_by_id FROM core.action_requests AS request
+           WHERE request.target_ref = 'ENQ-T011-2') = 'agent_t011',
+    'T3b FAIL: AGENT identity was not logged exactly';
+  ASSERT v_queue ->> 'http' = '202'
+     AND v_queue #>> '{body,status}' = 'QUEUED_FOR_APPROVAL'
+     AND v_queue #>> '{body,approvalRequest,policyId}' = 'APV-01',
+    pg_catalog.format('T3c FAIL: AGENT approval response was %s',v_queue);
+  ASSERT v_suggest ->> 'http' = '200'
+     AND v_suggest #>> '{body,status}' = 'SUGGESTED'
+     AND v_suggest #>> '{body,draft,type}' = 'FOLLOWUP_SEND',
+    pg_catalog.format('T3d FAIL: AGENT suggestion response was %s',v_suggest);
+  ASSERT (SELECT draft.expires_at - draft.created_at FROM core.suggested_drafts AS draft
+           WHERE draft.action_type = 'FOLLOWUP_SEND') = interval '7 days',
+    'T3e FAIL: suggested draft expiry is not exactly seven days';
+  ASSERT v_observe ->> 'ok' = 'false'
+     AND (v_observe ->> 'detailText')::jsonb ->> 'grantedLevel' = 'OBSERVE',
+    pg_catalog.format('T3f FAIL: default deny was %s',v_observe);
+  RAISE NOTICE 'T3 PASS - all four AGENT outcomes are exact.';
+END;
+$t3$;
+
+-- ─── T4 · SYSTEM ───────────────────────────────────────────────────────────
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a8","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"OPS","actor_kind":"SYSTEM","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.system_executed',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-3','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+DO $t4$
+DECLARE v jsonb := pg_catalog.current_setting('t011.system_executed')::jsonb;
+BEGIN
+  ASSERT v ->> 'http' = '202' AND v #>> '{body,status}' = 'EXECUTED',
+    pg_catalog.format('T4a FAIL: SYSTEM response was %s',v);
+  ASSERT (SELECT pg_catalog.jsonb_array_length(request.evaluation_trace)
+            FROM core.action_requests AS request
+           WHERE request.target_ref = 'ENQ-T011-3') = 5,
+    'T4b FAIL: SYSTEM did not traverse the exact five evaluation/dispatch trace entries';
+  ASSERT (SELECT request.requested_by_kind FROM core.action_requests AS request
+           WHERE request.target_ref = 'ENQ-T011-3') = 'SYSTEM',
+    'T4c FAIL: SYSTEM requester kind was not logged';
+  RAISE NOTICE 'T4 PASS - SYSTEM executes with 202 and its identity is logged.';
+END;
+$t4$;
+
+-- ─── T5 · idempotent replay is the original body with HTTP 200 ─────────────
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.replay_first',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-4','{}'::jsonb,NULL,'idem-t011')::text,true);
+RESET ROLE;
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.replay_second',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-4','{}'::jsonb,NULL,'idem-t011')::text,true);
+RESET ROLE;
+
+DO $t5$
+DECLARE v_first jsonb := pg_catalog.current_setting('t011.replay_first')::jsonb;
+        v_second jsonb := pg_catalog.current_setting('t011.replay_second')::jsonb;
+BEGIN
+  ASSERT v_first ->> 'http' = '202',
+    pg_catalog.format('T5a FAIL: original HTTP was %s',v_first ->> 'http');
+  ASSERT v_second ->> 'http' = '200',
+    pg_catalog.format('T5b FAIL: replay HTTP was %s, expected 200',v_second ->> 'http');
+  ASSERT v_second -> 'body' = v_first -> 'body',
+    'T5c FAIL: replay body differs from the original response';
+  ASSERT (SELECT pg_catalog.count(*) FROM core.action_requests AS request
+           WHERE request.target_ref = 'ENQ-T011-4') = 1,
+    'T5d FAIL: replay inserted a second action request';
+  RAISE NOTICE 'T5 PASS - replay body is identical and HTTP is 200.';
+END;
+$t5$;
+
+-- ─── Manual pending approvals for decision-side fraud/assurance probes ─────
+
+-- Manager One submits; assignment must choose Manager Two, never the requester.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a2","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES_MANAGER","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.self_submit',
+  pg_temp.t011_perform('PROPOSAL_SEND','PRO-T011-3','{"channel":"EMAIL"}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('t011.self_approval_id',(
+  SELECT approval.id::text FROM core.approval_requests AS approval
+   WHERE approval.target_ref = 'PRO-T011-3'),true);
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a2","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES_MANAGER","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.self_decide',
+  pg_temp.t011_decide(pg_catalog.current_setting('t011.self_approval_id')::uuid,
+    'APPROVE',NULL)::text,true);
+RESET ROLE;
+
+INSERT INTO core.action_requests
+  (id,tenant_id,ref,action_type,target_ref,target_entity,target_id,payload,
+   requested_by_kind,requested_by_id,status,effects,effects_hash)
+VALUES
+  ('00000011-1111-1111-1111-111111111201','00000011-1111-1111-1111-111111111111',
+   'ACT-T011-NULL','PROPOSAL_SEND','PRO-T011-4','proposal',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee4','{"channel":"EMAIL"}',
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL','[]',
+   pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('[]'::jsonb::text,'UTF8')),'hex'));
+INSERT INTO core.approval_requests
+  (id,tenant_id,ref,action_request_id,policy_id,action_type,subject,target_ref,
+   requested_by_kind,requested_by_id,reason,evidence,deviations,diff,diff_hash,
+   approver_role,assigned_to_id,sla_due_at,expires_at,bulk_approvable)
+VALUES
+  ('00000011-1111-1111-1111-111111111301','00000011-1111-1111-1111-111111111111',
+   'APV-T011-NULL','00000011-1111-1111-1111-111111111201','APV-01',
+   'PROPOSAL_SEND','NULL requester','PRO-T011-4','HUMAN',NULL,'fraud backstop',
+   '[]','[]','[]',
+   pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('[]'::jsonb::text,'UTF8')),'hex'),
+   'SALES_MANAGER','00000011-0000-0000-0000-0000000000a3',
+   pg_catalog.now() + interval '4 hours',pg_catalog.now() + interval '24 hours',false);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES_MANAGER","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.null_requester_decide',
+  pg_temp.t011_decide('00000011-1111-1111-1111-111111111301','APPROVE',NULL)::text,true);
+RESET ROLE;
+
+DO $t6$
+DECLARE v_self jsonb := pg_catalog.current_setting('t011.self_decide')::jsonb;
+        v_null jsonb := pg_catalog.current_setting('t011.null_requester_decide')::jsonb;
+BEGIN
+  ASSERT pg_catalog.current_setting('t011.self_submit')::jsonb
+           #>> '{body,approvalRequest,assignedTo,id}' =
+         '00000011-0000-0000-0000-0000000000a3',
+    'T6a FAIL: requester was assigned their own approval';
+  ASSERT v_self ->> 'ok' = 'false'
+     AND (v_self ->> 'detailText')::jsonb ->> 'policyId' = 'GOV-03',
+    pg_catalog.format('T6b FAIL: self-approval response was %s',v_self);
+  ASSERT v_null ->> 'ok' = 'false'
+     AND (v_null ->> 'detailText')::jsonb ->> 'policyId' = 'GOV-03',
+    pg_catalog.format('T6c FAIL: NULL requester response was %s',v_null);
+  RAISE NOTICE 'T6 PASS - self and NULL requesters both fail GOV-03.';
+END;
+$t6$;
+
+-- ─── T7/T8 · NULL role and AAL2 inside both envelopes ──────────────────────
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a7","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","actor_kind":"HUMAN","aal":"aal1"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.null_role',
+  pg_temp.t011_decide('00000011-1111-1111-1111-111111111301','APPROVE',NULL)::text,true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a4","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"FINANCE","actor_kind":"HUMAN","aal":"aal2"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.money_perform',
+  pg_temp.t011_perform('INVOICE_PUSH','INV-NOT-REACHED','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+
+INSERT INTO core.action_requests
+  (id,tenant_id,ref,action_type,target_ref,target_entity,payload,requested_by_kind,
+   requested_by_id,status,effects,effects_hash)
+VALUES
+  ('00000011-1111-1111-1111-111111111202','00000011-1111-1111-1111-111111111111',
+   'ACT-T011-MONEY','INVOICE_PUSH','INV-NOT-REACHED','invoice','{}','HUMAN',
+   '00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL','[]',
+   pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('[]'::jsonb::text,'UTF8')),'hex'));
+INSERT INTO core.approval_requests
+  (id,tenant_id,ref,action_request_id,policy_id,action_type,subject,target_ref,
+   requested_by_kind,requested_by_id,reason,evidence,deviations,diff,diff_hash,
+   approver_role,assigned_to_id,sla_due_at,expires_at,bulk_approvable)
+VALUES
+  ('00000011-1111-1111-1111-111111111302','00000011-1111-1111-1111-111111111111',
+   'APV-T011-MONEY','00000011-1111-1111-1111-111111111202','FIN-02','INVOICE_PUSH',
+   'Money approval','INV-NOT-REACHED','HUMAN','00000011-0000-0000-0000-0000000000a1',
+   'AAL2 backstop','[]','[]','[]',
+   pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('[]'::jsonb::text,'UTF8')),'hex'),
+   'FINANCE','00000011-0000-0000-0000-0000000000a4',
+   pg_catalog.now() + interval '4 hours',pg_catalog.now() + interval '24 hours',false);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a4","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"FINANCE","actor_kind":"HUMAN","aal":"aal2"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.money_decide',
+  pg_temp.t011_decide('00000011-1111-1111-1111-111111111302','APPROVE',NULL)::text,true);
+RESET ROLE;
+
+DO $t7_t8$
+DECLARE v_role jsonb := pg_catalog.current_setting('t011.null_role')::jsonb;
+        v_perform jsonb := pg_catalog.current_setting('t011.money_perform')::jsonb;
+        v_decide jsonb := pg_catalog.current_setting('t011.money_decide')::jsonb;
+BEGIN
+  ASSERT v_role ->> 'ok' = 'false'
+     AND (v_role ->> 'detailText')::jsonb ->> 'reason' = 'APP_ROLE_REQUIRED',
+    pg_catalog.format('T7 FAIL: NULL role response was %s',v_role);
+  -- A forgeable aal2 claim is present on purpose. With no matching auth.sessions
+  -- row, app.aal2_verified() must still fail closed.
+  ASSERT v_perform ->> 'ok' = 'false'
+     AND (v_perform ->> 'detailText')::jsonb ->> 'reason' = 'AAL2_REQUIRED',
+    pg_catalog.format('T8a FAIL: money perform response was %s',v_perform);
+  ASSERT v_decide ->> 'ok' = 'false'
+     AND (v_decide ->> 'detailText')::jsonb ->> 'reason' = 'AAL2_REQUIRED',
+    pg_catalog.format('T8b FAIL: money decide response was %s',v_decide);
+  RAISE NOTICE 'T7 PASS - NULL role refused before authorisation.';
+  RAISE NOTICE 'T8 PASS - a forged aal2 claim passes neither money boundary.';
+END;
+$t7_t8$;
+
+-- ─── T9 · both H-07 holes are closed ───────────────────────────────────────
+
+INSERT INTO core.action_requests
+  (id,tenant_id,ref,action_type,target_ref,target_entity,target_id,payload,
+   requested_by_kind,requested_by_id,status,effects)
+VALUES
+  ('00000011-1111-1111-1111-111111111203','00000011-1111-1111-1111-111111111111',
+   'ACT-T011-QUEUED','PROPOSAL_SEND','PRO-T011-4','proposal',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee4','{"channel":"EMAIL"}',
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL','[]'),
+  ('00000011-1111-1111-1111-111111111204','00000011-1111-1111-1111-111111111111',
+   'ACT-T011-SIBLING','PROPOSAL_SEND','PRO-T011-4','proposal',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee4','{"channel":"EMAIL"}',
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','EXECUTING','[]');
+
+DO $t9$
+DECLARE v_queued boolean := false; v_sibling boolean := false;
+BEGIN
+  PERFORM pg_catalog.set_config(
+    'app.effect_applier','00000011-1111-1111-1111-111111111203',true);
+  BEGIN
+    UPDATE core.proposals SET status = 'SENT',sent_at = pg_catalog.now()
+     WHERE id = '00000011-eeee-eeee-eeee-eeeeeeeeeee4';
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN v_queued := true;
+  END;
+  PERFORM pg_catalog.set_config(
+    'app.effect_applier','00000011-1111-1111-1111-111111111204',true);
+  BEGIN
+    UPDATE core.proposals SET status = 'SENT',sent_at = pg_catalog.now()
+     WHERE id = '00000011-eeee-eeee-eeee-eeeeeeeeeee5';
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN v_sibling := true;
+  END;
+  PERFORM pg_catalog.set_config('app.effect_applier','',true);
+  ASSERT v_queued, 'T9a FAIL: QUEUED_FOR_APPROVAL opened a state gate';
+  ASSERT v_sibling, 'T9b FAIL: an action for a different target row opened the gate';
+  ASSERT (SELECT proposal.status FROM core.proposals AS proposal
+           WHERE proposal.id = '00000011-eeee-eeee-eeee-eeeeeeeeeee4') = 'DRAFT',
+    'T9c FAIL: queued action changed its target';
+  ASSERT (SELECT proposal.status FROM core.proposals AS proposal
+           WHERE proposal.id = '00000011-eeee-eeee-eeee-eeeeeeeeeee5') = 'DRAFT',
+    'T9d FAIL: sibling action changed the wrong target';
+  RAISE NOTICE 'T9 PASS - queued status and sibling target both fail GOV-07.';
+END;
+$t9$;
+
+-- ─── T10 · restrictive self-grant and NULL autonomy ceiling ────────────────
+
+CREATE POLICY t011_autonomy_insert_positive_control ON core.autonomy_grants
+  AS PERMISSIVE FOR INSERT TO authenticated WITH CHECK (true);
+GRANT INSERT ON core.autonomy_grants TO authenticated;
+
+DO $t10a$
+DECLARE v_denied boolean := false;
+BEGIN
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    '{"sub":"00000011-0000-0000-0000-0000000000a5","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"AGENT","actor_kind":"AGENT","agent_id":"agent_t011"}',true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO core.autonomy_grants
+      (id,tenant_id,agent_id,action_type,level,granted_by)
+    VALUES
+      ('00000011-1111-1111-1111-111111111401',
+       '00000011-1111-1111-1111-111111111111','agent_t011',
+       'TNA_RECOMMENDATION_ACCEPT','SUGGEST','agent_t011');
+  EXCEPTION WHEN insufficient_privilege THEN v_denied := true;
+  END;
+  RESET ROLE;
+  ASSERT v_denied, 'T10a FAIL: agent inserted its own autonomy grant';
+END;
+$t10a$;
+
+REVOKE INSERT ON core.autonomy_grants FROM authenticated;
+DROP POLICY t011_autonomy_insert_positive_control ON core.autonomy_grants;
+SELECT pg_catalog.set_config('request.jwt.claims','',true);
+
+ALTER TABLE app.action_types ALTER COLUMN ceiling_autonomy DROP NOT NULL;
+DO $t10b$
+DECLARE v_raised boolean := false;
+BEGIN
+  BEGIN
+    UPDATE app.action_types SET ceiling_autonomy = NULL
+     WHERE key = 'TNA_RECOMMENDATION_ACCEPT';
+    INSERT INTO core.autonomy_grants
+      (tenant_id,agent_id,action_type,level,granted_by)
+    VALUES
+      ('00000011-1111-1111-1111-111111111111','agent_null_ceiling_t011',
+       'TNA_RECOMMENDATION_ACCEPT','SUGGEST','t011');
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN v_raised := true;
+  END;
+  ASSERT v_raised, 'T10b FAIL: NULL autonomy ceiling admitted a grant';
+  RAISE NOTICE 'T10 PASS - self-grant denied and NULL ceiling raises.';
+END;
+$t10b$;
+ALTER TABLE app.action_types ALTER COLUMN ceiling_autonomy SET NOT NULL;
+
+-- ─── T11 · typed effect-status seam ────────────────────────────────────────
+
+INSERT INTO core.action_requests
+  (id,tenant_id,ref,action_type,target_entity,payload,requested_by_kind,
+   requested_by_id,status,effects)
+VALUES
+  ('00000011-1111-1111-1111-111111111205','00000011-1111-1111-1111-111111111111',
+   'ACT-T011-EFFECT','BROADCAST_SEND','broadcast','{"channel":"EMAIL"}',
+   'SYSTEM','00000011-0000-0000-0000-0000000000a8','EXECUTING','[]');
+WITH inserted AS (
+  INSERT INTO app.action_effects
+    (tenant_id,action_request_id,seq,op,entity,description,kind,status,job_key)
+  VALUES
+    ('00000011-1111-1111-1111-111111111111',
+     '00000011-1111-1111-1111-111111111205',1,'ADD','Message',
+     'T011 effect','EXTERNAL','DISPATCHED','t011-effect')
+  RETURNING id
+)
+SELECT pg_catalog.set_config('t011.effect_id',(SELECT id::text FROM inserted),true);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a8","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"OPS","actor_kind":"SYSTEM"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.effect_unknown',
+  pg_temp.t011_report(pg_catalog.current_setting('t011.effect_id')::bigint,'BOGUS')::text,true);
+RESET ROLE;
+
+DO $t11$
+DECLARE v jsonb := pg_catalog.current_setting('t011.effect_unknown')::jsonb;
+BEGIN
+  ASSERT v ->> 'ok' = 'false' AND v ->> 'sqlstate' = '22P02',
+    pg_catalog.format('T11a FAIL: unknown effect status response was %s',v);
+  ASSERT (SELECT effect.status FROM app.action_effects AS effect
+           WHERE effect.id = pg_catalog.current_setting('t011.effect_id')::bigint) = 'DISPATCHED',
+    'T11b FAIL: unknown status changed the ledger';
+  ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_type AS type
+           WHERE type.typname = 'effect_status') = 1,
+    'T11c FAIL: effect_status is duplicated';
+  RAISE NOTICE 'T11 PASS - unknown worker status raises at the single enum seam.';
+END;
+$t11$;
+
+-- ─── T12 · malformed payload_schema raises ─────────────────────────────────
+
+ALTER TABLE app.action_types DROP CONSTRAINT action_types_payload_schema_shape;
+UPDATE app.action_types SET payload_schema = '{"requires":[]}'::jsonb
+ WHERE key = 'ENQUIRY_ARCHIVE';
+SELECT pg_catalog.set_config('request.jwt.claims',
+  '{"sub":"00000011-0000-0000-0000-0000000000a1","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"SALES","actor_kind":"HUMAN"}',true);
+SET LOCAL ROLE service_role;
+SELECT pg_catalog.set_config('t011.malformed_schema',
+  pg_temp.t011_perform('ENQUIRY_ARCHIVE','ENQ-T011-5','{}'::jsonb,NULL,NULL)::text,true);
+RESET ROLE;
+UPDATE app.action_types SET payload_schema = '{"required":[]}'::jsonb
+ WHERE key = 'ENQUIRY_ARCHIVE';
+ALTER TABLE app.action_types
+  ADD CONSTRAINT action_types_payload_schema_shape
+  CHECK (payload_schema ? 'required'
+         AND pg_catalog.jsonb_typeof(payload_schema -> 'required') = 'array');
+
+DO $t12$
+DECLARE v jsonb := pg_catalog.current_setting('t011.malformed_schema')::jsonb;
+BEGIN
+  ASSERT v ->> 'ok' = 'false'
+     AND (v ->> 'detailText')::jsonb ->> 'reason' = 'MALFORMED_PAYLOAD_SCHEMA',
+    pg_catalog.format('T12 FAIL: malformed schema response was %s',v);
+  RAISE NOTICE 'T12 PASS - malformed payload_schema fails closed.';
+END;
+$t12$;
+
+-- ─── T1/T13/T14 · structural and privilege closure ────────────────────────
+
+DO $t1_t13_t14$
+DECLARE
+  v_count integer;
+  v_bad text;
+  v_name text;
+  v_definition text;
+  v_role text;
+  v_relation regclass;
+  v_function regprocedure;
+  v_column record;
+BEGIN
+  SELECT pg_catalog.count(*)::integer INTO v_count
+    FROM (VALUES
+      ('core.autonomy_grants'),('core.action_policies'),('core.action_requests'),
+      ('app.action_effects'),('core.approval_requests'),('core.approval_decisions'),
+      ('app.idempotency_keys'),('core.suggested_drafts'),('core.jury_configs'),
+      ('core.jury_verdicts'),('core.state_transitions')
+    ) AS expected(name)
+   WHERE pg_catalog.to_regclass(expected.name) IS NOT NULL;
+  ASSERT v_count = 11,
+    pg_catalog.format('T1a FAIL: 011 table count is %s, expected 11',v_count);
+  ASSERT (SELECT pg_catalog.count(*) FROM app.action_types) = 22,
+    'T1b FAIL: action type count is not exactly 22';
+  ASSERT (SELECT pg_catalog.count(*) FROM core.action_policies
+           WHERE tenant_id = '00000011-1111-1111-1111-111111111111') = 22,
+    'T1c FAIL: policy count is not exactly 22 for the fixture tenant';
+  -- 121 from doc 01 §5.3 + 3 payment-reversal edges that section omits and
+  -- 010's reversal path requires. See the marked note at the seed in 011.
+  ASSERT (SELECT pg_catalog.count(*) FROM core.state_transitions) = 124,
+    'T1d FAIL: transition count is not exactly 124';
+  ASSERT (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger AS trigger
+           WHERE NOT trigger.tgisinternal
+             AND trigger.tgfoid = 'app.enforce_state_transition()'::regprocedure) = 15,
+    'T1e FAIL: state-transition attachment count is not exactly 15';
+  ASSERT (SELECT pg_catalog.array_agg(enum.enumlabel::text ORDER BY enum.enumsortorder)
+            FROM pg_catalog.pg_enum AS enum
+           WHERE enum.enumtypid = 'app.effect_status'::regtype) = ARRAY[
+      'PLANNED','APPLIED','DISPATCHED','SUCCEEDED','FAILED','SETTLED','DEAD_LETTERED'],
+    'T1f FAIL: effect_status labels or order changed';
+
+  SELECT pg_catalog.count(*)::integer INTO v_count
+    FROM pg_catalog.pg_proc AS procedure
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+   WHERE namespace.nspname = 'app'
+     AND procedure.proname = ANY (ARRAY[
+       'is_valid_condition_set','autonomy_rank','jnum','policy_matches','aal2_verified',
+       'seed_action_policies','seed_action_policies_on_tenant',
+       'enforce_autonomy_ceiling','assert_gates_exist','enforce_state_transition',
+       'resolve_action_target_id','action_value','open_approval_count',
+       'pick_role_holder','plan_effects',
+       'execute_in_database_action','apply_effects','perform_action','decide_approval',
+       'bulk_decide','report_effect_result','escalate_approvals',
+       'notify_approval_breaches','expire_approvals','cleanup_idempotency_keys',
+       'expire_suggested_drafts','enqueue_jury','enqueue_jury_samples'])
+     AND procedure.proconfig @> ARRAY['search_path=""'];
+  ASSERT v_count = 28,
+    pg_catalog.format('T1g FAIL: %s of 28 functions store search_path=""',v_count);
+
+  ASSERT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_policy AS policy
+    JOIN pg_catalog.pg_class AS class ON class.oid = policy.polrelid
+    WHERE class.oid = 'core.autonomy_grants'::regclass
+      AND policy.polname = 'autonomy_grants_agents_cannot_write'
+      AND NOT policy.polpermissive AND policy.polcmd = '*'
+      AND pg_catalog.strpos(pg_catalog.pg_get_expr(policy.polqual,policy.polrelid), 'is_agent()') > 0
+      AND pg_catalog.strpos(pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid), 'is_agent()') > 0),
+    'T1h FAIL: restrictive self-grant policy is absent from USING or WITH CHECK';
+
+  ASSERT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_class AS class
+     WHERE class.oid = 'core.v_approval_requests'::regclass
+       AND class.reloptions @> ARRAY['security_invoker=true']),
+    'T13a FAIL: v_approval_requests is not security_invoker';
+  ASSERT pg_catalog.has_schema_privilege('anon','app','USAGE')
+     AND pg_catalog.has_schema_privilege('authenticated','app','USAGE')
+     AND pg_catalog.has_schema_privilege('service_role','app','USAGE'),
+    'T13b FAIL: M-04 load-bearing app schema USAGE was revoked';
+
+  FOR v_column IN
+    SELECT * FROM (VALUES
+      ('core.enquiries','status'),('core.opportunities','stage'),
+      ('core.tnas','status'),('core.proposals','status'),
+      ('core.quotations','status'),('core.engagements','status'),
+      ('core.attendance_days','status'),('core.hrdc_packets','status'),
+      ('core.invoices','status'),('core.invoices','sync_state'),
+      ('core.collections_cases','stage'),('core.trainer_bookings','state'),
+      ('core.compliance_rules','status'),('core.rule_changes','status'),
+      ('core.outbound_messages','status'))
+      AS gated(relation_name,column_name)
+  LOOP
+    FOREACH v_role IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
+      ASSERT NOT pg_catalog.has_column_privilege(
+        v_role,v_column.relation_name,v_column.column_name,'UPDATE'),
+        pg_catalog.format('T13c FAIL: %s can directly UPDATE %s.%s',
+          v_role,v_column.relation_name,v_column.column_name);
+    END LOOP;
+  END LOOP;
+
+  SELECT pg_catalog.pg_get_functiondef(
+    'app.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb,text)'::regprocedure)
+    INTO v_definition;
+  ASSERT pg_catalog.strpos(v_definition, 'tenant.timezone') > 0
+     AND (pg_catalog.length(v_definition) - pg_catalog.length(pg_catalog.replace(
+       v_definition,'AT TIME ZONE v_tenant_timezone','')))
+         / pg_catalog.length('AT TIME ZONE v_tenant_timezone') >= 4,
+    'T13d FAIL: tenant-local day arithmetic is incomplete';
+  SELECT pg_catalog.regexp_replace(
+           pg_catalog.pg_get_viewdef('core.v_approval_requests'::regclass,true),
+           '\s+', '', 'g')
+    INTO v_definition;
+  ASSERT (pg_catalog.length(v_definition) - pg_catalog.length(pg_catalog.replace(
+       v_definition,'ATTIMEZONEtenant.timezone','')))
+         / pg_catalog.length('ATTIMEZONEtenant.timezone') = 2,
+    'T13e FAIL: date_trunc local midnight is not converted back to timestamptz';
+
+  FOREACH v_name IN ARRAY ARRAY[
+    'escalate_approvals','notify_approval_breaches','expire_approvals',
+    'cleanup_idempotency_keys','expire_suggested_drafts','enqueue_jury_samples']
+  LOOP
+    SELECT pg_catalog.pg_get_functiondef(procedure.oid) INTO v_definition
+      FROM pg_catalog.pg_proc AS procedure
+      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+     WHERE namespace.nspname = 'app' AND procedure.proname = v_name;
+    ASSERT pg_catalog.strpos(v_definition, 'FOR UPDATE') > 0
+       AND pg_catalog.strpos(v_definition, 'SKIP LOCKED') > 0
+       AND pg_catalog.strpos(v_definition, 'LIMIT p_limit') > 0,
+      pg_catalog.format('T13f FAIL: %s lacks FOR UPDATE SKIP LOCKED + LIMIT',v_name);
+  END LOOP;
+  FOREACH v_name IN ARRAY ARRAY[
+    'escalate_approvals','notify_approval_breaches','expire_approvals']
+  LOOP
+    SELECT pg_catalog.pg_get_functiondef(procedure.oid) INTO v_definition
+      FROM pg_catalog.pg_proc AS procedure
+      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+     WHERE namespace.nspname = 'app' AND procedure.proname = v_name;
+    ASSERT pg_catalog.strpos(v_definition, 'approval.status = ''PENDING''') > 0,
+      pg_catalog.format('T13g FAIL: %s outer UPDATE lacks the live status guard',v_name);
+  END LOOP;
+
+  FOREACH v_role IN ARRAY ARRAY['anon','authenticated'] LOOP
+    FOR v_relation IN
+      SELECT pg_catalog.to_regclass(name) FROM (VALUES
+        ('app.action_types'),('core.autonomy_grants'),('core.action_policies'),
+        ('core.action_requests'),('app.action_effects'),('core.approval_requests'),
+        ('core.approval_decisions'),('app.idempotency_keys'),
+        ('core.suggested_drafts'),('core.jury_configs'),('core.jury_verdicts'),
+        ('core.state_transitions'),('core.v_approval_requests')
+      ) AS relation(name)
+    LOOP
+      ASSERT NOT pg_catalog.has_table_privilege(v_role,v_relation,'SELECT'),
+        pg_catalog.format('T14a FAIL: %s has SELECT on %s',v_role,v_relation);
+    END LOOP;
+    FOR v_function IN
+      SELECT procedure.oid::regprocedure
+        FROM pg_catalog.pg_proc AS procedure
+        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+       WHERE namespace.nspname = 'app'
+         AND procedure.proname = ANY (ARRAY[
+           'is_valid_condition_set','autonomy_rank','jnum','policy_matches','aal2_verified',
+           'seed_action_policies','seed_action_policies_on_tenant',
+           'enforce_autonomy_ceiling','assert_gates_exist','enforce_state_transition',
+           'resolve_action_target_id','action_value','open_approval_count',
+           'pick_role_holder','plan_effects',
+           'execute_in_database_action','apply_effects','perform_action','decide_approval',
+           'bulk_decide','report_effect_result','escalate_approvals',
+           'notify_approval_breaches','expire_approvals','cleanup_idempotency_keys',
+           'expire_suggested_drafts','enqueue_jury','enqueue_jury_samples'])
+    LOOP
+      ASSERT NOT pg_catalog.has_function_privilege(v_role,v_function,'EXECUTE'),
+        pg_catalog.format('T14b FAIL: %s has EXECUTE on %s',v_role,v_function);
+    END LOOP;
+  END LOOP;
+
+  RAISE NOTICE 'T1 PASS - exact 11-table/28-function/22-policy/124-edge inventory.';
+  RAISE NOTICE 'T13 PASS - invoker view, app USAGE, timezone math, and bounded sweep structure hold.';
+  RAISE NOTICE 'T14 PASS - zero client SELECT/EXECUTE grants on every 011 object.';
+END;
+$t1_t13_t14$;
+
+ROLLBACK;

@@ -34,6 +34,61 @@
 
 BEGIN;
 
+-- ── GOV-07 fixture helper (added 2026-09-13, when 011 landed) ───────────────
+-- Migration 011 attaches app.enforce_state_transition to every gated column in
+-- doc 01 §5.3. A gated edge may be crossed only by the effect applier of an
+-- action of a gating type, running against THAT row: 011 closed critic finding
+-- H-07 by checking the request's status, its target_id and its tenant, so a
+-- fixture that sets only the GUC is still refused, and correctly.
+--
+-- This helper does what the product's executor does — it creates the action
+-- request and publishes it as the applier — so the fixture crosses the edge the
+-- way a real caller does instead of going around the control it is sitting
+-- next to. It lives in pg_temp and the pin's closing ROLLBACK removes it.
+CREATE FUNCTION pg_temp.gate(p_tenant uuid, p_type text, p_target uuid)
+RETURNS void LANGUAGE plpgsql AS $gate$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES (p_tenant, p_type, p_target, 'EXECUTING', 'SYSTEM', 'pin-fixture')
+  RETURNING id INTO v_id;
+  PERFORM set_config('app.effect_applier', v_id::text, true);
+END $gate$;
+
+-- Clear the applier. Every gated write is bracketed, so a later assertion that
+-- a gated edge is REFUSED cannot pass by accident on a stale applier.
+CREATE FUNCTION pg_temp.ungate() RETURNS void LANGUAGE plpgsql AS $ungate$
+BEGIN
+  PERFORM set_config('app.effect_applier', '', true);
+END $ungate$;
+
+-- A compliance rule is not insertable ACTIVE. core.state_transitions allows
+-- (new) -> PROPOSED, then PROPOSED -> ACTIVE gated by RULE_CHANGE_APPROVE, which
+-- is doc 01 §5.3 and is the point: 009 already refuses to let a rule go ACTIVE
+-- without a named verifier, and 011 adds that somebody must have RUN the action
+-- that promoted it. This pin used to type ACTIVE into the INSERT.
+--
+-- Rules are NATIONAL by default (tenant_id NULL). core.action_requests.tenant_id
+-- is NOT NULL, so the request is attributed to the fixture's tenant; 011's gate
+-- skips the tenant equality for a national row precisely because the question
+-- has no answer there. See the comment in app.enforce_state_transition.
+--
+-- Activation is PER RULE, not in bulk, because two of this pin's assertions are
+-- about a rule that must FAIL to activate -- the unverified one (T2) and the
+-- bitemporally ambiguous one (T4a). The GiST exclusion is `WHERE status IN
+-- (ACTIVE, SUPERSEDED)`, so it no longer fires on the INSERT; it fires here, on
+-- the edge that actually makes a second rule authoritative for the same family
+-- over the same two time windows. That is a better place for it to fire.
+CREATE FUNCTION pg_temp.activate_rule(p_tenant uuid, p_id uuid)
+RETURNS void LANGUAGE plpgsql AS $act$
+BEGIN
+  PERFORM pg_temp.gate(p_tenant, 'RULE_CHANGE_APPROVE', p_id);
+  UPDATE core.compliance_rules SET status = 'ACTIVE' WHERE id = p_id;
+  PERFORM pg_temp.ungate();
+END $act$;
+
+
 SET LOCAL plpgsql.check_asserts = on;
 
 DO $canary$
@@ -58,6 +113,15 @@ INSERT INTO auth.users (id, email) VALUES
   ('00000009-0000-0000-0000-0000000000a1','t009-jason@example.invalid');
 INSERT INTO public.tenants (id, slug, name) VALUES
   ('00000009-1111-1111-1111-111111111111','t009-alpha','Alpha');
+
+-- ACT is the action-envelope ref prefix. 011 gives core.action_requests a ref
+-- through app.finalise_table, so any fixture that crosses a GATED edge must be
+-- able to allocate one. It is seeded HERE rather than with the rest of the
+-- formats further down, because the first gated write in this pin is T2's rule
+-- activation and that runs long before T7's fixture block. In the product these
+-- rows come from 016's tenant provisioning; no migration seeds them.
+INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
+  ('00000009-1111-1111-1111-111111111111','ACT','action_requests',false,4);
 
 INSERT INTO core.rule_set_versions (id, tenant_id, version_key, registry_asof) VALUES
   ('00000009-0aaa-0aaa-0aaa-0aaaaaaaaaa1', NULL,'rs_2026_06_15','2026-06-15T00:00:00+08:00'),
@@ -85,10 +149,12 @@ $t1$;
 DO $t2$
 BEGIN
   BEGIN
-    INSERT INTO core.compliance_rules (rule_code, family_key, check_key, side, subject,
+    INSERT INTO core.compliance_rules (id, rule_code, family_key, check_key, side, subject,
       subject_field, op, reference_kind, reference, effective_from, status)
-    VALUES ('HRD-BAD','LEAD_TIME_PUBLIC','CHK_LEAD_TIME','GRANT','Public lead time',
-            'training_start','GTE','FIELD','grant_approval','2026-06-15','ACTIVE');
+    VALUES ('00000009-0bad-0bad-0bad-0badbadbad01',
+            'HRD-BAD','LEAD_TIME_PUBLIC','CHK_LEAD_TIME','GRANT','Public lead time',
+            'training_start','GTE','FIELD','grant_approval','2026-06-15','PROPOSED');
+    PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111','00000009-0bad-0bad-0bad-0badbadbad01');
     RAISE EXCEPTION
       'T2 FAIL: a rule went ACTIVE with no verifier. DECISIONS §3 loads every seeded '
       'rule as PROPOSED until Finance checks it against the circular - this is where '
@@ -112,7 +178,8 @@ BEGIN
   VALUES ('00000009-0bbb-0bbb-0bbb-0bbbbbbbbbb1','HRD-015','LEAD_TIME_PUBLIC','CHK_LEAD_TIME',
           'GRANT', NULL,'PUBLIC','Public lead time','training_start','GTE','FIELD',
           'grant_approval', 3,'2026-06-15','2027-01-01','2026-06-15T00:00:00+08:00',
-          'ACTIVE','00000009-0000-0000-0000-0000000000a1','2026-06-20T00:00:00+08:00');
+          'PROPOSED','00000009-0000-0000-0000-0000000000a1','2026-06-20T00:00:00+08:00');
+  PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111','00000009-0bbb-0bbb-0bbb-0bbbbbbbbbb1');
 
   -- 14-day revision, in force from 1 Jan 2027 - but only KNOWN from 8 November,
   -- when Circular 09/2026 was ingested.
@@ -123,8 +190,9 @@ BEGIN
   VALUES ('00000009-0bbb-0bbb-0bbb-0bbbbbbbbbb2','HRD-022','LEAD_TIME_PUBLIC','CHK_LEAD_TIME',
           'GRANT', NULL,'PUBLIC','Public lead time (revised)','training_start','GTE','FIELD',
           'grant_approval', 14,'2027-01-01','2026-11-08T00:00:00+08:00',
-          'ACTIVE','00000009-0bbb-0bbb-0bbb-0bbbbbbbbbb1',
+          'PROPOSED','00000009-0bbb-0bbb-0bbb-0bbbbbbbbbb1',
           '00000009-0000-0000-0000-0000000000a1','2026-11-10T00:00:00+08:00');
+  PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111','00000009-0bbb-0bbb-0bbb-0bbbbbbbbbb2');
 
   -- (a) a check run on 28 October, for a 12 November training date: the 14-day
   --     rule did not exist yet, so it must resolve the 3-day one.
@@ -171,16 +239,19 @@ $t3$;
 
 -- === T4 · the exclusion constraint refuses ambiguity and permits the rest ====
 DO $t4$
+DECLARE v_rule uuid;
 BEGIN
   -- ambiguous: same family, mode, scheme, overlapping on BOTH axes
   BEGIN
-    INSERT INTO core.compliance_rules (rule_code, family_key, check_key, side, scheme,
+    INSERT INTO core.compliance_rules (id, rule_code, family_key, check_key, side, scheme,
       delivery_mode, subject, subject_field, op, reference_kind, reference, offset_amount,
       effective_from, effective_to, registry_from, status, verified_by_user_id, verified_at)
-    VALUES ('HRD-DUP','LEAD_TIME_PUBLIC','CHK_LEAD_TIME','GRANT', NULL,'PUBLIC',
+    VALUES ('00000009-0d00-0d00-0d00-0d0dddddd001',
+            'HRD-DUP','LEAD_TIME_PUBLIC','CHK_LEAD_TIME','GRANT', NULL,'PUBLIC',
             'Conflicting','training_start','GTE','FIELD','grant_approval', 7,
-            '2026-08-01','2026-12-01','2026-08-01T00:00:00+08:00','ACTIVE',
+            '2026-08-01','2026-12-01','2026-08-01T00:00:00+08:00','PROPOSED',
             '00000009-0000-0000-0000-0000000000a1', now());
+    PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111','00000009-0d00-0d00-0d00-0d0dddddd001');
     RAISE EXCEPTION
       'T4a FAIL: two rules overlap on BOTH time axes for one family. "Which rule '
       'applied" now depends on which row the planner reads first.';
@@ -193,8 +264,10 @@ BEGIN
     effective_from, registry_from, status, verified_by_user_id, verified_at)
   VALUES ('HRD-014','LEAD_TIME_INHOUSE','CHK_LEAD_TIME','GRANT', NULL,'IN_HOUSE',
           'In-house lead time','training_start','GTE','FIELD','grant_approval', 14,
-          '2026-06-15','2026-06-15T00:00:00+08:00','ACTIVE',
-          '00000009-0000-0000-0000-0000000000a1', now());
+          '2026-06-15','2026-06-15T00:00:00+08:00','PROPOSED',
+          '00000009-0000-0000-0000-0000000000a1', now())
+  RETURNING id INTO v_rule;
+  PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111', v_rule);
 
   -- NOT ambiguous: same family, non-overlapping validity
   INSERT INTO core.compliance_rules (rule_code, family_key, check_key, side, scheme,
@@ -202,8 +275,10 @@ BEGIN
     effective_from, effective_to, registry_from, status, verified_by_user_id, verified_at)
   VALUES ('HRD-009','LEAD_TIME_PUBLIC','CHK_LEAD_TIME','GRANT', NULL,'PUBLIC',
           'Older public lead time','training_start','GTE','FIELD','grant_approval', 2,
-          '2025-01-01','2026-06-15','2025-01-01T00:00:00+08:00','ACTIVE',
-          '00000009-0000-0000-0000-0000000000a1', now());
+          '2025-01-01','2026-06-15','2025-01-01T00:00:00+08:00','PROPOSED',
+          '00000009-0000-0000-0000-0000000000a1', now())
+  RETURNING id INTO v_rule;
+  PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111', v_rule);
 
   -- NOT ambiguous: a TENANT OVERRIDE of a national family
   INSERT INTO core.compliance_rules (tenant_id, rule_code, family_key, check_key, side,
@@ -213,8 +288,10 @@ BEGIN
   VALUES ('00000009-1111-1111-1111-111111111111','HRD-015-LOCAL','LEAD_TIME_PUBLIC',
           'CHK_LEAD_TIME','GRANT', NULL,'PUBLIC','Stricter local policy',
           'training_start','GTE','FIELD','grant_approval', 21,
-          '2026-06-15','2027-01-01','2026-06-15T00:00:00+08:00','ACTIVE',
-          '00000009-0000-0000-0000-0000000000a1', now());
+          '2026-06-15','2027-01-01','2026-06-15T00:00:00+08:00','PROPOSED',
+          '00000009-0000-0000-0000-0000000000a1', now())
+  RETURNING id INTO v_rule;
+  PERFORM pg_temp.activate_rule('00000009-1111-1111-1111-111111111111', v_rule);
 
   RAISE NOTICE
     'T4 PASS - ambiguity refused; different family, different validity and a tenant '
@@ -253,7 +330,12 @@ BEGIN
   SELECT '00000009-1111-1111-1111-111111111111', p, e, false, 4
   FROM (VALUES ('ORG','organisations'),('PRG','programmes'),('PIP','pipelines'),
                ('ENG','engagements'),('HPK','hrdc_packets'),
-               ('SRC','knowledge_sources')) AS x(p,e);
+               ('SRC','knowledge_sources')) AS x(p,e)
+  ON CONFLICT DO NOTHING;
+-- ACT is the action-envelope ref prefix. 011 gives core.action_requests a
+-- ref through app.finalise_table, so any fixture that crosses a GATED edge
+-- must be able to allocate one. In the product these rows come from 016's
+-- tenant provisioning; no migration seeds them.
 
   INSERT INTO core.organisations (tenant_id, name, owner_id)
   VALUES ('00000009-1111-1111-1111-111111111111','Aurora','00000009-0000-0000-0000-0000000000a1')
@@ -279,6 +361,14 @@ BEGIN
           'HRDC-2201-8834', 1850000, 0.620)
   RETURNING id INTO v_pkt;
 
+  -- A packet is INSERTed DRAFT and reaches SUBMITTED through READY; the last
+  -- edge is gated by HRDC_PACKET_MARK_SUBMITTED. This pin used to jump straight
+  -- from DRAFT, which 011's GOV-07 gate now refuses. T6a's subject is unchanged:
+  -- an incomplete packet must still be refused, and it is refused on the edge
+  -- that actually files the claim.
+  UPDATE core.hrdc_packets SET status = 'READY' WHERE id = v_pkt;  -- DRAFT -> READY
+
+  PERFORM pg_temp.gate('00000009-1111-1111-1111-111111111111','HRDC_PACKET_MARK_SUBMITTED', v_pkt);
   BEGIN
     UPDATE core.hrdc_packets
        SET status = 'SUBMITTED', claim_reference = 'CLM-2026-118834',
@@ -295,6 +385,7 @@ BEGIN
      SET completeness = 1, status = 'SUBMITTED', claim_reference = 'CLM-2026-118834',
          claim_submitted_at = now()
    WHERE id = v_pkt;
+  PERFORM pg_temp.ungate();
 
   -- a document marked PRESENT with nothing behind it is how a packet reaches
   -- completeness 1.0 empty

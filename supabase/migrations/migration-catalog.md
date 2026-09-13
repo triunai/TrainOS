@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 10 · **Applied:** 0 · **Authored, not applied:** 10
+**Migrations:** 11 · **Applied:** 0 · **Authored, not applied:** 11
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 1 (2026-09-13, rulings R-EXT / search_path / FORCE RLS — see the entry below)
 
@@ -13,6 +13,33 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-13 — **011: the write spine, and the six pins it correctly invalidated.**
+011 lands the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry. Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions, the 22 action types, the 22-per-tenant policy catalogue materialised by a trigger on tenant creation, and the transition registry. Authored by Codex `gpt-5.6-sol` at xhigh, reviewed and executed here. **Applied nowhere.**
+
+**Nine defects were found by RUNNING it, and not one of them would have been caught by reading it.** They are listed because the ratio is the point: a pack this size reads clean and does not run.
+
+1. `pg_catalog.nullif(...)` (9 sites) and `pg_catalog.greatest(...)` (1). `NULLIF`, `COALESCE` and `GREATEST` are SQL *constructs*, not functions in `pg_catalog`, and cannot be schema-qualified. Under `search_path = ''` the instinct to qualify everything is right and these are the exceptions.
+2. `pg_catalog.position(x IN y)` (7 sites). Same class, worse: `POSITION(x IN y)` is a grammar production tied to the unqualified keyword, so qualifying it is a syntax error rather than a missing function. Rewritten to `pg_catalog.strpos(y, x)` — note the reversed argument order.
+3. A literal `+` left on a section-heading line by a diff-style edit.
+4. An unbalanced parenthesis in `app.bulk_decide`: `jsonb_agg(jsonb_build_object(…)` closed once.
+5. `pg_enum.enumlabel` is `name`, not `text`; compared to a `text[]` literal without a cast, the verify block could not run at all.
+6. **The policy catalogue seed omitted `expire_after_minutes`.** `CMP-05` set `escalate_after_minutes = 2880` and took the column default of `1440`, violating the table's own `escalate_after_minutes < expire_after_minutes` CHECK — an escalation scheduled for a full day after the approval it escalates had already expired. This is `H-13`'s failure shape arriving through the seed instead of through the sweep. Every row now states both numbers so the relationship is visible at the row.
+7. The `H-07` and `N-03` verify tripwires searched `pg_get_functiondef` for text that did not match the body's own whitespace, and failed on their own formatting rather than on their subject. Both sides are now whitespace-normalised. A text assertion that can fail for a reason unrelated to its subject is worse than none, because the next author deletes it.
+8. An extra `)` made one of the rollback's five pre-flight guards unparseable.
+9. **`H-07`'s tenant predicate made the national compliance registry unwritable.** The critic's fix is `v_request.tenant_id IS DISTINCT FROM NEW.tenant_id`, and `core.action_requests.tenant_id` is `NOT NULL` while `core.compliance_rules.tenant_id` is `NULL` for every national rule (009). `IS DISTINCT FROM` is therefore always true there, and `PROPOSED → ACTIVE` on a national rule was unreachable by every caller. Doc 03's original `<>` returned NULL for the same rows and let all of them through silently; neither shape is right, because "which tenant owns this row" has no answer for a national rule. The predicate is now guarded on `NEW.tenant_id IS NOT NULL`, which is what makes `H-07` applicable rather than a softening of it. Found by test_009 against the full applied set.
+
+**Three transition edges were ADDED to doc 01 §5.3, flagged not smuggled.** 010 makes a payment correction a reversal row, and `core.payment_apply` recomputes the invoice status from the payments that remain — so a reversal drives `PARTIALLY_PAID → SENT`, and `PAID → PARTIALLY_PAID` / `PAID → SENT`. §5.3 enumerates only the forward direction, so with the registry exactly as written every reversal in the product raises `ILLEGAL_STATE_TRANSITION` and the money cannot be put back. All three are gated by `PAYMENT_RECORD`, marked in place with their evidence, and registered against §5.3 as an enumeration gap for the domain owner to ratify. The registry is therefore **124 rows: 121 from §5.3 plus these three.**
+
+**Six committed pins failed and were repaired, not weakened.** Pins are executed against the FULL applied set, so 011's gate reached fixtures written when nothing enforced it: `test_005`, `006`, `008`, `009` and `010` each typed a status straight into a column, and `test_007` assigned `gen_random_uuid()` to `quotations.discount_approval_id`, which 011 now constrains with a real foreign key. Each fixture now crosses the edge the way the product does — for an ungated edge by walking it, for a gated one through a `pg_temp.gate()` helper that creates the `EXECUTING` action request and publishes it as `app.effect_applier`, because 011 checks the request's type, status, target and tenant and a fixture that sets only the GUC is still refused. No trigger was disabled, no `session_replication_role` was set, and no edge was invented to make a fixture pass.
+
+`test_004`'s T1b was NARROWED rather than repaired: it asserted that no `core` table carries any policy before 014, and 011 lands exactly one on purpose — the `AS RESTRICTIVE FOR ALL` guard carrying `NOT app.is_agent()` on `core.autonomy_grants`, which is critic finding `H-02`, "the agent grants itself autonomy". A restrictive policy can only ever subtract, so it cannot be what opens a table early. T1b now refuses any PERMISSIVE policy and pins the single restrictive exception by name and by table, as an exact value.
+
+**One product defect was found and is NOT fixed here.** `core.sync_programme_deliveries` (008) decrements `programmes.deliveries_count` on any move away from `DELIVERED`, and the only legal exit is `DELIVERED → CLOSED`. Closing out an engagement therefore un-counts the delivery that actually happened, and closing out is the normal end of every engagement — so in the product every delivered programme eventually reads zero "times run". `test_008` T9b pins what the code DOES, with the reasoning at the assertion and instructions to restore the intended form when 008's trigger is fixed. It is 008's to fix; editing another migration's trigger from inside this pass is how a fix gets lost.
+
+**Executed:** 11/11 migrations apply, 11/11 pins pass (123 assertions), full round trip forward → rollback → forward green, nothing applied to any hosted database.
+
+---
 
 **Last updated:** 2026-09-13 — **Amendment pass A: the four open rulings applied to 001–009, and three defects the pins had never been in a position to catch.**
 Nothing in this set is applied anywhere, so these are amendments to the files, not new migrations. Four rulings landed and each one paid for itself.
@@ -57,6 +84,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 011 | `011_action_envelope_and_policy_gate.sql` | **The write spine: the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry (2026-09-13).** Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions. Every primary button and every agent proposal in the product passes through `app.perform_action`, which is evaluated once, logged once, and dispatched to exactly one of EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED; the policy input is derived from stored rows and never trusted from the payload. New capability ships as a new action *type* plus a handler registered in data, never as a branch inside the envelope. **Second spine, and the one this migration makes real: `core.state_transitions`.** A status is no longer something a caller types into a column — 124 registry rows say which edges exist and which action authorises each, and `app.enforce_state_transition` is attached to every gated column that exists. That is what invalidated six committed pins, and repairing them is what found a defect in 008 and three missing edges in doc 01 §5.3. Seven critic findings are closed with an assertion each: `H-02` the agent cannot grant itself autonomy (the one RLS policy deliberately landing before 014, `AS RESTRICTIVE FOR ALL` in both clauses so INSERT and DELETE are covered); `H-03` self-approval, including the NULL requester, because `NULL IS DISTINCT FROM <uuid>` is TRUE and that is the fraud; `H-04` a NULL role raises before the authorisation disjunction instead of falling through it; `H-05` money-moving actions check `app.aal2_verified()`, grounded in an `auth.sessions` row GoTrue wrote rather than a claim the caller presents; `H-07` all three holes; `M-12` a NULL ceiling raises instead of permitting; `M-21` an idempotent replay returns the original body with 200. Nothing is granted to `anon` or `authenticated` — the `C-04` grant-sequencing residue is carried to 014, where policies and grants land together. Spine: this IS the spine, and it is pinned hardest. |
 | 010 | `010_finance_invoices_payments_collections.sql` | **Invoices, payments, credit notes, the e-invoice mirror, receivables aging and the collections ladder (2026-09-13).** Ten tables. Total-from-lines reuses 007's pattern rather than inventing a second one — the line amount is GENERATED, an AFTER trigger recomputes the header, a DEFERRABLE constraint trigger asserts at COMMIT — and extends it: `sst_sen` and `total_sen` are GENERATED too, so a wrong total is unrepresentable rather than merely rejected. **SST is computed on the summed net**, and the pin proves that is not pedantry: three lines at RM 333.33 at 8% give 8,001 sen per-line and 8,000 sen on the summed net. **Payments are append-only**, enforced by a trigger that refuses UPDATE and DELETE; a correction is a reversal row with a reason, because a signed amount column would let a correction be entered as an ordinary payment and vanish into the total. **Critic C-11 is answered**: the e-invoice mirror separates the document UUID from the submission UID, carries the QR long id, a status vocabulary that can express SUBMITTED_PENDING_VALIDATION and CANCELLED, structured per-field validation errors with a key-presence CHECK, per-line classification and UoM codes, self-billed and consolidated flags, a supplier tax profile and buyer identifiers — and enforces the **statutory 72-hour cancellation window**, proved at 71 and 73 hours. Credit notes are the legal exit from a mistake on a filed invoice and cannot exceed it. Aging buckets and the 7/30/45/60/75 ladder are DATA with a GiST exclusion and two CHECK constraints that make "reminder 3 is always human" and "a trading hold needs MD" unrepresentable. Spine untouched. |
 | 009 | `009_compliance_rules_checks_hrdc.sql` | **The bitemporal HRD Corp rule registry, rule-change review, checks with version drift, claim packets, knowledge corpus (2026-09-12).** Twelve tables. Rules carry two time ranges — in force, and known — so re-running a check on an old engagement resolves what the registry said THEN rather than silently re-deciding it against today. A GiST exclusion constraint over both axes makes "which rule applied on this date as known on that date" have exactly one answer. Rules are national by default (`tenant_id NULL`) with optional tenant overrides that win locally and nowhere else; there is deliberately no platform-admin role, so writing a national rule is a provisioning act. A rule cannot go ACTIVE without a named verifier, per DECISIONS §3. A packet cannot be marked SUBMITTED while incomplete — contract §9's 422 expressed where an application cannot route around it — and a required document marked PRESENT must have something behind it. A changed knowledge source is quarantined by constraint. Spine untouched. |
 | 008 | `008_delivery_engagements_sessions_attendance.sql` | **Delivery, and the one-way attendance lock (2026-09-12).** Engagements with a configuration-driven lifecycle, sessions, participants, attendance, certificates, evaluations, message rates and outbound messages. The attendance lock is enforced on the day AND its entries, because the rule is about the day and the writes happen to the entries. Locking forces all three capture modes false so the response cannot contradict the rule. Unlocking requires a reason, clears the approval, reopens capture and increments a counter the caller cannot set. `engagement_step_states` stores no step key and no position — both come from `pipeline_steps`. Participants' identity numbers are stored as a hash plus last four, never the number. A sent message cites the consent row it relied on by foreign key. Closes the two FKs 006 and 007 left open. Spine untouched: `ATTENDANCE_APPROVE` and `ATTENDANCE_UNLOCK` are action types 011 will dispatch; this is what makes the lock real when it does. |
@@ -244,6 +272,133 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 011 (`011_action_envelope_and_policy_gate.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.** Sources:
+`docs/architecture/03` §1 (the gate tables), §2 (`app.perform_action`, the evaluation
+algorithm), §2.9 (gated state transitions), §3 (effect executors), §4 (approval decisions)
+and §5 (jury); `docs/architecture/01` §5 (column grants, the `gated_by text[]` fix, and the
+legal-transition set); `docs/architecture/06` findings `C-04` residue, `N-03`, `H-02` to
+`H-05`, `H-07`, `H-10`, `H-13`, `M-02`, `M-04`, `M-12`, `M-13`, `M-21`; root `CLAUDE.md` R14.
+
+### What it does
+
+- **The envelope.** `core.action_requests` logs every action; `app.action_effects` is the
+  execution ledger; `app.idempotency_keys` makes a double-clicked button deterministic rather
+  than a race, by taking the advisory lock BEFORE the insert. `app.perform_action` runs the
+  guards in §2.0's order — each is cheaper than the next and each would be wrong later.
+- **The policy gate.** `core.action_policies` is the rule set, 22 rows per tenant, materialised
+  by a trigger on tenant creation rather than by a migration, because the table is
+  tenant-scoped and a tenant that arrives after this migration must still get a catalogue.
+  `core.autonomy_grants` is agent × action type × level.
+- **Approvals.** `core.approval_requests` and `core.approval_decisions`, `app.decide_approval`,
+  `app.bulk_decide`, and the bounded sweeps 015 will schedule.
+- **`core.state_transitions`.** 124 rows. The registry is keyed
+  `(entity, column_name, from_status, to_status)` with `gated_by text[]`, because one edge is
+  authorised by three different action types — `outbound_messages DRAFT → QUEUED` is gated by
+  `FOLLOWUP_SEND`, `REMINDER_SEND` or `BROADCAST_SEND` depending on why the message exists, and
+  with a single gate two of the three sends fail at send time on whichever flow is tested
+  second (doc 01 §5.2). A SQL PRIMARY KEY cannot contain the NULL `from_status` an INSERT edge
+  needs, so the key is a `UNIQUE NULLS NOT DISTINCT` index over the four columns.
+- **One shared enum at the outbox seam.** `app.effect_status` is created here and 012 REUSES
+  it. `app.report_effect_result` raises on any member outside `SUCCEEDED`/`FAILED`, and a value
+  outside the enum raises at the typed boundary — root `CLAUDE.md` R14, whose worked example is
+  a wrong constant recording every delivered email as dead-lettered.
+- **Spine:** this IS the spine. It is pinned hardest, and every finding it closes is closed
+  with an assertion rather than with a comment.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — `app.perform_action`, `app.decide_approval` and `app.bulk_decide` all return
+   through `app.ok`/`app.err` (001), which BUILD the object rather than describing it, so a
+   top-level sibling key is not something a later author can add by accident.
+2. **Unwrap** — `data` remains the sole non-`success` key. `Idempotent-Replay` is set as a
+   RESPONSE HEADER through `set_config`, deliberately not as a second top-level key.
+3. **RpcMap** — `packages/contract/src/actions.ts` already declares the request and every
+   response variant. 011 adds no shape the contract does not carry. **Contract lane: see the
+   disagreements listed below.**
+4. **Call sites** — none yet in `apps/web`; the envelope is reached through the Edge Function
+   adapter that 012's seam describes. New objects with no consumers, expected.
+5. **Casts** — none.
+6. **Reload/restore** — an idempotent replay returns the ORIGINAL body with status 200, not the
+   stored 202 (`M-21`), which is the path a reload actually takes.
+7. **Public routes** — none. Nothing in 011 is reachable from an unauthenticated request, and
+   nothing is granted to `anon` or `authenticated` at all.
+
+### Pin — `tests/test_011_action_envelope_and_policy_gate.sql`
+
+Fourteen checks, all executed, all PASS, against the FULL applied set 001–011.
+T1 the exact inventory — 11 tables, 27 functions, 22 policies per tenant, 124 edges, as exact
+values not counts · T2 HUMAN outcomes and their status codes · T3 all four AGENT outcomes ·
+T4 SYSTEM executes and its identity is logged · T5 replay is byte-identical at 200 ·
+T6 self-approval AND the NULL requester both refused (`H-03`) · T7 a NULL role refused before
+authorisation (`H-04`) · T8 a forged `aal2` claim passes neither money boundary (`H-05`) ·
+T9 both `H-07` holes — a `QUEUED_FOR_APPROVAL` request and a sibling-row target · T10 the
+agent cannot grant itself autonomy, proved by adding a permissive policy beside the
+restrictive one and showing the restrictive one still wins (`H-02`, and root `CLAUDE.md` R11's
+"a restrictive deny still denies") · T11 an unknown worker status raises at the single enum
+seam (R14) · T12 a malformed `payload_schema` fails closed (`N-03`) · T13 invoker view, `app`
+USAGE intact, timezone math, bounded sweeps · T14 zero client SELECT and EXECUTE on every
+object 011 creates.
+
+### Rollback — `rollbacks/011_action_envelope_and_policy_gate_rollback.sql`
+
+Five pre-flight guards, none with an override: **G1** a known 012–015 relation, a later policy,
+grant or trigger attachment; **G2** any operational row in a gate table, because action
+payloads, decisions, grants, effects and jury records are business data; **G3** seed drift —
+exactly 22 action types, 22 policies per tenant and 124 registry edges must still be present
+before they are removed (this guard fired during review, on the author's own change, which is
+what a guard is for); **G4** any 004 hours-saved baseline referencing an 011 action type;
+**G5** any relation or FK outside 011 depending on an 011 table. Then, in reverse of the
+forward order. `app.action_types` SURVIVES and is restored to the empty global catalogue 004
+created; its full prior definition is reproduced in the rollback's header rather than
+referenced. Round-tripped: applied → rolled back → re-applied, green each time.
+
+### Where the schema disagrees with the documents — the schema wins
+
+Recorded because the prose is a claim and the migration is the fact (R13):
+
+- 004 already owns **global** `app.action_types`; doc 03's surviving `core.action_types`
+  references are not followed.
+- 004's `value_source` CHECK has no `PROPOSAL` member, so `PROPOSAL_SEND` is seeded `NONE` and
+  `app.action_value` resolves it explicitly from `core.proposals.value_sen`.
+- `app.current_actor()` returns `(actor_id, actor_kind, role)`, not doc 03's `(id, kind, role)`.
+- `core.hrdc_packets` carries `claim_reference` / `claim_submitted_at`, not the prose's
+  `submission_reference` / `submitted_at`; `core.engagements` has `closed_out_at`, not
+  `closed_at`.
+- `core.outbound_messages` cannot store `DELIVERED` or `READ`, and `core.rule_changes` cannot
+  store `WITHHELD` (it has a separate `withheld` boolean). The registry is seeded in full
+  regardless; those edges are documented facts until the owning table's migration widens its
+  vocabulary.
+- `app.aal2_verified()` does **not** exist in 002, contrary to the brief 011 was given. It is
+  created here against `auth.sessions`, and doc 02 §7.2a's own `[assumed]` marker on the `aal`
+  column name still stands — see "What I could NOT verify".
+
+### Deliberately NOT built
+
+No cron schedule (015 owns schedules), no event or outbox table (012), no `core.agents` and no
+`app.ai_budgets` (013 — creating truncated impostors here would collide with that migration,
+so two future trigger attachments are honestly absent rather than fabricated), and no client
+policy or grant (014). External effects stop at typed `DISPATCHED` rows; 012 enqueues them and
+calls `app.report_effect_result`. Jury rows stop at `PENDING`. That is doc 03's transaction
+boundary held without a forward reference that would make 011 unrunnable.
+
+### What the contract lane needs to know
+
+The schema now disagrees with `packages/contract` in two places, both of which belong to that
+lane and neither of which 011 touched:
+
+1. **`ALL_ACTION_TYPES` is 22 and the schema agrees**, but `GOVERNED_ACTION_TYPES` adds
+   `PROPOSAL_DRAFT`, which carries an autonomy grant and a routing entry while never being a
+   `POST /v1/actions` call. `app.action_types` holds the 22; `core.autonomy_grants.action_type`
+   references it, so an autonomy grant for `PROPOSAL_DRAFT` is currently unrepresentable.
+2. **Three invoice status edges exist in the database that no contract type describes** —
+   `PARTIALLY_PAID → SENT`, `PAID → PARTIALLY_PAID` and `PAID → SENT`, all reachable through a
+   payment reversal. Any client-side transition map derived from doc 01 §5.3 will be missing
+   them.
 
 ---
 

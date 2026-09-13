@@ -35,6 +35,36 @@
 
 BEGIN;
 
+-- ── GOV-07 fixture helper (added 2026-09-13, when 011 landed) ───────────────
+-- Migration 011 attaches app.enforce_state_transition to every gated column in
+-- doc 01 §5.3. A gated edge may be crossed only by the effect applier of an
+-- action of a gating type, running against THAT row: 011 closed critic finding
+-- H-07 by checking the request's status, its target_id and its tenant, so a
+-- fixture that sets only the GUC is still refused, and correctly.
+--
+-- This helper does what the product's executor does — it creates the action
+-- request and publishes it as the applier — so the fixture crosses the edge the
+-- way a real caller does instead of going around the control it is sitting
+-- next to. It lives in pg_temp and the pin's closing ROLLBACK removes it.
+CREATE FUNCTION pg_temp.gate(p_tenant uuid, p_type text, p_target uuid)
+RETURNS void LANGUAGE plpgsql AS $gate$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES (p_tenant, p_type, p_target, 'EXECUTING', 'SYSTEM', 'pin-fixture')
+  RETURNING id INTO v_id;
+  PERFORM set_config('app.effect_applier', v_id::text, true);
+END $gate$;
+
+-- Clear the applier. Every gated write is bracketed, so a later assertion that
+-- a gated edge is REFUSED cannot pass by accident on a stale applier.
+CREATE FUNCTION pg_temp.ungate() RETURNS void LANGUAGE plpgsql AS $ungate$
+BEGIN
+  PERFORM set_config('app.effect_applier', '', true);
+END $ungate$;
+
+
 SET LOCAL plpgsql.check_asserts = on;
 
 DO $canary$
@@ -67,7 +97,12 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width)
 SELECT t.id, p.prefix, p.entity, p.dated, 4
 FROM (VALUES ('ORG','organisations',false),('CON','contacts',false),
              ('ENQ','enquiries',true),('OPP','opportunities',false),
-             ('TNA','tnas',false),('FUP','follow_ups',false)) AS p(prefix,entity,dated)
+             ('TNA','tnas',false),('FUP','follow_ups',false),
+             -- ACT is the action-envelope ref prefix. 011 gives
+             -- core.action_requests a ref, so any fixture crossing a GATED edge
+             -- must be able to allocate one. In the product these rows come
+             -- from 016's tenant provisioning; no migration seeds them.
+             ('ACT','action_requests',false)) AS p(prefix,entity,dated)
 CROSS JOIN public.tenants t
 WHERE t.slug IN ('t005-alpha','t005-beta');
 
@@ -130,6 +165,10 @@ BEGIN
           'unclear request', 0.410, true)
   RETURNING id INTO v_id;
 
+  -- OPEN -> ARCHIVED is gated by ENQUIRY_ARCHIVE (doc 01 §5.3, seeded by 011).
+  -- The gate is not what T3 is about, so the fixture crosses it the way the
+  -- product does and lets the CHECK constraint be the thing that refuses.
+  PERFORM pg_temp.gate('00000005-1111-1111-1111-111111111111','ENQUIRY_ARCHIVE',v_id);
   BEGIN
     UPDATE core.enquiries SET status = 'ARCHIVED' WHERE id = v_id;
     RAISE EXCEPTION
@@ -139,7 +178,9 @@ BEGIN
   END;
 
   -- clearing the flag is the legitimate path
+  PERFORM pg_temp.gate('00000005-1111-1111-1111-111111111111','ENQUIRY_ARCHIVE',v_id);
   UPDATE core.enquiries SET needs_human_review = false, status = 'ARCHIVED' WHERE id = v_id;
+  PERFORM pg_temp.ungate();
   ASSERT (SELECT status FROM core.enquiries WHERE id = v_id) = 'ARCHIVED',
     'T3b FAIL: a reviewed enquiry could not be archived either';
   RAISE NOTICE 'T3 PASS - archived only after review; the flag is the gate.';

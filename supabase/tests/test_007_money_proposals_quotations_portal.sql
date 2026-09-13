@@ -37,6 +37,36 @@
 
 BEGIN;
 
+-- ── GOV-07 fixture helper (added 2026-09-13, when 011 landed) ───────────────
+-- Migration 011 attaches app.enforce_state_transition to every gated column in
+-- doc 01 §5.3. A gated edge may be crossed only by the effect applier of an
+-- action of a gating type, running against THAT row: 011 closed critic finding
+-- H-07 by checking the request's status, its target_id and its tenant, so a
+-- fixture that sets only the GUC is still refused, and correctly.
+--
+-- This helper does what the product's executor does — it creates the action
+-- request and publishes it as the applier — so the fixture crosses the edge the
+-- way a real caller does instead of going around the control it is sitting
+-- next to. It lives in pg_temp and the pin's closing ROLLBACK removes it.
+CREATE FUNCTION pg_temp.gate(p_tenant uuid, p_type text, p_target uuid)
+RETURNS void LANGUAGE plpgsql AS $gate$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES (p_tenant, p_type, p_target, 'EXECUTING', 'SYSTEM', 'pin-fixture')
+  RETURNING id INTO v_id;
+  PERFORM set_config('app.effect_applier', v_id::text, true);
+END $gate$;
+
+-- Clear the applier. Every gated write is bracketed, so a later assertion that
+-- a gated edge is REFUSED cannot pass by accident on a stale applier.
+CREATE FUNCTION pg_temp.ungate() RETURNS void LANGUAGE plpgsql AS $ungate$
+BEGIN
+  PERFORM set_config('app.effect_applier', '', true);
+END $ungate$;
+
+
 SET LOCAL plpgsql.check_asserts = on;
 
 DO $canary$
@@ -67,7 +97,12 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
   ('00000007-1111-1111-1111-111111111111','TPL','templates',false,4),
   ('00000007-1111-1111-1111-111111111111','PRG','programmes',false,4),
   ('00000007-1111-1111-1111-111111111111','PRO','proposals',true,4),
-  ('00000007-1111-1111-1111-111111111111','QUO','quotations',true,4);
+  ('00000007-1111-1111-1111-111111111111','QUO','quotations',true,4),
+  ('00000007-1111-1111-1111-111111111111','ACT','action_requests',false,4);
+-- ACT is the action-envelope ref prefix. 011 gives core.action_requests a
+-- ref through app.finalise_table, so any fixture that crosses a GATED edge
+-- must be able to allocate one. In the product these rows come from 016's
+-- tenant provisioning; no migration seeds them.
 
 INSERT INTO core.organisations (id, tenant_id, name, owner_id)
 VALUES ('00000007-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000007-1111-1111-1111-111111111111',
@@ -203,7 +238,7 @@ $t4$;
 
 -- === T4b · a genuine breach is refused, and an approval lets it through =====
 DO $t4b$
-DECLARE v_q uuid;
+DECLARE v_q uuid; v_act uuid;
 BEGIN
   INSERT INTO core.quotations (tenant_id, proposal_id, rate_card_id, pax, version,
                                programme_floor_price_sen, floor_margin_rate)
@@ -224,9 +259,18 @@ BEGIN
   EXCEPTION WHEN integrity_constraint_violation THEN NULL;
   END;
 
-  -- with an approval recorded, the same price is permitted
+  -- With an approval recorded, the same price is permitted. 011 gives
+  -- quotations.discount_approval_id a foreign key to core.action_requests, so
+  -- `gen_random_uuid()` no longer stands in for an approval -- which was the
+  -- point of the column and is now enforced rather than assumed. The fixture
+  -- creates the DISCOUNT_APPROVE request it is claiming to have.
   SET CONSTRAINTS core.trg_quotation_floor DEFERRED;
-  UPDATE core.quotations SET discount_approval_id = gen_random_uuid() WHERE id = v_q;
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES ('00000007-1111-1111-1111-111111111111','DISCOUNT_APPROVE', v_q,
+          'EXECUTED','HUMAN','pin-fixture')
+  RETURNING id INTO v_act;
+  UPDATE core.quotations SET discount_approval_id = v_act WHERE id = v_q;
   SET CONSTRAINTS core.trg_quotation_floor IMMEDIATE;
   SET CONSTRAINTS core.trg_quotation_floor DEFERRED;
 
@@ -338,6 +382,10 @@ BEGIN
           '00000007-0eee-0eee-0eee-0eeeeeeeeee1', 30, 2, 0, 0)
   RETURNING id INTO v_q;
 
+  -- DRAFT -> APPLIED is gated by QUOTATION_APPLY. T8 is about the PLACEHOLDER
+  -- rate card, not about the gate, so the fixture crosses the edge the way the
+  -- product does and lets the placeholder guard be what refuses.
+  PERFORM pg_temp.gate('00000007-1111-1111-1111-111111111111','QUOTATION_APPLY',v_q);
   BEGIN
     UPDATE core.quotations SET status = 'APPLIED' WHERE id = v_q;
     RAISE EXCEPTION
@@ -346,6 +394,7 @@ BEGIN
       'from an empty card.';
   EXCEPTION WHEN integrity_constraint_violation THEN NULL;
   END;
+  PERFORM pg_temp.ungate();
   RAISE NOTICE 'T8 PASS - drafting on the placeholder is allowed; applying is not.';
 END;
 $t8$;
@@ -401,8 +450,10 @@ BEGIN
   VALUES ('00000007-1111-1111-1111-111111111111','00000007-0fff-0fff-0fff-0fffffffffe1',
           1,'Understanding your needs','Aurora Manufacturing''s 30 line managers...');
 
+  PERFORM pg_temp.gate('00000007-1111-1111-1111-111111111111','PROPOSAL_SEND','00000007-0fff-0fff-0fff-0fffffffffe1');   -- DRAFT -> SENT
   UPDATE core.proposals SET status = 'SENT', sent_at = now()
    WHERE id = '00000007-0fff-0fff-0fff-0fffffffffe1';
+  PERFORM pg_temp.ungate();
 
   BEGIN
     UPDATE core.proposal_sections SET body = 'rewritten after sending'

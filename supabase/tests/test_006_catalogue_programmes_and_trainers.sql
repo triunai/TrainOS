@@ -32,6 +32,57 @@
 
 BEGIN;
 
+-- ── GOV-07 fixture helper (added 2026-09-13, when 011 landed) ───────────────
+-- Migration 011 attaches app.enforce_state_transition to every gated column in
+-- doc 01 §5.3. A gated edge may be crossed only by the effect applier of an
+-- action of a gating type, running against THAT row: 011 closed critic finding
+-- H-07 by checking the request's status, its target_id and its tenant, so a
+-- fixture that sets only the GUC is still refused, and correctly.
+--
+-- This helper does what the product's executor does — it creates the action
+-- request and publishes it as the applier — so the fixture crosses the edge the
+-- way a real caller does instead of going around the control it is sitting
+-- next to. It lives in pg_temp and the pin's closing ROLLBACK removes it.
+CREATE FUNCTION pg_temp.gate(p_tenant uuid, p_type text, p_target uuid)
+RETURNS void LANGUAGE plpgsql AS $gate$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES (p_tenant, p_type, p_target, 'EXECUTING', 'SYSTEM', 'pin-fixture')
+  RETURNING id INTO v_id;
+  PERFORM set_config('app.effect_applier', v_id::text, true);
+END $gate$;
+
+-- Clear the applier. Every gated write is bracketed, so a later assertion that
+-- a gated edge is REFUSED cannot pass by accident on a stale applier.
+CREATE FUNCTION pg_temp.ungate() RETURNS void LANGUAGE plpgsql AS $ungate$
+BEGIN
+  PERFORM set_config('app.effect_applier', '', true);
+END $ungate$;
+
+-- A CONFIRMED booking is not insertable. core.state_transitions allows only
+-- (new) -> SOFT_HOLD, then SOFT_HOLD -> CONFIRMED gated by TRAINER_BOOK, which
+-- is doc 01 §5.3 and is the point: a trainer is held while a client decides and
+-- confirmed by an action somebody is accountable for. This pin used to type
+-- CONFIRMED into the INSERT. It now walks the two edges, which also moves the
+-- EXCLUDE constraint's refusal from the INSERT to the confirming UPDATE -- the
+-- same constraint, on the edge that actually double-books the trainer.
+CREATE FUNCTION pg_temp.book(p_tenant uuid, p_trainer uuid, p_from date, p_to date)
+RETURNS uuid LANGUAGE plpgsql AS $book$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.trainer_bookings
+    (tenant_id, trainer_id, state, starts_on, ends_on, hold_expires_at)
+  VALUES (p_tenant, p_trainer, 'SOFT_HOLD', p_from, p_to, now() + interval '72 hours')
+  RETURNING id INTO v_id;
+  PERFORM pg_temp.gate(p_tenant, 'TRAINER_BOOK', v_id);
+  UPDATE core.trainer_bookings SET state = 'CONFIRMED' WHERE id = v_id;
+  PERFORM pg_temp.ungate();
+  RETURN v_id;
+END $book$;
+
+
 SET LOCAL plpgsql.check_asserts = on;
 
 DO $canary$
@@ -58,7 +109,11 @@ INSERT INTO public.tenants (id, slug, name) VALUES
 
 INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width)
 SELECT t.id, p.prefix, p.entity, false, 4
-FROM (VALUES ('PRG','programmes'),('TRN','trainers'),('TBK','trainer_bookings')) AS p(prefix,entity)
+-- ACT is the action-envelope ref prefix. 011 gives core.action_requests a ref,
+-- so any fixture crossing a GATED edge must be able to allocate one. In the
+-- product these rows come from 016's tenant provisioning; no migration seeds them.
+FROM (VALUES ('PRG','programmes'),('TRN','trainers'),('TBK','trainer_bookings'),
+             ('ACT','action_requests')) AS p(prefix,entity)
 CROSS JOIN public.tenants t WHERE t.slug IN ('t006-alpha','t006-beta');
 
 INSERT INTO core.programmes (id, tenant_id, name, category, days, list_price_sen,
@@ -121,16 +176,13 @@ DO $t3$
 DECLARE v_first uuid;
 BEGIN
   -- baseline: Farah confirmed 12-13 Nov
-  INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-  VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
-          'CONFIRMED','2026-11-12','2026-11-13')
-  RETURNING id INTO v_first;
+  v_first := pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
+                          '2026-11-12','2026-11-13');
 
   -- (a) an identical span must be refused
   BEGIN
-    INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-    VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
-            'CONFIRMED','2026-11-12','2026-11-13');
+    PERFORM pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
+                         '2026-11-12','2026-11-13');
     RAISE EXCEPTION 'T3a FAIL: an identical confirmed booking was accepted';
   EXCEPTION WHEN exclusion_violation THEN NULL;
   END;
@@ -138,9 +190,8 @@ BEGIN
   -- (b) a PARTIAL overlap must be refused. This is the case a naive unique
   --     index on (trainer, starts_on) would let through.
   BEGIN
-    INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-    VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
-            'CONFIRMED','2026-11-13','2026-11-14');
+    PERFORM pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
+                         '2026-11-13','2026-11-14');
     RAISE EXCEPTION
       'T3b FAIL: a PARTIALLY overlapping booking was accepted. 13 Nov is now booked '
       'twice and the trainer is in two places.';
@@ -149,14 +200,12 @@ BEGIN
 
   -- (c) ADJACENT but not overlapping must be ALLOWED. An inclusive upper bound
   --     written as exclusive, or the reverse, breaks exactly this case.
-  INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-  VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
-          'CONFIRMED','2026-11-14','2026-11-15');
+  PERFORM pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
+                       '2026-11-14','2026-11-15');
 
   -- (d) a DIFFERENT trainer over the same dates must be allowed
-  INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-  VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000002',
-          'CONFIRMED','2026-11-12','2026-11-13');
+  PERFORM pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000002',
+                       '2026-11-12','2026-11-13');
 
   -- (e) two SOFT_HOLDs over the same dates must be allowed. Holding two options
   --     for a client while they decide is the entire point of a soft hold.
@@ -177,9 +226,8 @@ BEGIN
 
   -- (g) reversed dates
   BEGIN
-    INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-    VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000002',
-            'CONFIRMED','2026-12-20','2026-12-19');
+    PERFORM pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000002',
+                         '2026-12-20','2026-12-19');
     RAISE EXCEPTION 'T3g FAIL: a booking that ends before it starts was accepted';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
@@ -194,10 +242,8 @@ $t3$;
 DO $t4$
 DECLARE v_id uuid; v_n int;
 BEGIN
-  INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-  VALUES ('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
-          'CONFIRMED','2027-03-01','2027-03-03')
-  RETURNING id INTO v_id;
+  v_id := pg_temp.book('00000006-1111-1111-1111-111111111111','00000006-7a11-7a11-7a11-7a1100000001',
+                       '2027-03-01','2027-03-03');
 
   SELECT count(*) INTO v_n FROM core.trainer_availability
   WHERE trainer_id = '00000006-7a11-7a11-7a11-7a1100000001'
@@ -237,9 +283,9 @@ $t4$;
 --     dates. The constraint includes tenant_id for exactly this reason.
 DO $t5$
 BEGIN
-  INSERT INTO core.trainer_bookings (tenant_id, trainer_id, state, starts_on, ends_on)
-  VALUES ('00000006-2222-2222-2222-222222222222','00000006-7a11-7a11-7a11-7a1100000003',
-          'CONFIRMED','2026-11-12','2026-11-13');
+  PERFORM pg_temp.book('00000006-2222-2222-2222-222222222222',
+                       '00000006-7a11-7a11-7a11-7a1100000003',
+                       '2026-11-12','2026-11-13');
   RAISE NOTICE 'T5 PASS - another tenant books the same dates freely.';
 END;
 $t5$;

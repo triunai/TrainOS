@@ -12,6 +12,47 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-13 — every button in the product now goes through one door
+
+Authored and executed against a scratch database. Applied nowhere. Engineering detail is in
+`supabase/migrations/migration-catalog.md`.
+
+### Added
+
+- **The action envelope.** Every primary button and every agent proposal now passes through a
+  single evaluated path that decides one of three outcomes: it happened, it needs an approval,
+  or it is a suggestion for a human to accept. What made the decision is recorded with the
+  action, so "why did this need my approval" has an answer that is not somebody's memory.
+  Reasoning: `docs/architecture/03`.
+- **Approvals, with the self-approval rule enforced rather than assumed.** Somebody cannot
+  approve their own request, and — the part that had been getting through — a request with no
+  named requester cannot be approved either. An unnamed requester used to read as "not you".
+- **Actions that move money require a second factor**, checked against the session the login
+  service actually wrote rather than against a claim the caller hands us.
+- **Stage changes are now legal or refused, per record type.** An invoice cannot be marked SENT
+  by writing SENT into it; it gets there by being pushed, and the push is an action somebody is
+  accountable for. The same holds for enquiries, quotations, proposals, engagements, attendance
+  days, trainer bookings, compliance rules and claim packets. Which moves are legal is
+  configuration, not code: `docs/architecture/01` §5.
+- **An agent cannot raise its own autonomy.** This is the one access rule that ships ahead of
+  the rest, because the gap it closes is an agent promoting itself while nothing is watching.
+
+### Fixed
+
+- **A payment reversal can put the money back.** The legal-transition set described only the
+  forward direction, so reversing a payment would have been refused outright and the invoice
+  would have stayed looking paid. Three edges added, flagged for the domain owner to ratify.
+- **An approval escalation is no longer scheduled after its own expiry.** One rule in the
+  catalogue escalated at 48 hours and expired at 24, so the escalation would have arrived a day
+  after there was anything left to escalate.
+
+### Known issue
+
+- **A programme's "times run" count returns to zero when its engagements are closed out.** The
+  count is decremented whenever an engagement stops being DELIVERED, and closing out is the
+  normal end of every engagement. Pinned in `test_008` so the fix cannot land unnoticed; the fix
+  belongs to the delivery migration and is not made here.
+
 ## 2026-09-13 — billing, and the tax document that finally has somewhere to put its own identity
 
 Authored and executed against a scratch database. Applied nowhere. Engineering detail is in

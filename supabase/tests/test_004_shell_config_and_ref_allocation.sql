@@ -74,13 +74,42 @@ BEGIN
     AND NOT (c.relrowsecurity AND c.relforcerowsecurity);
   ASSERT v_bad IS NULL, format('T1a FAIL: core table(s) not RLS forced: %s', v_bad);
 
-  SELECT string_agg(c.relname, ', ') INTO v_bad
-  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'core' AND c.relkind = 'r'
-    AND EXISTS (SELECT 1 FROM pg_catalog.pg_policy pol WHERE pol.polrelid = c.oid);
+  -- T1b. NARROWED 2026-09-13, when 011 landed and this assertion failed.
+  -- It used to read "no core table carries any policy". That was too broad, not
+  -- wrong in spirit: what it defends is that nothing is READABLE before 014,
+  -- and a PERMISSIVE policy is the only kind that can grant a read. 011 lands
+  -- exactly one RESTRICTIVE policy on purpose --
+  -- `autonomy_grants_agents_cannot_write`, carrying `NOT app.is_agent()` in both
+  -- USING and WITH CHECK -- because critic finding H-02 is that an agent can
+  -- otherwise raise its own autonomy to AUTONOMOUS, and leaving that open from
+  -- 011 until 014 is the exposure the finding names. A restrictive policy can
+  -- only ever subtract, so it cannot be the thing that opens a table early.
+  --
+  -- The exception is pinned by NAME and by TABLE, as exact values rather than as
+  -- a count, because a second restrictive policy appearing quietly is precisely
+  -- what this check exists to catch.
+  SELECT string_agg(c.relname || '.' || pol.polname, ', ') INTO v_bad
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_policy pol ON pol.polrelid = c.oid
+  WHERE n.nspname = 'core' AND c.relkind = 'r' AND pol.polpermissive;
   ASSERT v_bad IS NULL,
-    format('T1b FAIL: core table(s) already carry a policy: %s. Policies belong in 014.', v_bad);
-  RAISE NOTICE 'T1 PASS - every core table is RLS-forced and deny-all.';
+    format('T1b FAIL: core table(s) carry a PERMISSIVE policy: %s. '
+           'A permissive policy grants a read and belongs in 014.', v_bad);
+
+  SELECT coalesce(string_agg(c.relname || '.' || pol.polname, ', '
+                             ORDER BY c.relname, pol.polname), '(none)')
+    INTO v_bad
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_policy pol ON pol.polrelid = c.oid
+  WHERE n.nspname = 'core' AND c.relkind = 'r' AND NOT pol.polpermissive;
+  ASSERT v_bad = 'autonomy_grants.autonomy_grants_agents_cannot_write',
+    format('T1b FAIL: the restrictive-policy set before 014 is %s, expected '
+           'exactly autonomy_grants.autonomy_grants_agents_cannot_write (H-02).',
+           v_bad);
+  RAISE NOTICE 'T1 PASS - every core table is RLS-forced, no permissive policy '
+               'before 014, and the H-02 restrictive guard is the only exception.';
 END;
 $t1$;
 

@@ -52,6 +52,36 @@
 
 BEGIN;
 
+-- ── GOV-07 fixture helper (added 2026-09-13, when 011 landed) ───────────────
+-- Migration 011 attaches app.enforce_state_transition to every gated column in
+-- doc 01 §5.3. A gated edge may be crossed only by the effect applier of an
+-- action of a gating type, running against THAT row: 011 closed critic finding
+-- H-07 by checking the request's status, its target_id and its tenant, so a
+-- fixture that sets only the GUC is still refused, and correctly.
+--
+-- This helper does what the product's executor does — it creates the action
+-- request and publishes it as the applier — so the fixture crosses the edge the
+-- way a real caller does instead of going around the control it is sitting
+-- next to. It lives in pg_temp and the pin's closing ROLLBACK removes it.
+CREATE FUNCTION pg_temp.gate(p_tenant uuid, p_type text, p_target uuid)
+RETURNS void LANGUAGE plpgsql AS $gate$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES (p_tenant, p_type, p_target, 'EXECUTING', 'SYSTEM', 'pin-fixture')
+  RETURNING id INTO v_id;
+  PERFORM set_config('app.effect_applier', v_id::text, true);
+END $gate$;
+
+-- Clear the applier. Every gated write is bracketed, so a later assertion that
+-- a gated edge is REFUSED cannot pass by accident on a stale applier.
+CREATE FUNCTION pg_temp.ungate() RETURNS void LANGUAGE plpgsql AS $ungate$
+BEGIN
+  PERFORM set_config('app.effect_applier', '', true);
+END $ungate$;
+
+
 SET LOCAL plpgsql.check_asserts = on;
 
 DO $canary$
@@ -84,7 +114,12 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width) VALUES
   ('00000010-1111-1111-1111-111111111111','INV','invoices',true,4),
   ('00000010-1111-1111-1111-111111111111','PAY','payments',true,4),
   ('00000010-1111-1111-1111-111111111111','CRN','credit_notes',true,4),
-  ('00000010-1111-1111-1111-111111111111','COL','collections_cases',false,4);
+  ('00000010-1111-1111-1111-111111111111','COL','collections_cases',false,4),
+  ('00000010-1111-1111-1111-111111111111','ACT','action_requests',false,4);
+-- ACT is the action-envelope ref prefix. 011 gives core.action_requests a
+-- ref through app.finalise_table, so any fixture that crosses a GATED edge
+-- must be able to allocate one. In the product these rows come from 016's
+-- tenant provisioning; no migration seeds them.
 
 INSERT INTO core.organisations (id, tenant_id, name, owner_id,
                                 tax_identifier_kind, tax_identifier, tin,
@@ -129,11 +164,20 @@ $t1$;
 -- === T2 · SST on the SUMMED NET, where per-line would give a different answer =
 --     Three lines at RM 333.33. Per line: 33333 x 0.08 = 2666.64 -> 2667 each,
 --     x3 = 8001. On the summed net: 99999 x 0.08 = 7999.92 -> 8000. One sen.
+-- (new) -> DRAFT on core.invoices is gated by INVOICE_CREATE, and DRAFT -> SENT
+-- by INVOICE_PUSH (doc 01 §5.3, seeded by 011). An invoice is therefore not
+-- insertable at all without an action behind it, which is the design: the ref
+-- prefix INV is the one finance was consulted about, and a burnt number with no
+-- action to explain it is the gap H-24 is about. app.resolve_action_target_id
+-- reads INVOICE_CREATE's target from the PAYLOAD for exactly this reason -- the
+-- caller pre-generates the id -- so these fixtures do the same.
+SELECT pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_CREATE','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1');
 INSERT INTO core.invoices (id, tenant_id, organisation_id, status, issued_at, due_at,
                            sst_rate, sst_reason)
 VALUES ('00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1','00000010-1111-1111-1111-111111111111',
         '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','DRAFT', now(), current_date + 30,
         0.0800,'STANDARD_RATED');
+SELECT pg_temp.ungate();
 
 INSERT INTO core.invoice_lines (tenant_id, invoice_id, n, description, qty, unit_price_sen)
 VALUES ('00000010-1111-1111-1111-111111111111','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
@@ -195,14 +239,22 @@ END;
 $t3b$;
 
 -- === T4 · payments, and the reversal that puts the money back ================
-UPDATE core.invoices SET status = 'SENT'
+SELECT pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_PUSH','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1');
+UPDATE core.invoices SET status = 'SENT'        -- DRAFT -> SENT
  WHERE id = '00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1';
+SELECT pg_temp.ungate();
 
+-- Recording a payment moves the INVOICE's status through core.payment_apply,
+-- and SENT -> PARTIALLY_PAID is gated by PAYMENT_RECORD. The gate therefore
+-- applies to the payment INSERT even though the payment table is not itself
+-- gated, which is right: the money is what moves the invoice.
+SELECT pg_temp.gate('00000010-1111-1111-1111-111111111111','PAYMENT_RECORD','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1');
 INSERT INTO core.payments (id, tenant_id, invoice_id, amount_sen, method,
                            recorded_by_user_id)
 VALUES ('00000010-cccc-cccc-cccc-ccccccccccc1','00000010-1111-1111-1111-111111111111',
         '00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1', 50000,'BANK_TRANSFER',
         '00000010-0000-0000-0000-0000000000a1');
+SELECT pg_temp.ungate();
 
 DO $t4a$
 DECLARE v record;
@@ -217,12 +269,14 @@ BEGIN
 END;
 $t4a$;
 
+SELECT pg_temp.gate('00000010-1111-1111-1111-111111111111','PAYMENT_RECORD','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1');
 INSERT INTO core.payments (tenant_id, invoice_id, amount_sen, method,
                            recorded_by_user_id, is_reversal, reverses_payment_id,
                            reversal_reason)
 VALUES ('00000010-1111-1111-1111-111111111111','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
         50000,'BANK_TRANSFER','00000010-0000-0000-0000-0000000000a1',
         true,'00000010-cccc-cccc-cccc-ccccccccccc1','Cheque returned unpaid');
+SELECT pg_temp.ungate();
 
 DO $t4b$
 DECLARE v record;
@@ -258,11 +312,12 @@ END;
 $t5$;
 
 -- === T6/T7/T8 · the validated invoice, and the 72-hour window ================
+SELECT pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_CREATE','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb2');
 INSERT INTO core.invoices (id, tenant_id, organisation_id, status, issued_at, due_at,
                            einvoice_status, einvoice_uuid, einvoice_long_id,
                            einvoice_validated_at)
 VALUES ('00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb2','00000010-1111-1111-1111-111111111111',
-        '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','SENT', now(), current_date + 30,
+        '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','DRAFT', now(), current_date + 30,
         'VALID','F9D3-UUID-0001','LONGID0001', now() - interval '71 hours');
 
 DO $t6$
@@ -314,11 +369,12 @@ BEGIN
 END;
 $t7a$;
 
+SELECT pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_CREATE','00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb3');
 INSERT INTO core.invoices (id, tenant_id, organisation_id, status, issued_at, due_at,
                            einvoice_status, einvoice_uuid, einvoice_long_id,
                            einvoice_validated_at)
 VALUES ('00000010-bbbb-bbbb-bbbb-bbbbbbbbbbb3','00000010-1111-1111-1111-111111111111',
-        '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','SENT', now(), current_date + 30,
+        '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','DRAFT', now(), current_date + 30,
         'VALID','F9D3-UUID-0002','LONGID0002', now() - interval '73 hours');
 
 DO $t7b$
@@ -441,12 +497,21 @@ $t12$;
 
 -- === T13 · the e-invoice mirror refuses an incoherent state ==================
 DO $t13$
-DECLARE v_a boolean := false; v_b boolean := false; v_c boolean := false;
+DECLARE
+  v_a boolean := false; v_b boolean := false; v_c boolean := false;
+  v_id uuid;
 BEGIN
   SET CONSTRAINTS ALL DEFERRED;
+  -- (new) -> DRAFT is gated by INVOICE_CREATE, and the gate matches the action
+  -- request's target_id against the row being written, so the id is generated
+  -- here rather than defaulted. That is exactly what the product does:
+  -- app.resolve_action_target_id reads INVOICE_CREATE's target out of the
+  -- PAYLOAD, because the row does not exist yet when the action is raised.
   BEGIN
-    INSERT INTO core.invoices (tenant_id, organisation_id, einvoice_status)
-    VALUES ('00000010-1111-1111-1111-111111111111',
+    v_id := gen_random_uuid();
+    PERFORM pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_CREATE',v_id);
+    INSERT INTO core.invoices (id, tenant_id, organisation_id, einvoice_status)
+    VALUES (v_id,'00000010-1111-1111-1111-111111111111',
             '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','VALID');
   EXCEPTION WHEN check_violation THEN v_a := true;
   END;
@@ -456,8 +521,10 @@ BEGIN
     'evidence of it, or the QR code renders from nothing';
 
   BEGIN
-    INSERT INTO core.invoices (tenant_id, organisation_id, einvoice_status)
-    VALUES ('00000010-1111-1111-1111-111111111111',
+    v_id := gen_random_uuid();
+    PERFORM pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_CREATE',v_id);
+    INSERT INTO core.invoices (id, tenant_id, organisation_id, einvoice_status)
+    VALUES (v_id,'00000010-1111-1111-1111-111111111111',
             '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1','INVALID');
   EXCEPTION WHEN check_violation THEN v_b := true;
   END;
@@ -469,13 +536,16 @@ BEGIN
   -- `errors->>'code' IS NOT NULL`, which evaluates to NULL and PASSES on an
   -- object with no `errors` key at all. This is that payload.
   BEGIN
-    INSERT INTO core.invoices (tenant_id, organisation_id,
+    v_id := gen_random_uuid();
+    PERFORM pg_temp.gate('00000010-1111-1111-1111-111111111111','INVOICE_CREATE',v_id);
+    INSERT INTO core.invoices (id, tenant_id, organisation_id,
                                einvoice_validation_errors)
-    VALUES ('00000010-1111-1111-1111-111111111111',
+    VALUES (v_id,'00000010-1111-1111-1111-111111111111',
             '00000010-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
             '{"message":"something went wrong"}'::jsonb);
   EXCEPTION WHEN check_violation THEN v_c := true;
   END;
+  PERFORM pg_temp.ungate();
   ASSERT v_c,
     'T13c FAIL: a validation-errors blob with no `errors` key was accepted. Key '
     'presence is asserted with `?`, not with a comparison that returns NULL and '

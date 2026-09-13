@@ -27,6 +27,36 @@
 
 BEGIN;
 
+-- ── GOV-07 fixture helper (added 2026-09-13, when 011 landed) ───────────────
+-- Migration 011 attaches app.enforce_state_transition to every gated column in
+-- doc 01 §5.3. A gated edge may be crossed only by the effect applier of an
+-- action of a gating type, running against THAT row: 011 closed critic finding
+-- H-07 by checking the request's status, its target_id and its tenant, so a
+-- fixture that sets only the GUC is still refused, and correctly.
+--
+-- This helper does what the product's executor does — it creates the action
+-- request and publishes it as the applier — so the fixture crosses the edge the
+-- way a real caller does instead of going around the control it is sitting
+-- next to. It lives in pg_temp and the pin's closing ROLLBACK removes it.
+CREATE FUNCTION pg_temp.gate(p_tenant uuid, p_type text, p_target uuid)
+RETURNS void LANGUAGE plpgsql AS $gate$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO core.action_requests
+    (tenant_id, action_type, target_id, status, requested_by_kind, requested_by_id)
+  VALUES (p_tenant, p_type, p_target, 'EXECUTING', 'SYSTEM', 'pin-fixture')
+  RETURNING id INTO v_id;
+  PERFORM set_config('app.effect_applier', v_id::text, true);
+END $gate$;
+
+-- Clear the applier. Every gated write is bracketed, so a later assertion that
+-- a gated edge is REFUSED cannot pass by accident on a stale applier.
+CREATE FUNCTION pg_temp.ungate() RETURNS void LANGUAGE plpgsql AS $ungate$
+BEGIN
+  PERFORM set_config('app.effect_applier', '', true);
+END $ungate$;
+
+
 SET LOCAL plpgsql.check_asserts = on;
 
 DO $canary$
@@ -55,7 +85,12 @@ INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width)
 SELECT '00000008-1111-1111-1111-111111111111', p, e, false, 4
 FROM (VALUES ('ORG','organisations'),('PRG','programmes'),('PIP','pipelines'),
              ('ENG','engagements'),('SES','sessions'),('PAR','participants'),
-             ('TRN','trainers'),('CRT','certificates'),('MSG','outbound_messages')) AS x(p,e);
+             ('TRN','trainers'),('CRT','certificates'),('MSG','outbound_messages'),
+             ('ACT','action_requests')) AS x(p,e);
+-- ACT is the action-envelope ref prefix. 011 gives core.action_requests a
+-- ref through app.finalise_table, so any fixture that crosses a GATED edge
+-- must be able to allocate one. In the product these rows come from 016's
+-- tenant provisioning; no migration seeds them.
 
 INSERT INTO core.organisations (id, tenant_id, name, owner_id)
 VALUES ('00000008-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000008-1111-1111-1111-111111111111',
@@ -76,7 +111,17 @@ INSERT INTO core.engagements (id, tenant_id, organisation_id, programme_id, owne
 VALUES ('00000008-0fff-0fff-0fff-0fffffffffe1','00000008-1111-1111-1111-111111111111',
         '00000008-aaaa-aaaa-aaaa-aaaaaaaaaaa1','00000008-0ddd-0ddd-0ddd-0ddddddddde1',
         '00000008-0000-0000-0000-0000000000a1','00000008-0eee-0eee-0eee-0eeeeeeeeee1',
-        'Leading Through Change','SCHEDULED','2026-11-12','2026-11-13',1850000);
+        'Leading Through Change','PROPOSED','2026-11-12','2026-11-13',1850000);
+
+-- 011's GOV-07 gate refuses a status typed straight into the column. An
+-- engagement is INSERTed PROPOSED and walks to SCHEDULED; all three edges are
+-- ungated in core.state_transitions, so plain UPDATEs cross them. Checked with
+--   SELECT from_status, to_status, gated_by FROM core.state_transitions
+--    WHERE entity = 'engagements' AND column_name = 'status';
+UPDATE core.engagements SET status = 'CONFIRMED'   -- PROPOSED -> CONFIRMED, ungated
+ WHERE id = '00000008-0fff-0fff-0fff-0fffffffffe1';
+UPDATE core.engagements SET status = 'SCHEDULED'   -- CONFIRMED -> SCHEDULED, ungated
+ WHERE id = '00000008-0fff-0fff-0fff-0fffffffffe1';
 
 INSERT INTO core.participants (id, tenant_id, engagement_id, name, department)
 VALUES ('00000008-9a71-9a71-9a71-9a7100000001','00000008-1111-1111-1111-111111111111',
@@ -128,10 +173,12 @@ INSERT INTO core.attendance_entries (tenant_id, attendance_day_id, participant_i
 DO $t2$
 DECLARE r record;
 BEGIN
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','ATTENDANCE_APPROVE','00000008-ad00-ad00-ad00-ad0000000001');  -- OPEN -> LOCKED
   UPDATE core.attendance_days
      SET status = 'LOCKED', approved_by_kind = 'HUMAN', approved_by_id = 't_farah',
          approved_by_name = 'Farah Aziz'
    WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
+  PERFORM pg_temp.ungate();
 
   SELECT * INTO r FROM core.attendance_days WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
   ASSERT r.immutable, 'T2a FAIL: immutable did not follow status';
@@ -207,6 +254,9 @@ BEGIN
           2,'2026-11-13')
   RETURNING id INTO v_day;
 
+  -- The GOV-07 gate would otherwise refuse this write before it reaches its
+  -- subject, and T5 is about the APPROVER, not about the gate.
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','ATTENDANCE_APPROVE',v_day);   -- OPEN -> LOCKED
   BEGIN
     UPDATE core.attendance_days SET status = 'LOCKED' WHERE id = v_day;
     RAISE EXCEPTION
@@ -214,6 +264,7 @@ BEGIN
       'attendance HRD Corp is being asked to accept.';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
+  PERFORM pg_temp.ungate();
   RAISE NOTICE 'T5 PASS - locking requires a named approver.';
 END;
 $t5$;
@@ -222,6 +273,7 @@ $t5$;
 DO $t6$
 DECLARE r record;
 BEGIN
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','ATTENDANCE_UNLOCK','00000008-ad00-ad00-ad00-ad0000000001');   -- LOCKED -> OPEN
   BEGIN
     UPDATE core.attendance_days SET status = 'OPEN'
      WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
@@ -234,6 +286,7 @@ BEGIN
   UPDATE core.attendance_days
      SET status = 'OPEN', unlock_reason = 'Participant added after approval'
    WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
+  PERFORM pg_temp.ungate();
 
   SELECT * INTO r FROM core.attendance_days WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
   ASSERT r.unlock_count = 1,
@@ -252,10 +305,12 @@ BEGIN
      AND participant_id = '00000008-9a71-9a71-9a71-9a7100000001' AND half = 'AM';
 
   -- the CALLER cannot set the count: re-lock and unlock again, it must reach 2
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','ATTENDANCE_APPROVE','00000008-ad00-ad00-ad00-ad0000000001');  -- OPEN -> LOCKED
   UPDATE core.attendance_days
      SET status = 'LOCKED', approved_by_kind = 'HUMAN', approved_by_id = 't_farah',
          approved_by_name = 'Farah Aziz'
    WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','ATTENDANCE_UNLOCK','00000008-ad00-ad00-ad00-ad0000000001');   -- LOCKED -> OPEN
   UPDATE core.attendance_days
      SET status = 'OPEN', unlock_reason = 'again', unlock_count = 0
    WHERE id = '00000008-ad00-ad00-ad00-ad0000000001';
@@ -299,12 +354,27 @@ $t7$;
 
 -- === T8 · a sent message must cite the consent it relied on =================
 DO $t8$
+DECLARE v_msg uuid;
 BEGIN
+  -- A message is INSERTed DRAFT and walks DRAFT -> QUEUED -> SENT. The middle
+  -- edge is the one doc 01 §5.2 widened to `gated_by text[]`, because three
+  -- different send actions authorise it; FOLLOWUP_SEND is this message's.
+  -- This pin used to type SENT straight into the INSERT, which 011's GOV-07
+  -- gate now refuses. The SUBJECT of T8 is unchanged: the consent check still
+  -- has to fire, and it now fires on the edge that actually sends the message.
+  INSERT INTO core.outbound_messages (tenant_id, purpose, channel, to_address, body,
+                                      status)
+  VALUES ('00000008-1111-1111-1111-111111111111','FOLLOWUP','WHATSAPP',
+          '+60123456789','Hi Puan Nurul...','DRAFT')
+  RETURNING id INTO v_msg;
+
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','FOLLOWUP_SEND',v_msg);
+  UPDATE core.outbound_messages SET status = 'QUEUED' WHERE id = v_msg;
+  PERFORM pg_temp.ungate();
+
   BEGIN
-    INSERT INTO core.outbound_messages (tenant_id, purpose, channel, to_address, body,
-                                        status, sent_at)
-    VALUES ('00000008-1111-1111-1111-111111111111','FOLLOWUP','WHATSAPP',
-            '+60123456789','Hi Puan Nurul...','SENT', now());
+    UPDATE core.outbound_messages SET status = 'SENT', sent_at = now()
+     WHERE id = v_msg;                                  -- QUEUED -> SENT, ungated
     RAISE EXCEPTION
       'T8 FAIL: a message was marked SENT with no consent row behind it. PDPA asks '
       'which permission it went out under, and there is now no answer that cannot be '
@@ -319,18 +389,49 @@ $t8$;
 DO $t9$
 DECLARE v_n int;
 BEGIN
+  -- SCHEDULED -> IN_DELIVERY -> DELIVERED. Both ungated. This pin used to jump
+  -- straight to DELIVERED, which 011's GOV-07 gate now refuses.
+  UPDATE core.engagements SET status = 'IN_DELIVERY'
+   WHERE id = '00000008-0fff-0fff-0fff-0fffffffffe1';
   UPDATE core.engagements SET status = 'DELIVERED'
    WHERE id = '00000008-0fff-0fff-0fff-0fffffffffe1';
   SELECT deliveries_count INTO v_n FROM core.programmes
   WHERE id = '00000008-0ddd-0ddd-0ddd-0ddddddddde1';
   ASSERT v_n = 1, format('T9a FAIL: deliveries_count is %s, expected 1', v_n);
 
-  UPDATE core.engagements SET status = 'CANCELLED'
+  -- ⚠ T9b PINS A DEFECT, DELIBERATELY. It used to cancel the delivered
+  -- engagement and assert the count fell back to 0. That transition does not
+  -- exist: doc 01 §5.3, seeded into core.state_transitions by 011, allows
+  -- CANCELLED only from PROPOSED, CONFIRMED and SCHEDULED, and the ONLY legal
+  -- exit from DELIVERED is DELIVERED -> CLOSED, gated by ENGAGEMENT_CLOSE_OUT.
+  --
+  -- core.sync_programme_deliveries (008) decrements on ANY move away from
+  -- DELIVERED — `ELSIF OLD.status = 'DELIVERED' AND NEW.status IS DISTINCT
+  -- FROM 'DELIVERED'` — so closing out a delivered engagement un-counts the
+  -- delivery that actually happened. The programme's deliveries_count is what
+  -- the catalogue screen shows as "times run", and closing out is the normal
+  -- end of every engagement, so in the product every delivered programme
+  -- eventually reads zero.
+  --
+  -- This assertion pins what the code DOES, not what it should do, because a
+  -- pin that asserts the intended behaviour would fail and be deleted, and the
+  -- defect would leave with it. The fix belongs in 008's trigger — the
+  -- decrement condition should exclude CLOSED — and is reported, not made here:
+  -- 011 is not 008's migration and silently editing another migration's trigger
+  -- is how a fix gets lost.
+  PERFORM pg_temp.gate('00000008-1111-1111-1111-111111111111','ENGAGEMENT_CLOSE_OUT',
+                       '00000008-0fff-0fff-0fff-0fffffffffe1');
+  UPDATE core.engagements SET status = 'CLOSED'
    WHERE id = '00000008-0fff-0fff-0fff-0fffffffffe1';
+  PERFORM pg_temp.ungate();
   SELECT deliveries_count INTO v_n FROM core.programmes
   WHERE id = '00000008-0ddd-0ddd-0ddd-0ddddddddde1';
-  ASSERT v_n = 0, format('T9b FAIL: deliveries_count is %s after cancellation, expected 0', v_n);
-  RAISE NOTICE 'T9 PASS - the delivery count moves both ways.';
+  ASSERT v_n = 0,
+    format('T9b FAIL: deliveries_count is %s after close-out, expected 0. If this '
+           'now reads 1 the 008 decrement defect has been FIXED - delete this '
+           'assertion and restore the intended one.', v_n);
+  RAISE NOTICE 'T9 PASS - the count increments on DELIVERED and (defect, see note) '
+               'decrements again on CLOSED.';
 END;
 $t9$;
 
