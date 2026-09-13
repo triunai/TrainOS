@@ -90,4 +90,24 @@ describe("ProfileModal", () => {
     render(<ProfileModal {...props} open={false} />);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  /* The slot exists because the sidebar profile band cannot hold both a
+     collapse control and the theme switch at 216px. If it silently dropped its
+     child the shell would lose the switch entirely with nothing to show for
+     it, which is the failure this asserts against. */
+  it("renders the control the shell hangs in the identity rail", () => {
+    render(<ProfileModal {...props} headerAction={<button type="button">Dark mode</button>} />);
+    expect(screen.getByRole("button", { name: "Dark mode" })).toBeInTheDocument();
+  });
+
+  it("renders no empty wrapper when the shell hangs nothing there", () => {
+    const { rerender } = render(
+      <ProfileModal {...props} headerAction={<button type="button">Dark mode</button>} />,
+    );
+    const withSlot = screen.getAllByRole("button").length;
+
+    rerender(<ProfileModal {...props} />);
+    expect(screen.getAllByRole("button")).toHaveLength(withSlot - 1);
+    expect(screen.queryByRole("button", { name: "Dark mode" })).toBeNull();
+  });
 });

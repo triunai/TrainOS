@@ -47,6 +47,20 @@ export interface ProfileModalProps {
   session: string;
   /** The build stamp, shown under the two account actions. */
   version: string;
+  /**
+   * A control the shell hangs at the foot of the identity rail.
+   *
+   * The theme switch lives here because the sidebar profile band has no room
+   * for it: at 1440 the band's content box is 216px, and avatar, button
+   * padding, gaps, the switch and a collapse control leave 69px for the name
+   * and role, which need 84px and 87px. The user's ruling when both cannot fit
+   * is that the collapse control takes the band and the switch moves in here.
+   *
+   * A slot rather than a `themeSwitch` prop: the kit does not import the
+   * shell's controls, and the next thing the shell needs to hang here should
+   * not be a second prop.
+   */
+  headerAction?: ReactNode;
 
   /** Tenant name and short code for the banner. */
   orgName: string;
@@ -114,6 +128,7 @@ export function ProfileModal({
   lastSignIn,
   session,
   version,
+  headerAction,
   orgName,
   orgCode,
   fields,
@@ -194,6 +209,11 @@ export function ProfileModal({
               </button>
 
               <p className="text-[13px] text-ink-muted">{version}</p>
+
+              {/* The stack is already `items-center`, so the slot needs no
+                  alignment of its own — only the extra breath that separates a
+                  control from the build stamp above it. */}
+              {headerAction ? <div className="pt-1">{headerAction}</div> : null}
             </div>
           </div>
 
