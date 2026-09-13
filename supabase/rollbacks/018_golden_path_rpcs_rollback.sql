@@ -222,6 +222,14 @@ DROP FUNCTION IF EXISTS core.decide_approval(uuid, text, text, text);
 -- them. The seeds lane's fixture rows share the same derived ids, so deleting
 -- them here would take the fixture world with it too. What goes is the
 -- MECHANISM; what stays is the DATA, and R4 asserts exactly that.
+-- 018's ONE routing row (§10d). Deleted by its exact (event_type, job_type)
+-- pair rather than by event_type alone: a later pack adding a second handler
+-- for the same event owns its own row and this rollback must not take it.
+DELETE FROM app.event_subscriptions
+ WHERE event_type = 'PROPOSAL_SECTION_REGENERATE_REQUESTED'
+   AND job_type   = 'AI_DRAFT_PROPOSAL_SECTION'
+   AND tenant_id IS NULL;
+
 DROP TRIGGER IF EXISTS trg_tenants_z_seed_pipelines ON public.tenants;
 DROP FUNCTION IF EXISTS app.seed_pipelines_on_tenant();
 DROP FUNCTION IF EXISTS app.seed_pipelines(uuid);
