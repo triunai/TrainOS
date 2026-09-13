@@ -319,3 +319,36 @@ is the thing that was destroyed, and no artefact confirms or refutes it.
 The single recommendation this review makes: **run the verifier pass before anything else.** Not
 because a specific defect is suspected, but because eleven lanes have each certified themselves and
 one of them has already been caught asserting something in a message that its file does not contain.
+
+---
+
+## Addendum — 2026-09-13, written the same morning this review was
+
+This review is a snapshot of 12 September and is left as written. Three commits
+landed on 13 September that change two of its findings, and they are recorded here rather than
+edited into the sections above, because a review that quietly updates itself stops being evidence of
+what was true when it ran.
+
+**L3 contract — R4 to R8 landed (`e148a34`).** `RunStatus` gained `RESUMABLE`, so the agent
+runtime's deviation in L7 now has a contract member to move onto and no longer has a reason. Four of
+the twelve reported contract gaps closed, each removing a local decorator that had been computing
+the same thing outside the contract.
+
+**L4 scaffold and L8 screens — the data boundary was deleted, not wired (`d4ae83d`).** This review's
+most consequential finding was that the typed client boundary was not in the path. The resolution
+went the other way from the one implied: `TrainOsClient` and its all-`NOT_IMPLEMENTED` stub were
+deleted, and `shared/api/useApi.ts` became the single seam with `ApiProvider` mounted at the root.
+The boundary described a shape the application had already outgrown.
+
+Two corrections to this review's own numbers fall out of it. **Seven features declaring a private
+`useApi()` was thirteen modules, in four incompatible shapes.** And the error-classification gap this
+review listed as a tidiness problem was **a live defect**: the fixture client throws a
+`ContractError` for a refusal, every thrown value is an `Error`, so a 403 was classified as a
+transport failure and `ErrorState` drew a retry button on a policy decision while replacing the
+server's sentence with "Something went wrong". It is now `B-012`, pinned by a test that asserts the
+retry affordance is absent even when a retry handler is passed.
+
+**What does not change.** No lane has been verified by anyone but itself. Nothing in this review was
+executed, CI has still never run, there is still no remote, and the Supabase lane is still paused at
+009 with seven critical findings open. The recommendation stands unchanged and is now the only thread
+in front of everything else.

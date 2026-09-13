@@ -80,14 +80,19 @@ built is not in the path — see CONSOLIDATION.
 
 ---
 
-## 🟢 CONSOLIDATION — the duplicates the parallel build left behind (2026-09-13)
+## ✅ CONSOLIDATION — one data seam, closed by `d4ae83d` (2026-09-13)
 
-**Resume:** Move one `useApi` and one `useAction` into `src/shared/api`, then
-make `shared/api/errors.ts` recognise a `ContractError` structurally rather than
-by `instanceof`. Then delete the seven local `useApi()` copies marked `TEMPORARY
-SHAPE` in the feature `api.ts` files, the two private `toApiError` adaptations
-in `dashboard/client.ts` and `approvals/client.ts`, and
-`useBadgeCounts.ts`'s own note that it should be reading the shared hook.
+**Resume:** Nothing on the data layer. What remains of the consolidation idea
+lives in KIT DUPLICATE SWEEP below, which is down to two files.
+
+**Closed 2026-09-13 10:40.** Thirteen modules had grown their own copy of the
+client hook in four incompatible shapes — seven with a private role table, three
+ignoring the role toggle, one with a different return type, three importing the
+singleton and skipping the hook. `shared/api/useApi.ts` is the only one now and
+`ApiProvider` is mounted at the root. The scaffold's `TrainOsClient` interface
+and its all-`NOT_IMPLEMENTED` stub are deleted: they described a boundary the
+app had outgrown, and a second client surface beside the real one is the
+divergence CLAUDE.md forbids.
 
 **Scope:** Anything that exists in more than one feature and should exist once.
 CLAUDE.md's consolidation rule is the standing instruction: when two variants of
@@ -100,14 +105,16 @@ the last three `ActionOutcome` deletions — finance, hrdc and engagements — a
 moved the five screens that drew their own `Breadcrumb` onto the shell's slot.
 `useApi`/`useAction` is the last duplicate and the largest.
 
-⚠ **The error split is the load-bearing part, not the hook.** `toApiError`
-recognises only `ApiErrorException`, so a thrown `ContractError` arrives as an
-unknown TRANSPORT error — every policy refusal reads as a dropped connection and
-earns a retry button, which is the R2 collapse CLAUDE.md names. Two features
-already patch around it locally. Fix it at the boundary or the patches multiply.
+⚠ **The error split was the load-bearing part, and it was a live defect, not a
+tidiness problem.** The fixture client throws a `ContractError` for a refusal;
+every thrown value is an `Error`, so `toApiError`'s `instanceof` check
+classified a 403 as a transport `UNKNOWN` — and `ErrorState` reads exactly that
+classification to decide whether to draw "Try again". A policy decision came
+with a retry button, and the server's sentence naming the missing role and
+permission was replaced with "Something went wrong". Pinned as `B-012`.
 
-**Refs:** `apps/web/src/shared/api/errors.ts`,
-`apps/web/src/features/*/api.ts`, `D-115`, `ai/state-backlog.md`.
+**Refs:** `apps/web/src/shared/api/useApi.ts`,
+`apps/web/src/shared/api/errors.ts`, `d4ae83d`, `af92507`, `D-115`, `B-012`.
 
 ---
 
@@ -154,7 +161,7 @@ standing in for it, and those come out with the ruling.
 
 ---
 
-## ⏸ VERIFIER PASS — never run (2026-09-12)
+## 🟢 VERIFIER PASS — never run, and now the only thing in front (2026-09-13)
 
 **Resume:** Run a verifier over the whole tree with no premise taken from this
 session's commit messages. The specific thing to check is not that the tests
@@ -168,7 +175,9 @@ in a separate context: CLAUDE.md's execution protocol forbids self-approval in
 the same context that authored the work.
 
 **State:** Deferred at the user's direction when the UI work took priority.
-Nothing has verified any lane against any other lane's output.
+Nothing has verified any lane against any other lane's output. Picked up from
+PARKED on 2026-09-13 once `d4ae83d` closed the consolidation: this is now the
+work that gates everything else, including the Supabase resume.
 
 ⚠ **Every "green" in this repository is a local run.** See CI below.
 
@@ -179,9 +188,10 @@ Nothing has verified any lane against any other lane's output.
 
 ## ⏸ KIT DUPLICATE SWEEP — parked (2026-09-12)
 
-**Resume:** Grep `apps/web/src/features/**` for anything the kit now exports and
-delete the local copy, then delete the two `StandInField.tsx` stand-ins once the
-kit ships `TextField` and `DateField` — the screens' primaries capture typed
+**Resume:** Down to two files as of `d4ae83d`. Delete the two
+`StandInField.tsx` stand-ins once the kit ships `TextField` and `DateField`,
+then grep `apps/web/src/features/**` once more for anything else the kit now
+exports — the screens' primaries capture typed
 references and there is no kit input for them, which is why the stand-ins exist
 at all. The showcase at `/dev/kit` is the inventory: a pattern not on that page
 is not in the kit, and inventing it on a screen is the divergence CLAUDE.md
@@ -190,8 +200,10 @@ calls a defect.
 **Scope:** `apps/web/src/shared/components/kit/**` and everything under
 `features/` that duplicates it.
 
-**State:** Parked behind CONSOLIDATION, which is the same sweep on the data
-layer and is the more urgent half.
+**State:** Was parked behind CONSOLIDATION, which was the same sweep on the data
+layer and the more urgent half. That closed on 2026-09-13; this is now waiting
+only on the two kit components, which is a real dependency rather than a
+priority call.
 
 **Refs:** `apps/web/src/features/finance/StandInField.tsx`,
 `apps/web/src/features/hrdc/StandInField.tsx`, `/dev/kit`, `D-116`, `D-117`.

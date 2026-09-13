@@ -32,6 +32,7 @@
 | B-009 | 2026-09-12 | web           | text-primary-foreground resolved to no | HIGH     | tailwind probe | PINNED |
 | B-010 | 2026-09-12 | web           | The dev gallery shipped in production  | MEDIUM   | measured build | PINNED |
 | B-011 | 2026-09-12 | web           | Radix tests slow, and not stubbable    | LOW      | comment only   | OPEN   |
+| B-012 | 2026-09-13 | web           | A 403 was classified as a transport no | HIGH     | render test    | PINNED |
 
 ---
 
@@ -323,6 +324,40 @@ again. That comment is the durable artefact.
 
 ---
 
+## B-012 · A policy refusal came with a retry button · HIGH · PINNED
+
+The fixture client **throws** a `ContractError` for a refusal. Every thrown
+value is an `Error`, so `toApiError`'s `instanceof ApiErrorException` check did
+not recognise it and classified a 403 as a transport `UNKNOWN`. `ErrorState`
+reads exactly that classification to decide whether to draw "Try again" — so a
+policy decision arrived with a retry affordance, and `readableMessage` replaced
+a server sentence naming the missing role and permission with "Something went
+wrong".
+
+That is the `R2` collapse `CLAUDE.md` names, reached by accident rather than by
+anyone deciding a refusal should be retried. Two features had already noticed
+the symptom and patched around it locally rather than blocking on another lane's
+file, which is how one boundary defect became thirteen private copies of a hook
+in four incompatible shapes.
+
+Two second-order defects fell out of the same consolidation. The copies signed
+in during render and never invalidated, so switching role kept serving the
+previous principal's cached projections. And two governed writes in proposals
+were sending no idempotency key, which is how a double-clicked send queues two
+approvals.
+
+**Pin:** a test renders a 403 and asserts the retry affordance is absent **even
+when `onRetry` is passed**. The component refusing the affordance, rather than
+every caller remembering not to pass one, is what stops this being reintroduced.
+`toApiError` now recognises a `ContractError` and carries its code, status,
+details and approval reference through.
+
+**Refs:** `apps/web/src/shared/api/errors.ts`,
+`apps/web/src/shared/api/__tests__/errors.test.tsx`, `d4ae83d`, `8b0716c`,
+`D-115`, `CLAUDE.md` R2.
+
+---
+
 ## Unlocated
 
 One catch was handed to this lane as "an index sweep" and could not be matched
@@ -337,14 +372,15 @@ only in a brief has no file behind it.
 
 ## Promotion
 
-A finding that recurs stops being an inbox item. `B-001`, `B-004` and `B-007`
-have each already produced a decision — `D-111`, `D-112` and `D-120` — and those
-are the curated record. Three or more incidents of one _shape_ is the trigger to
+A finding that recurs stops being an inbox item. `B-001`, `B-004`, `B-007` and
+`B-012` have each already produced a decision — `D-111`, `D-112`, `D-120` and
+`D-115` — and those are the curated record. Three or more incidents of one _shape_ is the trigger to
 write a decision, not a fourth pin.
 
 The shape that has now recurred five times across this log is: **a construct
 that is valid, reads as careful, and does nothing.** A quoted search_path list,
 a default-privileges revoke, a jsonb CHECK on an absent key, a dead DEV branch
-that still emits a chunk, a Tailwind class with no definition. That shape is
+that still emits a chunk, a Tailwind class with no definition, an `instanceof`
+check against a class the value was never an instance of. Six now. That shape is
 what `CLAUDE.md` R11 exists for, and it is the first thing to look for in any
 new control.

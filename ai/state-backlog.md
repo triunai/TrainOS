@@ -21,8 +21,20 @@
 
 ## Deferred on 2026-09-12 when the UI work took priority
 
-**OPEN (2026-09-12, consolidation) — `useApi` AND `useAction` ARE DECLARED SEVEN
-TIMES.** Seven feature `api.ts` files carry a private `useApi()` marked
+**CLOSED 2026-09-13 by `d4ae83d` (2026-09-12, consolidation) — `useApi` AND
+`useAction` ARE DECLARED SEVEN TIMES.** The count was wrong and understated:
+thirteen modules carried a copy, in four incompatible shapes. The boundary
+defect this entry named as the root cause was real and was live — the fixture
+client throws a `ContractError` for a refusal, every thrown value is an `Error`,
+so a 403 was classified as a transport `UNKNOWN` and `ErrorState` drew a retry
+button on a policy decision while replacing the server's sentence with
+"Something went wrong". Pinned by a test that renders a 403 and asserts the
+retry affordance is absent even when `onRetry` is passed. Recorded as `B-012`.
+The scaffold's `TrainOsClient` interface and stub are deleted rather than
+wired. Original text follows.
+
+**~~OPEN~~ (2026-09-12, consolidation) — `useApi` AND `useAction` ARE DECLARED
+SEVEN TIMES.** Seven feature `api.ts` files carry a private `useApi()` marked
 `TEMPORARY SHAPE`, and `dashboard/client.ts` and `approvals/client.ts` each
 carry a private `toApiError` adaptation. The root cause is one boundary defect,
 not seven lapses: `shared/api/errors.ts` recognises only `ApiErrorException`, so
@@ -34,7 +46,7 @@ recognition of a `ContractError` rather than `instanceof` — which also fails
 across a duplicated module instance — and then deletion of the nine local
 copies.
 **Owner:** the web lane. **Trigger:** now; this is the work in flight.
-**Refs:** `D-115`, `a9ba812`, `e811fd4`, `8b0716c`.
+**Refs:** `D-115`, `B-012`, `d4ae83d`, `a9ba812`, `e811fd4`, `8b0716c`.
 
 **OPEN (2026-09-12, verification) — NO LANE HAS BEEN VERIFIED BY ANYONE BUT
 ITSELF.** Nine lanes ran in parallel and each reported its own work green.
@@ -44,8 +56,9 @@ evidence was deferred. What makes this more than procedure: this session
 produced at least one commit whose message described an edit the file did not
 receive, so a message is not a substitute for the file. Closing it needs a
 verifier in a fresh context that takes no premise from any commit message.
-**Owner:** a verifier lane, not yet dispatched. **Trigger:** before the first
-real CI run, and before anything is applied to a hosted database.
+**Owner:** a verifier lane, not yet dispatched. **Trigger:** now. This became
+the front of the queue on 2026-09-13 when `d4ae83d` closed the consolidation,
+and it gates the Supabase resume as well as the first real CI run.
 **Refs:** `docs/reviews/2026-09-12-ui-blast-lane-review.md`, `D-121`, `B-007`.
 
 **CLOSED 2026-09-13 by `e148a34` (2026-09-12, contract) — RULINGS R4 AND R5 ARE
@@ -76,7 +89,8 @@ Two known survivors: `StandInField.tsx` exists twice, in finance and hrdc,
 because no kit `TextField` or `DateField` exists and those screens' primaries
 capture typed references.
 **Owner:** the kit lane. **Trigger:** when the kit ships `TextField` and
-`DateField`, which is what the stand-ins are waiting on.
+`DateField`, which is what the stand-ins are waiting on. Down to those two files
+as of `d4ae83d`; the data-layer half of this sweep is closed.
 **Refs:** `apps/web/src/shared/components/kit/**`, `/dev/kit`, `D-116`.
 
 **OPEN (2026-09-12, supabase) — MIGRATIONS 010 TO 016 ARE NOT WRITTEN, AND 001

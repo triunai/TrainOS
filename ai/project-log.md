@@ -40,6 +40,15 @@ whose claim window closes in three days, and the tax invoice its packet cites �
 because a screen reaching for a state the dataset cannot produce is how hardcoded
 data gets into a component.
 
+**Data seam (web).** `d4ae83d` closed the consolidation. Thirteen modules had
+grown their own copy of the client hook in four incompatible shapes, and the
+count in every document written that morning — seven — was wrong. The defect
+underneath was live, not cosmetic: a 403 was classified as a transport failure,
+so a policy refusal came with a retry button and the server's sentence naming
+the missing permission was replaced by "Something went wrong". The scaffold's
+`TrainOsClient` interface and its all-`NOT_IMPLEMENTED` stub were deleted rather
+than wired.
+
 **Doc spine (docs).** Four living docs added that the spine did not have:
 `workstreams.md`, `state-backlog.md`, `project-log.md` and `findings-log.md`.
 Twenty-one rulings from 12 September recorded as `D-102` to `D-122`. The
@@ -48,7 +57,7 @@ was not what happened, and the gap is itself the finding. `CHANGELOG.md`
 backfilled for the ten chunks that shipped, and a heading that a mid-line splice
 had destroyed restored.
 
-**Three things worth telling future-me:**
+**Five things worth telling future-me:**
 
 1. **The spine's own additive-surgery rule was broken by the lane that wrote the
    rule.** Commit `5549a35` spliced a new changelog entry into the middle of the
@@ -67,7 +76,22 @@ had destroyed restored.
    hydration ladder exists to prevent, done by the session that owns the ladder.
    The test of `ai/` is whether the next session can skip that, and it has not
    been run.
-3. **"Verified in-session" is not the same as verified.** Several facts handed
+3. **A living doc is stale the moment it is written, and the only fix is to
+   correct it in the same session.** This lane's files were made stale three
+   times in ninety minutes by lanes committing to the same branch: `e148a34`
+   landed contract rulings recorded as deferred, `af92507` landed a
+   consolidation recorded as in the working tree, and `d4ae83d` closed the whole
+   Next Active Task forty minutes after it was written. Each was corrected in
+   place rather than left, and each correction is marked with the commit that
+   caused it. A doc spine whose value is "the next session does not re-derive
+   this" cannot ship stale on the day it is written.
+4. **Every count handed over in prose was wrong, and the wrong ones were all
+   understatements.** Roughly 80 commits was 130. Seven copies of the data hook
+   was thirteen. Five divergent `ActionOutcome` copies was five copies of which
+   three had diverged. Twelve open contract gaps was eight by the time it was
+   written down. The number in a brief is a memory; the number in the tree is a
+   fact, and they diverge in one direction.
+5. **"Verified in-session" is not the same as verified.** Several facts handed
    to this lane as settled were checked against the repository and held, but one
    — an "index sweep" — matched no artefact under that name. It is recorded in
    `ai/findings-log.md` under Unlocated, mapped to the closest thing the

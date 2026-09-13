@@ -64,7 +64,27 @@ and one `useAction` into `src/shared/api`, make `errors.ts` recognise a
 local copies and the two `StandInField.tsx` stand-ins once the kit ships
 `TextField`/`DateField`. The verifier pass runs after it.
 
-**Updated 2026-09-13, later the same morning.** Two concurrent lanes landed
+**Superseded 2026-09-13 10:40 by `d4ae83d` — the consolidation is done.** The
+task above is complete and is left standing rather than rewritten, because the
+shape of what was found is worth more than the instruction. Thirteen modules had
+grown their own copy of the hook in four incompatible shapes, not the seven this
+block counted. `shared/api/useApi.ts` is now the only one and `ApiProvider` is
+mounted at the root. `toApiError` recognises a `ContractError` and carries its
+code, status, details and approval reference through, and a test renders a 403
+and asserts the retry affordance is absent **even when `onRetry` is passed** —
+the component refusing it is what stops a caller reintroducing the defect. The
+scaffold's `TrainOsClient` interface and its all-`NOT_IMPLEMENTED` stub are
+deleted: nothing imported them, and a second client surface beside the real one
+is the divergence CLAUDE.md forbids.
+
+**The new next action is the verifier pass.** It is the only thing left that
+gates everything else, and nothing in this repository has been verified by
+anyone but the lane that wrote it. After it: the kit duplicate sweep, which is
+now down to the two `StandInField.tsx` copies waiting on a kit `TextField` and
+`DateField`, and pointing the agent runtime at the contract's new `RESUMABLE`
+run status instead of its own wrapper.
+
+**Updated 2026-09-13, earlier the same morning.** Two concurrent lanes landed
 while this block was being written. `af92507` finished the `ActionOutcome`
 consolidation — finance, hrdc and engagements all import the kit's now — and
 moved the last five screens that drew their own `Breadcrumb` onto the shell's
@@ -144,7 +164,9 @@ either — the database, contract, architecture, kit and fixtures lanes all ran
 ahead of it, and M02-S01 landed in the middle of a twenty-seven-screen batch
 (`e811fd4`). The boundary's claim that nothing in the app moves when the client
 changes is therefore still untested: the thing it was meant to protect went
-around it. Closing that is the consolidation named in the 2026-09-13 block.
+around it. Closing that is the consolidation named in the 2026-09-13 block,
+which `d4ae83d` completed the same morning by deleting the boundary rather than
+wiring it: the interface described a seam the app had already outgrown.
 
 ### Blockers
 

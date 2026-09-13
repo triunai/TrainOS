@@ -150,8 +150,13 @@ its own path. The client portal at `/p/:token` mounts outside `AppShell` because
 a client with no account has nothing to navigate to. Refs:
 `apps/web/src/routes/routes.tsx`, `6816188`.
 
-**D-115 · One `useApi` and one `useAction`, in `src/shared/api` · IN PROGRESS
-(2026-09-13).** Seven feature `api.ts` files declare a private `useApi()` marked
+**D-115 · One `useApi` and one `useAction`, in `src/shared/api` · ACTIVE, landed
+`d4ae83d` (2026-09-13).** Thirteen modules carried a copy in four incompatible
+shapes, not the seven first counted, and the boundary defect below turned out to
+be live rather than cosmetic — see `B-012`. `ApiProvider` is mounted at the
+root; the scaffold's `TrainOsClient` interface and its all-`NOT_IMPLEMENTED`
+stub are deleted rather than wired, because they described a seam the app had
+outgrown. The entry as first written: Seven feature `api.ts` files declare a private `useApi()` marked
 `TEMPORARY SHAPE` and two `client.ts` files carry their own `toApiError`. The
 consolidation also has to make `shared/api/errors.ts` recognise a
 `ContractError` structurally, since `instanceof` fails across a duplicated
