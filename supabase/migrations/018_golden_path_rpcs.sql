@@ -9,10 +9,19 @@
 -- pack that makes the golden path real.
 --
 -- CHANGE, COUNTED. 30 `SECURITY DEFINER` RPCs in `core`, three
--- `security_invoker` views, fourteen internal `app._*` helpers, three seed
--- functions (`seed_pipelines`, `seed_pipelines_all`, `seed_pipelines_on_tenant`),
--- one trigger on `public.tenants` and one `app.event_subscriptions` routing
--- row. 51 objects. (This paragraph said "23 / one / seven" while the file
+-- `security_invoker` views, fourteen internal `app._*` helpers, four seed
+-- functions (`seed_pipelines`, `seed_pipelines_all`, `unseed_pipelines`,
+-- `seed_pipelines_on_tenant`), ONE TABLE (`app.seeded_pipelines`), one trigger
+-- on `public.tenants` and one `app.event_subscriptions` routing row.
+-- 53 objects.
+--
+-- ⚠ THE TABLE IS NEW SINCE THE FIRST VERSION OF THIS FILE, which said "it
+-- creates no table" and meant it. `app.seeded_pipelines` records every
+-- pipeline and step row the seed actually inserted, and it exists because a
+-- seed with no record of what it wrote cannot be undone: the rollback used to
+-- drop the mechanism and keep the rows, which left `pipelines_one_default_uq`
+-- rejecting a default ENGAGEMENT pipeline for every tenant permanently, with
+-- no supported way to reverse it. See `app.unseed_pipelines`. (This paragraph said "23 / one / seven" while the file
 -- shipped 30 / 3 / 11; the numbers are now derived from the `$verify$` block's
 -- own lists rather than maintained beside them.)
 --
@@ -4813,6 +4822,50 @@ COMMENT ON VIEW core.v_budgets IS
 --   PACKET       004 admits it; no contract, document or fixture defines a
 --                packet pipeline. Seeding one would be inventing configuration.
 
+-- ── THE SEED LEDGER, so the seed is reversible ──────────────────────────────
+--
+-- ⚠ THIS IS THE ONE TABLE 018 CREATES, and the header's "creates no table" is
+-- corrected there. It exists because a seed with no record of what it wrote is
+-- a seed that cannot be undone, and the rollback review (B6) was right that
+-- "the mechanism goes, the data stays" left `pipelines_one_default_uq`
+-- rejecting a default ENGAGEMENT pipeline for every tenant FOREVER after a
+-- rollback, with no supported way to reverse it.
+--
+-- IT RECORDS ONLY ROWS 018 ACTUALLY INSERTED. The seed is
+-- `ON CONFLICT (id) DO NOTHING`, so a row the seeds lane wrote first under the
+-- same derived id is NOT 018's and never enters this ledger — which is exactly
+-- the case the old design was protecting, now protected by construction
+-- instead of by refusing to delete anything.
+--
+-- NO FOREIGN KEY onto `core.pipelines` / `core.pipeline_steps`, deliberately.
+-- A tenant that deletes a seeded pipeline itself should not be blocked by a
+-- bookkeeping row, and `app.unseed_pipelines` tolerates a ledger entry whose
+-- subject is already gone.
+--
+-- RLS ENABLED, NOT FORCED. `app` is not a PostgREST-exposed schema and no
+-- client role holds a grant here, so the guard is the grant layer; FORCE would
+-- remove the owner's exemption and `app.seed_pipelines` — a definer whose owner
+-- may not carry BYPASSRLS — would silently record nothing. 012 measured that
+-- exact mechanism on `app.job_type_map` and took the same decision.
+CREATE TABLE IF NOT EXISTS app.seeded_pipelines (
+  row_kind  text        NOT NULL CHECK (row_kind IN ('PIPELINE','STEP')),
+  tenant_id uuid        NOT NULL,
+  row_id    uuid        NOT NULL,
+  seeded_by text        NOT NULL DEFAULT '018',
+  seeded_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  PRIMARY KEY (row_kind, row_id)
+);
+
+ALTER TABLE app.seeded_pipelines ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE app.seeded_pipelines FROM PUBLIC, anon, authenticated;
+
+COMMENT ON TABLE app.seeded_pipelines IS
+  'Every core.pipelines / core.pipeline_steps row 018''s seed actually inserted. '
+  'Written by app.seed_pipelines, read by app.unseed_pipelines, dropped by the '
+  'rollback after it has reversed the seed. Rows that already existed under the '
+  'same derived id are NOT recorded, because ON CONFLICT DO NOTHING did not '
+  'insert them and they are not 018''s to delete.';
+
 CREATE OR REPLACE FUNCTION app.seed_pipelines(p_tenant_id uuid)
 RETURNS integer
 LANGUAGE plpgsql
@@ -4842,6 +4895,10 @@ BEGIN
       USING ERRCODE = 'foreign_key_violation';
   END IF;
 
+  -- RECORDED AS IT IS INSERTED. `RETURNING` under `ON CONFLICT DO NOTHING`
+  -- yields ONLY the rows this statement actually wrote, which is precisely the
+  -- set the rollback is entitled to delete.
+  WITH inserted AS (
   INSERT INTO core.pipelines
     (id, tenant_id, object, name, is_default, version, status,
      created_by_kind, created_by_id)
@@ -4857,9 +4914,20 @@ BEGIN
             -- OPPORTUNITY_STAGES, in that order.
             ('OPPORTUNITY', 'Deal board')
           ) AS spec(object, name)
-  ON CONFLICT (id) DO NOTHING;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
+  ), recorded AS (
+  INSERT INTO app.seeded_pipelines (row_kind, tenant_id, row_id)
+  SELECT 'PIPELINE', p_tenant_id, inserted.id FROM inserted
+  ON CONFLICT (row_kind, row_id) DO NOTHING
+  RETURNING 1)
+  -- COUNTED OFF `inserted`, NOT off ROW_COUNT. ROW_COUNT would now report the
+  -- LEDGER's insert, and a stale ledger row from a pipeline deleted outside
+  -- `app.unseed_pipelines` would make a real seed report zero — which is how
+  -- `app.seed_pipelines_all()` would start believing it had nothing to do.
+  SELECT pg_catalog.count(*)::integer INTO v_rows FROM inserted;
 
+  WITH inserted AS (
   INSERT INTO core.pipeline_steps
     (id, tenant_id, pipeline_id, step_key, label, position, terminal, blocking_check_keys)
   SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object || ':' || spec.step_key)::uuid,
@@ -4896,12 +4964,110 @@ BEGIN
             ('OPPORTUNITY','WON',           'Won',           6::smallint, true),
             ('OPPORTUNITY','LOST',          'Lost',          7::smallint, true)
           ) AS spec(object, step_key, label, position, terminal)
-  ON CONFLICT (id) DO NOTHING;
-  GET DIAGNOSTICS v_steps = ROW_COUNT;
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
+  ), recorded AS (
+  INSERT INTO app.seeded_pipelines (row_kind, tenant_id, row_id)
+  SELECT 'STEP', p_tenant_id, inserted.id FROM inserted
+  ON CONFLICT (row_kind, row_id) DO NOTHING
+  RETURNING 1)
+  SELECT pg_catalog.count(*)::integer INTO v_steps FROM inserted;
 
   RETURN v_rows + v_steps;
 END;
 $fn$;
+
+CREATE OR REPLACE FUNCTION app.unseed_pipelines()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_row      record;
+  v_deleted  integer := 0;
+  v_gone     integer;
+  v_blocked  text[] := ARRAY[]::text[];
+  v_extra    text[] := ARRAY[]::text[];
+  v_err      text;
+BEGIN
+  -- REVERSES THE SEED, EXACTLY AND ONLY. Every row it deletes is one
+  -- `app.seed_pipelines` recorded having inserted; a row that already existed
+  -- under the same derived id was never recorded and is never touched.
+  --
+  -- STEPS BEFORE PIPELINES. `pipeline_steps_pipeline_fk` is ON DELETE CASCADE
+  -- (004:652), so deleting a pipeline first would take its steps with it —
+  -- INCLUDING steps a tenant added itself, which are not 018's to delete. The
+  -- guard below refuses a pipeline that still has an unrecorded step for the
+  -- same reason, rather than relying on the ordering alone.
+  FOR v_row IN
+    SELECT ledger.row_kind, ledger.tenant_id, ledger.row_id
+      FROM app.seeded_pipelines AS ledger
+     ORDER BY CASE ledger.row_kind WHEN 'STEP' THEN 0 ELSE 1 END, ledger.row_id
+  LOOP
+    IF v_row.row_kind = 'PIPELINE'
+       AND EXISTS (SELECT 1 FROM core.pipeline_steps AS step
+                    WHERE step.tenant_id = v_row.tenant_id
+                      AND step.pipeline_id = v_row.row_id
+                      AND NOT EXISTS (SELECT 1 FROM app.seeded_pipelines AS known
+                                       WHERE known.row_kind = 'STEP' AND known.row_id = step.id)) THEN
+      v_extra := v_extra || v_row.row_id::text;
+      CONTINUE;
+    END IF;
+
+    BEGIN
+      IF v_row.row_kind = 'STEP' THEN
+        DELETE FROM core.pipeline_steps AS step
+         WHERE step.tenant_id = v_row.tenant_id AND step.id = v_row.row_id;
+      ELSE
+        DELETE FROM core.pipelines AS pipe
+         WHERE pipe.tenant_id = v_row.tenant_id AND pipe.id = v_row.row_id;
+      END IF;
+      GET DIAGNOSTICS v_gone = ROW_COUNT;
+      v_deleted := v_deleted + v_gone;
+    EXCEPTION WHEN foreign_key_violation THEN
+      -- SOMETHING REAL POINTS AT IT. `core.engagements` and
+      -- `core.engagement_step_states` both carry ON DELETE RESTRICT composite
+      -- keys onto these rows (008:108, 008:150). By the time a row is
+      -- referenced it is a tenant's live configuration, not a seed.
+      GET STACKED DIAGNOSTICS v_err = CONSTRAINT_NAME;
+      v_blocked := v_blocked || (v_row.row_kind || ' ' || v_row.row_id::text
+                                 || ' (' || COALESCE(v_err, 'unknown constraint') || ')');
+    END;
+  END LOOP;
+
+  -- REFUSE LOUDLY, AND ALL OR NOTHING. The RAISE takes every delete above back
+  -- with it, so the caller never gets a half-reversed seed. The count and the
+  -- constraint names are in the message because "something references them" is
+  -- not an instruction anybody can act on.
+  IF pg_catalog.array_length(v_blocked, 1) IS NOT NULL
+     OR pg_catalog.array_length(v_extra, 1) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'unseed_pipelines: cannot reverse the 018 seed. % row(s) are referenced by '
+      'live data [%]; % seeded pipeline(s) carry steps 018 did not seed and would '
+      'be cascaded away [%]. Nothing was deleted. Remove or repoint the '
+      'referencing rows first, or accept that 018 cannot be rolled back while '
+      'this tenant configuration is in use.',
+      COALESCE(pg_catalog.array_length(v_blocked, 1), 0),
+      pg_catalog.array_to_string(v_blocked, '; '),
+      COALESCE(pg_catalog.array_length(v_extra, 1), 0),
+      pg_catalog.array_to_string(v_extra, '; ')
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  DELETE FROM app.seeded_pipelines;
+  RETURN v_deleted;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.unseed_pipelines() FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION app.unseed_pipelines() IS
+  'The other half of app.seed_pipelines, and the reason 018 is rollback-'
+  'reversible at all. Deletes exactly the core.pipelines / core.pipeline_steps '
+  'rows the seed recorded having inserted, refuses with a count and the '
+  'constraint names when live data references any of them, and deletes nothing '
+  'when it refuses. Called by the rollback; pinned by test_018 T39.';
 
 CREATE OR REPLACE FUNCTION app.seed_pipelines_on_tenant()
 RETURNS trigger
@@ -5028,6 +5194,44 @@ VALUES ('PROPOSAL_SECTION_REGENERATE_REQUESTED', 'AI_DRAFT_PROPOSAL_SECTION',
         'REGENERATE_NOT_ROUTED rather than returning 200 on nothing — which is '
         'what it did before this row existed.')
 ON CONFLICT ON CONSTRAINT event_subscriptions_key DO NOTHING;
+
+-- ── REGISTER THE SEED WITH 016's COMPLETENESS GUARD ─────────────────────────
+--
+-- `origin/cloud/migrations`' 016 adds `app.tenant_seed_checks`, one row per
+-- relation an AFTER INSERT trigger on `public.tenants` is expected to seed, and
+-- `app.provision_tenant` refuses a tenant whose seeds did not all land. This is
+-- the FOURTH such trigger — action policies (011), ref formats (016), check keys
+-- (017) and now pipelines — and a provisioning trigger that is not registered is
+-- a trigger whose silent failure the guard was built to catch and does not.
+--
+-- GUARDED ON THE TABLE'S EXISTENCE, because that 016 is not on this branch's
+-- base yet and 018 has to apply correctly against both. When the table is
+-- absent this is a no-op and the obligation is recorded in the PR body and the
+-- catalog row instead of being silently skipped.
+--
+-- `note` is shown verbatim in the refusal, so it states the CONSEQUENCE: the
+-- person reading it is mid-incident.
+DO $seed_check$
+BEGIN
+  IF pg_catalog.to_regclass('app.tenant_seed_checks') IS NULL THEN
+    RAISE NOTICE '018: app.tenant_seed_checks does not exist on this base, so the '
+                 'pipeline seed is NOT registered with provision_tenant''s guard. '
+                 'It must be registered when 016''s registry lands.';
+    RETURN;
+  END IF;
+  INSERT INTO app.tenant_seed_checks (pack, label, schema_name, table_name, note)
+  VALUES ('018','pipelines','core','pipelines',
+          'The tenant has no lifecycle at all: core.navigation and '
+          'core.get_pipeline_config render stages from core.pipeline_steps, so '
+          'every board and every stage list comes back empty and reads as '
+          'configuration rather than as a failed provision.'),
+         ('018','pipeline steps','core','pipeline_steps',
+          'The pipelines exist but have no stages, so a deal or an engagement '
+          'cannot be moved anywhere and the stepper renders nothing.')
+  ON CONFLICT (schema_name, table_name) DO UPDATE
+    SET pack = EXCLUDED.pack, label = EXCLUDED.label, note = EXCLUDED.note;
+END
+$seed_check$;
 
 -- ═══ 11 · Grants ═══════════════════════════════════════════════════════════
 --
