@@ -133,6 +133,9 @@ export function RuleChangeReviewScreen({ documentId }: { documentId: string }) {
   return (
     <div className="flex flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="rule-change"
         title={`${data.title} · proposed rule changes`}
         recordRef={data.documentId}
         meta={[
