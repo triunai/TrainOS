@@ -27,7 +27,11 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { I18nProvider } from "@/shared/i18n";
+import { BreadcrumbProvider } from "../BreadcrumbProvider";
 import { Sidebar } from "../Sidebar";
+import { Topbar } from "../Topbar";
+
+vi.mock("../useBadgeCounts", () => ({ useUnreadCount: () => 4 }));
 
 vi.mock("@/shared/hooks/useMe", () => ({
   useMe: () => ({
@@ -64,6 +68,25 @@ const renderAt = (path: string) =>
     </MemoryRouter>,
   );
 
+/** The rail and the bar together, which is the only way to compare their tops. */
+const renderShellTop = () =>
+  render(
+    <MemoryRouter initialEntries={["/dashboard"]}>
+      <I18nProvider>
+        <BreadcrumbProvider>
+          <Topbar />
+          <Sidebar role="SALES" />
+        </BreadcrumbProvider>
+      </I18nProvider>
+    </MemoryRouter>,
+  );
+
+/** The height utility a row ships, whether it is a token or a literal. */
+const heightClass = (el: HTMLElement) => /(?:^|\s)(h-\S+)/.exec(el.className)?.[1];
+
+const profileBand = () =>
+  screen.getByRole("navigation", { name: "Main" }).firstElementChild as HTMLElement;
+
 beforeEach(() => {
   window.localStorage.clear();
   setThemeSpy.mockClear();
@@ -98,7 +121,9 @@ describe("Sidebar", () => {
     renderAt("/training/programmes");
     const expanded = screen
       .getAllByRole("button")
-      .filter((button) => button.getAttribute("aria-expanded") === "true");
+      .filter((button) => button.getAttribute("aria-expanded") === "true")
+      /* The rail's own collapse control is a disclosure too, and it is open. */
+      .filter((button) => !button.hasAttribute("data-rail-toggle"));
 
     expect(expanded).toHaveLength(1);
     expect(expanded[0]).toHaveAccessibleName(expect.stringContaining("Training"));
@@ -351,23 +376,192 @@ describe("Sidebar", () => {
     expect(rail.firstElementChild).toContainElement(profile);
     expect(profile.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    expect(screen.getByRole("switch", { name: "Dark mode" })).toBeInTheDocument();
     expect(rail.className).not.toMatch(/w-rail/);
   });
 
-  it("has no rail-collapse control at all", () => {
-    renderAt("/dashboard");
+  /**
+   * THE TOP BAND. The rail's first row and the breadcrumb are the two things
+   * at the top of the frame and the pack draws them on one line. They were not
+   * on one line: the rail's `py-4` plus the row's own `pt-2 pb-4` ran the band
+   * to 72px starting 16px down, so the role line crossed the bar's 56px bottom
+   * edge and read as clipped against the content card (73.png).
+   */
+  describe("the profile band is the top bar's own height", () => {
+    it("takes its height from the SAME token the top bar does", () => {
+      const { container } = renderShellTop();
+      const bar = container.querySelector("header") as HTMLElement;
+      const band = profileBand();
 
-    expect(screen.queryByRole("button", { name: /Collapse the sidebar/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Expand the sidebar/ })).toBeNull();
-    expect(window.localStorage.getItem("trainos.sidebar.collapsed")).toBeNull();
+      /* Equal because it is one token, not because two literals agree today. */
+      expect(heightClass(band)).toBe("h-topbar");
+      expect(heightClass(bar)).toBe("h-topbar");
+      expect(heightClass(band)).toBe(heightClass(bar));
+    });
+
+    it("centres the row in the band instead of padding it out of it", () => {
+      renderAt("/dashboard");
+      const band = profileBand();
+
+      expect(band).toHaveClass("items-center");
+      /* Vertical padding on a fixed-height band is how the row left it. */
+      expect(band.className).not.toMatch(/\b(?:py|pt|pb)-/);
+      expect(screen.getByRole("navigation", { name: "Main" }).className).not.toMatch(
+        /\b(?:py|pt)-/,
+      );
+    });
+
+    it("clips nothing: the band hides no overflow, it fits", () => {
+      renderAt("/dashboard");
+      const band = profileBand();
+      const rail = screen.getByRole("navigation", { name: "Main" });
+
+      expect(band.className).not.toMatch(/overflow-hidden/);
+      expect(rail.className).not.toMatch(/overflow-hidden/);
+
+      /* 18 + 15 = 33px of type inside 56px. Explicit leading, because
+         `text-[13px]` sets a font size and nothing else — inherited leading
+         would put the stack's height outside this component's control, which
+         is exactly how it overran the band. */
+      const name = within(band).getByText("Amirah Yusof");
+      const role = within(band).getByText("Sales Consultant");
+      expect(name.className).toMatch(/leading-\[18px\]/);
+      expect(role.className).toMatch(/leading-\[15px\]/);
+    });
   });
 
-  it("keeps the theme out of any menu — it is one click, beside the name", async () => {
+  /**
+   * THE COLLAPSE CONTROL. 63888e5 put it at the footer's edge, 0abe2ad removed
+   * it; the user asked for it back at the TOP RIGHT of the profile band, and
+   * for the footer chevron to stay gone.
+   */
+  describe("the rail collapses, from the top right", () => {
+    const control = () => screen.getByRole("button", { name: /the sidebar/ });
+
+    it("sits in the profile band, and nowhere near the footer", () => {
+      renderAt("/dashboard");
+      const band = profileBand();
+
+      expect(band).toContainElement(control());
+      /* Last child of the band IS its right edge — the band is a plain row. */
+      expect(
+        band.lastElementChild?.contains(control()) || band.lastElementChild === control(),
+      ).toBe(true);
+
+      const footer = screen.getByRole("button", { name: "Help & support" })
+        .parentElement as HTMLElement;
+      expect(footer).not.toContainElement(control());
+      expect(footer.textContent).not.toMatch(/[«»]/);
+    });
+
+    it("is a disclosure button: aria-expanded, and it names the rail", () => {
+      renderAt("/dashboard");
+      const rail = screen.getByRole("navigation", { name: "Main" });
+
+      expect(control()).toHaveAccessibleName("Collapse the sidebar");
+      expect(control()).toHaveAttribute("aria-expanded", "true");
+      expect(control().getAttribute("aria-controls")).toBe(rail.id);
+      expect(rail.id).not.toBe("");
+    });
+
+    it("collapses to the 64px rail and expands back", async () => {
+      const user = userEvent.setup();
+      renderAt("/dashboard");
+      const rail = screen.getByRole("navigation", { name: "Main" });
+
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      await user.click(control());
+
+      expect(rail.className).toMatch(/\bw-rail\b/);
+      expect(rail.className).not.toMatch(/\bw-sidebar\b/);
+      expect(control()).toHaveAccessibleName("Expand the sidebar");
+      expect(control()).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(control());
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+    });
+
+    it("remembers the rail across reloads, under the key 63888e5 wrote", async () => {
+      const user = userEvent.setup();
+      const { unmount } = renderAt("/dashboard");
+      await user.click(control());
+      expect(window.localStorage.getItem("trainos.sidebar.collapsed")).toBe("true");
+      unmount();
+
+      renderAt("/dashboard");
+      expect(screen.getByRole("navigation", { name: "Main" }).className).toMatch(/\bw-rail\b/);
+    });
+
+    it("toggles on `[`, and not while someone is typing", async () => {
+      const user = userEvent.setup();
+      renderAt("/dashboard");
+      const rail = screen.getByRole("navigation", { name: "Main" });
+
+      /* `[[` is how user-event types a literal `[`: a single one opens its
+         own key-descriptor syntax. */
+      await user.keyboard("[[");
+      expect(rail.className).toMatch(/\bw-rail\b/);
+      await user.keyboard("[[");
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+
+      /* A bare key that fires inside a field would shut the rail every time
+         someone typed a bracket into search. */
+      const field = document.createElement("input");
+      document.body.appendChild(field);
+      field.focus();
+      await user.keyboard("[[");
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      field.remove();
+    });
+
+    it("in the rail: icons with tooltips, counts as dots, the branch still lit", async () => {
+      const user = userEvent.setup();
+      renderAt("/training/programmes");
+      await user.click(control());
+
+      const training = screen.getByRole("button", { name: /Training/ });
+      expect(training).toHaveAttribute("title", "Training");
+      expect(training.className).toMatch(/justify-center/);
+      /* The branch you are in is still the one lit row. */
+      expect(training).toHaveAttribute("data-lit", "true");
+
+      /* No child rows at 64px, and no group captions either. */
+      expect(screen.queryByRole("link", { name: /Programmes/ })).toBeNull();
+      expect(screen.queryByText("OPERATIONS")).toBeNull();
+
+      const rail = screen.getByRole("navigation", { name: "Main" });
+      expect(rail.querySelectorAll("[data-badge-dot]").length).toBeGreaterThan(0);
+      expect(rail.innerHTML).not.toMatch(/min-w-\[20px\]/);
+    });
+
+    it("widens the rail to open a group, because 64px has nowhere to put one", async () => {
+      const user = userEvent.setup();
+      renderAt("/dashboard");
+      await user.click(control());
+
+      await user.click(screen.getByRole("button", { name: /Training/ }));
+
+      const rail = screen.getByRole("navigation", { name: "Main" });
+      expect(rail.className).toMatch(/\bw-sidebar\b/);
+      expect(screen.getByRole("button", { name: /Training/ })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+    });
+  });
+
+  it("moves the theme switch into the profile modal, which is where the room is", async () => {
     const user = userEvent.setup();
     renderAt("/dashboard");
 
-    await user.click(screen.getByRole("switch", { name: "Dark mode" }));
+    /* Not in the band: at 216px the switch and a collapse control together
+       truncate both the name and the role. */
+    expect(screen.queryByRole("switch", { name: "Dark mode" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+    const modalSwitch = await screen.findByRole("switch", { name: "Dark mode" });
+
+    /* Still one click from the row it describes, and still not inside a menu. */
+    await user.click(modalSwitch);
     expect(setThemeSpy).toHaveBeenCalledWith("dark");
   });
 });

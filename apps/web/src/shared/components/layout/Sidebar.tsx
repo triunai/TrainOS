@@ -13,15 +13,36 @@ import { useNavSelection } from "./useNavSelection";
 import { useSidebarState } from "./useSidebarState";
 
 /**
- * The sidebar. 240px, on the same surface as the top bar — there is no border
- * and no colour step between them, because in the pack the rail, the bar and
- * the band around the content card are one ground and the card is the only
- * other plane.
+ * The sidebar. 240px expanded, a 64px icon rail collapsed, on the same surface
+ * as the top bar — there is no border and no colour step between them, because
+ * in the pack the rail, the bar and the band around the content card are one
+ * ground and the card is the only other plane.
  *
- * Top to bottom: WHO YOU ARE with a light/dark switch beside it, then the
+ * Top to bottom: a WHO YOU ARE band exactly as tall as the top bar, then the
  * navigation, then the application's own affordances in the footer. Identity
  * moved up here from the footer because it is the first thing a reader checks
  * and was in the last place they would look. There is no wordmark (24a765f).
+ *
+ * ── THE RAIL CLOSES AGAIN ────────────────────────────────────────────────
+ *
+ * 63888e5 built a rail that collapsed from a chevron at the FOOTER's edge;
+ * 0abe2ad removed the whole thing. It is back, and the control is at the top
+ * right of the profile band instead — the corner a reader reaches for, and the
+ * corner they are already looking at when they close it. The footer chevron
+ * does not come back with it: a control at the bottom of a 900px column, for a
+ * thing that happens at the top of it, is why the first one went unused.
+ *
+ * Collapsed, the rail is `--shell-rail-width`: icons only, the label in a
+ * tooltip, a count reduced to a dot on the glyph, the branch you are in still
+ * tinted, the avatar alone, and the footer down to its glyphs. Nothing moves
+ * except the width, which is what keeps the content beside it to a single
+ * reflow — `main` is the flex sibling, so it takes back the 176px as the rail
+ * gives it up and never reflows twice for one toggle.
+ *
+ * A parent with children cannot open inside 64px, so clicking one from the
+ * rail widens the rail first and then opens the group — one click, the thing
+ * the reader asked for, rather than a group that expands where it cannot be
+ * seen.
  *
  * It renders whatever `getNavGroups(role)` returns and knows nothing about
  * roles itself — there is exactly one filtering pass and it is not here.
@@ -102,15 +123,31 @@ const CHILD_IDLE = "text-ink-secondary hover:bg-surface-hover";
  */
 const TREE_LINE = "pointer-events-none absolute left-[17px] top-0 bottom-[17px] w-px bg-connector";
 
+/** The rail collapsed: icon centred in the 48px the 64px rail's `px-2` leaves. */
+const PARENT_RAIL = "justify-center px-0";
+
+/** `aria-controls` for the collapse toggle: the rail is what it opens and shuts. */
+const NAV_ID = "sidebar-rail";
+
 export function Sidebar({ role }: { role: Role }) {
   const groups = useMemo(() => getNavGroups(role), [role]);
   const selection = useNavSelection(groups);
-  const { isOpen, toggle } = useSidebarState(selection.parentKey);
+  const { isOpen, toggle, collapsed, toggleCollapsed } = useSidebarState(selection.parentKey);
   const t = useT();
 
   return (
-    <nav aria-label="Main" className="flex h-full w-sidebar shrink-0 flex-col bg-sidebar px-3 py-4">
-      <SidebarProfile />
+    <nav
+      id={NAV_ID}
+      aria-label="Main"
+      className={cn(
+        "flex h-full shrink-0 flex-col bg-sidebar pb-4",
+        /* The width is the only thing that animates, and `main` is its flex
+           sibling, so the content takes back the difference in the same pass. */
+        "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        collapsed ? "w-rail px-2" : "w-sidebar px-3",
+      )}
+    >
+      <SidebarProfile collapsed={collapsed} onToggleCollapsed={toggleCollapsed} navId={NAV_ID} />
 
       {/* THE SCROLL CONTAINER, AND WHY IT IS TWO ELEMENTS.
           `index.css` reserves the scrollbar's gutter permanently so nothing
@@ -122,13 +159,23 @@ export function Sidebar({ role }: { role: Role }) {
           and the gutter falls in the rail's right padding, over a track that
           is transparent at rest. `overflow-x-hidden` absorbs the overhang;
           nothing about the site-wide scrollbar rule changes. */}
-      <div className="-mx-3 flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
-        <div className="flex w-sidebar flex-col gap-4 px-3">
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pt-2",
+          collapsed ? "-mx-2" : "-mx-3",
+        )}
+      >
+        <div className={cn("flex flex-col gap-4", collapsed ? "w-rail px-2" : "w-sidebar px-3")}>
           {groups.map((group) => (
             <div key={group.caption} className="flex flex-col gap-0.5">
-              <div className="px-2 pb-1 font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
-                {CAPTION_KEY[group.caption] ? t(CAPTION_KEY[group.caption]) : group.caption}
-              </div>
+              {/* The caption is the group's only label, and at 64px there is no
+                  room for it. The glyphs keep their grouping from the 16px gap
+                  between groups, which survives the collapse. */}
+              {collapsed ? null : (
+                <div className="px-2 pb-1 font-mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">
+                  {CAPTION_KEY[group.caption] ? t(CAPTION_KEY[group.caption]) : group.caption}
+                </div>
+              )}
 
               {group.parents.map((parent) => {
                 const leaf = parent.children.length === 0;
@@ -139,63 +186,109 @@ export function Sidebar({ role }: { role: Role }) {
                  destination — the same tint, for the same reason: this is the
                  branch you are in. */
                 const selected = leaf && parentSelected && selection.childKey === null;
-                const lit = leaf ? selected : parentSelected;
+                /* Collapsed, the children are not drawn at all, so the parent is
+                   the only row that can carry the branch — still exactly one lit
+                   row, and it is the visible ancestor of the one that would be. */
+                const lit = collapsed ? parentSelected : leaf ? selected : parentSelected;
                 const panelId = `nav-${parent.key.replace(/\W+/g, "-")}`;
+                const icon = (
+                  <span
+                    aria-hidden="true"
+                    data-icon-box=""
+                    className="relative inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[15px] leading-none"
+                  >
+                    {parent.icon}
+                    {/* A count has nowhere to render at 64px, and dropping it
+                        would hide the one thing a badge exists to say. It
+                        becomes a dot on the glyph, alert-coloured when the
+                        count is. */}
+                    {collapsed && parent.badge ? (
+                      <span
+                        data-badge-dot=""
+                        className={cn(
+                          "absolute -right-1 -top-0.5 h-1.5 w-1.5 rounded-full",
+                          parent.badgeIsAlert ? "bg-danger" : "bg-primary",
+                        )}
+                      />
+                    ) : null}
+                  </span>
+                );
 
                 return (
                   <div key={parent.key} className="flex flex-col">
                     {leaf ? (
                       <NavLink
                         to={parent.path as string}
+                        title={collapsed ? parent.label : undefined}
                         data-lit={lit ? "true" : undefined}
-                        className={cn(PARENT_ROW, lit ? PARENT_LIT : PARENT_IDLE, FOCUS_RING)}
+                        className={cn(
+                          PARENT_ROW,
+                          collapsed && PARENT_RAIL,
+                          lit ? PARENT_LIT : PARENT_IDLE,
+                          FOCUS_RING,
+                        )}
                       >
-                        <span
-                          aria-hidden="true"
-                          data-icon-box=""
-                          className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[15px] leading-none"
-                        >
-                          {parent.icon}
-                        </span>
-                        <span className="truncate">{parent.label}</span>
-                        {parent.badge ? (
-                          <NavBadge count={parent.badge} alert={parent.badgeIsAlert} />
-                        ) : null}
+                        {icon}
+                        {collapsed ? (
+                          <span className="sr-only">{parent.label}</span>
+                        ) : (
+                          <>
+                            <span className="truncate">{parent.label}</span>
+                            {parent.badge ? (
+                              <NavBadge count={parent.badge} alert={parent.badgeIsAlert} />
+                            ) : null}
+                          </>
+                        )}
                       </NavLink>
                     ) : (
                       <button
                         type="button"
-                        onClick={() => toggle(parent.key)}
+                        onClick={() => {
+                          /* From the rail there is nowhere for the children to
+                             go, so opening a group widens the rail first. */
+                          if (collapsed) {
+                            toggleCollapsed();
+                            if (!open) toggle(parent.key);
+                            return;
+                          }
+                          toggle(parent.key);
+                        }}
                         aria-expanded={open}
                         aria-controls={panelId}
+                        title={collapsed ? parent.label : undefined}
                         data-lit={lit ? "true" : undefined}
-                        className={cn(PARENT_ROW, lit ? PARENT_LIT : PARENT_IDLE, FOCUS_RING)}
+                        className={cn(
+                          PARENT_ROW,
+                          collapsed && PARENT_RAIL,
+                          lit ? PARENT_LIT : PARENT_IDLE,
+                          FOCUS_RING,
+                        )}
                       >
-                        <span
-                          aria-hidden="true"
-                          data-icon-box=""
-                          className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[15px] leading-none"
-                        >
-                          {parent.icon}
-                        </span>
-                        <span className="truncate">{parent.label}</span>
-                        {parent.badge ? (
-                          <NavBadge count={parent.badge} alert={parent.badgeIsAlert} />
-                        ) : null}
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "shrink-0",
-                            lit ? "text-primary" : "text-ink-muted",
-                            parent.badge ? "ml-1" : "ml-auto",
-                          )}
-                        >
-                          {open ? "–" : "+"}
-                        </span>
+                        {icon}
+                        {collapsed ? (
+                          <span className="sr-only">{parent.label}</span>
+                        ) : (
+                          <>
+                            <span className="truncate">{parent.label}</span>
+                            {parent.badge ? (
+                              <NavBadge count={parent.badge} alert={parent.badgeIsAlert} />
+                            ) : null}
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                "shrink-0",
+                                lit ? "text-primary" : "text-ink-muted",
+                                parent.badge ? "ml-1" : "ml-auto",
+                              )}
+                            >
+                              {open ? "–" : "+"}
+                            </span>
+                          </>
+                        )}
                       </button>
                     )}
 
-                    {leaf ? null : (
+                    {leaf || collapsed ? null : (
                       <Collapse open={open} id={panelId}>
                         {/* Every scrap of spacing sits on the list, inside the
                           clipped row, so a closed group is exactly 0px. The
@@ -246,7 +339,7 @@ export function Sidebar({ role }: { role: Role }) {
         </div>
       </div>
 
-      <SidebarFooter />
+      <SidebarFooter collapsed={collapsed} />
     </nav>
   );
 }
