@@ -167,8 +167,14 @@ export class JobRunner {
       tenantId: job.tenant_id,
     });
     const beat = setInterval(() => {
+      // Extend by the FULL lease, not by the heartbeat interval. 012's
+      // heartbeat_job sets `visible_after = now() + p_extend`, so passing
+      // anything shorter than the lease resets the expiry to "now plus a
+      // sliver" — sooner than what the original claim already granted (S4) —
+      // and races app.reap_jobs on every single beat instead of only if a
+      // beat is missed entirely.
       void this.opts.rpc
-        .heartbeatJob(job, this.opts.workerId, this.opts.heartbeatSeconds)
+        .heartbeatJob(job, this.opts.workerId, this.opts.leaseSeconds)
         .catch((cause: unknown) => {
           // The lease is gone — reaped, cancelled, or taken. Nothing to do but
           // say so: complete_job and fail_job will refuse for the same reason.
@@ -184,7 +190,7 @@ export class JobRunner {
         job,
         workerId: this.opts.workerId,
         heartbeat: () =>
-          this.opts.rpc.heartbeatJob(job, this.opts.workerId, this.opts.heartbeatSeconds),
+          this.opts.rpc.heartbeatJob(job, this.opts.workerId, this.opts.leaseSeconds),
         keys: this.opts.keys.forTenant(job.tenant_id),
         log,
         signal: this.abort.signal,
