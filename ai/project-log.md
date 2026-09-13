@@ -15,6 +15,136 @@
 
 ---
 
+## 2026-09-13 22:1x — PR #20 merged, 018 BLOCK from a thermonuclear pass; the report's severity list was wrong and dropped two real Blockers
+
+**PR #20 confirmed MERGED at `c7efb8a`**, one file
+(`docs/reviews/2026-09-13-thermo-018.md`), base `main` — the review-branch
+rule held again. Thermonuclear review of PR #11 (018) at `fc9550c`.
+**VERDICT: BLOCK**, confirmed verbatim, severity counts confirmed exactly:
+5 Blocker, 5 High, 8 Medium, 6 Low.
+
+⚠ **Correction, and worth being precise about on a migration line this
+safety-sensitive: the report's list of "5 blockers" mixed severity
+levels, and two real Blockers were omitted entirely.** Read directly
+against the doc's own B1–B5 / H1–H5 / M1–M8 headings rather than the
+summary paraphrase:
+
+**What actually IS Blocker-severity, confirmed by heading and text:**
+
+- **B1**: one 4,857-line migration file holds five near-identical copies
+  of one list engine
+  (`list_enquiries`/`list_approvals`/`list_follow_ups`/`list_proposals`/`list_quotations`).
+  Confirmed via a diffed 25-line block between `list_proposals` and
+  `list_quotations` where only two lines differ. B1's own text explicitly
+  cross-references the pagination bugs as consequences — "has already
+  cost correctness twice, in opposite directions — see H2 and H3" — not
+  as part of its own severity.
+- **B3**: `list_follow_ups`, `list_proposals` and `list_quotations` all
+  declare `p_view text DEFAULT NULL` and never read it — a saved-view
+  filter silently discarded. Confirmed via the doc's own concrete
+  failing call: `core.list_proposals(p_view => 'SV-MINE')` returns every
+  proposal in the tenant with `success: true` and no error. The file's
+  own forbidden-case language at `018:869-872` calls exactly this out:
+  "never an ignored clause: ignoring a filter shows rows the reader
+  explicitly asked to exclude."
+
+**What the report called a "blocker" but is actually High or Medium,
+confirmed by heading:**
+
+- The "opposite pagination bugs" are **H2** (`list_enquiries` counts
+  after the cursor clause, so `page.total` shrinks per page) and **H3**
+  (the other four hand back a cursor past the end on an exact-multiple
+  page) — both High, not Blocker, and both already cross-referenced from
+  B1 rather than independently blocker-rated.
+- "`regenerate_proposal_section` enqueues nothing" is **H1**, High.
+- "`core.provenance` read without `tenant_id`" is **M1**, Medium — and
+  confirmed NOT reachable today: the doc states `subject_id` is always
+  tenant-scoped upstream. A materially softer finding than "blocker"
+  suggested.
+- "the pipeline backfill swallows a foreign-key violation into a
+  WARNING" is **M5**, Medium.
+
+**Two real Blockers were not in the report at all, and one of them
+matters for the whole migration line, not just 018:**
+
+- **B4**, the more serious omission: 018 edits **014's own pin**, moving
+  its exact grant-count assertion from `v_grants = 121` to `124` because
+  018 adds three view grants. Confirmed by reading the exact reproduced
+  failure in the doc: applying 001–014 alone and running `test_014` now
+  fails with `"expected 124 SELECT grants ... Found 121."` **014's pin
+  only passes once a LATER migration (018) has also been applied** — the
+  doc's own words: "A pin that only passes once a _later_ migration has
+  been applied is no longer a pin." This needs tracking against
+  `fix-014`'s eventual fix for 014's CRITICAL findings: that fix must not
+  reintroduce or silently depend on this ordering problem.
+- **B5**: 018 has no `BEGIN`/`COMMIT` transaction wrapper on either the
+  forward migration or its rollback, confirmed via `grep` returning
+  nothing for either file, and confirmed every other migration across
+  014–017 does wrap. This matters specifically because 018 is not pure
+  DDL — its tenant backfill loop writes `core.pipelines` and
+  `core.pipeline_steps` rows across every tenant, and a failure partway
+  through leaves helpers created, some RPCs created, some tenants
+  seeded and others not, with nothing to roll back to.
+
+**Confirmed clean, verbatim from the doc's own "What is right" section —
+these hold up and matter if 018 gets a substantial rewrite rather than a
+patch:** tenant scoping is disciplined (every join tenant-correlated,
+every table read filtered through `app.require_tenant_id()`, M1 the sole
+non-reachable exception); no error is swallowed into `app.ok` (all 18
+exception handlers traced — every one either re-raises, returns
+`app.err`, or sets a variable leading to an explicit refusal two branches
+later; the one true swallow is M5, and it lives in a `DO` block, not an
+RPC); the rollback is inventory-correct (all 47 created objects dropped,
+nothing from 001–017 destroyed, drop order is exact reverse dependency
+order, no `CASCADE`, and the one non-018 drop — `core.decide_approval`'s
+four-argument signature — is confirmed signature-qualified and cannot
+touch 014's five-argument function); yielding the three gate wrappers to
+014 rather than shipping a second copy is exactly the divergence
+discipline CLAUDE.md asks for.
+
+**Pin-honesty findings (H5), confirmed exactly, not just the summary
+numbers:** 239 labelled `RAISE EXCEPTION` assertions (not 228 — the doc
+itself notes 228 is actually 014's RLS policy count, cited in error
+elsewhere in this spine's own history). Four confirmed provably
+unfalsifiable: a comparison of a GENERATED column against the exact
+expression that generates it (`x <> x`); a comparison of two distinct
+primary keys for equality, which can never happen since `id` is the
+primary key; a code check on a path a prior line already restricted to a
+different code; a fixture filter matching a pattern the fixture's two
+lines can never contain. Roughly thirty more confirmed to pass
+vacuously: they extract `-> 'data'` from a response without first
+asserting `success`, so a refused call evaluates to `NULL` and takes the
+same "pass" branch as a genuinely correct one — the doc names the correct
+pattern already used elsewhere in the same file, just not applied
+consistently. `core.get_proposal` and `core.get_quotation` confirmed
+never invoked by the pin at all — appearing only in comments and one
+metadata sweep.
+
+⚠ **Negative result, confirmed exactly as reported: an assertion count is
+not evidence of coverage.** Four of 239 could not fail under any input
+regardless of what the migration does; roughly thirty more could not
+fail specifically on an error response. Neither gap would ever surface
+from the count alone — only from reading what each assertion actually
+tests.
+
+**Lane `fix-018`** (Opus, worktree
+`~/Repos/personal-work/trainos-wt/fix-018`, branch `fix/018-review`)
+confirmed active on `lane/rpc-018`, tip `fc9550c`. Shim port reported as
+5438, not independently verified. The Codex 018 report folds in when it
+lands.
+
+**One thing worth telling future-me:** a severity label is part of the
+finding, not decoration on it — "Blocker" and "High" carry different
+consequences for what can merge and in what order, and compressing five
+items of mixed severity into "the 5 blockers" makes a High finding read
+as more urgent than it is while making an actual Blocker (B4, which
+breaks a DIFFERENT pack's own pin) invisible entirely. When a report
+gives exact severity counts, check the count against the labelled
+findings one by one rather than trusting a prose summary to have
+preserved the mapping.
+
+---
+
 ## 2026-09-13 22:0x — PR #18 merged (second D-012 pass now formal), finding #19, "nineteen" pin edits confirmed wrong
 
 **PR #18 confirmed MERGED at `4162a4d`**, adding exactly one file

@@ -276,6 +276,21 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 22:1x — PR #20 merged, 018 BLOCK (thermonuclear pass); report's blocker list was wrong, missed two real Blockers
+
+- PR #20 confirmed merged, one file, thermonuclear review of 018 at
+  fc9550c. VERDICT BLOCK confirmed, 5/5/8/6 severity counts confirmed.
+  Corrected the report's "5 blockers" list: only B1 (five list-engine
+  copies) and B3 (p_view discarded) are actually Blockers; the pagination
+  bugs are H2/H3, regenerate_proposal_section is H1, provenance/backfill
+  items are M1/M5 (Medium, not Blocker). Two real Blockers were missing
+  from the report: B4 (018 breaks 014's own pin, 121->124 grants,
+  confirmed by reproducing the exact failure) and B5 (no transaction
+  wrapper on a data-writing migration). Confirmed clean: no reachable
+  cross-tenant read, no error swallowed into app.ok, rollback drops
+  exactly its 47 objects. fix-018 lane confirmed active. Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 22:0x — PR #18 merged (second D-012 pass formal); finding #19; "nineteen" pin-edit figure confirmed wrong
 
 - PR #18 confirmed merged, one file, cut from main per the new

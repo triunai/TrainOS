@@ -17,7 +17,7 @@
 
 ---
 
-## ⛔ SUPABASE SCHEMA — all four of 014–017 BLOCK per PR #18 (merged); 018 on PR #11 (2026-09-13)
+## ⛔ SUPABASE SCHEMA — 014–017 BLOCK per PR #18; 018 also BLOCK per PR #20 (2026-09-13)
 
 ✅ **The second D-012 pass is now confirmed formally landed as PR #18**
 (merged `4162a4d`, one file, cut from `main` per the new review-branch
@@ -480,6 +480,102 @@ HR table, already tracked). The rollback drops the seed trigger and
 deliberately keeps already-seeded rows, confirmed. `lane/rpc-018`'s
 worktree confirmed shut down; both 018 reviewers (`codex-review-018` and
 its detached-HEAD counterpart) re-pinned to `fc9550c`.
+
+⛔ **PR #20 confirmed MERGED at `c7efb8a`** (`gh pr view 20`: mergedAt
+2026-09-13T13:08:53Z, base `main`, one file —
+`docs/reviews/2026-09-13-thermo-018.md`, review-branch rule held again).
+**VERDICT: BLOCK on 018 at `fc9550c`**, confirmed verbatim. Severity
+counts confirmed exactly: **5 Blocker, 5 High, 8 Medium, 6 Low.**
+
+⚠ **Correction: the report's list of "5 blockers" mixed severities —
+only two of the five items named are actually the doc's own Blockers; two
+real Blockers went unmentioned entirely.** Read the doc's own B1–B5
+headings directly rather than trusting the paraphrase, since this is a
+safety-relevant migration review and severity level determines what
+merges before what:
+
+- **B1 (real Blocker), confirmed**: one 4,857-line migration holds five
+  near-identical copies of one list engine
+  (`list_enquiries`/`list_approvals`/`list_follow_ups`/`list_proposals`/`list_quotations`),
+  confirmed via a diffed 25-line block where only two lines differ between
+  copies. B1's own text explicitly says the duplication "has already cost
+  correctness twice, in opposite directions — see H2 and H3" — i.e. the
+  pagination bugs are cross-referenced FROM B1, not folded into it.
+- **B2 (real Blocker), confirmed** — this is the "no catalog row for 018"
+  item, correctly not labelled a blocker in the report's own "Pin honesty"
+  framing but IS one in the doc: `migration-catalog.md` has no entry for
+  018 at all, and `supabase/CLAUDE.md`'s own same-commit hard rule states
+  a catalog entry landing later "fails the gate."
+- **B3 (real Blocker), confirmed** — this is "`p_view` declared and never
+  read," exactly as reported: `list_follow_ups`/`list_proposals`/
+  `list_quotations` all silently discard a saved-view filter, confirmed
+  via a concrete failing call (`list_proposals(p_view => 'SV-MINE')`
+  returns every proposal in the tenant) and the file's own forbidden-case
+  language at `018:869-872` about never ignoring a filter clause.
+- **"Opposite pagination bugs" are NOT part of B1 — they are two separate
+  HIGH findings, H2 and H3, confirmed by heading.** H2:
+  `list_enquiries` counts after the cursor clause, so `page.total`
+  shrinks per page. H3: the other four hand back a cursor past the end on
+  an exact-multiple page. Real, confirmed, correctly described in
+  substance — just misfiled as blocker-severity in the report.
+- **"`regenerate_proposal_section` enqueues nothing" is H1, HIGH, not a
+  Blocker, confirmed by heading**: "enqueues nothing, and says it does."
+- **"`core.provenance` read without `tenant_id`" is M1, MEDIUM, not a
+  Blocker, confirmed by heading and text** — and confirmed NOT reachable
+  today: `subject_id` is always tenant-scoped upstream, per the doc's own
+  words, which the report's framing didn't convey.
+- **"pipeline backfill swallows an FK violation into a WARNING" is M5,
+  MEDIUM, not a Blocker, confirmed by heading.**
+- **Two real Blockers went unmentioned in the report entirely, and B4 in
+  particular is safety-relevant to this whole migration line:**
+  - **B4**: 018 edits 014's own pin, moving its exact grant-count
+    assertion from `v_grants = 121` to `124` because 018 adds three view
+    grants. Confirmed directly: applying 001–014 alone and running
+    `test_014` now **fails** with `"expected 124 ... Found 121"` — 014's
+    pin only passes once a LATER migration (018) has also been applied.
+    This is a real regression this thread needs to track: once `fix-014`
+    lands its own fix for 014's CRITICAL findings, that fix must not
+    reintroduce or depend on this ordering problem.
+  - **B5**: 018 has no transaction wrapper (`BEGIN`/`COMMIT`) on either
+    the forward migration or its rollback — confirmed via `grep`, and
+    confirmed every other migration in 014–017 does wrap. Matters because
+    018 is not pure DDL: its tenant backfill loop can fail partway through,
+    leaving helpers created, some RPCs created, some tenants seeded and
+    others not, with no atomicity to fall back on.
+
+✅ **Confirmed clean, verbatim from the doc's own "What is right" section
+— these hold up and should not be lost if 018 gets rewritten:** tenant
+scoping is disciplined (every join tenant-correlated, every read filtered
+through `app.require_tenant_id()`, M1 the sole non-reachable exception);
+no error is swallowed into `app.ok` (all 18 exception handlers traced,
+the one swallow is M5 and lives in a `DO` block, not an RPC); the
+rollback is inventory-correct (all 47 created objects dropped, nothing
+from 001–017 destroyed, the one non-018 drop is signature-qualified and
+confirmed cannot touch 014's five-argument function); yielding the three
+gate wrappers to 014 rather than shipping a second copy is exactly the
+divergence discipline CLAUDE.md asks for.
+
+⚠ **Pin-honesty findings (H5), confirmed exactly, not just the summary
+numbers:** 239 labelled assertions (not 228, which the doc notes is
+actually 014's RLS policy count, mistakenly cited elsewhere); four
+provably unfalsifiable (`T23g` compares a value to itself via a
+GENERATED-column identity; `T30d` compares two distinct primary keys for
+equality, which can never happen; `T14e` checks a code a prior line
+already excluded; `T13i` filters against a fixture pattern matching zero
+rows unconditionally); roughly thirty more pass vacuously because they
+extract `-> 'data'` without first asserting `success`, so a refused call
+(`NULL` downstream) takes the same branch as a passing assertion;
+`get_proposal`/`get_quotation` confirmed never invoked by the pin at all.
+**Negative result for the log: a pin's assertion count is not evidence of
+coverage** — 4 of 239 could not fail under any input, and roughly 30 more
+could not fail specifically on an error response, and the count alone
+would never have surfaced either.
+
+**Lane `fix-018`** (Opus, worktree
+`~/Repos/personal-work/trainos-wt/fix-018`, branch `fix/018-review`, its
+own shim — port reported as 5438, not independently verified) confirmed
+active on `lane/rpc-018`, tip `fc9550c`. The Codex 018 report folds in
+when it lands.
 
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is

@@ -300,8 +300,29 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > `codex-review-014-017` stays alive for the re-review after `fix-014`
 > pushes. Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 22:0x — PR #18 merged (second pass formally
-> landed); finding #19 confirmed; "nineteen" pin-edit figure was wrong.
+> **BLAST 13 Sep 22:1x +08** — PR #20 confirmed MERGED (`c7efb8a`), one
+> file, thermonuclear review of 018 at `fc9550c`. **VERDICT: BLOCK**,
+> confirmed, 5 Blocker/5 High/8 Medium/6 Low. **Correction: the report's
+> "5 blockers" list mixed severities — only B1 (five copies of one list
+> engine) and B3 (`p_view` silently discarded) are actually Blockers.**
+> The "opposite pagination bugs" are H2/H3 (High, cross-referenced FROM
+> B1, not part of it); `regenerate_proposal_section` enqueuing nothing is
+> H1 (High); the provenance-without-tenant_id and backfill-swallows-FK
+> items are M1/M5 (Medium, and M1 confirmed not reachable today). **Two
+> real Blockers went unmentioned: B4 — 018 edits 014's own pin
+> (121→124 grants), so 014's pin now only passes once 018 is ALSO
+> applied, confirmed by reproducing the exact failure; B5 — 018 has no
+> transaction wrapper on a migration that also writes data via a
+> tenant backfill loop.** Confirmed clean, verbatim from the doc: no
+> reachable cross-tenant read, no error swallowed into `app.ok`, rollback
+> drops exactly its 47 objects. Pin-honesty confirmed: 239 assertions, 4
+> provably unfalsifiable, ~30 pass vacuously on a refusal,
+> `get_proposal`/`get_quotation` never invoked. `fix-018` lane confirmed
+> active on `lane/rpc-018` at `fc9550c`. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 22:1x — PR #20 merged, 018 BLOCKed; the
+> report's blocker list mixed severities, missing two real Blockers.
 
 ### Focus
 
