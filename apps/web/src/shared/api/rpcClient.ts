@@ -122,6 +122,9 @@ const MISSING_FUNCTION_CODES = new Set(["PGRST202", "PGRST106", "PGRST205", "428
 /** PostgREST's JWT rejections, plus Postgres' own privilege refusal. */
 const UNAUTHENTICATED_CODES = new Set(["PGRST301", "PGRST302", "42501"]);
 
+/** Any RFC 4122 layout; the database generates v4 but the check need not care. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -220,6 +223,45 @@ export function unwrapEnvelope(body: unknown): Result<unknown> {
   delete rest.success;
   const keys = Object.keys(rest);
   return ok(keys.length === 1 && keys[0] === "data" ? rest.data : rest);
+}
+
+/**
+ * The contract's audit resource type, in the database's spelling.
+ *
+ * The contract addresses a trail by its ROUTE SEGMENT — `/v1/approvals/{id}/audit`,
+ * plural and lowercase, which is also the fixture store's key. The database
+ * keys it by AGGREGATE TYPE: `core.audit_entries.subject_type` is CHECKed
+ * `^[A-Z][A-Z0-9_]*$` (012:598) and written as the singular entity upper-cased
+ * (`app.aggregate_type_for`, 012:1010). Sent as-is, `approvals` can never match
+ * a row, and the trail is empty rather than an error — which is why nobody saw
+ * it. The rule is derived rather than listed so a new record type needs no entry
+ * here: singular, kebab to snake, upper-cased. A value already in UPPER_SNAKE
+ * passes through untouched.
+ */
+export function aggregateTypeOf(resourceType: string): string {
+  if (/^[A-Z][A-Z0-9_]*$/.test(resourceType)) return resourceType;
+  return resourceType.replace(/s$/, "").replace(/-/g, "_").toUpperCase();
+}
+
+/**
+ * A view read's failure. The same split, with one difference: `42501`.
+ *
+ * On an RPC, `42501` is the database refusing a principal with no tenant, and
+ * sign-in reads it as "not linked", so it stays `UNAUTHENTICATED`. On a VIEW it
+ * is a GRANT that has not shipped — a view is checked against the invoker for
+ * every function in its body, and `v_organisation_relations`, `v_budgets` and
+ * `v_model_tiers` call `app.*` helpers `authenticated` cannot execute (018:706,
+ * 018:4705-4706). Drawn as "Your session has expired" it sent a signed-in reader
+ * to sign in again; it is a deployment fact, so it reads as one. A signed-out
+ * reader never reaches a view read — the session guard answers first.
+ */
+export function classifyViewFailure(failure: TransportFailure): ApiError {
+  if (failure.code === "42501") {
+    return transportError("NOT_DEPLOYED", `${failure.message} — view grant not deployed`, {
+      status: 404,
+    });
+  }
+  return classifyTransportFailure(failure);
 }
 
 /** A supabase-js failure, split into the domain and transport branches. */
@@ -452,8 +494,24 @@ export class SupabaseRpcClient implements TrainOsClient {
       const message = thrown instanceof Error ? thrown.message : "Request failed";
       return fail(transportError("NETWORK", message, { cause: thrown }));
     }
-    if (response.error !== null) return fail(classifyTransportFailure(response.error));
+    if (response.error !== null) return fail(classifyViewFailure(response.error));
     return ok(asList((response.data ?? []) as T[]));
+  }
+
+  /**
+   * The UUID a uuid-keyed view is matched on, from whatever the caller holds.
+   *
+   * `v_organisation_relations` and `v_contact_consent_current` key their rows
+   * by uuid, but the screens hold REFS — a route segment, `organisationRef` — and
+   * a ref in a uuid `.match()` is 22P02, which reads as a server fault. The
+   * record's own RPC already accepts id or ref, so it resolves one to the other;
+   * a value that is already a uuid costs no round trip.
+   */
+  private async uuidOf(rpc: string, idOrRef: string): Promise<Result<string>> {
+    if (UUID.test(idOrRef)) return ok(idOrRef);
+    const record = await this.call<{ id: string }>(rpc, { p_id: idOrRef });
+    if (record.error !== null) return fail(record.error);
+    return ok(record.data.id);
   }
 
   me(): Promise<Result<Me>> {
@@ -509,8 +567,10 @@ export class SupabaseRpcClient implements TrainOsClient {
    * empty list. The contract types this endpoint as a record, not a collection.
    */
   async getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>> {
+    const uuid = await this.uuidOf("get_organisation", id);
+    if (uuid.error !== null) return fail(uuid.error);
     const rows = await this.view<OrganisationRelations>(VIEW_READS.organisationRelations, {
-      organisation_id: id,
+      organisation_id: uuid.data,
     });
     if (rows.error !== null) return fail(rows.error);
     const first = rows.data.data[0];
@@ -659,7 +719,7 @@ export class SupabaseRpcClient implements TrainOsClient {
    */
   audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>> {
     return this.call<ListResponse<AuditEntry>>("get_audit", {
-      p_resource_type: resourceType,
+      p_resource_type: aggregateTypeOf(resourceType),
       p_id: id,
     });
   }
@@ -717,8 +777,10 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<Contact>("get_contact", { p_id: id });
   }
 
-  getContactConsent(id: string): Promise<Result<ListResponse<ChannelConsent>>> {
-    return this.view<ChannelConsent>(VIEW_READS.contactConsent, { contact_id: id });
+  async getContactConsent(id: string): Promise<Result<ListResponse<ChannelConsent>>> {
+    const uuid = await this.uuidOf("get_contact", id);
+    if (uuid.error !== null) return fail(uuid.error);
+    return this.view<ChannelConsent>(VIEW_READS.contactConsent, { contact_id: uuid.data });
   }
 
   listProgrammes(): Promise<Result<ListResponse<Programme>>> {

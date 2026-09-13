@@ -84,7 +84,7 @@ const HIGH_VALUE_CHIP: FilterChipModel = {
  * one reason.
  */
 interface BulkRefusal {
-  severity: "WARN" | "DANGER";
+  severity: "INFO" | "WARN" | "DANGER";
   title: string;
   subtitle: string;
 }
@@ -308,6 +308,23 @@ export function ApprovalInbox() {
         subtitle: `${gone.join(" · ")}. Decided or changed since you selected ${
           gone.length === 1 ? "it" : "them"
         }; the rest are still selected.`,
+      });
+      return;
+    }
+
+    /* An APPROVE item must carry the diff hash its row was shown, and
+       `core.bulk_decide_approvals` refuses the batch otherwise. A queue read
+       that carries none — an environment whose approval list predates the
+       field — cannot be bulk approved, so nothing is sent. */
+    const hashless = rows
+      .filter((row) => selected.has(row.ref))
+      .filter((row) => typeof row.diffHash !== "string" || row.diffHash.trim().length === 0);
+    if (hashless.length > 0) {
+      setBulkRefusal({
+        severity: "INFO",
+        title: "Nothing was approved: bulk approve is not available here yet",
+        subtitle:
+          "This environment does not send the change fingerprint an approval must echo back, so the batch would be refused.",
       });
       return;
     }
