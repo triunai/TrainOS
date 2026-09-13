@@ -218,7 +218,6 @@ export function KnowledgeSourcesScreen() {
     .filter((value): value is string => Boolean(value))
     .sort()
     .at(-1);
-
   return (
     <div className="flex flex-col gap-4 pb-10">
       <RecordHeader

@@ -99,7 +99,6 @@ export function ProviderKeysScreen() {
     .map((provider) => provider.rotationDate)
     .filter((date): date is string => Boolean(date))
     .sort()[0];
-
   return (
     <div className="flex flex-col gap-4 pb-10">
       <RecordHeader

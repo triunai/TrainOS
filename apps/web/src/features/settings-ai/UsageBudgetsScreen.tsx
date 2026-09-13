@@ -183,7 +183,6 @@ export function UsageBudgetsScreen() {
   const { totals, forecast, cap, breakdown } = usage.data;
   const forecastInsideCap = forecast.amount <= cap.amount;
   const maxSpend = Math.max(...breakdown.map((row) => row.spend.amount), 1);
-
   return (
     <div className="flex flex-col gap-4 pb-10">
       <RecordHeader

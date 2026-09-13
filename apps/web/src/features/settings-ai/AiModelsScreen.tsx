@@ -264,7 +264,6 @@ export function AiModelsScreen() {
   const entriesToApply: RoutingEntry[] = routingRows
     .filter((entry) => staged.has(entry.actionType))
     .map((entry) => ({ ...entry, tier: staged.get(entry.actionType) as TierKey }));
-
   return (
     <div className="flex flex-col gap-4 pb-10">
       <RecordHeader

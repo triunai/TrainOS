@@ -88,7 +88,6 @@ function juryOf(run: AutomationRun) {
 
 export function RunTraceScreen() {
   const { runRef } = useParams<{ runRef: string }>();
-  useBreadcrumb([{ label: "Automation" }, { label: "Runs" }, { label: runRef ?? "Latest" }]);
 
   const navigate = useNavigate();
   const runs = useRuns();
@@ -109,6 +108,16 @@ export function RunTraceScreen() {
   const fetched = useRun(selectedId);
 
   const run = mockRun ?? fetched.data;
+
+  /* The last crumb is the run's BUSINESS reference, not the opaque id in the
+     URL. `run_4821` is what the route carries; `#4821` is what the run is
+     called everywhere a person reads it, including this page's own title. The
+     id stands in only until the fetch resolves. */
+  useBreadcrumb([
+    { label: "Automation" },
+    { label: "Runs" },
+    { label: run?.ref ?? runRef ?? "Latest" },
+  ]);
   const failed = useMemo(() => findFailed(runs.data?.data ?? []), [runs.data]);
 
   const agentName = useMemo(() => {
@@ -194,7 +203,6 @@ export function RunTraceScreen() {
   const jury = juryOf(run);
   const subAgents = nodes.filter((node) => node.kind === "SUB_AGENT").length;
   const toolCalls = steps.length || nodes.filter((node) => node.kind === "TOOL").length;
-
   return (
     <div className="flex flex-col gap-4 pb-10">
       <RecordHeader
