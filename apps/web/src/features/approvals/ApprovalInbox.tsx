@@ -324,12 +324,16 @@ export function ApprovalInbox() {
       setSelected(new Set());
     } catch (thrown) {
       /* The refusal IS the screen, which is why this write is awaited rather
-         than toasted. §7 returns the offending refs in `details.blockers`, and
-         naming them beats "something went wrong". */
+         than toasted. `app.bulk_decide` answers `BULK_NOT_PERMITTED` with one
+         row per blocked approval in `details.notBulkApprovable` (011:3558-3571),
+         and naming them beats "something went wrong". */
       const error = toApiError(thrown);
-      const blockers = isDomainError(error) ? error.details?.blockers : undefined;
+      const blockers =
+        isDomainError(error) && error.code === "BULK_NOT_PERMITTED"
+          ? (error.details?.notBulkApprovable ?? []).map((row) => row.ref)
+          : [];
       setBulkRefusal(
-        blockers && blockers.length > 0
+        blockers.length > 0
           ? {
               severity: "DANGER",
               title: "Those approvals carry money and must be decided one at a time",

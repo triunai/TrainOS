@@ -12,7 +12,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { focusManager } from "@tanstack/react-query";
 import { APPROVAL_ATTENDANCE, APPROVAL_RULE_CHANGE } from "@trainos/fixtures";
-import { fixtureClient } from "@/shared/api";
+import { ContractError, fixtureClient } from "@/shared/api";
 import { ApprovalInbox } from "../ApprovalInbox";
 import { APPROVALS_PATH } from "../paths";
 import { renderScreen, resetFixtures } from "./harness";
@@ -212,6 +212,40 @@ describe("M02-S01 approval inbox", () => {
        approves exactly what the bar counts. */
     expect(screen.getByText("1 selected")).toBeInTheDocument();
     expect((await fixtureClient.getApproval(APPROVAL_ATTENDANCE)).status).toBe("PENDING");
+  });
+
+  /**
+   * PR #30 review M2. A row's `bulkApprovable` can change between the read and
+   * the write, so the database is the last word, and it answers
+   * `BULK_NOT_PERMITTED` with `notBulkApprovable: [{id, ref, reason}]`
+   * (011:3558-3571). The screen read `details.blockers`, which only the old
+   * fixture sent, so against Postgres the named banner never rendered.
+   *
+   * The one stub in this file, because no checkbox can select a money row: the
+   * refusal is the fixture's own error class carrying the database's shape.
+   */
+  it("names the rows the database refused to bulk-approve", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(fixtureClient, "bulkDecideApprovals").mockRejectedValue(
+      new ContractError("BULK_NOT_PERMITTED", "one or more approvals may not be decided in bulk", {
+        notBulkApprovable: [
+          { id: "apv_0773", ref: APPROVAL_RULE_CHANGE, reason: "MONEY_MOVING_TYPE" },
+        ],
+      }),
+    );
+    renderInbox();
+
+    const bulkable = (await screen.findByText(/Approve 1 rule change/)).closest(
+      "tr",
+    ) as HTMLElement;
+    await user.click(within(bulkable).getByRole("checkbox"));
+    await user.click(await screen.findByRole("button", { name: "Bulk approve" }));
+
+    expect(
+      await screen.findByText("Those approvals carry money and must be decided one at a time"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(APPROVAL_RULE_CHANGE)).toBeInTheDocument();
+    expect(screen.queryByText("That bulk approval did not go through")).toBeNull();
   });
 
   it("reports the median decision time the server measured", async () => {

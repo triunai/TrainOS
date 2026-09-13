@@ -159,6 +159,8 @@ export function messageForCode(code: ErrorCode): string {
       return "This approval is past its SLA.";
     case "DIFF_CHANGED":
       return "The rendered diff is no longer current. Refresh and decide again.";
+    case "BULK_NOT_PERMITTED":
+      return "Some of those approvals must be decided one at a time.";
     default:
       return "That key was already used with a different request.";
   }

@@ -146,6 +146,12 @@ describe("bulk decisions", () => {
     expect(result.results.every((row) => row.status === "APPROVED")).toBe(true);
   });
 
+  /**
+   * 011:3558-3571 (11508ed): `BULK_NOT_PERMITTED`, with one `{id, ref, reason}`
+   * per blocked row under `notBulkApprovable`. The fixture used to raise
+   * `AGENT_PAUSED` with `blockers: [ref]`, a code and a field name the
+   * database never sends.
+   */
   it("409s as soon as one selected row carries a monetary value", async () => {
     const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
     const aurora = await api.getApproval(APPROVAL_AURORA);
@@ -157,7 +163,14 @@ describe("bulk decisions", () => {
         ],
         decision: "APPROVE",
       }),
-    ).rejects.toMatchObject({ http: 409, details: { blockers: [APPROVAL_AURORA] } });
+    ).rejects.toMatchObject({
+      code: "BULK_NOT_PERMITTED",
+      http: 409,
+      message: "one or more approvals may not be decided in bulk",
+      details: {
+        notBulkApprovable: [{ id: aurora.id, ref: APPROVAL_AURORA, reason: "MONETARY_VALUE" }],
+      },
+    });
   });
 
   it("leaves every row untouched when the bulk is refused", async () => {

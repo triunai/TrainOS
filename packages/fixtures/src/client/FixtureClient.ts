@@ -1135,9 +1135,15 @@ export class FixtureClient {
       const blocked = rows.filter(({ approval }) => !approval.bulkApprovable);
       if (blocked.length > 0) {
         throw new ContractError(
-          "AGENT_PAUSED",
-          "One or more selected approvals carry a monetary value and must be decided individually.",
-          { blockers: blocked.map(({ approval }) => approval.ref) },
+          "BULK_NOT_PERMITTED",
+          "one or more approvals may not be decided in bulk",
+          {
+            notBulkApprovable: blocked.map(({ approval }) => ({
+              id: approval.id,
+              ref: approval.ref,
+              reason: approval.value ? "MONETARY_VALUE" : "MONEY_MOVING_TYPE",
+            })),
+          },
         );
       }
       if (body.decision === "APPROVE") {

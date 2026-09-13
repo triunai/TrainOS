@@ -5,7 +5,7 @@ import { createFixtureClient, isContractError } from "@trainos/fixtures";
 
 import { createRpcApiClient, type ApiClient } from "../apiClient";
 import { isNotDeployed } from "../notDeployed";
-import { createRpcClient } from "../rpcClient";
+import { classifyTransportFailure, createRpcClient } from "../rpcClient";
 import { __setTransportForTests } from "../supabase";
 import {
   oracleTransport,
@@ -170,13 +170,48 @@ describe("M02 · the two clients answer the approval screens the same", () => {
       .bulkDecideApprovals(body, { idempotencyKey: "bulk:test" })
       .catch((error: unknown) => error);
 
-    if (isContractError(fromFixtures)) {
-      expect(isContractError(fromRpc)).toBe(true);
-      expect(isContractError(fromRpc) && fromRpc.code).toBe(fromFixtures.code);
-      expect(isContractError(fromRpc) && fromRpc.details).toEqual(fromFixtures.details);
-      return;
-    }
-    expect(fromRpc).toEqual(fromFixtures);
+    /* Unconditional: a money row in a bulk batch MUST refuse. The old
+       `if (isContractError(fromFixtures))` let a fixture that stopped refusing
+       pass on `toEqual`, and it compared codes without naming one, which is
+       how `AGENT_PAUSED` stood in for 011's `BULK_NOT_PERMITTED` unnoticed. */
+    expect(isContractError(fromFixtures)).toBe(true);
+    expect(isContractError(fromRpc)).toBe(true);
+    expect(isContractError(fromRpc) && fromRpc.code).toBe("BULK_NOT_PERMITTED");
+    expect(isContractError(fromRpc) && fromRpc.code).toBe(
+      isContractError(fromFixtures) && fromFixtures.code,
+    );
+    expect(isContractError(fromRpc) && fromRpc.details).toEqual(
+      isContractError(fromFixtures) && fromFixtures.details,
+    );
+  });
+
+  /**
+   * The same refusal as PostgREST hands it over, with the fixture out of the
+   * loop. Every other assertion in this suite answers from `FixtureClient`, so
+   * it can only prove the two clients agree with EACH OTHER. This one feeds
+   * `classifyTransportFailure` the DETAIL 011:3566-3571 (11508ed) builds —
+   * `jsonb_build_object(...)::text`, so jsonb's own key order and spacing —
+   * and asserts the code survives. Before `BULK_NOT_PERMITTED` joined
+   * `ErrorCode`, `isErrorCode` failed and it degraded to `VALIDATION_FAILED`,
+   * so the inbox's named-blockers banner could never render against Postgres.
+   */
+  it("keeps the database's BULK_NOT_PERMITTED and its blocked rows through classification", () => {
+    const error = classifyTransportFailure({
+      code: "TRNOS",
+      message: "one or more approvals may not be decided in bulk",
+      details:
+        '{"code": "BULK_NOT_PERMITTED", "notBulkApprovable": ' +
+        '[{"id": "apv_0771", "ref": "APV-2026-0771", "reason": "MONETARY_VALUE"}]}',
+    });
+    expect(error).toMatchObject({
+      kind: "domain",
+      code: "BULK_NOT_PERMITTED",
+      status: 409,
+      message: "one or more approvals may not be decided in bulk",
+      details: {
+        notBulkApprovable: [{ id: "apv_0771", ref: "APV-2026-0771", reason: "MONETARY_VALUE" }],
+      },
+    });
   });
 
   /**
