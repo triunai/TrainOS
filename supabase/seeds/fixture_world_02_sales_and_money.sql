@@ -555,12 +555,17 @@ WHERE (target.id, target.title, target.body, target.merge_fields_used, target.ne
 -- sell_price_sen and direct_cost_sen are written as the fixture states them and are then
 -- recomputed from the lines by trg_quotation_lines_recalc; the deferred reconciliation
 -- trigger fails this file at COMMIT if the two ever disagree.
+--
+-- SST is resolved through app.resolve_tax_policy() rather than typed, so the
+-- stored rate is by construction what fix-014's resolver trigger would produce.
+-- The fixture world states no SST treatment; this is the schema's default
+-- (SST-G-TRAINING-8, 800 bps) standing in until the user rules. See the PR.
 INSERT INTO core.quotations AS target
-  (id, tenant_id, ref, proposal_id, supersedes_quotation_id, version, rate_card_id, pax, sell_price_sen, direct_cost_sen, currency, programme_floor_price_sen, floor_margin_rate, commission_rate, commission_payable_on, discount_approval_id, invoice_id, status, created_at, created_by_kind, created_by_id, created_by_name)
+  (id, tenant_id, ref, proposal_id, supersedes_quotation_id, version, rate_card_id, pax, sell_price_sen, direct_cost_sen, currency, programme_floor_price_sen, floor_margin_rate, commission_rate, commission_payable_on, discount_approval_id, invoice_id, status, sst_policy_id, sst_rate, sst_reason, sst_exempt_reason, created_at, created_by_kind, created_by_id, created_by_name)
 VALUES
-  ('8af3f0db-3802-5d75-b1da-babf6ad367d4', 'acade111-0000-4000-8000-000000000001', 'QUO-2026-0184', 'a4bdb4e8-35f3-5ed3-a0e1-710b3f0e9bdc', NULL, 1, '2d9d4fa8-edc5-53d4-9c98-fe6cc7192179', 30, 1850000, 1140000, 'MYR', 1390000, 0.35, 0.08, 'COLLECTION', NULL, NULL, 'DRAFT', '2026-09-11T09:14:20+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('fab18728-b6fc-5584-8bf3-110e8a99fa11', 'acade111-0000-4000-8000-000000000001', 'QUO-2026-0179', '058ae894-1152-5fb9-8bfc-4e5d5a35655e', NULL, 1, '2d9d4fa8-edc5-53d4-9c98-fe6cc7192179', 18, 980000, 382000, 'MYR', 735000, 0.35, 0.08, 'COLLECTION', NULL, NULL, 'APPLIED', '2026-05-20T10:10:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
-  ('0feb4cbd-54ef-5433-807e-399d9ad1188d', 'acade111-0000-4000-8000-000000000001', 'QUO-2026-0191', '7cf72341-2af7-5fdc-b4c6-eb39c44dd9b5', NULL, 1, '2d9d4fa8-edc5-53d4-9c98-fe6cc7192179', 22, 1920000, 991000, 'MYR', 1440000, 0.35, 0.08, 'COLLECTION', NULL, NULL, 'APPLIED', '2026-10-21T10:05:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof')
+  ('8af3f0db-3802-5d75-b1da-babf6ad367d4', 'acade111-0000-4000-8000-000000000001', 'QUO-2026-0184', 'a4bdb4e8-35f3-5ed3-a0e1-710b3f0e9bdc', NULL, 1, '2d9d4fa8-edc5-53d4-9c98-fe6cc7192179', 30, 1850000, 1140000, 'MYR', 1390000, 0.35, 0.08, 'COLLECTION', NULL, NULL, 'DRAFT', (SELECT policy_id FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-09-11')), (SELECT rate FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-09-11')), (SELECT CASE WHEN exempt THEN 'TRAINING_EXEMPT' ELSE 'STANDARD_RATED' END FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-09-11')), NULL, '2026-09-11T09:14:20+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('fab18728-b6fc-5584-8bf3-110e8a99fa11', 'acade111-0000-4000-8000-000000000001', 'QUO-2026-0179', '058ae894-1152-5fb9-8bfc-4e5d5a35655e', NULL, 1, '2d9d4fa8-edc5-53d4-9c98-fe6cc7192179', 18, 980000, 382000, 'MYR', 735000, 0.35, 0.08, 'COLLECTION', NULL, NULL, 'APPLIED', (SELECT policy_id FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-05-20')), (SELECT rate FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-05-20')), (SELECT CASE WHEN exempt THEN 'TRAINING_EXEMPT' ELSE 'STANDARD_RATED' END FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-05-20')), NULL, '2026-05-20T10:10:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof'),
+  ('0feb4cbd-54ef-5433-807e-399d9ad1188d', 'acade111-0000-4000-8000-000000000001', 'QUO-2026-0191', '7cf72341-2af7-5fdc-b4c6-eb39c44dd9b5', NULL, 1, '2d9d4fa8-edc5-53d4-9c98-fe6cc7192179', 22, 1920000, 991000, 'MYR', 1440000, 0.35, 0.08, 'COLLECTION', NULL, NULL, 'APPLIED', (SELECT policy_id FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-10-21')), (SELECT rate FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-10-21')), (SELECT CASE WHEN exempt THEN 'TRAINING_EXEMPT' ELSE 'STANDARD_RATED' END FROM app.resolve_tax_policy('acade111-0000-4000-8000-000000000001'::uuid, 'CORPORATE_TRAINING', DATE '2026-10-21')), NULL, '2026-10-21T10:05:00+08:00', 'HUMAN', 'u_amirah', 'Amirah Yusof')
 ON CONFLICT (tenant_id, ref) DO UPDATE SET
   id = EXCLUDED.id,
   proposal_id = EXCLUDED.proposal_id,
@@ -578,11 +583,15 @@ ON CONFLICT (tenant_id, ref) DO UPDATE SET
   discount_approval_id = EXCLUDED.discount_approval_id,
   invoice_id = EXCLUDED.invoice_id,
   status = EXCLUDED.status,
+  sst_policy_id = EXCLUDED.sst_policy_id,
+  sst_rate = EXCLUDED.sst_rate,
+  sst_reason = EXCLUDED.sst_reason,
+  sst_exempt_reason = EXCLUDED.sst_exempt_reason,
   created_by_kind = EXCLUDED.created_by_kind,
   created_by_id = EXCLUDED.created_by_id,
   created_by_name = EXCLUDED.created_by_name
-WHERE (target.id, target.proposal_id, target.supersedes_quotation_id, target.version, target.rate_card_id, target.pax, target.sell_price_sen, target.direct_cost_sen, target.currency, target.programme_floor_price_sen, target.floor_margin_rate, target.commission_rate, target.commission_payable_on, target.discount_approval_id, target.invoice_id, target.status, target.created_by_kind, target.created_by_id, target.created_by_name)
-   IS DISTINCT FROM (EXCLUDED.id, EXCLUDED.proposal_id, EXCLUDED.supersedes_quotation_id, EXCLUDED.version, EXCLUDED.rate_card_id, EXCLUDED.pax, EXCLUDED.sell_price_sen, EXCLUDED.direct_cost_sen, EXCLUDED.currency, EXCLUDED.programme_floor_price_sen, EXCLUDED.floor_margin_rate, EXCLUDED.commission_rate, EXCLUDED.commission_payable_on, EXCLUDED.discount_approval_id, EXCLUDED.invoice_id, EXCLUDED.status, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
+WHERE (target.id, target.proposal_id, target.supersedes_quotation_id, target.version, target.rate_card_id, target.pax, target.sell_price_sen, target.direct_cost_sen, target.currency, target.programme_floor_price_sen, target.floor_margin_rate, target.commission_rate, target.commission_payable_on, target.discount_approval_id, target.invoice_id, target.status, target.sst_policy_id, target.sst_rate, target.sst_reason, target.sst_exempt_reason, target.created_by_kind, target.created_by_id, target.created_by_name)
+   IS DISTINCT FROM (EXCLUDED.id, EXCLUDED.proposal_id, EXCLUDED.supersedes_quotation_id, EXCLUDED.version, EXCLUDED.rate_card_id, EXCLUDED.pax, EXCLUDED.sell_price_sen, EXCLUDED.direct_cost_sen, EXCLUDED.currency, EXCLUDED.programme_floor_price_sen, EXCLUDED.floor_margin_rate, EXCLUDED.commission_rate, EXCLUDED.commission_payable_on, EXCLUDED.discount_approval_id, EXCLUDED.invoice_id, EXCLUDED.status, EXCLUDED.sst_policy_id, EXCLUDED.sst_rate, EXCLUDED.sst_reason, EXCLUDED.sst_exempt_reason, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
 
 -- `total_sen` is generated — app.round_half_up_sen(unit_price × qty) — so the §18 rounding rule is the database's, not the fixture's.
 INSERT INTO core.quotation_lines AS target

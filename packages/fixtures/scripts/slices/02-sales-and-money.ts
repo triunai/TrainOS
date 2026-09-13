@@ -707,6 +707,55 @@ const sellLine = (quotation: FixtureQuotation, n: number) => ({
   created_at: quotation.createdAt,
 });
 
+/**
+ * SST on a quotation, resolved rather than typed.
+ *
+ * 017 seeds two national tax policies — `SST-G-TRAINING-8` at 800 bps, the
+ * default, and `SST-EDU-ACT-EXEMPT` — and both carry `gen_random_uuid()` ids,
+ * so there is no literal to write: the id differs on every database the
+ * migration is applied to. `app.resolve_tax_policy()` is the resolution 017
+ * ships (tenant override first, then national; ACTIVE before PROPOSED; bounded
+ * by the policy's validity and registry windows), and it is what fix-014's
+ * table-level trigger will call for a bare insert.
+ *
+ * Resolving here rather than writing 0.08 is what keeps the two in step: an
+ * explicit value has to equal what that trigger would have produced, and the
+ * only way to guarantee that without a second implementation is to call the
+ * same function. The fixture world states no SST treatment of its own, so the
+ * schema's default is the seed's answer until somebody rules otherwise — see
+ * the PR's open ruling, and T7d, which asserts the stored rate against the
+ * resolver rather than against a number.
+ *
+ * `CORPORATE_TRAINING` is the category: Akademi Perdana's programmes are
+ * corporate training, and the Education Act exemption is a different category
+ * that would need the company's status ruled on before it could be claimed.
+ */
+const sstColumn = (onDate: string, column: "policy_id" | "rate") =>
+  raw(
+    `(SELECT ${column} FROM app.resolve_tax_policy(` +
+      `'${TENANT_UUID}'::uuid, 'CORPORATE_TRAINING', DATE '${onDate}'))`,
+  );
+
+/**
+ * The reason is resolved too, and that is what makes the seed fail rather than
+ * lie if the ruling changes.
+ *
+ * Writing `STANDARD_RATED` as a literal beside a resolved rate is the shape of
+ * bug worth avoiding: flip akademi-perdana to an exempt policy and the seed
+ * would happily store a standard-rated supply at 0%, which no constraint
+ * forbids and no screen would question. Derived, an exempt policy produces
+ * `TRAINING_EXEMPT` with no `sst_exempt_reason`, and
+ * `quotations_exempt_needs_reason` refuses the insert by name. An exemption
+ * needs a stated reason; a reason is a ruling, and a seed has no business
+ * inventing one.
+ */
+const sstReason = (onDate: string) =>
+  raw(
+    `(SELECT CASE WHEN exempt THEN 'TRAINING_EXEMPT' ELSE 'STANDARD_RATED' END` +
+      ` FROM app.resolve_tax_policy(` +
+      `'${TENANT_UUID}'::uuid, 'CORPORATE_TRAINING', DATE '${onDate}'))`,
+  );
+
 const quotationsSql = (): string =>
   upsert({
     table: "core.quotations",
@@ -717,6 +766,11 @@ const quotationsSql = (): string =>
       "-- sell_price_sen and direct_cost_sen are written as the fixture states them and are then",
       "-- recomputed from the lines by trg_quotation_lines_recalc; the deferred reconciliation",
       "-- trigger fails this file at COMMIT if the two ever disagree.",
+      "--",
+      "-- SST is resolved through app.resolve_tax_policy() rather than typed, so the",
+      "-- stored rate is by construction what fix-014's resolver trigger would produce.",
+      "-- The fixture world states no SST treatment; this is the schema's default",
+      "-- (SST-G-TRAINING-8, 800 bps) standing in until the user rules. See the PR.",
     ].join("\n"),
     rows: fx.quotations.map((quotation) => ({
       id: uuidFor(quotation.id),
@@ -742,6 +796,11 @@ const quotationsSql = (): string =>
       discount_approval_id: null,
       invoice_id: null,
       status: quotation.status,
+      // Resolved from 017's tax policy registry as at the quotation's own date.
+      sst_policy_id: sstColumn(quotation.createdAt.slice(0, 10), "policy_id"),
+      sst_rate: sstColumn(quotation.createdAt.slice(0, 10), "rate"),
+      sst_reason: sstReason(quotation.createdAt.slice(0, 10)),
+      sst_exempt_reason: null,
       created_at: quotation.createdAt,
       ...actorColumns(quotation.createdBy),
     })),

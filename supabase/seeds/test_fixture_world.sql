@@ -477,8 +477,66 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- SST, against the registry rather than against a number.
+  --
+  -- The fixture world states no SST treatment, so the seed writes the schema's
+  -- own default: app.resolve_tax_policy() for CORPORATE_TRAINING, which today is
+  -- the national SST-G-TRAINING-8 at 800 bps. Asserting a literal 0.08 here would
+  -- pass on the day somebody flips akademi-perdana to the Education Act exemption
+  -- and the quotations stopped agreeing with the registry. Asserting against the
+  -- resolver fails that day instead, which is the whole point: the seed is
+  -- standing in for a ruling nobody has made, and it has to stop quietly standing
+  -- in the moment one is.
+  --
+  -- fix-014 is adding a table-level resolver trigger to 017 so that a bare insert
+  -- gets this automatically. When it lands, these values must be what it produces
+  -- -- which they are by construction, because the seed calls the same function.
+  FOR v_row IN
+    SELECT quotation.ref,
+           quotation.sst_rate,
+           quotation.sst_reason,
+           quotation.sst_policy_id,
+           resolved.policy_id   AS want_policy_id,
+           resolved.rate        AS want_rate,
+           resolved.exempt      AS want_exempt,
+           resolved.policy_code AS want_code
+      FROM core.quotations AS quotation
+      CROSS JOIN LATERAL app.resolve_tax_policy(
+        quotation.tenant_id, 'CORPORATE_TRAINING', quotation.created_at::date) AS resolved
+     WHERE quotation.tenant_id = v_tenant
+  LOOP
+    IF v_row.sst_rate IS DISTINCT FROM v_row.want_rate THEN
+      RAISE EXCEPTION
+        'T7d FAIL: % carries an SST rate of %, but the tenant''s policy for '
+        'CORPORATE_TRAINING on that date is % (%). Either the seed has drifted '
+        'from the registry, or the registry has been ruled on and the seed has '
+        'not been told.', v_row.ref, v_row.sst_rate, v_row.want_rate, v_row.want_code;
+    END IF;
+
+    IF v_row.sst_policy_id IS DISTINCT FROM v_row.want_policy_id THEN
+      RAISE EXCEPTION
+        'T7e FAIL: % cites tax policy %, but the resolver returns % (%).',
+        v_row.ref, coalesce(v_row.sst_policy_id::text, '<null>'),
+        v_row.want_policy_id, v_row.want_code;
+    END IF;
+
+    -- Derived from the policy, not asserted as a literal, for the same reason the
+    -- seed derives it: a standard-rated supply at an exempt policy's 0% rate is a
+    -- combination no constraint forbids and no screen questions.
+    IF v_row.sst_reason IS DISTINCT FROM
+       (CASE WHEN v_row.want_exempt THEN 'TRAINING_EXEMPT' ELSE 'STANDARD_RATED' END) THEN
+      RAISE EXCEPTION
+        'T7f FAIL: % has sst_reason % against a policy that is %exempt (%). An '
+        'exempt supply needs sst_rate 0 and a stated sst_exempt_reason, which is a '
+        'ruling rather than a default.',
+        v_row.ref, v_row.sst_reason,
+        CASE WHEN v_row.want_exempt THEN '' ELSE 'not ' END, v_row.want_code;
+    END IF;
+  END LOOP;
+
   RAISE NOTICE
-    'T7 PASS - every invoice equals its lines, no quotation is below floor, aging matches the fixture.';
+    'T7 PASS - every invoice equals its lines, no quotation is below floor, aging '
+    'matches the fixture, and SST agrees with the tax policy registry.';
 END;
 $t7$;
 
