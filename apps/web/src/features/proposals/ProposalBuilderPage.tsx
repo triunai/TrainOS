@@ -146,7 +146,15 @@ export function ProposalBuilderPage() {
           which the bare `flex flex-col gap-4` root did not have. Same shape as
           the engagement and invoice detail screens. */}
       <RecordHeader
-        title={clientQuery.data ? `${proposal.ref} · ${clientQuery.data.name}` : proposal.ref}
+        /* §15a. The ref moves out of the h1 into `recordRef`, so the title can
+           be the thing this proposal is FOR. Until the client read lands there
+           is no name to give it, and "Proposal" plus the ref in the identity
+           line says more than the ref alone ever did as a heading. */
+        accent
+        collapsible
+        recordType="proposal"
+        title={clientQuery.data ? `Proposal · ${clientQuery.data.name}` : "Proposal"}
+        recordRef={proposal.ref}
         meta={[
           proposal.opportunityRef,
           proposal.templateId,

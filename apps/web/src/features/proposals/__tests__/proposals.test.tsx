@@ -26,16 +26,18 @@ describe("M07-S02 · proposal builder", () => {
   it("renders every section with its own provenance", async () => {
     renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
 
-    expect(
-      await screen.findByRole("heading", { name: new RegExp(PROPOSAL_AURORA) }),
-    ).toBeInTheDocument();
     /* RecordHeader owns the record's identity, and the identity is the
-       reference AND the client it is for. */
+       reference AND the client it is for — but they sit in two rows, not one.
+       §15a moved the ref out of the h1 into the mono line beneath it, which is
+       what CLAUDE.md asks: the title names the record, the identity line
+       carries the refs. Both are still asserted, each where it lives. */
     expect(
       await screen.findByRole("heading", {
-        name: `${PROPOSAL_AURORA} · Aurora Manufacturing Sdn Bhd`,
+        name: "Proposal · Aurora Manufacturing Sdn Bhd",
       }),
     ).toBeInTheDocument();
+    const header = screen.getByRole("heading", { level: 1 }).closest("header") as HTMLElement;
+    expect(within(header).getByText(new RegExp(PROPOSAL_AURORA))).toBeInTheDocument();
 
     const rail = screen.getByRole("navigation", { name: "Proposal sections" });
     expect(within(rail).getByText("Understanding your needs")).toBeInTheDocument();
@@ -99,7 +101,9 @@ describe("M07-S02 · proposal builder", () => {
     const user = userEvent.setup();
     renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
 
-    await screen.findByRole("heading", { name: new RegExp(PROPOSAL_AURORA) });
+    await screen.findByRole("heading", { name: /^Proposal/ });
+    const header = screen.getByRole("heading", { level: 1 }).closest("header") as HTMLElement;
+    expect(within(header).getByText(new RegExp(PROPOSAL_AURORA))).toBeInTheDocument();
     const sendButtons = screen.getAllByRole("button", { name: "Send for approval" });
     await user.click(sendButtons[0] as HTMLElement);
 
@@ -141,9 +145,7 @@ describe("M07-S03 · costing worksheet", () => {
   it("renders the lines, both floors, the binding basis and the placeholder rate card", async () => {
     renderScreen(<CostingWorksheetPage />, { path: costingPath, route: COSTING_ROUTE });
 
-    expect(
-      await screen.findByRole("heading", { name: `${QUOTATION_AURORA} · costing` }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Costing worksheet" })).toBeInTheDocument();
 
     expect(screen.getByText("rate card v0 · placeholder", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Absolute floor · programme tier")).toBeInTheDocument();
@@ -190,7 +192,7 @@ describe("M07-S03 · costing worksheet", () => {
     const user = userEvent.setup();
     renderScreen(<CostingWorksheetPage />, { path: costingPath, route: COSTING_ROUTE });
 
-    await screen.findByRole("heading", { name: `${QUOTATION_AURORA} · costing` });
+    await screen.findByRole("heading", { name: "Costing worksheet" });
     await user.click(screen.getByRole("button", { name: "Apply to proposal" }));
 
     await waitFor(() => {
@@ -215,7 +217,9 @@ describe("M07-S03 · costing worksheet", () => {
 describe("the one-solid-primary rule", () => {
   it("claims a single primary on the builder, even though the header and the editor both offer it", async () => {
     renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
-    await screen.findByRole("heading", { name: new RegExp(PROPOSAL_AURORA) });
+    await screen.findByRole("heading", { name: /^Proposal/ });
+    const header = screen.getByRole("heading", { level: 1 }).closest("header") as HTMLElement;
+    expect(within(header).getByText(new RegExp(PROPOSAL_AURORA))).toBeInTheDocument();
 
     /* Two buttons, one action, one label — the header carries the view's solid
        primary and the editor offers the same action where the decision is made,
@@ -229,7 +233,7 @@ describe("the one-solid-primary rule", () => {
 
   it("claims a single primary on the costing worksheet", async () => {
     renderScreen(<CostingWorksheetPage />, { path: costingPath, route: COSTING_ROUTE });
-    await screen.findByRole("heading", { name: `${QUOTATION_AURORA} · costing` });
+    await screen.findByRole("heading", { name: "Costing worksheet" });
 
     expect(currentPrimaries()).toEqual(["Apply to proposal"]);
   });
