@@ -24,7 +24,8 @@ import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
 import { todayKey } from "@/features/calendar";
 import { engagementPath, useEngagements } from "@/features/engagements";
-import { useProgrammes, useTrainers } from "./api";
+import { useProgrammes } from "@/features/programmes";
+import { useTrainers } from "./api";
 import { accreditationOf, nextBookedDay } from "./accreditation";
 import { TRAINERS_LIST_PATH } from "./paths";
 

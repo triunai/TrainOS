@@ -1,5 +1,5 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import type { ListResponse, Programme } from "@trainos/contract";
+import type { ListResponse } from "@trainos/contract";
 import type { FixtureTrainer } from "@trainos/fixtures";
 import { useApi } from "@/shared/api";
 
@@ -27,20 +27,5 @@ export function useTrainers(): UseQueryResult<ListResponse<FixtureTrainer>> {
   return useQuery({
     queryKey: trainerKeys.list(),
     queryFn: () => api.listTrainers(),
-  });
-}
-
-/**
- * The catalogue, for the record's programmes tab.
- *
- * `FixtureTrainer.programmeRefs` names what a trainer may deliver but carries
- * no titles or prices, so the catalogue is read and joined here rather than the
- * screen showing a column of bare refs.
- */
-export function useProgrammes(): UseQueryResult<ListResponse<Programme>> {
-  const api = useApi();
-  return useQuery({
-    queryKey: ["programmes", "list", null] as const,
-    queryFn: () => api.listProgrammes(),
   });
 }
