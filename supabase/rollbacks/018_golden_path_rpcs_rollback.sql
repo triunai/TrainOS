@@ -231,6 +231,7 @@ DROP FUNCTION IF EXISTS app.seed_pipelines(uuid);
 DROP FUNCTION IF EXISTS app._model_tier_rows();
 DROP FUNCTION IF EXISTS app._budget_rows();
 DROP FUNCTION IF EXISTS app._body_sql(regprocedure);
+DROP FUNCTION IF EXISTS app._view_filters(uuid, text, text, jsonb);
 DROP FUNCTION IF EXISTS app._next_cursor(regclass, uuid, text, text, boolean, integer, integer, timestamptz, uuid, boolean);
 DROP FUNCTION IF EXISTS app._keyset_scope(regclass, uuid, text, text, boolean, timestamptz, uuid, boolean);
 DROP FUNCTION IF EXISTS app._predicate(text, text, text, jsonb);
