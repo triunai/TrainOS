@@ -46,12 +46,16 @@ type WireItem = { approvalId: string; expectedDiffHash: string };
 /** What `bulk_decide_approvals` was actually called with, in call order. */
 const bulkWireCalls: { items: WireItem[]; idempotencyKey: string }[] = [];
 
+/** What `decide_approval` was actually called with, in call order. */
+const decideWireCalls: Record<string, unknown>[] = [];
+
 const FUNCTIONS: RpcHandlers = {
   list_approvals: (args, oracle) => oracle.listApprovals(toPageRequest(args)),
   get_approval: (args, oracle) => oracle.getApproval(String(args.p_id)),
   get_audit: (args, oracle) => oracle.getAudit(String(args.p_resource_type), String(args.p_id)),
-  decide_approval: (args, oracle) =>
-    oracle.decideApproval(
+  decide_approval: (args, oracle) => {
+    decideWireCalls.push({ ...args });
+    return oracle.decideApproval(
       String(args.p_approval_id),
       {
         decision: args.p_decision,
@@ -59,7 +63,8 @@ const FUNCTIONS: RpcHandlers = {
         diffHash: args.p_expected_diff_hash,
       } as ApprovalDecideRequest,
       { idempotencyKey: String(args.p_idempotency_key) },
-    ),
+    );
+  },
   bulk_decide_approvals: (args, oracle) => {
     /* Recorded so the suite can assert what actually went ON THE WIRE, not just
        what came back. The p_items shape and the derived key are the contract
@@ -106,6 +111,7 @@ describe("M02 · the two clients answer the approval screens the same", () => {
 
   beforeEach(() => {
     bulkWireCalls.length = 0;
+    decideWireCalls.length = 0;
     oracle = createFixtureClient({ latencyMs: 0, actorId: USER_KELVIN });
     fixtures = createFixtureClient({ latencyMs: 0, actorId: USER_KELVIN });
     __setTransportForTests(oracleTransport(oracle, FUNCTIONS, VIEWS));
@@ -402,6 +408,46 @@ describe("M02 · the two clients answer the approval screens the same", () => {
       idempotencyKey: "approval-decide:fresh",
     });
     expect(freshFromRpc).toEqual(freshFromFixtures);
+  });
+
+  /**
+   * The single decide's argument list, asserted on the wire.
+   *
+   * `core.decide_approval(p_approval_id uuid, p_decision text, p_note text,
+   * p_expected_diff_hash text, p_idempotency_key text)` (014:1274-1280 at
+   * 11508ed) refuses an APPROVE whose hash is missing or blank (014:1287-1297).
+   * PostgREST matches named arguments, so a renamed key does not reach the
+   * parameter: the hash reads NULL and every web APPROVE is refused. The fresh
+   * decide elsewhere in this suite would catch a dropped hash only indirectly,
+   * through the oracle's answer.
+   */
+  it("sends the single decide with 014's five argument names, the rendered hash among them", async () => {
+    await rpc.decideApproval(APPROVAL_AURORA, APPROVE, { idempotencyKey: "approval-decide:wire" });
+
+    expect(decideWireCalls).toHaveLength(1);
+    expect(decideWireCalls[0]).toEqual({
+      p_approval_id: APPROVAL_AURORA,
+      p_decision: "APPROVE",
+      p_note: APPROVE.note,
+      p_expected_diff_hash: APPROVE.diffHash,
+      p_idempotency_key: "approval-decide:wire",
+    });
+
+    /* And a hashless APPROVE refuses the way the wrapper refuses it, on both. */
+    const hashless: ApprovalDecideRequest = { ...APPROVE, diffHash: "" };
+    const fromFixtures = await fixtures
+      .decideApproval(APPROVAL_AURORA, hashless, { idempotencyKey: "approval-decide:hashless" })
+      .catch((error: unknown) => error);
+    const fromRpc = await rpc
+      .decideApproval(APPROVAL_AURORA, hashless, { idempotencyKey: "approval-decide:hashless" })
+      .catch((error: unknown) => error);
+    expect(isContractError(fromRpc) && fromRpc.code).toBe("VALIDATION_FAILED");
+    expect(isContractError(fromRpc) && fromRpc.details).toEqual({
+      fields: [{ field: "diffHash", reason: "REQUIRED" }],
+    });
+    expect(isContractError(fromRpc) && fromRpc.details).toEqual(
+      isContractError(fromFixtures) && fromFixtures.details,
+    );
   });
 
   /**

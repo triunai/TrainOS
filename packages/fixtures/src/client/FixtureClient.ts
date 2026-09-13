@@ -1008,6 +1008,15 @@ export class FixtureClient {
     body: ApprovalDecideRequest,
     options: RequestOptions = {},
   ): Promise<ApprovalDecideResponse> {
+    /* 014:1287-1297 (11508ed): `core.decide_approval` refuses a hashless
+       APPROVE itself, before `app.decide_approval` looks anything up, because
+       011 compares the hash only when one is sent. Without this the hashless
+       APPROVE below reached the stale-hash branch and answered DIFF_CHANGED. */
+    if (body.decision === "APPROVE" && !body.diffHash?.trim()) {
+      throw validationFailed("an APPROVE must carry the diff hash the approver was shown", {
+        fields: [{ field: "diffHash", reason: "REQUIRED" }],
+      });
+    }
     const approval = byIdOrRef(this.#store.approvals, id);
     if (!approval) throw notFound("Approval", id);
     if ((body.decision === "REJECT" || body.decision === "REQUEST_CHANGES") && !body.note) {

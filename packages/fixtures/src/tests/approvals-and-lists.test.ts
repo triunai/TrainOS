@@ -109,6 +109,30 @@ describe("deciding one approval", () => {
    * `011:2781-2787` does, or the guard is provably dead as soon as the client
    * omits — or gets wrong — the hash it renders.
    */
+  /**
+   * 014:1287-1297 (11508ed): `core.decide_approval` refuses an APPROVE with a
+   * missing or blank hash as VALIDATION_FAILED, before `app.decide_approval`
+   * runs, so before not-found too. 011 compares the hash only when it is
+   * non-NULL, which is why the wrapper has to. The fixture answered a hashless
+   * APPROVE with DIFF_CHANGED, a different code, status and details bag.
+   */
+  it("refuses a hashless APPROVE as the wrapper does, before looking the approval up", async () => {
+    const refusal = {
+      code: "VALIDATION_FAILED",
+      http: 422,
+      message: "an APPROVE must carry the diff hash the approver was shown",
+      details: { fields: [{ field: "diffHash", reason: "REQUIRED" }] },
+    };
+    await expect(
+      api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null, diffHash: "  " }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      api.decideApproval("APV-0000-0000", { decision: "APPROVE", note: null, diffHash: "" }),
+    ).rejects.toMatchObject(refusal);
+    const after = await api.getApproval(APPROVAL_AURORA);
+    expect(after.status).toBe("PENDING");
+  });
+
   it("refuses to approve against a diff hash that no longer matches", async () => {
     await expect(
       api.decideApproval(APPROVAL_AURORA, {
