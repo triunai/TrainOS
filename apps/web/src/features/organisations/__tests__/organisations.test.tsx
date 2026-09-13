@@ -81,7 +81,12 @@ describe("M04-S02 · organisation 360", () => {
        The stepper states both without a second visual language for either. */
     expect(await screen.findByText("Safety Leadership Essentials")).toBeInTheDocument();
     const table = screen.getByRole("table", { name: /Engagements for Aurora/ });
-    expect(within(table).getByText("ENG-0198")).toBeInTheDocument();
+
+    /* The artboard's row subline is `ref · state`, and both halves are derived:
+       "delivery" is the DEAL_CHAIN stage's configured label, "blocked" is the
+       contract's LifecycleState. A tenant renaming the stage renames this. */
+    expect(within(table).getByText("ENG-0198 · delivery blocked")).toBeInTheDocument();
+    expect(within(table).getByText("ENG-0231 · complete")).toBeInTheDocument();
   });
 
   it("carries the cross-sell suggestion as a tinted AI panel with its citations", async () => {

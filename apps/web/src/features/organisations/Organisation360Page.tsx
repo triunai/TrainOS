@@ -2,8 +2,10 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type {
   ContactSummary,
+  LifecycleStep,
   Money,
   OrganisationRelations,
+  PipelineStage,
   RelatedEngagement,
   RelatedHrdcPacket,
 } from "@trainos/contract";
@@ -30,6 +32,7 @@ import {
   RefChip,
   SecondaryButton,
   StatusChip,
+  stepLabel,
   type Column,
 } from "@/shared/components/kit";
 import { toApiError } from "@/shared/api";
@@ -58,6 +61,43 @@ import {
  */
 
 const TAB_OVERVIEW = "overview";
+
+/**
+ * The step that decides how the row reads: a failure first, then a block, then
+ * whatever is current. Pending stages say nothing a reader needs in one line.
+ */
+function decisiveStep(engagement: RelatedEngagement): LifecycleStep | undefined {
+  const byState = (state: LifecycleStep["state"]) =>
+    engagement.lifecycle.find((step) => step.state === state);
+  return byState("FAILED") ?? byState("BLOCKED") ?? byState("CURRENT");
+}
+
+/**
+ * The words after the ref in the row's subline, e.g. `ENG-0198 · delivery blocked`.
+ *
+ * Both halves are derived, neither is written here: the stage name comes from
+ * pipeline configuration through `stepLabel` — CLAUDE.md's standing rule — and
+ * the state word from the contract's own `LifecycleState`. That is why this
+ * does not reproduce the artboard's literal "proposed" / "claim blocked" /
+ * "lost": those are mock copy for a chain the artboard invented, and a tenant
+ * that renames a stage must see its own name here.
+ *
+ * A stage alone would not do. "delivery" reads like ordinary progress on a row
+ * whose delivery is BLOCKED, which is the one thing the subline exists to say.
+ */
+function engagementState(
+  engagement: RelatedEngagement,
+  stages: PipelineStage[] | undefined,
+): string {
+  const step = decisiveStep(engagement);
+  /* Nothing failed, blocked or in flight: every stage is behind it. */
+  if (!step) return "complete";
+
+  const stage = stepLabel(step, stages).toLowerCase();
+  if (step.state === "FAILED") return `${stage} failed`;
+  if (step.state === "BLOCKED") return `${stage} blocked`;
+  return stage;
+}
 
 export function Organisation360Page() {
   const { organisationId } = useParams<{ organisationId: string }>();
@@ -120,7 +160,9 @@ export function Organisation360Page() {
       accessor: (row) => (
         <div className="flex flex-col">
           <span className="font-medium text-ink">{row.title}</span>
-          <span className="font-mono text-[11px] text-ink-muted">{row.ref}</span>
+          <span className="font-mono text-[11px] text-ink-muted">
+            {row.ref} · {engagementState(row, stages.data?.stages)}
+          </span>
         </div>
       ),
     },
@@ -143,7 +185,14 @@ export function Organisation360Page() {
       label: "Value",
       align: "right",
       width: "148px",
-      accessor: (row) => <MoneyText value={row.value} />,
+      /* The artboard greys a lost engagement's value rather than striking it
+         through: the number is still true, it just stopped mattering. */
+      accessor: (row) => (
+        <MoneyText
+          value={row.value}
+          className={decisiveStep(row)?.state === "FAILED" ? "text-ink-muted" : undefined}
+        />
+      ),
     },
   ];
 
