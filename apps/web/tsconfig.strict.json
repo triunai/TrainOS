@@ -38,5 +38,6 @@
     // in a graduate's dependency tree fails with TS2339.
     "src/vite-env.d.ts",
     // Graduates go below, one path per line, newest last.
+    "src/shared/components/layout/useNavSelection.ts",
   ],
 }

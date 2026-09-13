@@ -30,21 +30,28 @@ export interface NavSelection {
 const covers = (navPath: string, pathname: string): boolean =>
   navPath === "/" ? pathname === "/" : pathname === navPath || pathname.startsWith(`${navPath}/`);
 
-export function selectNav(groups: readonly NavGroup[], pathname: string): NavSelection {
-  let best: (NavSelection & { length: number }) | null = null;
+type Scored = NavSelection & { length: number };
 
-  const consider = (path: string, selection: NavSelection) => {
-    if (!covers(path, pathname)) return;
-    if (best && best.length >= path.length) return;
-    best = { ...selection, length: path.length };
+export function selectNav(groups: readonly NavGroup[], pathname: string): NavSelection {
+  /* `better` RETURNS the new winner rather than assigning to a captured
+     variable. A closure that writes to `best` is invisible to TypeScript's
+     control-flow analysis, which then still believes `best` is the `null` it
+     was initialised to and narrows it to `never` at the return — the two
+     errors that kept this file off the strict allowlist (R6). */
+  const better = (current: Scored | null, path: string, selection: NavSelection): Scored | null => {
+    if (!covers(path, pathname)) return current;
+    if (current && current.length >= path.length) return current;
+    return { ...selection, length: path.length };
   };
+
+  let best: Scored | null = null;
 
   for (const group of groups) {
     for (const parent of group.parents) {
-      if (parent.path) consider(parent.path, { childKey: null, parentKey: parent.key });
+      if (parent.path) best = better(best, parent.path, { childKey: null, parentKey: parent.key });
 
       for (const child of parent.children) {
-        consider(child.path, {
+        best = better(best, child.path, {
           childKey: `${parent.key}/${child.key}`,
           parentKey: parent.key,
         });
