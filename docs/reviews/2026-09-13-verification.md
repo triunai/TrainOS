@@ -396,6 +396,23 @@ checked per file first), each verified before commit.
 | `b44ed77` | `automationApi.ts` and `automationPaths.ts` fold into `api.ts` and `paths.ts`, clearing both `TODO(consolidation)` notes | 28 agents tests pass; depcruise 327 modules where it cruised 328 |
 | `001a501` | Four breadcrumb trails stop at the list crumb (Organisation 360, invoice detail, attendance capture, claim packet) | 79 tests across the four features pass; the attendance test that PINNED the old shape is updated with it |
 | `cb75f9e` | The h1 names the record and `recordRef` carries the reference on the TNA detail, the claim packet and the invoice detail (§15a) | 908 web tests pass; two tests asserting the old concatenated headings are updated |
+| `db9a675` | `check:barrels` — a barrel may not export a file nobody committed — as its OWN blocking CI job | both failure modes probed with deliberate violations; clean at HEAD and in the working tree |
+| `fab5fe4` | The profile modal reads `GET /v1/me/profile`; `shared/config/profileDetails.ts` deleted | 914 web tests pass; the role switch is asserted to CHANGE the job title and email; verified in a browser, both themes, zero console errors |
+
+Fix list rows 6, 8 and 13 are closed.
+
+**A note on row 13's gate.** `check:barrels` caught its own author: adding
+`useMeProfile` to the layout barrel before staging the file failed the check on
+the very next run. That is the defect it was written for, reproduced by accident
+within the hour.
+
+**Three items added by the lead and checked here:**
+
+| Item | Verdict |
+|---|---|
+| `useNavSelection.ts:56` two `never` narrowings block strict graduation | Already fixed in `7022caa` before the request arrived |
+| `packages/fixtures` typecheck failing on `ActionResponse.result` | **Not reproducible.** Clean at HEAD `b73dfb2` and clean in the live working tree. It was an in-flight transient and is gone |
+| A barrel may export an uncommitted file | **Real class, no live instance.** `KanbanBoard.tsx` is tracked now; all 32 barrels are clean. Gated in `db9a675` |
 
 Fix list rows 6 and 8 are therefore closed. The approval detail was dropped from
 row 6 because another lane had already fixed it between the snapshot and the
