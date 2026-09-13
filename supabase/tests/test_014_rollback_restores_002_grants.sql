@@ -17,7 +17,9 @@
 -- This pin cannot live inside `test_014`, because `test_014` asserts the state
 -- 014 leaves and this asserts the state its ROLLBACK leaves. The two states are
 -- mutually exclusive: one has `app.apply_tenant_policies` and 228 policies on
--- `core`, the other has neither. So this is its own file with its own
+-- `core` (226 tenant policies over 113 tenant-scoped tables, plus
+-- provenance_subjects_read, plus 011's H-02), the other has one policy and no
+-- such function. So this is its own file with its own
 -- pre-flight, run at exactly one moment:
 --
 --   RUN IT AFTER `rollbacks/014_rls_policies_and_client_grants_rollback.sql`
@@ -178,16 +180,28 @@ BEGIN
   ASSERT v_left IS NULL,
     pg_catalog.format('R3a FAIL: a client grant survives in core or app: %s', v_left);
 
-  ASSERT NOT has_schema_privilege('authenticated','core','USAGE'),
-    'R3b FAIL: authenticated keeps USAGE on core after the rollback; 013 did not '
-    'have it and 014 granted it.';
+  -- USAGE on `core` must still be HELD, by all three API roles, because 001:232
+  -- grants it and 014 did not. An earlier version of this pin asserted the
+  -- opposite — that authenticated had lost it — which would have locked in the
+  -- same defect as CRIT-2 one schema over. The measured 001-013 nspacl on core is
+  -- postgres=UC anon=U authenticated=U service_role=U.
+  ASSERT has_schema_privilege('authenticated','core','USAGE'),
+    'R3b FAIL: authenticated lost USAGE on core. 001:232 grants it to all three '
+    'API roles; 014 only restated it, so the rollback must not revoke it.';
+  ASSERT has_schema_privilege('anon','core','USAGE'),
+    'R3b1 FAIL: anon lost USAGE on core. 014 revokes it as hardening — the one '
+    'privilege 014 takes away rather than gives — and this rollback restores it, '
+    'because a rollback returns the database to what 001-013 left.';
+  ASSERT has_schema_privilege('service_role','core','USAGE'),
+    'R3b2 FAIL: service_role lost USAGE on core. Neither 014 nor its rollback '
+    'names that role; something is using a wider revoke than it says it is.';
 
   ASSERT has_schema_privilege('authenticated','app','USAGE'),
     'R3c FAIL: the rollback revoked USAGE on `app` from authenticated. 001 grants '
     'it and 011''s M-04 records it as load-bearing for the caller-context RLS '
     'helpers; 014 never touched it and the rollback must not either.';
 
-  RAISE NOTICE 'R3 PASS - core is deny-all and unreachable, app USAGE untouched.';
+  RAISE NOTICE 'R3 PASS - core and app hold no client table privilege, and all three API roles keep 001:232''s USAGE on core, which 014 only restated for authenticated and narrowed for anon.';
 END;
 $r3$;
 

@@ -10,7 +10,8 @@
 // privileges to the internet.
 //
 // RULES
-//   T1  no test file defines a SECURITY DEFINER function.
+//   T1  no test file defines a SECURITY DEFINER function, EXCEPT in pg_temp,
+//       which is session-private and gone at ROLLBACK.
 //   T2  no test file grants EXECUTE to anon / authenticated / public.
 //   M1  no migration grants EXECUTE to anon or public on a function outside the
 //       allowlist, including the schema-wide `GRANT EXECUTE ON ALL FUNCTIONS`
@@ -111,12 +112,42 @@ for (const file of sqlFiles(TESTS)) {
   const sql = stripComments(readFileSync(file, "utf8"));
 
   for (const match of sql.matchAll(/security\s+definer/gi)) {
+    // EXCEPTION: a definer function created in `pg_temp`.
+    //
+    // The rule's purpose is that a test must not be able to create the privilege
+    // escalation it is checking for. A `pg_temp` function cannot: the temp schema
+    // is private to one backend, the function disappears when that session ends,
+    // and every pin in this repo creates its temp objects inside a transaction
+    // that ends in ROLLBACK, so nothing outside the test can call it even while
+    // it exists. Nothing can be escalated that is not already inside the session
+    // doing the escalating.
+    //
+    // It is also a pattern the tests genuinely need. test_014 T7 has to prove
+    // that `core.v_approval_requests` is readable through a SECURITY DEFINER path
+    // and refused to a direct `authenticated` SELECT — which requires a definer
+    // to read it through. Without this exception the guard's only advice is
+    // "delete the test that proves the posture", and a guard that fires on the
+    // correct code teaches people to stop reading it.
+    //
+    // The narrowness is the point: the schema must be literally `pg_temp`. A
+    // definer created anywhere else in a test file still fires, including
+    // `pg_temp_3` or a schema a test creates for itself, because those are not
+    // the per-session temp schema alias and are not covered by the reasoning
+    // above.
+    const preceding = sql.slice(0, match.index);
+    const create = preceding.match(
+      /create\s+(?:or\s+replace\s+)?function\s+([a-z_][a-z0-9_$]*)\s*\.[^;]*$/i,
+    );
+    if (create && create[1].toLowerCase() === "pg_temp") continue;
+
     finding(
       "T1",
       shown,
       lineOf(sql, match.index),
       "a test file defines a SECURITY DEFINER function. A test must not be able to " +
-        "create the privilege escalation it is supposed to be checking for.",
+        "create the privilege escalation it is supposed to be checking for. " +
+        "(Functions created in `pg_temp` are excepted: session-private, dropped " +
+        "at ROLLBACK, unreachable from outside the test.)",
     );
   }
 

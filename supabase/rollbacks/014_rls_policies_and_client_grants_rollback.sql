@@ -85,7 +85,20 @@ DROP FUNCTION IF EXISTS core.bulk_decide_approvals(uuid[],text,text,text);
 REVOKE ALL ON ALL TABLES    IN SCHEMA core   FROM authenticated, anon, PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA core   FROM authenticated, anon, PUBLIC;
 REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM authenticated, anon, PUBLIC;
-REVOKE USAGE ON SCHEMA core FROM authenticated;
+-- ⚠ NOT `REVOKE USAGE ON SCHEMA core FROM authenticated`. That is what this file
+-- used to do, on the stated belief that 014 granted it. 001:232 grants USAGE on
+-- `core` to anon, authenticated AND service_role in one statement — measured on a
+-- 001-013 database, whose `core` nspacl reads
+--   postgres=UC/postgres anon=U/postgres authenticated=U/postgres service_role=U/postgres
+-- — so 014's GRANT was a restatement and revoking it here destroyed a 001 grant
+-- exactly the way the blanket `public` revoke destroyed 002's. Same defect, one
+-- schema over, found by executing the rollback rather than by reading it.
+--
+-- And the one privilege 014 really does take away is given back: 014 revokes
+-- `anon`'s USAGE on `core` as hardening, which is a change to 001's state, so the
+-- rollback restores it. A rollback returns the database to what the previous
+-- migration left, including the parts this one narrowed.
+GRANT USAGE ON SCHEMA core TO anon;
 
 -- ⚠ AND NOW PUT BACK EVERY GRANT 002 LEFT, BECAUSE THE LINE ABOVE TOOK THEM TOO.
 --
@@ -169,9 +182,10 @@ DECLARE
   v_expected integer;
 BEGIN
   -- What the stamp SHOULD cover, DERIVED from the catalogue as it stands right
-  -- now rather than hardcoded. Two policies for every tenant-scoped core table,
-  -- plus provenance_subjects_read, plus the three role gates, plus 014's one
-  -- policy on public.memberships.
+  -- now rather than hardcoded. Two policies for every tenant-scoped core table
+  -- (the three role-gated tables carry their gate INSIDE their isolation policy,
+  -- so they are two like everything else), plus provenance_subjects_read, plus
+  -- 014's one policy on public.memberships.
   --
   -- Derived and not a literal because the number legitimately moves. 014's §2
   -- loop covers every tenant-scoped core table that exists WHEN IT RUNS: on a
@@ -180,7 +194,7 @@ BEGIN
   -- stamp afterwards because 014 genuinely was the last thing to create them.
   -- A literal would have made a correct re-apply fail here, which is how magic
   -- numbers teach people to delete assertions.
-  SELECT pg_catalog.count(*) * 2 + 5 INTO v_expected
+  SELECT pg_catalog.count(*) * 2 + 2 INTO v_expected
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'core' AND c.relkind = 'r'
@@ -210,7 +224,7 @@ BEGIN
     RAISE EXCEPTION
       'ROLLBACK 014: dropped % policies stamped migration:014, and the catalogue '
       'says there should have been % (two per tenant-scoped core table, plus '
-      'provenance_subjects_read, three role gates and memberships_no_client_delete). '
+      'provenance_subjects_read and memberships_no_client_delete). '
       'Either 014 created a policy it did not stamp, or something other than 014 '
       'is writing 014''s marker.', v_count, v_expected;
   END IF;
@@ -231,6 +245,10 @@ DROP POLICY IF EXISTS memberships_no_client_delete ON public.memberships;
 -- stops meaning anything.
 DROP INDEX IF EXISTS core.rule_set_versions_tenant_idx;
 
+-- BOTH signatures. 014 changed this function from two arguments to three and
+-- dropped the two-argument form as it went; a database rolled back from an
+-- earlier 014 could still be carrying either.
+DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text, text);
 DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text);
 
 -- ── POST-CONDITIONS ─────────────────────────────────────────────────────────
@@ -265,7 +283,6 @@ BEGIN
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'core'
      AND (p.polname LIKE '%\_tenant\_select' OR p.polname LIKE '%\_tenant\_isolation'
-          OR p.polname LIKE '%\_role\_gate'
           OR p.polname = 'provenance_subjects_read');
   IF v_left IS NOT NULL THEN
     RAISE EXCEPTION
@@ -278,7 +295,9 @@ BEGIN
     RAISE EXCEPTION 'ROLLBACK 014 incomplete: a core wrapper survives';
   END IF;
 
-  IF pg_catalog.to_regproc('app.apply_tenant_policies') IS NOT NULL THEN
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+               JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'app' AND p.proname = 'apply_tenant_policies') THEN
     RAISE EXCEPTION 'ROLLBACK 014 incomplete: app.apply_tenant_policies survives';
   END IF;
 

@@ -10,19 +10,52 @@
 -- open, not even for the duration of one migration. 014 is the pack that opens
 -- the read path, and it opens it exactly as wide as one tenant.
 --
--- The whole of 001-013 granted no table, view, sequence or function privilege to
--- `anon` or `authenticated`. The catalog records that as the `C-04` residue and
--- says in four places that "policies and grants land together in 014". This is
--- that landing, and the reason they must land together is mechanical rather than
--- tidy-minded:
+-- ⚠ THE PRE-014 BASELINE, MEASURED ON A 001-013 DATABASE RATHER THAN ASSUMED.
+-- An earlier version of this header said "the whole of 001-013 granted no table,
+-- view, sequence or function privilege to `anon` or `authenticated`", and that
+-- `relacl` on 002's five identity tables was `{postgres=arwdDxtm/postgres}` and
+-- nothing else. Both statements are false, and the second one names the table
+-- that disproves it. Measured, on a database with exactly 001-013 applied:
 --
---   A POLICY WITHOUT A GRANT IS DEAD CODE. 002 authored twelve policies naming
---   `authenticated` on `public.tenants`, `teams`, `team_members`, `memberships`
---   and `user_profiles`. Measured on the shim before this migration:
---   `relacl` on every one of those tables is `{postgres=arwdDxtm/postgres}` and
---   nothing else. `authenticated` holds no privilege, so the policies have never
---   once been consulted. They read as security and are inert. 014 grants them
---   into service and the pin proves they now decide something.
+--   public.memberships relacl:
+--     postgres=arwdDxtm/postgres supabase_auth_admin=r/postgres authenticated=arw/postgres
+--   authenticated table privileges in `public`: 16, over the five identity
+--     tables — 002:696-701.
+--   authenticated table privileges in `core` and `app`: NONE. (This half was true.)
+--   authenticated EXECUTE on functions: 15, all in `app` — 002:626-640.
+--   schema USAGE for authenticated: `app`, `public` AND `core`, all from
+--     001:190/231/232, which grants `core` to anon and service_role too.
+--   policies already standing: 14 on `public` (002), 3 on `app` (002),
+--     1 on `core` (011's H-02 kill switch).
+--
+-- WHY THAT MATTERED RATHER THAN BEING A TIDINESS PROBLEM. The false premise is
+-- what made `GRANT SELECT, INSERT, UPDATE, DELETE ON public.memberships` read as
+-- "restating 002" to whoever wrote it. It was not restating 002; 002 grants three
+-- privileges there and withholds DELETE on purpose, and the fourth one was a
+-- role-escalation path (see §4). A header that describes the starting state
+-- wrongly will licence a diff that nobody can see is a diff.
+--
+-- SO THE REAL DIFF 014 MAKES, stated as a diff:
+--   + SELECT on 114 `core` tables and 2 `core` views to `authenticated`
+--   + EXECUTE on app.require_tenant_id() to `authenticated`
+--   + EXECUTE on three new `core` wrapper functions to `authenticated`
+--   + 227 policies on `core` (226 tenant policies over 113 tenant-scoped tables,
+--     three of whose restrictive halves also carry a permission term, plus
+--     provenance_subjects_read)
+--   + 1 policy on `public.memberships` (memberships_no_client_delete)
+--   - USAGE on schema `core` from `anon` (001:232 granted it; see §4)
+--   = 002's five `public.*` grant sets, restated unchanged
+--
+-- The reason policies and grants must land together is still mechanical rather
+-- than tidy-minded, and it is still the reason this pack exists:
+--
+--   A POLICY WITHOUT A GRANT IS DEAD CODE — in `core`, where it is literally
+--   true. 011 wrote the `autonomy_grants_agents_cannot_write` kill switch and no
+--   client role has ever held a privilege on any `core` table, so that policy has
+--   never once been consulted. 014 grants `core` into service and the pin proves
+--   the policies now decide something. On `public` the same sentence would be
+--   false: 002 landed its twelve `authenticated` policies AND the grants under
+--   them in the same migration, which is the pattern 014 is copying.
 --
 --   A GRANT WITHOUT A POLICY IS A LEAK. Under FORCE-with-no-policy the answer is
 --   zero rows, so the leak does not open the day the grant lands — it opens the
@@ -38,9 +71,33 @@
 --   table AT ALL is the guard, and the verify block re-derives it from
 --   `information_schema.column_privileges` rather than trusting the revokes.
 --
--- OBJECTS. One function, 235 policies over 115 relations, the client grant layer
--- over 114 `core` tables + 4 `core` views + 5 `public` tables, and three
--- `SECURITY DEFINER` wrappers in `core`. No table, no type, no trigger.
+-- OBJECTS, COUNTED FROM THE APPLIED DATABASE RATHER THAN FROM THIS FILE'S
+-- ARITHMETIC. An earlier version of this header said "235 policies over 115
+-- relations… 4 core views granted", and the catalog repeated it. The real
+-- figures, on a clean forward apply of 001-014:
+--
+--   228 policies created by 014, over 115 relations:
+--     226  tenant policy pairs over 113 tenant-scoped `core` tables — three of
+--          those pairs also carry a permission term (§4b), which is folded into
+--          the pair's restrictive half rather than added as a third policy
+--       1  provenance_subjects_read, on the one `core` table with no tenant_id
+--       1  memberships_no_client_delete, on `public.memberships`
+--   228 policies on `core` in total afterwards: 227 of 014's (everything above
+--       except the one on `public.memberships`) plus 011's H-02 kill switch.
+--   15 policies on `public`: 002's fourteen plus 014's one.
+--
+--   Every figure above was read back off a clean 001-014 apply, not counted by
+--   hand off this file.
+--   114 `core` tables granted SELECT; 2 of the 5 `core` views granted, not 4 —
+--       the other three are explicitly REVOKED here and each has its reason
+--       written beside it.
+--     5 `public` tables, whose grant set is 002's unchanged.
+--
+-- Plus one function, three `SECURITY DEFINER` wrappers in `core`, and one index.
+-- No table, no type, no trigger.
+--
+-- Every one of those numbers is re-derived by §6 and by the pin's T1, so this
+-- comment cannot drift from the database without something failing.
 --
 -- ── THE READ MODEL, AND WHY WRITES ARE NOT IN IT ─────────────────────────────
 --
@@ -261,7 +318,20 @@ $preflight$;
 -- isolate. `core.provenance_subjects` is the one core relation in that state and
 -- §3 handles it explicitly, by name, with its reason written down.
 
-CREATE OR REPLACE FUNCTION app.apply_tenant_policies(p_schema text, p_table text)
+-- ⚠ THREE ARGUMENTS, AND THE TWO-ARGUMENT SIGNATURE IS DROPPED FIRST.
+-- `CREATE OR REPLACE FUNCTION` matches on the ARGUMENT LIST, so adding
+-- `p_permission` — even defaulted — would CREATE A SECOND OVERLOAD rather than
+-- replace the first, and two overloads differing only by a defaulted trailing
+-- argument make every two-argument call ambiguous. 017 calls this function with
+-- two arguments for three of its own tables, so that ambiguity would be a live
+-- failure in the next migration, not a theoretical one. The DROP below is what
+-- stops it; §6 asserts the overload count is exactly one.
+DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text);
+
+CREATE OR REPLACE FUNCTION app.apply_tenant_policies(
+  p_schema     text,
+  p_table      text,
+  p_permission text DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -270,9 +340,11 @@ AS $fn$
 DECLARE
   v_oid        pg_catalog.oid;
   v_notnull    boolean;
-  v_pred       text;
+  v_read       text;
+  v_write      text;
   v_select_pol text := p_table || '_tenant_select';
   v_iso_pol    text := p_table || '_tenant_isolation';
+  v_gate       text := '';
 BEGIN
   v_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', p_schema, p_table));
   IF v_oid IS NULL THEN
@@ -307,10 +379,55 @@ BEGIN
   -- The global-row fallback, DERIVED. A NULL-able tenant_id is 009's national
   -- rule; a NOT NULL one cannot represent a global row and must not be given a
   -- predicate that pretends it can.
+  --
+  -- ⚠ THE FALLBACK IS A READ CONCESSION AND NOTHING ELSE. `v_read` admits the
+  -- global row; `v_write` never does. An earlier version used ONE string for both
+  -- halves, so `tenant_id IS NULL` was admitted on writes too — and this file's
+  -- own header sells the restrictive policy as making "a cross-tenant write
+  -- already impossible on the day somebody grants a write". It did not: on that
+  -- day any authenticated caller could have written a row attributed to no tenant
+  -- and therefore visible to EVERY tenant, which is worse than a cross-tenant
+  -- write because it lands in all of them at once.
+  --
+  -- Inert today, because no client role holds INSERT or UPDATE on any core table.
+  -- Fixed today anyway, while it is two strings instead of one, rather than on
+  -- the day a write grant makes it live — which is the whole argument for the
+  -- restrictive policy existing before the grant does.
   IF v_notnull THEN
-    v_pred := 'tenant_id = (SELECT app.require_tenant_id())';
+    v_read  := 'tenant_id = (SELECT app.require_tenant_id())';
   ELSE
-    v_pred := '(tenant_id = (SELECT app.require_tenant_id()) OR tenant_id IS NULL)';
+    v_read  := '(tenant_id = (SELECT app.require_tenant_id()) OR tenant_id IS NULL)';
+  END IF;
+  v_write := 'tenant_id = (SELECT app.require_tenant_id())';
+
+  -- ⚠ THE ROLE GATE, WHEN THE CALLER ASKS FOR ONE. `p_permission` ANDs a
+  -- permission term into the RESTRICTIVE policy's two halves, for the handful of
+  -- tables where being a member of the tenant is not sufficient authorization to
+  -- read every row (see §4b for which, and why each).
+  --
+  -- It goes INSIDE the existing `<table>_tenant_isolation` policy rather than
+  -- into a policy of its own, for two reasons. The inventory pins that 004 T1c
+  -- and 013 T1d already enforce name every policy in `core` as one of exactly two
+  -- shapes, and a third shape would break them without making anything safer.
+  -- And a restrictive term folded into the restrictive policy is the same boolean
+  -- either way: RESTRICTIVE policies AND together, so `A AND B` as one policy and
+  -- `A`,`B` as two are indistinguishable to the planner and to an attacker.
+  --
+  -- `app.has_permission` is SECURITY DEFINER over app.role_permissions, which
+  -- `authenticated` cannot read directly, and is already granted EXECUTE to
+  -- `authenticated` by 002:637 — so it is runnable in a predicate, which is
+  -- evaluated AS THE QUERYING ROLE. A hardcoded role list here would be a second
+  -- copy of 002's permission catalogue that nothing keeps in step with the first.
+  -- The `(SELECT ...)` wrapper is the InitPlan form used throughout this file:
+  -- one evaluation per statement, not per row.
+  IF p_permission IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.permission = p_permission) THEN
+      RAISE EXCEPTION
+        'apply_tenant_policies: permission % names no row in app.role_permissions, '
+        'so the gate on %.% would refuse every role including ADMIN. A gate nobody '
+        'can satisfy is a broken screen, not security.', p_permission, p_schema, p_table;
+    END IF;
+    v_gate := pg_catalog.format(' AND (SELECT app.has_permission(%L))', p_permission);
   END IF;
 
   -- Idempotent by DROP-then-CREATE rather than by a pg_policy lookup: a policy
@@ -322,23 +439,36 @@ BEGIN
 
   EXECUTE pg_catalog.format(
     'CREATE POLICY %I ON %I.%I AS PERMISSIVE FOR SELECT TO authenticated USING (%s)',
-    v_select_pol, p_schema, p_table, v_pred);
+    v_select_pol, p_schema, p_table, v_read);
 
+  -- USING is the read half of the restrictive policy — which rows an UPDATE or
+  -- DELETE may even see — and keeps the fallback so a global row is not invisible
+  -- to the statement that is about to be refused for a better reason. WITH CHECK
+  -- is the write half and is always strict: whatever row this caller ends up
+  -- writing must carry this caller's tenant.
   EXECUTE pg_catalog.format(
     'CREATE POLICY %I ON %I.%I AS RESTRICTIVE FOR ALL TO authenticated '
-    'USING (%s) WITH CHECK (%s)',
-    v_iso_pol, p_schema, p_table, v_pred, v_pred);
+    'USING (%s%s) WITH CHECK (%s%s)',
+    v_iso_pol, p_schema, p_table, v_read, v_gate, v_write, v_gate);
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION app.apply_tenant_policies(text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app.apply_tenant_policies(text, text, text) FROM PUBLIC, anon, authenticated;
 
-COMMENT ON FUNCTION app.apply_tenant_policies(text, text) IS
+COMMENT ON FUNCTION app.apply_tenant_policies(text, text, text) IS
   'Stamps the standard two-policy tenant posture on a tenant-scoped table: a '
   'PERMISSIVE SELECT policy and a RESTRICTIVE FOR ALL isolation policy, both TO '
   'authenticated, both resolving the tenant through (SELECT app.require_tenant_id()). '
   'The global-row fallback (tenant_id IS NULL) is derived from the column''s NOT NULL '
-  'flag, never from a list. Refuses a table with no tenant_id. 014.';
+  'flag, never from a list, and appears in the READ predicate only: the isolation '
+  'policy''s WITH CHECK is always the strict tenant equality, so no caller can ever '
+  'write a row attributed to no tenant and therefore visible to every tenant. '
+  'Refuses a table with no tenant_id. An optional third argument ANDs an '
+  'app.has_permission() term into the restrictive policy''s two halves, for tables '
+  'where tenant membership is not sufficient authorization; it lives inside that '
+  'policy rather than in a policy of its own because restrictive policies AND '
+  'together anyway and the inventory pins in test_004 and test_013 name exactly '
+  'two policy shapes in core. 014.';
 
 -- ── THE GRANT THAT MAKES A POLICY PREDICATE RUNNABLE AT ALL ─────────────────
 -- Found by executing this migration, not by reading it. With the policies in
@@ -526,9 +656,11 @@ REVOKE ALL ON ALL TABLES    IN SCHEMA app  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA app  FROM PUBLIC, anon, authenticated;
 
 -- `core` USAGE: without it the grants below are unreachable and PostgREST reports
--- nothing useful. `app` deliberately gets no USAGE for anon and never has —
--- 011's M-04 note records that 001's USAGE on `app` for authenticated is
--- load-bearing for the caller-context RLS helpers, so it is left exactly alone.
+-- nothing useful. 001:232 ALREADY grants it to `authenticated` — measured, not
+-- assumed — so this line changes nothing and is kept only so the requirement is
+-- readable beside the grants that depend on it. Its rollback is therefore NOT a
+-- revoke: see the rollback file, which used to revoke it and in doing so
+-- destroyed a 001 grant.
 GRANT USAGE ON SCHEMA core TO authenticated;
 
 -- ⚠ `anon` KEEPS ITS USAGE ON `app`, AND THAT IS DELIBERATE. An earlier draft of
@@ -542,9 +674,26 @@ GRANT USAGE ON SCHEMA core TO authenticated;
 -- the schema as well would be a second, weaker guard that breaks a pinned
 -- invariant to restate something already true.
 --
--- `core` is different only because `anon` never had USAGE on it to begin with;
--- the line below is therefore a statement of the end state rather than a change,
--- and it is kept so the posture is readable in one place.
+-- ⚠ `core` IS DIFFERENT, AND NOT FOR THE REASON AN EARLIER DRAFT OF THIS COMMENT
+-- GAVE. That draft said `anon` never had USAGE on `core` to begin with, so the
+-- line below was "a statement of the end state rather than a change". Measured on
+-- a 001-013 database: `core`'s nspacl is
+--   postgres=UC/postgres anon=U/postgres authenticated=U/postgres service_role=U/postgres
+-- because 001:232 grants USAGE on `core` to all three API roles in one statement.
+-- So this line IS a change, and it is the only privilege 014 takes away from a
+-- role rather than giving.
+--
+-- It is kept, deliberately: `anon` holds SELECT on no table in `core` and EXECUTE
+-- on no function in `core`, 014 creates no public-token allowlist, and schema
+-- USAGE with no object privilege underneath it is a door into an empty room that
+-- the next person to write `GRANT SELECT ON ALL TABLES IN SCHEMA core` turns into
+-- a door into every room. `app` is NOT treated the same way, because 011's M-04
+-- records 001's USAGE there as load-bearing for the caller-context RLS helpers
+-- and test_011 T13b pins it; `core` has no such consumer.
+--
+-- Because it is a change to 001's state, THE ROLLBACK RESTORES IT. That is the
+-- same rule that governs 002's table grants: a rollback returns the database to
+-- what the previous migration left, including the parts this migration narrowed.
 REVOKE USAGE ON SCHEMA core FROM anon;
 
 -- SELECT, and only SELECT, on every core table. See the header: the write path is
@@ -654,7 +803,7 @@ BEGIN
       ('run_node_io',         'run:read',
        'raw agent prompt and completion text; 002:1116/1212 make run:read MD and ADMIN only'),
       ('public_share_tokens', 'portal:token:issue',
-       'the portal token hashes and which proposal each opens; 002 gives portal:token:issue to SALES, SALES_MANAGER, MD and ADMIN')
+       'the portal token hashes and which proposal or TNA each opens; 002 gives portal:token:issue to SALES, SALES_MANAGER, MD and ADMIN')
     ) AS t(relname, perm, why)
   LOOP
     IF pg_catalog.to_regclass(pg_catalog.format('core.%I', r.relname)) IS NULL THEN
@@ -663,30 +812,25 @@ BEGIN
         'and §4 is about to grant SELECT on a sensitive table with no gate.', r.relname;
     END IF;
 
-    -- The permission must be one 002 actually issued to somebody. A typo here
-    -- would produce a policy nobody can satisfy, which reads as very secure and
-    -- is a broken screen.
-    IF NOT EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.permission = r.perm) THEN
-      RAISE EXCEPTION
-        '014: permission %s names no row in app.role_permissions, so the gate on '
-        'core.%s would refuse every role including ADMIN.', r.perm, r.relname;
-    END IF;
+    -- Re-runs the SAME function §2 ran, with the permission this time. It is a
+    -- DROP-then-CREATE inside, so this replaces the ungated pair §2 left rather
+    -- than layering on top of it — which is why this block has to come AFTER §2's
+    -- loop and not before.
+    PERFORM app.apply_tenant_policies('core', r.relname, r.perm);
 
-    EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON core.%I',
-      r.relname || '_role_gate', r.relname);
-    EXECUTE pg_catalog.format(
-      'CREATE POLICY %I ON core.%I AS RESTRICTIVE FOR ALL TO authenticated '
-      'USING ((SELECT app.has_permission(%L))) WITH CHECK ((SELECT app.has_permission(%L)))',
-      r.relname || '_role_gate', r.relname, r.perm, r.perm);
     EXECUTE pg_catalog.format(
       'COMMENT ON POLICY %I ON core.%I IS %L',
-      r.relname || '_role_gate', r.relname,
+      r.relname || '_tenant_select', r.relname,
+      'migration:014 — permissive tenant-scoped SELECT. Narrowed by the '
+      'restrictive isolation policy beside it, which carries a permission term.');
+    EXECUTE pg_catalog.format(
+      'COMMENT ON POLICY %I ON core.%I IS %L',
+      r.relname || '_tenant_isolation', r.relname,
       pg_catalog.format(
-        'migration:014 — tenant membership is not sufficient authorization here: %s. '
-        'RESTRICTIVE, so it ANDs with the permissive tenant SELECT policy and with '
-        'any permissive policy a later migration adds.', r.why));
+        'migration:014 — restrictive FOR ALL tenant isolation AND role gate: %s. '
+        'Tenant membership is not sufficient authorization on this table.', r.why));
   END LOOP;
-  RAISE NOTICE '014: role gates created on 3 sensitive core tables';
+  RAISE NOTICE '014: role gates folded into the isolation policy of 3 sensitive core tables';
 END;
 $role_gates$;
 
@@ -934,12 +1078,15 @@ BEGIN
   --     the guard the fifteen vacuous column revokes in 011 were reaching for,
   --     stated where it can actually be false. Column-level privileges are
   --     included because a column grant does not appear in relacl.
-  SELECT pg_catalog.string_agg(DISTINCT pg_catalog.format('%s.%s(%s)', table_schema, table_name, privilege_type), ', ')
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format('%s(%s)', c.relname, w.priv), ', ' ORDER BY c.relname, w.priv)
     INTO v_missing
-    FROM information_schema.table_privileges
-   WHERE table_schema = 'core'
-     AND grantee IN ('authenticated','anon')
-     AND privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER');
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN pg_catalog.unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS w(priv)
+   WHERE n.nspname = 'core' AND c.relkind IN ('r','v','m','p','f')
+     AND (has_table_privilege('authenticated', c.oid, w.priv)
+       OR has_table_privilege('anon', c.oid, w.priv));
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION
       '014 verify: a client role holds a WRITE privilege in core, which is a path '
@@ -957,19 +1104,36 @@ BEGIN
   END IF;
 
   -- (3) anon holds nothing at all, in any of the three schemas.
-  SELECT pg_catalog.string_agg(DISTINCT pg_catalog.format('%s.%s', table_schema, table_name), ', ')
+  --
+  --     ⚠ has_table_privilege, NOT information_schema.table_privileges. That view
+  --     lists a privilege under the grantee it was granted TO. A privilege granted
+  --     to PUBLIC does not appear there under `anon` or `authenticated` even
+  --     though both inherit it, so a future `GRANT SELECT ON core.enquiries TO
+  --     PUBLIC` would leave this check — and the pin's matching one — reporting a
+  --     clean posture while every unauthenticated request read the table.
+  --     has_table_privilege resolves role inheritance and PUBLIC, which is the
+  --     question actually being asked: can this role do this, by ANY route.
+  --     Today's revokes make both spellings agree; the point is the day they stop.
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format('%s.%s', n.nspname, c.relname), ', ' ORDER BY n.nspname, c.relname)
     INTO v_missing
-    FROM information_schema.table_privileges
-   WHERE table_schema IN ('core','app','public') AND grantee = 'anon';
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname IN ('core','app','public') AND c.relkind IN ('r','v','m','p','f')
+     AND has_table_privilege('anon', c.oid,
+           'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION '014 verify: anon holds a table privilege, and 014 creates no public-token allowlist: %', v_missing;
   END IF;
 
   -- (4) authenticated holds nothing in `app`. The schema is unexposed AND
   --     unprivileged; either alone would be one edit from being neither.
-  SELECT pg_catalog.string_agg(DISTINCT table_name, ', ') INTO v_missing
-    FROM information_schema.table_privileges
-   WHERE table_schema = 'app' AND grantee IN ('authenticated','anon');
+  SELECT pg_catalog.string_agg(c.relname, ', ' ORDER BY c.relname) INTO v_missing
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'app' AND c.relkind IN ('r','v','m','p','f')
+     AND has_table_privilege('authenticated', c.oid,
+           'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION '014 verify: a client role holds a privilege on an app table: %', v_missing;
   END IF;
@@ -978,11 +1142,13 @@ BEGIN
   --     v_approval_requests   doc 09 §12 forbids the grant outright.
   --     budget_status         security_invoker over app.usage_rollup, so a grant
   --     model_tier_status     cannot work; see the note at the GRANT block.
-  SELECT pg_catalog.string_agg(DISTINCT table_name, ', ') INTO v_missing
-    FROM information_schema.table_privileges
-   WHERE table_schema='core'
-     AND table_name IN ('v_approval_requests','budget_status','model_tier_status')
-     AND grantee IN ('authenticated','anon');
+  SELECT pg_catalog.string_agg(c.relname, ', ' ORDER BY c.relname) INTO v_missing
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'core'
+     AND c.relname IN ('v_approval_requests','budget_status','model_tier_status')
+     AND (has_table_privilege('authenticated', c.oid, 'SELECT')
+       OR has_table_privilege('anon', c.oid, 'SELECT'));
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION
       '014 verify: view(s) %s are granted to a client role. v_approval_requests is '
@@ -1072,8 +1238,7 @@ BEGIN
     JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'core'
-     AND (p.polname LIKE '%\_tenant\_select' OR p.polname LIKE '%\_tenant\_isolation'
-          OR p.polname LIKE '%\_role\_gate')
+     AND (p.polname LIKE '%\_tenant\_select' OR p.polname LIKE '%\_tenant\_isolation')
      AND NOT (SELECT 'authenticated'::regrole::oid = ANY (p.polroles));
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION '014 verify: policy/policies not scoped TO authenticated: %', v_missing;
@@ -1152,11 +1317,11 @@ BEGIN
       'is the absent privilege, and 002''s memberships_write_admin is FOR ALL.';
   END IF;
 
-  -- (13) The three role gates exist, are RESTRICTIVE, and name a permission that
-  --      at least one role holds and at least one role does not. A gate no role
-  --      satisfies is a broken screen that reads as security; a gate every role
-  --      satisfies is decoration. Both are asserted off the catalogue rather than
-  --      off the DDL text above.
+  -- (13) The three role gates are in place, each inside its table's RESTRICTIVE
+  --      isolation policy, each naming a permission that at least one role holds
+  --      and at least one role does not. A gate no role satisfies is a broken
+  --      screen that reads as security; a gate every role satisfies is decoration.
+  --      Read off pg_policy, never off the DDL text above.
   FOR v_missing IN
     SELECT x FROM pg_catalog.unnest(ARRAY[
       'ai_provider_keys:ai:provider:read',
@@ -1164,30 +1329,40 @@ BEGIN
       'public_share_tokens:portal:token:issue']) AS t(x)
   LOOP
     DECLARE
-      v_rel  text := pg_catalog.split_part(v_missing, ':', 1);
-      v_perm text := pg_catalog.substr(v_missing, pg_catalog.strpos(v_missing, ':') + 1);
-      v_qual text;
-      v_have integer;
-      v_all  integer;
+      v_rel   text := pg_catalog.split_part(v_missing, ':', 1);
+      v_perm  text := pg_catalog.substr(v_missing, pg_catalog.strpos(v_missing, ':') + 1);
+      v_qual  text;
+      v_check text;
+      v_have  integer;
+      v_all   integer;
     BEGIN
-      SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) INTO v_qual
+      SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid),
+             pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid)
+        INTO v_qual, v_check
         FROM pg_catalog.pg_policy p
         JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname = 'core' AND c.relname = v_rel
-         AND p.polname = v_rel || '_role_gate'
+         AND p.polname = v_rel || '_tenant_isolation'
          AND NOT p.polpermissive
          AND p.polcmd = '*';
       IF v_qual IS NULL THEN
         RAISE EXCEPTION
-          '014 verify: core.%s has no RESTRICTIVE FOR ALL policy %s_role_gate. '
-          'Without it §4''s blanket SELECT grant lets every role in the tenant read '
-          'it, and 002 says only the holders of %s may.', v_rel, v_rel, v_perm;
+          '014 verify: core.%s has no RESTRICTIVE FOR ALL isolation policy to '
+          'carry its role gate.', v_rel;
       END IF;
       IF pg_catalog.strpos(v_qual, v_perm) = 0 THEN
         RAISE EXCEPTION
-          '014 verify: core.%s''s role gate does not consult %s. Predicate is: %s',
+          '014 verify: core.%s''s isolation policy does not consult %s on the read '
+          'side, so §4''s blanket SELECT grant lets every role in the tenant read '
+          'it and 002 says only the holders of that permission may. Predicate: %s',
           v_rel, v_perm, v_qual;
+      END IF;
+      IF pg_catalog.strpos(COALESCE(v_check,''), v_perm) = 0 THEN
+        RAISE EXCEPTION
+          '014 verify: core.%s''s isolation policy gates reads on %s but not '
+          'writes. The write half decides nothing today and must already be right '
+          'on the day it does. WITH CHECK: %s', v_rel, v_perm, COALESCE(v_check,'NULL');
       END IF;
 
       SELECT pg_catalog.count(*) INTO v_have
@@ -1207,6 +1382,22 @@ BEGIN
     END;
   END LOOP;
 
+  -- (13b) EXACTLY ONE OVERLOAD of app.apply_tenant_policies. 014 changed its
+  --       signature from two arguments to three; `CREATE OR REPLACE` matches on
+  --       the argument list, so without the DROP in §1 there would now be two,
+  --       and 017's two-argument calls would be ambiguous (PGRST203 in the
+  --       PostgREST case, `function is not unique` here).
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname = 'apply_tenant_policies';
+  IF v_n <> 1 THEN
+    RAISE EXCEPTION
+      '014 verify: app.apply_tenant_policies has % overloads, not 1. Two of them '
+      'differing only by a defaulted trailing argument make every short call '
+      'ambiguous, and 017 makes three of those calls.', v_n;
+  END IF;
+
   -- (14) THE MANIFEST IS COMPLETE. Every policy 014 created carries the
   --      `migration:014` stamp its rollback drops by, and the number of stamped
   --      policies matches what the catalogue says this database's inventory
@@ -1214,7 +1405,7 @@ BEGIN
   --      leave behind, and the rollback's own count check would then fire against
   --      a database it is halfway through changing — which is a worse place to
   --      find out than here.
-  SELECT pg_catalog.count(*) * 2 + 5 INTO v_n
+  SELECT pg_catalog.count(*) * 2 + 2 INTO v_n
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'core' AND c.relkind = 'r'
@@ -1230,9 +1421,9 @@ BEGIN
     RAISE EXCEPTION
       '014 verify: the migration:014 policy manifest does not cover what this '
       'migration created. Expected % stamped policies (two per tenant-scoped core '
-      'table, plus provenance_subjects_read, three role gates and '
-      'memberships_no_client_delete) and found %. The rollback drops by that '
-      'stamp, so an unstamped policy is one it will leave standing.',
+      'table, plus provenance_subjects_read and memberships_no_client_delete) and '
+      'found %. The rollback drops by that stamp, so an unstamped policy is one it '
+      'will leave standing.',
       v_n,
       (SELECT pg_catalog.count(*)
          FROM pg_catalog.pg_policy p
