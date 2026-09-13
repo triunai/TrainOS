@@ -6,9 +6,9 @@
 -- replaced is re-created here from 018's text, IN FULL, not by reference.
 --
 -- ORDER, the reverse of the forward file:
---   1. drop the objects 020 created (none exist in 001–019), dependants first
---   2. re-create the 018 definitions 020 replaced
---   3. restate 018's grants on them
+--   1. drop the fourteen views 020 created, and the two 018 views whose shape it changed
+--   2. re-create the 018 functions and views 020 replaced, then drop its two row sources
+--   3. restate 018's grants and comments on them
 --   4. verify: no `diffHash` projection, no 020-only object left
 --
 -- Wrapped in one transaction: a rollback that fails half way leaves a state
@@ -22,6 +22,32 @@
 BEGIN;
 
 SET LOCAL client_min_messages = warning;
+
+-- ═══ 1 · Drop what 020 created ═════════════════════════════════════════════
+--
+-- The fourteen VIEW_READS views first (nothing depends on them), then the two
+-- 018 views whose shape 020 changed. `v_organisation_relations` gained a column
+-- and `v_model_tiers` changed a column's type; CREATE OR REPLACE VIEW can do
+-- neither in reverse, so both are dropped and re-created from 018's text in §2.
+-- `v_budgets` is re-pointed at 018's `app._budget_rows()` in §2 BEFORE the
+-- `core.ai_*_rows()` functions it currently reads are dropped in §2b.
+
+DROP VIEW IF EXISTS core.v_templates;
+DROP VIEW IF EXISTS core.v_policies;
+DROP VIEW IF EXISTS core.v_saved_views;
+DROP VIEW IF EXISTS core.v_trainers;
+DROP VIEW IF EXISTS core.v_contacts;
+DROP VIEW IF EXISTS core.v_contact_channel_consents;
+DROP VIEW IF EXISTS core.v_programmes;
+DROP VIEW IF EXISTS core.v_programme_deliveries;
+DROP VIEW IF EXISTS core.v_hrdc_deadlines;
+DROP VIEW IF EXISTS core.v_collection_rules;
+DROP VIEW IF EXISTS core.v_compliance_rules;
+DROP VIEW IF EXISTS core.v_rule_change_sets;
+DROP VIEW IF EXISTS core.v_agent_evals;
+DROP VIEW IF EXISTS core.v_knowledge_sources;
+DROP VIEW IF EXISTS core.v_model_tiers;
+DROP VIEW IF EXISTS core.v_organisation_relations;
 
 -- ═══ 2 · The 018 definitions, reproduced in full ═════════════════════════
 
@@ -386,6 +412,138 @@ BEGIN
 END;
 $fn$;
 
+CREATE OR REPLACE VIEW core.v_organisation_relations
+WITH (security_invoker = true) AS
+SELECT
+  org.tenant_id,
+  org.id AS organisation_id,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+             'ref',   engagement.ref,
+             'title', engagement.title,
+             'dates', COALESCE(engagement.starts_on::text, '') ||
+                      CASE WHEN engagement.ends_on IS NULL THEN ''
+                           ELSE '/' || engagement.ends_on::text END,
+             'value', app._money(COALESCE(engagement.value_sen, 0), engagement.currency::text),
+             -- STAGE NAMES AND ORDER FROM `core.pipeline_steps`, never a
+             -- hardcoded list: the lifecycle strip renders whatever the
+             -- engagement's own pipeline configures, in `position` order.
+             'lifecycle', COALESCE((
+               SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                        'key',   step.step_key,
+                        'label', step.label,
+                        'state', COALESCE(state.state::text, 'PENDING'))
+                      || CASE WHEN state.at IS NULL THEN '{}'::jsonb
+                              ELSE pg_catalog.jsonb_build_object('at', state.at) END
+                      || CASE WHEN state.note IS NULL THEN '{}'::jsonb
+                              ELSE pg_catalog.jsonb_build_object('note', state.note) END
+                      || CASE WHEN state.target_ref IS NULL THEN '{}'::jsonb
+                              ELSE pg_catalog.jsonb_build_object('ref', state.target_ref) END
+                      ORDER BY step.position)
+                 FROM core.pipeline_steps AS step
+                 LEFT JOIN core.engagement_step_states AS state
+                        ON state.tenant_id = engagement.tenant_id
+                       AND state.engagement_id = engagement.id
+                       AND state.pipeline_step_id = step.id
+                WHERE step.tenant_id = engagement.tenant_id
+                  AND step.pipeline_id = engagement.pipeline_id), '[]'::jsonb))
+           ORDER BY engagement.created_at DESC)
+      FROM core.engagements AS engagement
+     WHERE engagement.tenant_id = org.tenant_id
+       AND engagement.organisation_id = org.id), '[]'::jsonb) AS engagements,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+             'ref',  contact.ref,
+             'name', contact.name,
+             'role', COALESCE(contact.job_title, ''),
+             'primary', contact.is_primary,
+             'consent', pg_catalog.jsonb_build_object(
+               'email', COALESCE((SELECT pg_catalog.bool_or(c.granted) FROM core.contact_consents AS c
+                                   WHERE c.tenant_id = contact.tenant_id AND c.contact_id = contact.id
+                                     AND c.channel = 'EMAIL' AND c.withdrawn_at IS NULL), false),
+               'whatsapp', COALESCE((SELECT pg_catalog.bool_or(c.granted) FROM core.contact_consents AS c
+                                   WHERE c.tenant_id = contact.tenant_id AND c.contact_id = contact.id
+                                     AND c.channel = 'WHATSAPP' AND c.withdrawn_at IS NULL), false)))
+           || CASE WHEN contact.pdpa_flag IS NULL THEN '{}'::jsonb
+                   ELSE pg_catalog.jsonb_build_object('pdpaFlag', contact.pdpa_flag) END
+           ORDER BY contact.is_primary DESC, contact.name)
+      FROM core.contacts AS contact
+     WHERE contact.tenant_id = org.tenant_id
+       AND contact.organisation_id = org.id
+       AND contact.redacted_at IS NULL), '[]'::jsonb) AS contacts,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+             'ref',    invoice.ref,
+             'status', invoice.status::text,
+             'amount', app._money(COALESCE(invoice.total_sen, 0), invoice.currency::text))
+           || CASE WHEN invoice.due_at IS NULL OR invoice.due_at >= CURRENT_DATE
+                   THEN '{}'::jsonb
+                   ELSE pg_catalog.jsonb_build_object('daysOverdue',
+                          (CURRENT_DATE - invoice.due_at)) END
+           ORDER BY invoice.issued_at DESC NULLS LAST)
+      FROM core.invoices AS invoice
+     WHERE invoice.tenant_id = org.tenant_id
+       AND invoice.organisation_id = org.id
+       AND invoice.voided_at IS NULL), '[]'::jsonb) AS invoices,
+  CASE WHEN org.hrdc_employer_code IS NULL THEN NULL ELSE
+    pg_catalog.jsonb_build_object(
+      'employerCode',  org.hrdc_employer_code,
+      'levyAvailable', app._money(COALESCE((
+          SELECT statement.levy_available_sen FROM core.hrdc_levy_statements AS statement
+           WHERE statement.tenant_id = org.tenant_id AND statement.organisation_id = org.id
+           ORDER BY statement.as_of DESC LIMIT 1), 0), 'MYR'),
+      'packets', COALESCE((
+          SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                   'ref',   packet.ref,
+                   'state', packet.panel_state::text)
+                 || CASE WHEN packet.deadline_at IS NULL THEN '{}'::jsonb
+                         ELSE pg_catalog.jsonb_build_object('daysRemaining',
+                                (packet.deadline_at::date - CURRENT_DATE)) END
+                 ORDER BY packet.deadline_at NULLS LAST)
+            FROM core.hrdc_packets AS packet
+           WHERE packet.tenant_id = org.tenant_id
+             AND packet.organisation_id = org.id
+             AND packet.voided_at IS NULL), '[]'::jsonb))
+  END AS hrdc
+FROM core.organisations AS org;
+
+CREATE OR REPLACE VIEW core.v_budgets
+WITH (security_invoker = true) AS
+SELECT rows.scope,
+       rows.key,
+       app._money(rows.cap_sen,   rows.currency) AS cap,
+       app._money(rows.spend_sen, rows.currency) AS spend,
+       rows.state
+  FROM app._budget_rows() AS rows;
+
+CREATE OR REPLACE VIEW core.v_model_tiers
+WITH (security_invoker = true) AS
+SELECT tier.tier_key                              AS key,
+       tier.model,
+       tier.provider,
+       tier.routing,
+       tier.fallback_chain                        AS "fallbackChain",
+       tier.cache_strategy                        AS "cacheStrategy",
+       tier.max_output_tokens                     AS "maxOutputTokens",
+       tier.allowed_hours                         AS "allowedHours",
+       app._money(tier.monthly_cap_sen, tier.currency::text) AS "monthlyCap",
+       tier.status,
+       -- `degradation` is OPTIONAL and is emitted only when the tier is
+       -- actually degraded: an object full of nulls beside a healthy tier
+       -- reads as a fault that is not there.
+       CASE WHEN tier.degraded_since IS NULL THEN NULL
+            ELSE pg_catalog.jsonb_build_object(
+                   'since',  tier.degraded_since,
+                   'reason', tier.degraded_reason,
+                   'activeFallbackTier', tier.active_fallback_tier)
+       END                                        AS degradation
+  FROM app._model_tier_rows() AS tier;
+
+-- ═══ 2b · The two row sources 020 added, now that nothing reads them ═══════
+
+DROP FUNCTION IF EXISTS core.ai_budget_rows();
+DROP FUNCTION IF EXISTS core.ai_model_tier_rows();
+
 -- ═══ 3 · 018's grants on what was restored ═════════════════════════════════
 
 REVOKE ALL ON FUNCTION core.list_approvals(jsonb, text, jsonb, text) FROM PUBLIC, anon;
@@ -395,6 +553,29 @@ GRANT EXECUTE ON FUNCTION core.list_approvals(jsonb, text, jsonb, text) TO authe
 GRANT EXECUTE ON FUNCTION core.get_approval(text)                      TO authenticated;
 GRANT EXECUTE ON FUNCTION core.get_audit(text, text)                   TO authenticated;
 
+
+-- 018's view grants and comments.
+REVOKE ALL ON core.v_budgets      FROM PUBLIC, anon;
+REVOKE ALL ON core.v_model_tiers  FROM PUBLIC, anon;
+REVOKE ALL ON core.v_organisation_relations FROM PUBLIC, anon;
+GRANT SELECT ON core.v_budgets     TO authenticated;
+GRANT SELECT ON core.v_model_tiers TO authenticated;
+GRANT SELECT ON core.v_organisation_relations TO authenticated;
+
+COMMENT ON VIEW core.v_budgets IS
+  'Closes 014 §4''s carried defect. core.budget_status is security_invoker and '
+  'reads app.usage_rollup, which authenticated cannot reach, so it is '
+  'unreadable no matter what is granted on it. This view carries the name '
+  'rpcClient.ts actually reads (VIEW_READS.aiBudgets) and crosses the app '
+  'boundary through a definer function that re-derives the tenant itself. 018.';
+
+COMMENT ON VIEW core.v_organisation_relations IS
+  'The §5 organisation relations panel, one row per organisation, keyed '
+  'organisation_id. security_invoker=true is LOAD-BEARING: without it the view '
+  'runs as its owner and returns every tenant''s rows. Read by rpcClient.ts as '
+  '.from("v_organisation_relations").select("*").match({organisation_id}); an '
+  'empty result is NOT_FOUND because the contract types this as a record.';
+
 -- ═══ 4 · Verify ════════════════════════════════════════════════════════════
 
 DO $verify$
@@ -403,6 +584,12 @@ BEGIN
      OR pg_catalog.strpos(app._body_sql('core.get_approval(text)'::regprocedure), '''diffHash''') > 0
      OR pg_catalog.strpos(app._body_sql('core.get_audit(text,text)'::regprocedure), 'APPROVAL_REQUEST') > 0 THEN
     RAISE EXCEPTION '020 rollback verify: a 020 body is still in place';
+  END IF;
+  IF pg_catalog.to_regclass('core.v_templates') IS NOT NULL
+     OR pg_catalog.to_regprocedure('core.ai_budget_rows()') IS NOT NULL
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+                 WHERE attrelid = 'core.v_organisation_relations'::regclass AND attname = 'organisation_ref') THEN
+    RAISE EXCEPTION '020 rollback verify: a 020 view or row source is still in place';
   END IF;
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS p
         JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace

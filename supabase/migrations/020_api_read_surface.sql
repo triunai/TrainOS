@@ -18,7 +18,9 @@
 -- contract (`packages/contract/src/actions.ts`, `ApprovalRequest.diffHash`,
 -- origin/main) requires the field on both the list row and the detail.
 -- `core.v_approval_requests` already selects `diff_hash` (011:573, NOT NULL).
--- The change is one key in each projection.
+-- The change is one key in each projection. The list also accepts the
+-- contract's `value.amount` filter (the inbox's high-value toggle sends it, in
+-- sen), which 018's whitelist refused as VALIDATION_FAILED.
 --
 -- decide_approval keeps its 014 signature `(p_approval_id uuid, …)`. It does
 -- NOT accept a ref. The web passes `ApprovalDetail.id`. Widening the argument
@@ -45,6 +47,20 @@
 -- REVOKEd from `authenticated`. test_018 only checked `has_table_privilege`.
 -- Measured on the hosted-like shim: `SELECT count(*) FROM core.v_budgets` as
 -- `authenticated` gives `permission denied for function _budget_rows`.
+--
+-- ── DEFECT 4 · FOURTEEN VIEW_READS NAME VIEWS THAT DO NOT EXIST ────────────
+--
+-- See §5. `rpcClient.ts` `VIEW_READS` names eighteen `core.v_*` reads, and 018
+-- built three. Every other one answered PGRST205. §5 builds the fourteen the
+-- web calls. `v_pipeline_configs` has no caller and is not built. The web's
+-- consent read moves to `v_contact_channel_consents`, because 005's view is
+-- snake_case and is not renamed under its other readers.
+--
+-- NOT BUILT, and reported rather than stubbed: `core.me_profile` (018's own
+-- reasoning stands — `MeProfile` requires location, jobTitle, department,
+-- staffNumber and a session block that no table carries) and the three
+-- dashboard RPCs (no metric definition or hours-saved baseline exists to
+-- compute them from).
 --
 -- ── AUTHORIZATION ON WHAT THIS FILE REPLACES ───────────────────────────────
 --
@@ -80,7 +96,9 @@
 --  4 CALL SITES. `list_approvals`: approvals/api.ts, tasks/api.ts,
 --    agents/api.ts. `get_approval`: approvals/api.ts, proposals/api.ts.
 --    `get_audit`: approvals/api.ts (`"approvals"`). Views: VIEW_READS in
---    rpcClient.ts.
+--    rpcClient.ts, one read method each. `core.ai_budget_rows` and
+--    `core.ai_model_tier_rows` have no direct call site; each is read only
+--    through its view.
 --  5 CASTS. No TypeScript in this migration.
 --  6 RELOAD. All reads. No idempotency surface.
 --  7 PUBLIC ROUTES. Nothing is granted to anon.
@@ -89,9 +107,13 @@
 --
 -- Additive for the client: a client that ignores `diffHash` is unaffected, and
 -- `get_audit` still accepts every string it accepted before. Apply before the
--- web change that sends `detail.id` + `detail.diffHash`. Needs no hosted
--- privilege beyond what 018 needed: every statement is CREATE OR REPLACE on
--- objects the migration role owns, or a new object in `core`.
+-- web change that sends `detail.id` + `detail.diffHash`. The two view shape
+-- changes (`v_model_tiers.allowedHours`, `degradation.activeFallback`) are
+-- breaking only in principle: before 020 no client could read that view at all.
+-- Needs no hosted privilege beyond what 018 needed: every statement is CREATE
+-- OR REPLACE or DROP VIEW on an object the migration role owns (018's), or a
+-- new object in `core`. Nothing is created in `public`, so Supabase's
+-- `public` default ACLs do not apply.
 --
 -- Spine untouched: no action type, no handler, no branch in the envelope.
 -- `core.decide_approval` and `core.bulk_decide_approvals` are 014's and are
@@ -203,7 +225,10 @@ BEGIN
               ('slaBreached',  'sla_breached',  'bool'),
               ('slaDueAt',     'sla_due_at',    'ts'),
               ('policyId',     'policy_id',     'text'),
-              ('targetRef',    'target_ref',    'text')
+              ('targetRef',    'target_ref',    'text'),
+              -- 020 · the contract's high-value toggle (ApprovalInbox) filters on
+              -- the Money amount, in sen.
+              ('value.amount', 'value_sen',     'number')
             ) AS allowed(field, column_name, kind)
      WHERE allowed.field = v_field;
     IF v_column IS NULL THEN
@@ -540,6 +565,670 @@ BEGIN
 END;
 $fn$;
 
+-- ═══ 4 · The three 018 views a client could not read ═══════════════════════
+--
+-- THE MECHANISM. Under `security_invoker = true` every function a view calls is
+-- checked against the QUERYING role. 018's three views call `app._money`
+-- (all three), `app._budget_rows` and `app._model_tier_rows`, and 018 REVOKEd
+-- all of them from `authenticated`. So a browser read raised 42501, which the
+-- client maps to UNAUTHENTICATED: a signed-in user looked signed out.
+-- `v_budgets` and `v_model_tiers` failed on every read, and
+-- `v_organisation_relations` failed as soon as one organisation row was visible.
+--
+-- THE FIX KEEPS `app` CLOSED. Nothing in `app` is granted to `authenticated`:
+--   * `app._money` is inlined as `jsonb_build_object('amount', …, 'currency', …)`.
+--     Every call site already COALESCEs the amount, so the null branch of
+--     `_money` was unreachable in these bodies.
+--   * The two definer row sources move to `core.ai_budget_rows()` and
+--     `core.ai_model_tier_rows()`. Each one derives the tenant itself and returns
+--     no rows to a caller without the permission (`ai:budget:read`,
+--     `ai:tier:read`). Only these are granted to `authenticated`. 018's
+--     `app._budget_rows` / `app._model_tier_rows` are left in place and still
+--     revoked (test_018 T21b counts them by name).
+--
+-- SHAPE FIXES ON THE WAY THROUGH, each against `packages/contract`:
+--   * `v_model_tiers."allowedHours"` was the raw `bit(24)` column, which reaches
+--     the wire as a 24-character string. The contract's `AllowedHourWindow[]` is
+--     `[start, end]` pairs. It is now derived from the bits as half-open runs of
+--     set hours. A type change is not expressible through CREATE OR REPLACE
+--     VIEW, so this view is dropped and re-created, and its grant restated.
+--   * `degradation.activeFallbackTier` becomes `activeFallback`
+--     (`TierDegradation.activeFallback`).
+--   * `spend` is added (`ModelTier.spend`), read from the tier's TIER budget.
+--   * `v_organisation_relations` gains `organisation_ref` as its LAST column
+--     (CREATE OR REPLACE VIEW may only append), so the client can match on the
+--     ref its route carries. It also gains the `organisation:read` predicate.
+--
+-- ═══ 5 · The VIEW_READS the client names and 001–019 never built ═══════════
+--
+-- `apps/web/src/shared/api/rpcClient.ts` `VIEW_READS` reads each of these as
+-- `.from(name).select("*")`, so a column name IS the contract key: camelCase,
+-- quoted. Match keys the client passes to `.match()` stay snake_case. Every view:
+--   * is `security_invoker = true`, so 014's tenant policies apply to the caller
+--     (014 §4 re-asserts this for every `core` view);
+--   * calls no `app` function except `app.has_permission`, which 002 grants to
+--     `authenticated` precisely so predicates can evaluate it;
+--   * returns NO ROWS to a caller without the 002 read permission. A view has
+--     no FORBIDDEN channel. Empty is the answer RLS would give, and it is the
+--     same answer for every id.
+--
+-- A contract field marked optional (`?`) is a column that is NULL when absent.
+-- A view cannot omit a key per row.
+--
+-- Two views reuse an 018 projection rather than re-writing it:
+-- `v_programmes` over `core.get_programme` and `v_compliance_rules` over
+-- `core.get_compliance_rule`. A second copy of a projection drifts from the
+-- first. Each row calls the RPC as the invoker, and rows the RPC refuses are
+-- dropped.
+--
+-- `v_pipeline_configs` is NOT built: nothing in the web calls it
+-- (`get_pipeline_config` is the RPC every screen uses).
+
+CREATE OR REPLACE VIEW core.v_organisation_relations
+WITH (security_invoker = true) AS
+SELECT
+  org.tenant_id,
+  org.id AS organisation_id,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+             'ref',   engagement.ref,
+             'title', engagement.title,
+             'dates', COALESCE(engagement.starts_on::text, '') ||
+                      CASE WHEN engagement.ends_on IS NULL THEN ''
+                           ELSE '/' || engagement.ends_on::text END,
+             'value', pg_catalog.jsonb_build_object('amount', COALESCE(engagement.value_sen, 0),
+                        'currency', COALESCE(pg_catalog.rtrim(engagement.currency::text), 'MYR')),
+             -- STAGE NAMES AND ORDER FROM `core.pipeline_steps`, never a
+             -- hardcoded list: the lifecycle strip renders whatever the
+             -- engagement's own pipeline configures, in `position` order.
+             'lifecycle', COALESCE((
+               SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                        'key',   step.step_key,
+                        'label', step.label,
+                        'state', COALESCE(state.state::text, 'PENDING'))
+                      || CASE WHEN state.at IS NULL THEN '{}'::jsonb
+                              ELSE pg_catalog.jsonb_build_object('at', state.at) END
+                      || CASE WHEN state.note IS NULL THEN '{}'::jsonb
+                              ELSE pg_catalog.jsonb_build_object('note', state.note) END
+                      || CASE WHEN state.target_ref IS NULL THEN '{}'::jsonb
+                              ELSE pg_catalog.jsonb_build_object('ref', state.target_ref) END
+                      ORDER BY step.position)
+                 FROM core.pipeline_steps AS step
+                 LEFT JOIN core.engagement_step_states AS state
+                        ON state.tenant_id = engagement.tenant_id
+                       AND state.engagement_id = engagement.id
+                       AND state.pipeline_step_id = step.id
+                WHERE step.tenant_id = engagement.tenant_id
+                  AND step.pipeline_id = engagement.pipeline_id), '[]'::jsonb))
+           ORDER BY engagement.created_at DESC)
+      FROM core.engagements AS engagement
+     WHERE engagement.tenant_id = org.tenant_id
+       AND engagement.organisation_id = org.id), '[]'::jsonb) AS engagements,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+             'ref',  contact.ref,
+             'name', contact.name,
+             'role', COALESCE(contact.job_title, ''),
+             'primary', contact.is_primary,
+             'consent', pg_catalog.jsonb_build_object(
+               'email', COALESCE((SELECT pg_catalog.bool_or(c.granted) FROM core.contact_consents AS c
+                                   WHERE c.tenant_id = contact.tenant_id AND c.contact_id = contact.id
+                                     AND c.channel = 'EMAIL' AND c.withdrawn_at IS NULL), false),
+               'whatsapp', COALESCE((SELECT pg_catalog.bool_or(c.granted) FROM core.contact_consents AS c
+                                   WHERE c.tenant_id = contact.tenant_id AND c.contact_id = contact.id
+                                     AND c.channel = 'WHATSAPP' AND c.withdrawn_at IS NULL), false)))
+           || CASE WHEN contact.pdpa_flag IS NULL THEN '{}'::jsonb
+                   ELSE pg_catalog.jsonb_build_object('pdpaFlag', contact.pdpa_flag) END
+           ORDER BY contact.is_primary DESC, contact.name)
+      FROM core.contacts AS contact
+     WHERE contact.tenant_id = org.tenant_id
+       AND contact.organisation_id = org.id
+       AND contact.redacted_at IS NULL), '[]'::jsonb) AS contacts,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+             'ref',    invoice.ref,
+             'status', invoice.status::text,
+             'amount', pg_catalog.jsonb_build_object('amount', COALESCE(invoice.total_sen, 0),
+                        'currency', COALESCE(pg_catalog.rtrim(invoice.currency::text), 'MYR')))
+           || CASE WHEN invoice.due_at IS NULL OR invoice.due_at >= CURRENT_DATE
+                   THEN '{}'::jsonb
+                   ELSE pg_catalog.jsonb_build_object('daysOverdue',
+                          (CURRENT_DATE - invoice.due_at)) END
+           ORDER BY invoice.issued_at DESC NULLS LAST)
+      FROM core.invoices AS invoice
+     WHERE invoice.tenant_id = org.tenant_id
+       AND invoice.organisation_id = org.id
+       AND invoice.voided_at IS NULL), '[]'::jsonb) AS invoices,
+  CASE WHEN org.hrdc_employer_code IS NULL THEN NULL ELSE
+    pg_catalog.jsonb_build_object(
+      'employerCode',  org.hrdc_employer_code,
+      'levyAvailable', pg_catalog.jsonb_build_object('currency', 'MYR', 'amount', COALESCE((
+          SELECT statement.levy_available_sen FROM core.hrdc_levy_statements AS statement
+           WHERE statement.tenant_id = org.tenant_id AND statement.organisation_id = org.id
+           ORDER BY statement.as_of DESC LIMIT 1), 0)),
+      'packets', COALESCE((
+          SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                   'ref',   packet.ref,
+                   'state', packet.panel_state::text)
+                 || CASE WHEN packet.deadline_at IS NULL THEN '{}'::jsonb
+                         ELSE pg_catalog.jsonb_build_object('daysRemaining',
+                                (packet.deadline_at::date - CURRENT_DATE)) END
+                 ORDER BY packet.deadline_at NULLS LAST)
+            FROM core.hrdc_packets AS packet
+           WHERE packet.tenant_id = org.tenant_id
+             AND packet.organisation_id = org.id
+             AND packet.voided_at IS NULL), '[]'::jsonb))
+  END AS hrdc,
+  -- 020 · appended (CREATE OR REPLACE VIEW may only add columns at the end).
+  org.ref AS organisation_ref
+FROM core.organisations AS org
+-- 020 · the 002 read permission; empty for a caller without it.
+WHERE (SELECT app.has_permission('organisation:read'));
+
+-- ── 4b · The AI budget and tier row sources, in core ──────────────────────
+--
+-- Same body as 018's `app._budget_rows` / `app._model_tier_rows`, plus the
+-- permission predicate. SECURITY DEFINER only to cross into `app.usage_rollup`
+-- (read by `core.budget_status`). The tenant is derived here and is never an
+-- argument. Reachable as an RPC because it sits in `core`, and that is harmless:
+-- it returns exactly what the view shows the same caller.
+
+CREATE OR REPLACE FUNCTION core.ai_budget_rows()
+RETURNS TABLE (scope text, key text, cap_sen bigint, currency text,
+               spend_sen bigint, state text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+  SELECT b.scope::text, b.key, b.cap_sen, b.currency::text, b.spend_sen, b.state::text
+    FROM core.budget_status AS b
+   WHERE b.tenant_id = app.require_tenant_id()
+     AND app.has_permission('ai:budget:read');
+$fn$;
+
+CREATE OR REPLACE FUNCTION core.ai_model_tier_rows()
+RETURNS TABLE (tier_key text, model text, provider text, routing text,
+               fallback_chain text[], cache_strategy text, max_output_tokens integer,
+               allowed_hours bit(24), monthly_cap_sen bigint, currency text,
+               status text, degraded_since timestamptz, degraded_reason text,
+               active_fallback_tier text, spend_sen bigint)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+SET statement_timeout = '10s'
+AS $fn$
+  SELECT t.tier_key, t.model, t.provider::text, t.routing::text, t.fallback_chain,
+         t.cache_strategy::text, t.max_output_tokens, t.allowed_hours,
+         t.monthly_cap_sen, t.currency::text, t.status::text,
+         t.degraded_since, t.degraded_reason, t.active_fallback_tier,
+         budget.spend_sen
+    FROM core.model_tier_status AS t
+    LEFT JOIN core.budget_status AS budget
+           ON budget.tenant_id = t.tenant_id
+          AND budget.scope = 'TIER'
+          AND budget.key = t.tier_key
+   WHERE t.tenant_id = app.require_tenant_id()
+     AND app.has_permission('ai:tier:read');
+$fn$;
+
+REVOKE ALL ON FUNCTION core.ai_budget_rows()     FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION core.ai_model_tier_rows() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION core.ai_budget_rows()     TO authenticated;
+GRANT EXECUTE ON FUNCTION core.ai_model_tier_rows() TO authenticated;
+
+CREATE OR REPLACE VIEW core.v_budgets
+WITH (security_invoker = true) AS
+SELECT rows.scope,
+       rows.key,
+       pg_catalog.jsonb_build_object('amount', rows.cap_sen,
+         'currency', COALESCE(pg_catalog.rtrim(rows.currency), 'MYR')) AS cap,
+       pg_catalog.jsonb_build_object('amount', rows.spend_sen,
+         'currency', COALESCE(pg_catalog.rtrim(rows.currency), 'MYR')) AS spend,
+       rows.state
+  FROM core.ai_budget_rows() AS rows;
+
+DROP VIEW core.v_model_tiers;
+
+CREATE VIEW core.v_model_tiers
+WITH (security_invoker = true) AS
+SELECT tier.tier_key                              AS key,
+       tier.model,
+       tier.provider,
+       tier.routing,
+       tier.fallback_chain                        AS "fallbackChain",
+       tier.cache_strategy                        AS "cacheStrategy",
+       tier.max_output_tokens                     AS "maxOutputTokens",
+       -- `AllowedHourWindow` is `[start, end]`: each maximal run of set bits,
+       -- half-open, bit n being MYT hour n (013:1254). All 24 set is [[0,24]].
+       (SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(run.start_hour, run.end_hour)
+                                             ORDER BY run.start_hour), '[]'::jsonb)
+          FROM (SELECT pg_catalog.min(hours.h) AS start_hour, pg_catalog.max(hours.h) + 1 AS end_hour
+                  FROM (SELECT h, h - pg_catalog.row_number() OVER (ORDER BY h) AS island
+                          FROM pg_catalog.generate_series(0, 23) AS h
+                         WHERE pg_catalog.get_bit(tier.allowed_hours, h) = 1) AS hours
+                 GROUP BY hours.island) AS run)  AS "allowedHours",
+       CASE WHEN tier.monthly_cap_sen IS NULL THEN NULL
+            ELSE pg_catalog.jsonb_build_object('amount', tier.monthly_cap_sen,
+                   'currency', COALESCE(pg_catalog.rtrim(tier.currency), 'MYR')) END AS "monthlyCap",
+       CASE WHEN tier.spend_sen IS NULL THEN NULL
+            ELSE pg_catalog.jsonb_build_object('amount', tier.spend_sen,
+                   'currency', COALESCE(pg_catalog.rtrim(tier.currency), 'MYR')) END AS spend,
+       tier.status,
+       CASE WHEN tier.degraded_since IS NULL THEN NULL
+            ELSE pg_catalog.jsonb_build_object(
+                   'since',          tier.degraded_since,
+                   'reason',         tier.degraded_reason,
+                   'activeFallback', tier.active_fallback_tier)
+       END                                        AS degradation
+  FROM core.ai_model_tier_rows() AS tier;
+
+REVOKE ALL ON core.v_budgets     FROM PUBLIC, anon;
+REVOKE ALL ON core.v_model_tiers FROM PUBLIC, anon;
+GRANT SELECT ON core.v_budgets     TO authenticated;
+GRANT SELECT ON core.v_model_tiers TO authenticated;
+
+COMMENT ON VIEW core.v_budgets IS
+  'VIEW_READS.aiBudgets (contract Budget). security_invoker; rows come from '
+  'core.ai_budget_rows(), a definer that derives the tenant and requires '
+  'ai:budget:read. 018, repaired by 020 so authenticated can read it.';
+COMMENT ON VIEW core.v_model_tiers IS
+  'VIEW_READS.aiTiers (contract ModelTier). security_invoker; rows come from '
+  'core.ai_model_tier_rows(), a definer that derives the tenant and requires '
+  'ai:tier:read. allowedHours is [start,end) windows derived from the bit(24). 020.';
+
+-- ── 5a · Templates, policies, saved views ──────────────────────────────────
+
+CREATE VIEW core.v_templates
+WITH (security_invoker = true) AS
+SELECT template.id::text                     AS id,
+       template.template_type::text          AS type,
+       template.version,
+       template.label,
+       COALESCE(template.merge_fields, ARRAY[]::text[]) AS "mergeFields",
+       (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                 'n', section.n, 'title', section.title, 'aiEnabled', section.ai_enabled)
+               ORDER BY section.n)
+          FROM core.template_sections AS section
+         WHERE section.tenant_id = template.tenant_id
+           AND section.template_id = template.id) AS sections,
+       template.category::text               AS category,
+       CASE WHEN template.rate_per_message_sen IS NULL THEN NULL
+            ELSE pg_catalog.jsonb_build_object('amount', template.rate_per_message_sen,
+                                               'currency', 'MYR') END AS "ratePerMessage"
+  FROM core.templates AS template
+ WHERE template.status <> 'RETIRED'
+   AND (SELECT app.has_permission('template:read'))
+ ORDER BY template.template_type, template.label, template.version DESC;
+
+CREATE VIEW core.v_policies
+WITH (security_invoker = true) AS
+SELECT policy.id,
+       policy.action_type                    AS "actionType",
+       policy.description,
+       policy.conditions,
+       policy.combinator,
+       policy.approver_role                  AS "approverRole",
+       policy.sla_minutes                    AS "slaMinutes",
+       policy.escalate_to_role               AS "escalateToRole",
+       policy.escalate_after_minutes         AS "escalateAfterMinutes"
+  FROM core.action_policies AS policy
+ WHERE policy.active
+   AND policy.effective_from <= pg_catalog.now()
+   AND (policy.effective_to IS NULL OR policy.effective_to > pg_catalog.now())
+   AND (SELECT app.has_permission('policy:read'))
+ ORDER BY policy.id;
+
+-- `count` is the SAME number the list header shows, because it is the list
+-- RPC's own `page.total` for that view: one filter engine, not two. LEAD has no
+-- list RPC in 001–020, so its count is NULL rather than a number nobody
+-- computed. PRIVATE views are the owner's; TEAM views the owner's team's.
+CREATE VIEW core.v_saved_views
+WITH (security_invoker = true) AS
+SELECT saved.id::text                        AS id,
+       saved.label,
+       saved.object::text                    AS object,
+       CASE saved.object::text
+         WHEN 'ENQUIRY'  THEN (core.list_enquiries('[]'::jsonb, NULL, '{"size":1}'::jsonb, saved.id::text)
+                               #>> '{data,page,total}')::integer
+         WHEN 'APPROVAL' THEN (core.list_approvals('[]'::jsonb, NULL, '{"size":1}'::jsonb, saved.id::text)
+                               #>> '{data,page,total}')::integer
+       END                                   AS count,
+       saved.is_default                      AS "isDefault",
+       saved.filters,
+       COALESCE(saved.columns, ARRAY[]::text[]) AS columns
+  FROM core.saved_views AS saved
+ WHERE saved.deleted_at IS NULL
+   AND (saved.visibility = 'TENANT'
+        OR saved.owner_id = (SELECT auth.uid())
+        OR (saved.visibility = 'TEAM'
+            AND saved.owner_id = ANY ((SELECT app.my_team_user_ids())::uuid[])))
+   AND (SELECT app.has_permission('view:read'))
+ ORDER BY saved.object, saved.is_default DESC, saved.label;
+
+-- ── 5b · People: trainers, contacts, consent ───────────────────────────────
+
+CREATE VIEW core.v_trainers
+WITH (security_invoker = true) AS
+SELECT trainer.id::text                      AS id,
+       trainer.ref,
+       trainer.name,
+       trainer.email::text                   AS email,
+       trainer.band::text                    AS bands,
+       trainer.ttt_certified                 AS "tttCertified",
+       trainer.ttt_ref                       AS "tttRef",
+       trainer.ttt_valid_to                  AS "tttValidTo",
+       trainer.hrd_tdf                       AS "hrdTdf",
+       trainer.rating,
+       COALESCE((SELECT pg_catalog.array_agg(programme.ref ORDER BY programme.ref)
+                   FROM core.programme_trainers AS pool
+                   JOIN core.programmes AS programme
+                     ON programme.tenant_id = pool.tenant_id AND programme.id = pool.programme_id
+                  WHERE pool.tenant_id = trainer.tenant_id AND pool.trainer_id = trainer.id),
+                ARRAY[]::text[])             AS "programmeRefs",
+       COALESCE((SELECT pg_catalog.array_agg(DISTINCT day::date::text ORDER BY day::date::text)
+                   FROM core.trainer_bookings AS booking
+                  CROSS JOIN LATERAL pg_catalog.generate_series(
+                          booking.starts_on::timestamp, booking.ends_on::timestamp, interval '1 day') AS day
+                  WHERE booking.tenant_id = trainer.tenant_id
+                    AND booking.trainer_id = trainer.id
+                    AND booking.state IN ('SOFT_HOLD','CONFIRMED')),
+                ARRAY[]::text[])             AS "bookedDates",
+       (SELECT pg_catalog.max(engagement.ends_on)::timestamptz
+          FROM core.trainer_bookings AS booking
+          JOIN core.engagements AS engagement
+            ON engagement.tenant_id = booking.tenant_id AND engagement.id = booking.engagement_id
+         WHERE booking.tenant_id = trainer.tenant_id
+           AND booking.trainer_id = trainer.id
+           AND booking.state = 'CONFIRMED'
+           AND engagement.status IN ('DELIVERED','CLOSED')) AS "lastDeliveredAt"
+  FROM core.trainers AS trainer
+ WHERE trainer.status <> 'RETIRED'
+   AND (SELECT app.has_permission('trainer:read'))
+ ORDER BY trainer.name;
+
+CREATE VIEW core.v_contacts
+WITH (security_invoker = true) AS
+SELECT contact.id::text                      AS id,
+       contact.ref,
+       contact.created_at                    AS "createdAt",
+       contact.updated_at                    AS "updatedAt",
+       pg_catalog.jsonb_build_object(
+         'kind', contact.created_by_kind::text,
+         'id',   contact.created_by_id,
+         'name', COALESCE(contact.created_by_name, contact.created_by_id)) AS "createdBy",
+       organisation.ref                      AS "organisationRef",
+       contact.name,
+       COALESCE(contact.job_title, '')       AS role,
+       contact.email::text                   AS email,
+       contact.phone,
+       contact.is_primary                    AS "primary",
+       pg_catalog.jsonb_build_object(
+         'email',    COALESCE((SELECT consent.effective_granted FROM core.v_contact_consent_current AS consent
+                                WHERE consent.tenant_id = contact.tenant_id AND consent.contact_id = contact.id
+                                  AND consent.channel = 'EMAIL'), false),
+         'whatsapp', COALESCE((SELECT consent.effective_granted FROM core.v_contact_consent_current AS consent
+                                WHERE consent.tenant_id = contact.tenant_id AND consent.contact_id = contact.id
+                                  AND consent.channel = 'WHATSAPP'), false)) AS consent,
+       contact.pdpa_flag                     AS "pdpaFlag"
+  FROM core.contacts AS contact
+  JOIN core.organisations AS organisation
+    ON organisation.tenant_id = contact.tenant_id AND organisation.id = contact.organisation_id
+ WHERE contact.redacted_at IS NULL
+   AND (SELECT app.has_permission('contact:read'))
+ ORDER BY contact.name;
+
+-- 005's `v_contact_consent_current` is the ledger summary other packs read, with
+-- snake_case columns and both `granted` and `effective_granted`. It is not
+-- renamed. This view is the contract's `ChannelConsent`, where `granted` MEANS
+-- effective: a withdrawn consent is not a consent.
+CREATE VIEW core.v_contact_channel_consents
+WITH (security_invoker = true) AS
+SELECT consent.channel::text                 AS channel,
+       consent.effective_granted             AS granted,
+       consent.recorded_at                   AS "recordedAt",
+       consent.contact_id,
+       contact.ref                           AS contact_ref
+  FROM core.v_contact_consent_current AS consent
+  JOIN core.contacts AS contact
+    ON contact.tenant_id = consent.tenant_id AND contact.id = consent.contact_id
+ WHERE contact.redacted_at IS NULL
+   AND (SELECT app.has_permission('contact:consent:read'))
+ ORDER BY consent.contact_id, consent.channel;
+
+-- ── 5c · Catalogue: programmes and their deliveries ────────────────────────
+
+CREATE VIEW core.v_programmes
+WITH (security_invoker = true) AS
+SELECT d ->> 'id'          AS id,
+       d ->> 'ref'         AS ref,
+       d -> 'createdAt'    AS "createdAt",
+       d -> 'updatedAt'    AS "updatedAt",
+       d -> 'createdBy'    AS "createdBy",
+       d ->> 'name'        AS name,
+       d ->> 'category'    AS category,
+       d -> 'days'         AS days,
+       d -> 'version'      AS version,
+       d ->> 'status'      AS status,
+       d ->> 'hrdcScheme'  AS "hrdcScheme",
+       d -> 'hrdcClaimable' AS "hrdcClaimable",
+       d -> 'listPrice'    AS "listPrice",
+       d -> 'listPricePax' AS "listPricePax",
+       d -> 'floorPrice'   AS "floorPrice",
+       d -> 'floorMarginRate' AS "floorMarginRate",
+       d -> 'outcomes'     AS outcomes,
+       d -> 'modules'      AS modules,
+       d -> 'pricingTiers' AS "pricingTiers",
+       d -> 'trainerPool'  AS "trainerPool",
+       d -> 'materials'    AS materials,
+       d -> 'stats'        AS stats
+  FROM core.programmes AS programme
+ CROSS JOIN LATERAL (SELECT core.get_programme(programme.id::text) AS envelope) AS read
+ CROSS JOIN LATERAL (SELECT read.envelope -> 'data' AS d) AS projected
+ WHERE programme.archived_at IS NULL
+   AND read.envelope -> 'success' = 'true'::jsonb
+   AND (SELECT app.has_permission('programme:read'))
+ ORDER BY programme.name;
+
+-- A delivery is an engagement of the programme that has been delivered.
+-- `evaluation` is on the 5-point scale the programme rollup uses
+-- (`programmes.average_evaluation` numeric(3,2); fixture 4.6), converted from
+-- `evaluation_responses.overall_score`, which 017 bounds to 0..1. NULL when no
+-- response has been submitted.
+CREATE VIEW core.v_programme_deliveries
+WITH (security_invoker = true) AS
+SELECT engagement.programme_id,
+       programme.ref                         AS programme_ref,
+       engagement.ref                        AS "engagementRef",
+       organisation.ref                      AS "organisationRef",
+       organisation.name                     AS "organisationName",
+       COALESCE(engagement.starts_on::text, '') ||
+         CASE WHEN engagement.ends_on IS NULL THEN ''
+              ELSE '/' || engagement.ends_on::text END AS dates,
+       (SELECT pg_catalog.count(*)::integer FROM core.participants AS participant
+         WHERE participant.tenant_id = engagement.tenant_id
+           AND participant.engagement_id = engagement.id
+           AND participant.withdrawn_at IS NULL) AS pax,
+       (SELECT pg_catalog.round(pg_catalog.avg(response.overall_score) * 5, 1)
+          FROM core.evaluation_responses AS response
+         WHERE response.tenant_id = engagement.tenant_id
+           AND response.engagement_id = engagement.id) AS evaluation,
+       pg_catalog.jsonb_build_object('amount', COALESCE(engagement.value_sen, 0),
+         'currency', COALESCE(pg_catalog.rtrim(engagement.currency::text), 'MYR')) AS value
+  FROM core.engagements AS engagement
+  JOIN core.programmes AS programme
+    ON programme.tenant_id = engagement.tenant_id AND programme.id = engagement.programme_id
+  JOIN core.organisations AS organisation
+    ON organisation.tenant_id = engagement.tenant_id AND organisation.id = engagement.organisation_id
+ WHERE engagement.status IN ('DELIVERED','CLOSED')
+   AND (SELECT app.has_permission('programme:read'))
+ ORDER BY engagement.starts_on DESC NULLS LAST;
+
+-- ── 5d · HRD Corp, collections, compliance ─────────────────────────────────
+
+-- One row per live packet with a deadline. `status` is the packet's panel
+-- state in the contract's spelling (`DEADLINE_AT_RISK` → `AT_RISK`).
+CREATE VIEW core.v_hrdc_deadlines
+WITH (security_invoker = true) AS
+SELECT engagement.ref                        AS "engagementRef",
+       organisation.ref                      AS "organisationRef",
+       packet.deadline_at                    AS "deadlineAt",
+       (packet.deadline_at::date - CURRENT_DATE) AS "daysRemaining",
+       CASE packet.panel_state::text
+         WHEN 'DEADLINE_AT_RISK' THEN 'AT_RISK'
+         ELSE packet.panel_state::text END   AS status,
+       COALESCE(packet.deadline_severity::text, 'INFO') AS severity
+  FROM core.hrdc_packets AS packet
+  JOIN core.engagements AS engagement
+    ON engagement.tenant_id = packet.tenant_id AND engagement.id = packet.engagement_id
+  JOIN core.organisations AS organisation
+    ON organisation.tenant_id = packet.tenant_id AND organisation.id = packet.organisation_id
+ WHERE packet.voided_at IS NULL
+   AND packet.deadline_at IS NOT NULL
+   AND (SELECT app.has_permission('hrdc:read'))
+ ORDER BY packet.deadline_at;
+
+CREATE VIEW core.v_collection_rules
+WITH (security_invoker = true) AS
+SELECT rule.stage::text                      AS stage,
+       rule.trigger_days_overdue             AS "afterDays",
+       rule.channel::text                    AS channel,
+       rule.autonomy::text                   AS autonomy,
+       rule.requires_role::text              AS "requiresApprovalFromRole"
+  FROM core.collection_rules AS rule
+ WHERE (SELECT app.has_permission('collection:read'))
+ ORDER BY rule.trigger_days_overdue;
+
+CREATE VIEW core.v_compliance_rules
+WITH (security_invoker = true) AS
+SELECT d ->> 'id'          AS id,
+       d ->> 'scheme'      AS scheme,
+       d ->> 'subject'     AS subject,
+       d -> 'expression'   AS expression,
+       d -> 'effectiveFrom' AS "effectiveFrom",
+       d -> 'effectiveTo'  AS "effectiveTo",
+       d ->> 'status'      AS status,
+       d -> 'source'       AS source,
+       d ->> 'supersedesId'   AS "supersedesId",
+       d ->> 'supersededById' AS "supersededById",
+       d -> 'usedByChecks' AS "usedByChecks",
+       d -> 'affectedOpenEngagements' AS "affectedOpenEngagements",
+       d -> 'verifiedBy'   AS "verifiedBy",
+       d -> 'verifiedAt'   AS "verifiedAt",
+       d -> 'provenance'   AS provenance
+  FROM core.compliance_rules AS rule
+ CROSS JOIN LATERAL (SELECT core.get_compliance_rule(rule.id::text) AS envelope) AS read
+ CROSS JOIN LATERAL (SELECT read.envelope -> 'data' AS d) AS projected
+ WHERE read.envelope -> 'success' = 'true'::jsonb
+   AND (SELECT app.has_permission('compliance:rule:read'))
+ ORDER BY rule.scheme_key, rule.rule_code, rule.effective_from;
+
+CREATE VIEW core.v_rule_change_sets
+WITH (security_invoker = true) AS
+SELECT change_set.document_id                AS "documentId",
+       change_set.title,
+       change_set.published_at               AS "publishedAt",
+       change_set.ingested_at                AS "ingestedAt",
+       pg_catalog.jsonb_build_object(
+         'model',      change_set.extracted_by_model,
+         'confidence', change_set.extraction_confidence,
+         'runId',      change_set.run_id::text) AS "extractedBy",
+       change_set.effective_from             AS "effectiveFrom",
+       COALESCE((
+         SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                  'id',           change.id::text,
+                  'op',           change.op::text,
+                  'targetRuleId', change.target_rule_id::text,
+                  'newRuleId',    change.new_rule_id::text,
+                  'before',       change.before_text,
+                  'after',        change.after_text,
+                  'sourceSpan',   pg_catalog.jsonb_build_object(
+                                    'page',    change.source_page,
+                                    'section', change.source_section,
+                                    'excerpt', change.source_excerpt),
+                  'confidence',   change.confidence,
+                  'affectedEngagements', COALESCE((
+                    SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('ref', engagement.ref)
+                                                ORDER BY engagement.ref)
+                      FROM core.rule_change_affected_engagements AS affected
+                      JOIN core.engagements AS engagement
+                        ON engagement.tenant_id = affected.tenant_id
+                       AND engagement.id = affected.engagement_id
+                     WHERE affected.tenant_id = change.tenant_id
+                       AND affected.rule_change_id = change.id), '[]'::jsonb),
+                  'status',       change.status)
+                ORDER BY change.change_key, change.id)
+           FROM core.rule_changes AS change
+          WHERE change.tenant_id = change_set.tenant_id
+            AND change.rule_change_set_id = change_set.id), '[]'::jsonb) AS changes
+  FROM core.rule_change_sets AS change_set
+ WHERE (SELECT app.has_permission('compliance:rule:read'))
+ ORDER BY change_set.ingested_at DESC;
+
+-- ── 5e · Agents and knowledge ──────────────────────────────────────────────
+
+-- `AgentEval` is a dashboard ROW per agent, not an evaluation record: the mean
+-- score and sample size over the trailing 30 days, labelled `30d` as the
+-- fixture labels it.
+CREATE VIEW core.v_agent_evals
+WITH (security_invoker = true) AS
+SELECT eval.agent_id                         AS "agentId",
+       '30d'::text                           AS "window",
+       pg_catalog.round(pg_catalog.avg(eval.score), 3) AS score,
+       pg_catalog.count(*)::integer          AS "sampleSize",
+       NULL::jsonb                           AS provenance
+  FROM core.evals AS eval
+ WHERE eval.evaluated_at >= pg_catalog.now() - interval '30 days'
+   AND eval.score IS NOT NULL
+   AND (SELECT app.has_permission('eval:read'))
+ GROUP BY eval.agent_id
+ ORDER BY eval.agent_id;
+
+CREATE VIEW core.v_knowledge_sources
+WITH (security_invoker = true) AS
+SELECT source.id::text                       AS id,
+       source.name,
+       source.source_type::text              AS type,
+       source.version,
+       source.ingested_at                    AS "ingestedAt",
+       source.chunk_count                    AS chunks,
+       source.embedding_status::text         AS "embeddingStatus",
+       source.last_checked_at                AS "lastCheckedAt",
+       source.monitor_status::text           AS "monitorStatus",
+       source.content_hash                   AS "contentHash",
+       COALESCE(source.retrieval_scopes::text[], ARRAY[]::text[]) AS "retrievalScopes",
+       (SELECT change_set.id::text FROM core.rule_change_sets AS change_set
+         WHERE change_set.tenant_id = source.tenant_id
+           AND change_set.knowledge_source_id = source.id
+         ORDER BY change_set.ingested_at DESC, change_set.id DESC
+         LIMIT 1)                            AS "ruleChangeSetId"
+  FROM core.knowledge_sources AS source
+ WHERE source.archived_at IS NULL
+   AND (SELECT app.has_permission('knowledge:source:read'))
+ ORDER BY source.name;
+
+DO $view_grants$
+DECLARE v_name text;
+BEGIN
+  FOREACH v_name IN ARRAY ARRAY[
+      'v_templates','v_policies','v_saved_views','v_trainers','v_contacts',
+      'v_contact_channel_consents','v_programmes','v_programme_deliveries',
+      'v_hrdc_deadlines','v_collection_rules','v_compliance_rules',
+      'v_rule_change_sets','v_agent_evals','v_knowledge_sources']
+  LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON core.%I FROM PUBLIC, anon', v_name);
+    EXECUTE pg_catalog.format('GRANT SELECT ON core.%I TO authenticated', v_name);
+    EXECUTE pg_catalog.format(
+      'COMMENT ON VIEW core.%I IS %L', v_name,
+      'VIEW_READS in apps/web/src/shared/api/rpcClient.ts; columns are the contract keys. '
+      'security_invoker, so 014''s tenant policies apply to the caller, and empty for a '
+      'caller without the 002 read permission. 020.');
+  END LOOP;
+END
+$view_grants$;
+
 -- ═══ 9 · Grants ════════════════════════════════════════════════════════════
 --
 -- CREATE OR REPLACE keeps an existing function's ACL, so these statements
@@ -631,5 +1320,70 @@ BEGIN
   END IF;
 END
 $verify$;
+
+-- ═══ 11 · $verify$ — the views a browser reads ═════════════════════════════
+
+DO $verify_views$
+DECLARE
+  v_bad text[];
+BEGIN
+  -- V5 · EVERY client-readable view is security_invoker and granted.
+  SELECT pg_catalog.array_agg(v.name ORDER BY v.name) INTO v_bad
+    FROM (VALUES ('v_organisation_relations'),('v_budgets'),('v_model_tiers'),
+                 ('v_templates'),('v_policies'),('v_saved_views'),('v_trainers'),
+                 ('v_contacts'),('v_contact_channel_consents'),('v_programmes'),
+                 ('v_programme_deliveries'),('v_hrdc_deadlines'),('v_collection_rules'),
+                 ('v_compliance_rules'),('v_rule_change_sets'),('v_agent_evals'),
+                 ('v_knowledge_sources')) AS v(name)
+    LEFT JOIN pg_catalog.pg_class AS c
+           ON c.relname = v.name AND c.relkind = 'v'
+          AND c.relnamespace = 'core'::regnamespace
+   WHERE c.oid IS NULL
+      OR NOT ('security_invoker=true' = ANY (COALESCE(c.reloptions, ARRAY[]::text[])))
+      OR NOT pg_catalog.has_table_privilege('authenticated', c.oid, 'SELECT')
+      OR pg_catalog.has_table_privilege('anon', c.oid, 'SELECT');
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION '020 verify V5: view(s) missing, not security_invoker, or wrongly granted: %', v_bad;
+  END IF;
+
+  -- V6 · NO client view depends on a function `authenticated` cannot execute.
+  -- This is the exact defect §4 repairs, asserted off pg_depend rather than
+  -- off the DDL text, so it covers every view in `core`, not only 020's.
+  SELECT pg_catalog.array_agg(DISTINCT c.relname || ' -> ' || p.oid::regprocedure::text) INTO v_bad
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_rewrite AS r ON r.ev_class = c.oid
+    JOIN pg_catalog.pg_depend AS d ON d.objid = r.oid AND d.classid = 'pg_catalog.pg_rewrite'::regclass
+                                  AND d.refclassid = 'pg_catalog.pg_proc'::regclass
+    JOIN pg_catalog.pg_proc AS p ON p.oid = d.refobjid
+   WHERE c.relnamespace = 'core'::regnamespace
+     AND c.relkind = 'v'
+     AND pg_catalog.has_table_privilege('authenticated', c.oid, 'SELECT')
+     AND NOT pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE');
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION '020 verify V6: a client-readable view calls a function authenticated cannot execute: %', v_bad;
+  END IF;
+
+  -- V7 · The two new definer row sources: posture, and nothing in app granted.
+  SELECT pg_catalog.array_agg(p.proname) INTO v_bad
+    FROM pg_catalog.pg_proc AS p
+   WHERE p.pronamespace = 'core'::regnamespace
+     AND p.proname IN ('ai_budget_rows','ai_model_tier_rows')
+     AND NOT (p.prosecdef
+              AND p.proconfig @> ARRAY['search_path=""']
+              AND p.proconfig @> ARRAY['statement_timeout=10s']
+              AND pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              AND NOT pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE'));
+  IF v_bad IS NOT NULL OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS p
+                             WHERE p.pronamespace = 'core'::regnamespace
+                               AND p.proname IN ('ai_budget_rows','ai_model_tier_rows')) <> 2 THEN
+    RAISE EXCEPTION '020 verify V7: core.ai_*_rows posture wrong: %', v_bad;
+  END IF;
+  IF pg_catalog.has_function_privilege('authenticated', 'app._money(bigint,text)'::regprocedure, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated', 'app._budget_rows()'::regprocedure, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated', 'app._model_tier_rows()'::regprocedure, 'EXECUTE') THEN
+    RAISE EXCEPTION '020 verify V7b: an app internal was granted to authenticated';
+  END IF;
+END
+$verify_views$;
 
 COMMIT;

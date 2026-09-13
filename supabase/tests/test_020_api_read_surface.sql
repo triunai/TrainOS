@@ -30,6 +30,14 @@
 --     to the approval's action request, `proposals::{ref}` with the proposal's,
 --     and the UPPER_SNAKE spelling still works.
 -- T6  anon can call none of it.
+-- T7  Seventeen views read as `authenticated` MD: every one returns rows, each
+--     row's keys are exactly the contract's, and the repaired values hold
+--     (inline money, allowedHours windows, activeFallback, effective consent,
+--     saved-view count equal to the list total, PRIVATE views hidden).
+-- T8  SALES is filtered out of the six views whose 002 permission it lacks and
+--     reads the ones it holds.
+-- T9  Another tenant's MD sees no tenant-A value through any view.
+-- T10 anon is refused every view with 42501.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -141,6 +149,22 @@ SELECT pg_catalog.set_config('a20.t1_queue2',
                                            NULL,NULL,NULL,NULL,'a20-send-2')$$)::text, true);
 RESET ROLE;
 
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0200000-0000-4000-8000-0000000000a2','a0200000-1111-4000-8000-000000000001','SALES_MANAGER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a20.t1_value',
+  pg_temp.try($$SELECT core.list_approvals('[{"field":"value.amount","op":"gte","value":1500000}]'::jsonb,
+                                           NULL, '{"size":50}'::jsonb, NULL)$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0200000-0000-4000-8000-0000000000a2','a0200000-1111-4000-8000-000000000001','SALES_MANAGER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a20.t1_value_hi',
+  pg_temp.try($$SELECT core.list_approvals('[{"field":"value.amount","op":"gte","value":1850001}]'::jsonb,
+                                           NULL, '{"size":50}'::jsonb, NULL)$$)::text, true);
+RESET ROLE;
+
 SELECT pg_catalog.set_config('a20.apv1_id',
   (SELECT approval.id::text FROM core.approval_requests AS approval WHERE approval.target_ref = 'PRO-A20-0001'), true);
 SELECT pg_catalog.set_config('a20.apv2_id',
@@ -201,7 +225,13 @@ BEGIN
   IF v_detail #>> '{value,data,diffHash}' IS DISTINCT FROM v_stored THEN
     RAISE EXCEPTION 'T1e: detail diffHash % is not the stored %', v_detail #> '{value,data,diffHash}', v_stored;
   END IF;
-  RAISE NOTICE 'T1 PASS: list rows and the detail carry diffHash equal to approval_requests.diff_hash.';
+  -- The inbox's high-value toggle filters `value.amount` (sen).
+  IF (pg_temp.got('t1_value') #>> '{value,data,page,total}')::integer IS DISTINCT FROM 2
+     OR (pg_temp.got('t1_value_hi') #>> '{value,data,page,total}')::integer IS DISTINCT FROM 0 THEN
+    RAISE EXCEPTION 'T1f: the value.amount filter did not filter: % / %',
+      pg_temp.got('t1_value'), pg_temp.got('t1_value_hi');
+  END IF;
+  RAISE NOTICE 'T1 PASS: list rows and the detail carry diffHash equal to approval_requests.diff_hash; value.amount filters.';
 END
 $t1$;
 
@@ -431,5 +461,338 @@ BEGIN
   RAISE NOTICE 'T6 PASS: anon is refused at the privilege layer.';
 END
 $t6$;
+
+-- ════════ P2 fixtures · one row behind every view, in tenant A ════════
+
+INSERT INTO core.contacts (id,tenant_id,organisation_id,name,job_title,email,is_primary,created_by_kind,created_by_id,created_by_name)
+VALUES ('a0200000-6666-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001',
+        'a0200000-2222-4000-8000-000000000001','Siti A20','HR Director','siti@a20.test',true,
+        'HUMAN','a0200000-0000-4000-8000-0000000000a1','Sales A20');
+
+INSERT INTO core.contact_consents (tenant_id,contact_id,channel,granted,recorded_at,purpose,withdrawn_at,created_by_kind,created_by_id)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-6666-4000-8000-000000000001','EMAIL',true,
+        pg_catalog.now(),'ENQUIRY_RESPONSE',NULL,'HUMAN','a0200000-0000-4000-8000-0000000000a1'),
+       ('a0200000-1111-4000-8000-000000000001','a0200000-6666-4000-8000-000000000001','WHATSAPP',true,
+        pg_catalog.now(),'ENQUIRY_RESPONSE',pg_catalog.now(),'HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.template_sections (tenant_id,template_id,n,title,ai_enabled,default_body)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-4444-4000-8000-000000000001',1,'Understanding',true,'x');
+
+INSERT INTO core.saved_views (id,tenant_id,object,label,filters,columns,is_default,owner_id,visibility,created_by_kind,created_by_id)
+VALUES ('a0200000-7777-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001','APPROVAL','Pending only',
+        '[{"field":"status","op":"eq","value":"PENDING"}]'::jsonb, ARRAY['ref'], true,
+        'a0200000-0000-4000-8000-0000000000a1','TENANT','HUMAN','a0200000-0000-4000-8000-0000000000a1'),
+       ('a0200000-7777-4000-8000-000000000002','a0200000-1111-4000-8000-000000000001','ENQUIRY','Sales private',
+        '[]'::jsonb, ARRAY['ref'], false,
+        'a0200000-0000-4000-8000-0000000000a1','PRIVATE','HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.programmes (id,tenant_id,name,category,days,version,status,hrdc_scheme,hrdc_claimable,
+  list_price_sen,list_price_pax,floor_price_sen,floor_margin_rate,currency,outcomes,created_by_kind,created_by_id)
+VALUES ('a0200000-8888-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001','Leading Teams A20','LEADERSHIP',
+        2,1,'ACTIVE','SBL_KHAS',true,4000000,25,2800000,0.3000,'MYR',ARRAY['Delegate'],'HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.trainers (id,tenant_id,name,email,band,ttt_certified,ttt_ref,hrd_tdf,hrd_tdf_valid_to,rating,status,created_by_kind,created_by_id)
+VALUES ('a0200000-9999-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001','Farah A20','farah@a20.test',
+        'A',true,'TTT-A20',true,'2028-01-01',4.70,'ACTIVE','HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.programme_trainers (tenant_id,programme_id,trainer_id,created_by_kind,created_by_id)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-8888-4000-8000-000000000001',
+        'a0200000-9999-4000-8000-000000000001','HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.engagements (id,tenant_id,organisation_id,programme_id,owner_id,pipeline_id,title,value_sen,currency,starts_on,ends_on,created_by_kind,created_by_id)
+SELECT 'a0200000-aaaa-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001',
+       'a0200000-2222-4000-8000-000000000001','a0200000-8888-4000-8000-000000000001',
+       'a0200000-0000-4000-8000-0000000000a1', pipeline.id, 'Leading Teams for Chrome', 1850000,'MYR',
+       '2026-08-10','2026-08-11','HUMAN','a0200000-0000-4000-8000-0000000000a1'
+  FROM core.pipelines AS pipeline
+ WHERE pipeline.tenant_id = 'a0200000-1111-4000-8000-000000000001' AND pipeline.object = 'ENGAGEMENT' AND pipeline.is_default;
+
+-- 011's transition gate: an engagement is born PROPOSED and walks to DELIVERED.
+UPDATE core.engagements SET status = 'CONFIRMED'   WHERE id = 'a0200000-aaaa-4000-8000-000000000001';
+UPDATE core.engagements SET status = 'SCHEDULED'   WHERE id = 'a0200000-aaaa-4000-8000-000000000001';
+UPDATE core.engagements SET status = 'IN_DELIVERY' WHERE id = 'a0200000-aaaa-4000-8000-000000000001';
+UPDATE core.engagements SET status = 'DELIVERED'   WHERE id = 'a0200000-aaaa-4000-8000-000000000001';
+
+INSERT INTO core.participants (tenant_id,engagement_id,name,created_by_kind,created_by_id)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-aaaa-4000-8000-000000000001','P One','HUMAN','a0200000-0000-4000-8000-0000000000a1'),
+       ('a0200000-1111-4000-8000-000000000001','a0200000-aaaa-4000-8000-000000000001','P Two','HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.evaluation_responses (tenant_id,engagement_id,overall_score,created_by_kind,created_by_id)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-aaaa-4000-8000-000000000001',0.900,'HUMAN','a0200000-0000-4000-8000-0000000000a1'),
+       ('a0200000-1111-4000-8000-000000000001','a0200000-aaaa-4000-8000-000000000001',0.940,'HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.trainer_bookings (tenant_id,trainer_id,engagement_id,state,starts_on,ends_on,hold_expires_at,created_by_kind,created_by_id)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-9999-4000-8000-000000000001',
+        'a0200000-aaaa-4000-8000-000000000001','SOFT_HOLD','2026-08-10','2026-08-11',pg_catalog.now() + interval '2 days','HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.hrdc_packets (tenant_id,engagement_id,organisation_id,scheme,employer_code,claim_value_sen,completeness,deadline_at,deadline_severity)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-aaaa-4000-8000-000000000001',
+        'a0200000-2222-4000-8000-000000000001','SBL_KHAS','E-A20',1850000,0.500,
+        pg_catalog.now() + interval '10 days','WARN');
+
+INSERT INTO core.collection_rules (tenant_id,stage,trigger_days_overdue,channel,autonomy)
+VALUES ('a0200000-1111-4000-8000-000000000001','REMINDER_1',7,'EMAIL','ACT_WITH_APPROVAL');
+
+INSERT INTO core.compliance_rules (id,tenant_id,rule_code,family_key,check_key,side,subject,subject_field,op,reference_kind,reference,effective_from,status)
+VALUES ('a0200000-bbbb-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001','A20-LEAD','LEAD_TIME_PUBLIC',
+        'CHK_LEAD_TIME','GRANT','Public lead time A20','training_start','GTE','FIELD','grant_approval','2026-06-15','PROPOSED');
+
+INSERT INTO core.rule_change_sets (id,tenant_id,document_id,title,published_at,ingested_at,effective_from,extracted_by_model,extraction_confidence,created_by_kind,created_by_id)
+VALUES ('a0200000-cccc-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001','DOC-A20','Circular A20',
+        '2026-09-01',pg_catalog.now(),'2026-10-01','model-x',0.910,'AGENT','agent_compliance');
+
+INSERT INTO core.rule_changes (id,tenant_id,rule_change_set_id,change_key,op,target_rule_id,after_text,confidence)
+VALUES ('a0200000-cccc-4000-8000-000000000002','a0200000-1111-4000-8000-000000000001',
+        'a0200000-cccc-4000-8000-000000000001','C1','MODIFY','a0200000-bbbb-4000-8000-000000000001','14 days',0.930);
+
+INSERT INTO core.rule_change_affected_engagements (tenant_id,rule_change_id,engagement_id)
+VALUES ('a0200000-1111-4000-8000-000000000001','a0200000-cccc-4000-8000-000000000002','a0200000-aaaa-4000-8000-000000000001');
+
+INSERT INTO core.agents (tenant_id, agent_id, name, status, principal_user_id, scopes, kill_switch, escalation_ladder)
+VALUES ('a0200000-1111-4000-8000-000000000001','agent_proposal','Proposal Agent','ACTIVE',
+        'a0200000-0000-4000-8000-0000000000a1', ARRAY['proposal:write'], false, ARRAY[]::text[]);
+
+INSERT INTO core.evals (tenant_id,agent_id,kind,score,evaluated_at)
+VALUES ('a0200000-1111-4000-8000-000000000001','agent_proposal','LIVE_SAMPLE',0.800,pg_catalog.now()),
+       ('a0200000-1111-4000-8000-000000000001','agent_proposal','LIVE_SAMPLE',0.900,pg_catalog.now());
+
+INSERT INTO core.knowledge_sources (id,tenant_id,name,version,content_hash,created_by_kind,created_by_id)
+VALUES ('a0200000-dddd-4000-8000-000000000001','a0200000-1111-4000-8000-000000000001','HRD Corp circular A20','1',
+        'sha256:a20','HUMAN','a0200000-0000-4000-8000-0000000000a1');
+
+INSERT INTO core.tier_keys (tenant_id,tier_key,label,position)
+VALUES ('a0200000-1111-4000-8000-000000000001','A20FAST','Fast',1)
+ON CONFLICT DO NOTHING;
+INSERT INTO core.model_tiers (tenant_id,tier_key,model,provider,allowed_hours,monthly_cap_sen,health,degraded_since,degraded_reason)
+VALUES ('a0200000-1111-4000-8000-000000000001','A20FAST','model-fast','ANTHROPIC',
+        B'000000001111111111000011',50000,'DEGRADED',pg_catalog.now(),'PROVIDER_5XX');
+INSERT INTO core.ai_budgets (tenant_id,scope,key,cap_sen)
+VALUES ('a0200000-1111-4000-8000-000000000001','TIER','A20FAST',50000);
+
+-- ════════ T7–T10 · The views, read the way a browser reads them ════════
+--
+-- One probe per principal: `pg_temp.snapshot()` reads every client view in its
+-- own subtransaction (`pg_temp.try`), so one view's 42501 cannot hide another's
+-- rows. There is no role or claim change inside the statement.
+
+CREATE FUNCTION pg_temp.snapshot() RETURNS jsonb
+LANGUAGE plpgsql AS $fn$
+DECLARE v_name text; v_out jsonb := '{}'::jsonb;
+BEGIN
+  FOREACH v_name IN ARRAY ARRAY[
+      'v_organisation_relations','v_budgets','v_model_tiers','v_templates','v_policies',
+      'v_saved_views','v_trainers','v_contacts','v_contact_channel_consents','v_programmes',
+      'v_programme_deliveries','v_hrdc_deadlines','v_collection_rules','v_compliance_rules',
+      'v_rule_change_sets','v_agent_evals','v_knowledge_sources']
+  LOOP
+    v_out := v_out || pg_catalog.jsonb_build_object(v_name, pg_temp.try(pg_catalog.format(
+      'SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(v)), ''[]''::jsonb) FROM core.%I AS v', v_name)));
+  END LOOP;
+  RETURN v_out;
+END;
+$fn$;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0200000-0000-4000-8000-0000000000a3','a0200000-1111-4000-8000-000000000001','MD'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a20.v_md', pg_temp.snapshot()::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0200000-0000-4000-8000-0000000000a1','a0200000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a20.v_sales', pg_temp.snapshot()::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0200000-0000-4000-8000-0000000000b1','a0200000-1111-4000-8000-000000000002','MD'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a20.v_other', pg_temp.snapshot()::text, true);
+RESET ROLE;
+
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('a20.v_anon', pg_temp.snapshot()::text, true);
+RESET ROLE;
+
+-- T7 · every view reads as `authenticated`, and each row is the contract shape.
+DO $t7$
+DECLARE
+  v      jsonb := pg_temp.got('v_md');
+  v_name text;
+  v_keys text[];
+  v_want text[];
+  v_row  jsonb;
+BEGIN
+  FOR v_name IN SELECT pg_catalog.jsonb_object_keys(v) LOOP
+    IF v -> v_name -> 'ok' <> 'true'::jsonb THEN
+      RAISE EXCEPTION 'T7a: % is not readable by authenticated MD: %', v_name, v -> v_name;
+    END IF;
+    IF pg_catalog.jsonb_array_length(v -> v_name -> 'value') = 0 THEN
+      RAISE EXCEPTION 'T7b: % returned no rows to the tenant''s MD', v_name;
+    END IF;
+  END LOOP;
+
+  -- The column set IS the wire shape under select("*"): exact, per view.
+  FOR v_name, v_want IN
+    SELECT w.name, w.keys FROM (VALUES
+      ('v_organisation_relations', ARRAY['tenant_id','organisation_id','engagements','contacts','invoices','hrdc','organisation_ref']),
+      ('v_budgets',     ARRAY['scope','key','cap','spend','state']),
+      ('v_model_tiers', ARRAY['key','model','provider','routing','fallbackChain','cacheStrategy','maxOutputTokens','allowedHours','monthlyCap','spend','status','degradation']),
+      ('v_templates',   ARRAY['id','type','version','label','mergeFields','sections','category','ratePerMessage']),
+      ('v_policies',    ARRAY['id','actionType','description','conditions','combinator','approverRole','slaMinutes','escalateToRole','escalateAfterMinutes']),
+      ('v_saved_views', ARRAY['id','label','object','count','isDefault','filters','columns']),
+      ('v_trainers',    ARRAY['id','ref','name','email','bands','tttCertified','tttRef','tttValidTo','hrdTdf','rating','programmeRefs','bookedDates','lastDeliveredAt']),
+      ('v_contacts',    ARRAY['id','ref','createdAt','updatedAt','createdBy','organisationRef','name','role','email','phone','primary','consent','pdpaFlag']),
+      ('v_contact_channel_consents', ARRAY['channel','granted','recordedAt','contact_id','contact_ref']),
+      ('v_programmes',  ARRAY['id','ref','createdAt','updatedAt','createdBy','name','category','days','version','status','hrdcScheme','hrdcClaimable','listPrice','listPricePax','floorPrice','floorMarginRate','outcomes','modules','pricingTiers','trainerPool','materials','stats']),
+      ('v_programme_deliveries', ARRAY['programme_id','programme_ref','engagementRef','organisationRef','organisationName','dates','pax','evaluation','value']),
+      ('v_hrdc_deadlines', ARRAY['engagementRef','organisationRef','deadlineAt','daysRemaining','status','severity']),
+      ('v_collection_rules', ARRAY['stage','afterDays','channel','autonomy','requiresApprovalFromRole']),
+      ('v_compliance_rules', ARRAY['id','scheme','subject','expression','effectiveFrom','effectiveTo','status','source','supersedesId','supersededById','usedByChecks','affectedOpenEngagements','verifiedBy','verifiedAt','provenance']),
+      ('v_rule_change_sets', ARRAY['documentId','title','publishedAt','ingestedAt','extractedBy','effectiveFrom','changes']),
+      ('v_agent_evals', ARRAY['agentId','window','score','sampleSize','provenance']),
+      ('v_knowledge_sources', ARRAY['id','name','type','version','ingestedAt','chunks','embeddingStatus','lastCheckedAt','monitorStatus','contentHash','retrievalScopes','ruleChangeSetId'])
+    ) AS w(name, keys)
+  LOOP
+    SELECT pg_catalog.array_agg(k ORDER BY k) INTO v_keys
+      FROM pg_catalog.jsonb_object_keys(v -> v_name -> 'value' -> 0) AS k;
+    IF v_keys <> (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.unnest(v_want) AS k) THEN
+      RAISE EXCEPTION 'T7c: % columns are % — the contract keys are %', v_name, v_keys, v_want;
+    END IF;
+  END LOOP;
+
+  -- Values that carry the repairs.
+  SELECT e.value INTO v_row FROM pg_catalog.jsonb_array_elements(v -> 'v_organisation_relations' -> 'value') AS e(value)
+   WHERE e.value ->> 'organisation_id' = 'a0200000-2222-4000-8000-000000000001';
+  IF v_row #>> '{engagements,0,value,amount}' <> '1850000' OR v_row ->> 'organisation_ref' IS NULL THEN
+    RAISE EXCEPTION 'T7d: relations money or organisation_ref wrong: %', v_row;
+  END IF;
+  v_row := v -> 'v_model_tiers' -> 'value' -> 0;
+  IF v_row -> 'allowedHours' <> '[[8,18],[22,24]]'::jsonb
+     OR NOT (v_row -> 'degradation' ? 'activeFallback')
+     OR v_row #>> '{monthlyCap,amount}' <> '50000'
+     OR v_row ->> 'status' <> 'DEGRADED' THEN
+    RAISE EXCEPTION 'T7e: v_model_tiers shape wrong: %', v_row;
+  END IF;
+  v_row := v -> 'v_budgets' -> 'value' -> 0;
+  IF v_row #>> '{cap,amount}' <> '50000' OR v_row #>> '{spend,currency}' <> 'MYR' THEN
+    RAISE EXCEPTION 'T7f: v_budgets money wrong: %', v_row;
+  END IF;
+  v_row := v -> 'v_contacts' -> 'value' -> 0;
+  IF v_row -> 'consent' <> '{"email": true, "whatsapp": false}'::jsonb THEN
+    RAISE EXCEPTION 'T7g: a withdrawn WhatsApp consent reads as granted: %', v_row;
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_array_elements(v -> 'v_contact_channel_consents' -> 'value') AS e(value)
+       WHERE e.value ->> 'channel' = 'WHATSAPP' AND e.value -> 'granted' = 'false'::jsonb
+         AND e.value ->> 'recordedAt' IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'T7h: ChannelConsent granted is not the effective consent: %', v -> 'v_contact_channel_consents';
+  END IF;
+  v_row := v -> 'v_trainers' -> 'value' -> 0;
+  IF v_row -> 'bookedDates' <> '["2026-08-10","2026-08-11"]'::jsonb
+     OR pg_catalog.jsonb_array_length(v_row -> 'programmeRefs') <> 1 THEN
+    RAISE EXCEPTION 'T7i: v_trainers derived arrays wrong: %', v_row;
+  END IF;
+  v_row := v -> 'v_programme_deliveries' -> 'value' -> 0;
+  IF v_row -> 'pax' <> '2'::jsonb OR v_row -> 'evaluation' <> '4.6'::jsonb THEN
+    RAISE EXCEPTION 'T7j: v_programme_deliveries pax/evaluation wrong: %', v_row;
+  END IF;
+  v_row := v -> 'v_hrdc_deadlines' -> 'value' -> 0;
+  IF (v_row ->> 'daysRemaining')::integer NOT BETWEEN 9 AND 10 OR v_row ->> 'severity' <> 'WARN' THEN
+    RAISE EXCEPTION 'T7k: v_hrdc_deadlines wrong: %', v_row;
+  END IF;
+  IF v #>> '{v_rule_change_sets,value,0,changes,0,affectedEngagements,0,ref}' IS NULL THEN
+    RAISE EXCEPTION 'T7l: rule change set lost its affected engagement: %', v -> 'v_rule_change_sets';
+  END IF;
+  IF v #> '{v_agent_evals,value,0,score}' <> '0.850'::jsonb
+     OR v #> '{v_agent_evals,value,0,sampleSize}' <> '2'::jsonb THEN
+    RAISE EXCEPTION 'T7m: v_agent_evals rollup wrong: %', v -> 'v_agent_evals';
+  END IF;
+  -- The APPROVAL saved view's count is list_approvals' own total: one PENDING.
+  IF (SELECT e.value -> 'count' FROM pg_catalog.jsonb_array_elements(v -> 'v_saved_views' -> 'value') AS e(value)
+       WHERE e.value ->> 'label' = 'Pending only') <> '1'::jsonb THEN
+    RAISE EXCEPTION 'T7n: saved view count is not the list total: %', v -> 'v_saved_views';
+  END IF;
+  -- A PRIVATE view owned by SALES is not the MD's.
+  IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(v -> 'v_saved_views' -> 'value') AS e(value)
+              WHERE e.value ->> 'label' = 'Sales private') THEN
+    RAISE EXCEPTION 'T7o: the MD can see another user''s PRIVATE saved view';
+  END IF;
+  RAISE NOTICE 'T7 PASS: 17 views read as authenticated MD with the contract''s exact columns and repaired values.';
+END
+$t7$;
+
+-- T8 · a role without the 002 read permission gets rows it may read, and no others.
+DO $t8$
+DECLARE
+  v      jsonb := pg_temp.got('v_sales');
+  v_name text;
+BEGIN
+  FOR v_name IN SELECT pg_catalog.jsonb_object_keys(v) LOOP
+    IF v -> v_name -> 'ok' <> 'true'::jsonb THEN
+      RAISE EXCEPTION 'T8a: % errored for SALES instead of filtering: %', v_name, v -> v_name;
+    END IF;
+  END LOOP;
+  -- SALES holds none of: hrdc:read, ai:budget:read, ai:tier:read,
+  -- compliance:rule:read, eval:read, knowledge:source:read (002 §11).
+  FOREACH v_name IN ARRAY ARRAY['v_hrdc_deadlines','v_budgets','v_model_tiers','v_compliance_rules',
+                                'v_rule_change_sets','v_agent_evals','v_knowledge_sources']
+  LOOP
+    IF pg_catalog.jsonb_array_length(v -> v_name -> 'value') <> 0 THEN
+      RAISE EXCEPTION 'T8b: SALES read % without the permission: %', v_name, v -> v_name;
+    END IF;
+  END LOOP;
+  -- ...and does hold these.
+  FOREACH v_name IN ARRAY ARRAY['v_organisation_relations','v_templates','v_trainers','v_contacts',
+                                'v_contact_channel_consents','v_programmes','v_collection_rules']
+  LOOP
+    IF pg_catalog.jsonb_array_length(v -> v_name -> 'value') = 0 THEN
+      RAISE EXCEPTION 'T8c: SALES holds the permission for % and got nothing', v_name;
+    END IF;
+  END LOOP;
+  IF pg_catalog.jsonb_array_length(v -> 'v_saved_views' -> 'value') <> 2 THEN
+    RAISE EXCEPTION 'T8d: SALES should see the TENANT view and its own PRIVATE one: %', v -> 'v_saved_views';
+  END IF;
+  RAISE NOTICE 'T8 PASS: SALES is filtered out of six permissioned views and reads the seven it holds.';
+END
+$t8$;
+
+-- T9 · another tenant's MD sees none of tenant A through any view.
+DO $t9$
+DECLARE
+  v      jsonb := pg_temp.got('v_other');
+  v_name text;
+  v_mark text;
+BEGIN
+  FOR v_name IN SELECT pg_catalog.jsonb_object_keys(v) LOOP
+    IF v -> v_name -> 'ok' <> 'true'::jsonb THEN
+      RAISE EXCEPTION 'T9a: % errored for the other tenant: %', v_name, v -> v_name;
+    END IF;
+  END LOOP;
+  FOREACH v_mark IN ARRAY ARRAY['a0200000-1111-4000-8000-000000000001','Chrome A20','Siti A20','Farah A20',
+                                'Leading Teams A20','A20-LEAD','DOC-A20','A20FAST','HRD Corp circular A20',
+                                'Pending only','Standard A20','agent_proposal']
+  LOOP
+    IF pg_catalog.strpos(v::text, v_mark) > 0 THEN
+      RAISE EXCEPTION 'T9b: tenant A''s "%" is visible to another tenant: %', v_mark, v;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'T9 PASS: no tenant-A row reaches another tenant through any of the 17 views.';
+END
+$t9$;
+
+-- T10 · anon is refused every view at the privilege layer.
+DO $t10$
+DECLARE
+  v      jsonb := pg_temp.got('v_anon');
+  v_name text;
+BEGIN
+  FOR v_name IN SELECT pg_catalog.jsonb_object_keys(v) LOOP
+    IF v -> v_name ->> 'sqlstate' IS DISTINCT FROM '42501' THEN
+      RAISE EXCEPTION 'T10: anon was not refused % with 42501: %', v_name, v -> v_name;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'T10 PASS: anon is refused all 17 views.';
+END
+$t10$;
 
 ROLLBACK;
