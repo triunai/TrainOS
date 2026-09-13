@@ -254,13 +254,27 @@ jobs:
     name: npm audit (high+)
     needs: install
     runs-on: ubuntu-latest
-    continue-on-error: true # advisory — keep main green when transitive vulns appear
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "20", cache: "npm" }
       - run: npm ci
-      - run: npm audit --audit-level=high
+      # Scoped to what ships. The job used to run the whole tree and was kept
+      # `continue-on-error`, which made it a report nobody could fail — so the
+      # three advisories below sat unread. They are all in build and test
+      # tooling that never reaches a bundle:
+      #   GHSA-fx2h-pf6j-xcff  high      vite <=6.4.2, server.fs.deny bypass
+      #   GHSA-5xrq-8626-4rwp  critical  vitest <3.2.6, Vitest UI file read
+      #   GHSA-82fw-gwwq-j7x9  moderate  @vitest/mocker, and with it the
+      #                                  critical @vitest/coverage-v8 <=3.2.5
+      # Clearing them needs vite 7 and vitest 3, both majors, which is tracked
+      # by the chore(toolchain) draft PR rather than smuggled into a feature
+      # branch. Dropping --omit=dev is what closes that follow-up.
+      #
+      # Production scope is clean at high+: the only runtime advisories are
+      # GHSA-wrjc-x8rr-h8h6 and GHSA-337j-9hxr-rhxg on react-router, both
+      # moderate, and a react-router-dom 7 major is its own piece of work.
+      - run: npm audit --omit=dev --audit-level=high
 
   sast-semgrep:
     name: Semgrep SAST
