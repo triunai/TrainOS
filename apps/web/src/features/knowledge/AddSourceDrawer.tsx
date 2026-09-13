@@ -70,7 +70,7 @@ export function AddSourceDrawer({ open, onClose }: AddSourceDrawerProps) {
       title="Add source"
       subtitle="What the agents may read, and what they may cite it for."
       footer={
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex w-full items-center justify-end gap-2">
           <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
           <PrimaryButton disabled={!valid || create.isPending} onClick={submit}>
             Add source

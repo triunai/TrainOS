@@ -66,7 +66,7 @@ export function SourceDetailDrawer({
              — and CLAUDE.md allows a view one; a drawer open over the page is
              not a second view. The three actions escalate by WEIGHT instead:
              ghost, ghost, outlined. */
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex w-full items-center justify-end gap-2">
             <GhostButton disabled={busy} onClick={() => onCheck(source)}>
               Check
             </GhostButton>
