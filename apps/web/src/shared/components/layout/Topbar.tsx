@@ -11,6 +11,11 @@ import { ThemeToggle } from "./ThemeToggle";
  * The top bar. 56px, the height every surface lines up against — read from the
  * shell token, never retyped.
  *
+ * Its padding is the pack's `padding:0 20px 0 4px`, which all 50 internal
+ * artboards carry: 4px on the left so the breadcrumb starts almost flush with
+ * the card below it, 20px on the right so the chrome cluster lines up with the
+ * card's 14px inset plus its own gutter.
+ *
  * No solid primary button lives here: solid blue means a human triggered an
  * action, and chrome triggers nothing.
  *
@@ -26,7 +31,7 @@ export function Topbar() {
   const unread = useUnreadCount();
 
   return (
-    <header className="flex h-topbar shrink-0 items-center gap-3 bg-canvas px-4">
+    <header className="flex h-topbar shrink-0 items-center gap-3 bg-canvas pl-1 pr-5">
       <div className="min-w-0 flex-1">
         {/* Router links, not bare anchors: an `<a href>` here would reload the
             whole application to move one level up its own breadcrumb. */}
