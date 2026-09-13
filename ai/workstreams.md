@@ -17,7 +17,74 @@
 
 ---
 
-## ⛔ SUPABASE SCHEMA — 014 BLOCKED by D-012 review; 015–017 unreviewed; 018 on PR #11 (2026-09-13)
+## ⛔ SUPABASE SCHEMA — all four of 014–017 now BLOCK on the second D-012 pass; 018 on PR #11 (2026-09-13)
+
+⛔ **Second D-012 pass landed on branch `review/codex-014-017`, confirmed
+directly via `git show` — but NOT YET on main, no PR open for it as of
+this check.** Read the diff at commit `5a5655c` for anything below marked
+"confirmed"; do not treat it as merged or reviewable-in-a-PR until one
+opens. Verdict, confirmed exactly against the actual diff:
+**014 BLOCK (unchanged)**, **015 MERGE-WITH-FIXES**, **016 BLOCK**, **017
+BLOCK**. "None of the four packs may merge as currently written. 015 is
+the closest to ready," quoted directly from the review.
+
+- **015**: no CRIT/HIGH. Central safety claim verified true — exactly two
+  `cron.schedule()` calls (`trainos_reap_jobs` every 30s,
+  `trainos_reap_cron_history` daily) and zero `net.http_post`/`net.http_get`
+  calls anywhere in the file. One real gap: `app.reap_jobs_all_tenants`
+  has no overload-count guard in its verify block — the same G3 trap
+  class the skill exists to catch — so a later migration adding a
+  defaulted parameter would silently create an ambiguous overload.
+- **016**: forward migration confirmed sound (the `pg_trigger`-derived
+  seeding mechanism is real). BLOCKED on its rollback: an unqualified
+  `DELETE FROM core.ref_formats WHERE NOT EXISTS (allocated)` deletes
+  every unallocated ref_format row in the database, not only the ones 016
+  itself seeded — confirmed the exact same class of defect that blocked
+  014's rollback.
+- **017**: highest blast-radius pack in the PR, four serious findings all
+  confirmed directly against the diff. (1) CRITICAL: SST is meant to be
+  resolved from policy per ruling R-C, but every quotation is stamped
+  `sst_rate=0, sst_reason='STANDARD_RATED'` with no trigger or write-path
+  call to `app.resolve_tax_policy()` — silently under-taxing every
+  quotation at zero. (2) The file is one transaction start to finish, so
+  its claimed `NOT VALID`/`VALIDATE` lock-safety property does not
+  actually exist — `VALIDATE` inside the same transaction still holds the
+  lock to commit, operationally identical to a plain `ADD CONSTRAINT`.
+  (3) An unguarded `VALIDATE` on `evaluation_responses_overall_score_range`
+  has no pre-flight row-count guard, and the file's own header concedes a
+  legacy 4.5-point Likert score is accepted today — this aborts on any
+  database carrying one. (4) The rollback's header claims only
+  non-customer data is lost, but it actually drops
+  `core.data_breach_register` (a statutory PDPA register),
+  `data_retention_policies`, consent-evidence columns, and the SST columns
+  on already-issued quotations — confirmed false as stated. Also
+  confirmed: catalog pin `T3b` never executes, because its fixture selects
+  from an empty `core.engagements` table in that pin, so `IF FOUND` is
+  false and the assertion it claims to prove silently never runs — "the
+  same false-catalog-claim mechanism that hid 014's defect, reproduced
+  here," quoted directly.
+- **Pin-edit audit confirmed: 14 hunks across 10 files, all legitimate**
+  adaptations to 016's provisioning trigger and 017's new tables — none a
+  weakened assertion, two recomputed counts independently re-verified
+  correct by execution.
+- **`check:grants` ruling confirmed: the `pg_temp` SECURITY DEFINER flag
+  on `test_014:513` is a false positive.** `pg_temp` objects cannot
+  persist an escalation past their own transaction; the fix is a
+  `check:grants` exemption, not a test change.
+- G6 confirmed run on all 17 migrations: forward, all pins, rollback
+  017→015, re-apply all clean — proves internal consistency only, exactly
+  as the first pass's own framing already established; none of these
+  findings are pin-detectable, several because the claimed property (the
+  lock-safety one) doesn't exist regardless of what any pin could show.
+- **Everything routed to `fix-014`, which now covers all of 014–017, not
+  just 014.** Hosted apply stays gated on the eventual clean verdict.
+
+⚠ **Negative result for the log, and a real pattern, not a coincidence:
+two packs in one PR (014 and 016) shipped rollbacks that destroy state
+they never created and assert the broken result as correct.** Recorded as
+a new line for the migration-authoring checklist: "a rollback restores
+PRIOR state, not empty state" — the same failure mode twice in one day is
+worth a standing check, not just two separate findings.
 
 ⚠ **Second correction, this time to the "015–017 do not exist" claim this
 thread repeated from the review two updates ago — that claim was itself
@@ -649,20 +716,26 @@ RLS.
    (`uuidFor(childKey(...))`, unconfirmed against 018) has since been
    replaced by a measured, corrected rule shared between both lanes.
 
-⚠ **SST ruling reported as corrected, but NOT YET reflected in the
-committed diff — checked directly, not assumed.** The report says the
-three fixture quotations were moved onto the 017 default policy
-`SST-G-TRAINING-8` (8%), pinned against the policy row rather than a
-literal, because the earlier `STANDARD_RATED` at 0% was inconsistent with 017. Searched `quotationsSql` in the current head (`e1dca98`) directly:
-it still writes no `sst_rate` or `sst_reason` field at all, relying on
-017's column defaults (0 / `STANDARD_RATED`) — the same state the report
-says was corrected. Either the commit implementing this hasn't been
-pushed yet, or it landed somewhere this check didn't look; recorded as an
-open discrepancy rather than assumed resolved. **The remaining USER
-DECISION, as reported, is narrower than the tax rate itself**: whether
-tenant `akademi-perdana` is Education-Act exempt is a policy-row decision,
-not a seed-code change, and stays open regardless of which SST state the
-seed currently reflects.
+✅ **The earlier "SST fix reported but not found" flag is resolved, not
+a discrepancy after all: confirmed directly that the fix is queued, not
+yet applied.** The team lead's own follow-up states the SST ruling (quote
+at the 017 default policy `SST-G-TRAINING-8`, pinned against the policy
+row) "is applied next by the seeds lane" — matching exactly what this
+thread already found by reading `quotationsSql` and seeing no `sst_rate`
+change. Both checks agree: the fix is real and planned, just not yet in
+the diff as of `e1dca98`. Recheck after the next `lane/seeds` push before
+assuming it has landed. **The remaining USER DECISION, unaffected either
+way**: whether tenant `akademi-perdana` is Education-Act exempt is a
+policy-row decision, not a seed-code change.
+
+⚠ **Scratchpad collision incident, recorded as reported — this is about
+the fleet's shared filesystem, not the git repo, so not independently
+re-verifiable here.** The session scratchpad is shared across lanes;
+`lane/seeds` and `lane/rpc-018` both wrote a `pr-body.md` at its root, and
+PR #16 briefly carried PR #11's description before the collision was
+caught and fixed. **New fleet convention, worth carrying into every
+future multi-lane blast this spine records:** lane-specific scratch files
+go under `<scratchpad>/<lane-name>/`, not the scratchpad root.
 
 ⚠ **Twenty-two schema gaps enumerated in the PR body** — the margin-floor
 column is one of them; the rest are listed in full there rather than

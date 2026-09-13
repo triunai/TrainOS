@@ -276,6 +276,21 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 21:4x — second D-012 pass BLOCKs all of 014-017 (branch only, not on main); scratchpad collision; SST confirmed queued
+
+- Confirmed via git show on branch review/codex-014-017 (not merged, no
+  PR yet): 014 BLOCK unchanged, 015 MERGE-WITH-FIXES, 016 BLOCK (rollback
+  over-deletes ref_formats, same class as 014), 017 BLOCK (SST silent
+  zero-tax, false lock-safety claim, unguarded VALIDATE will abort on
+  live data, rollback drops the PDPA breach register, T3b never
+  executes). All routed to fix-014, now covering all four packs.
+  Negative result: two rollbacks in one PR destroyed state they never
+  created -- added a standing checklist line. SST discrepancy from last
+  round resolved (confirmed queued, not landed). Scratchpad collision
+  between two lanes recorded; new convention: lane files under
+  <scratchpad>/<lane-name>/. Full detail in `ai/project-log.md` and
+  `ai/workstreams.md`.
+
 ## 2026-09-13 21:3x — PR #17 merged; PR #11 rebased with 5 confirmed findings; SST fix reported but missing from PR #16's diff
 
 - PR #17 confirmed merged, both lanes shut down. Conformance suite caveat

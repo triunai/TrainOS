@@ -15,6 +15,119 @@
 
 ---
 
+## 2026-09-13 21:4x — second D-012 pass BLOCKs all of 014–017 (not on main yet), scratchpad collision, SST discrepancy resolved
+
+**Second D-012 review pass confirmed via `git show` on branch
+`review/codex-014-017`, commit `5a5655c` — explicitly NOT on main, no PR
+open for it yet.** Recorded with that caveat prominent, since everything
+below is verified against a branch, not a mergeable, reviewable PR.
+Verdict, confirmed exactly: **014 BLOCK (unchanged), 015
+MERGE-WITH-FIXES, 016 BLOCK, 017 BLOCK**, quoting the review directly:
+"None of the four packs may merge as currently written. 015 is the
+closest to ready."
+
+**015, confirmed:** central safety claim holds — exactly two
+`cron.schedule()` calls (`trainos_reap_jobs` every 30s,
+`trainos_reap_cron_history` daily) and zero `net.http_post`/`net.http_get`
+calls anywhere in the file. One real gap: `app.reap_jobs_all_tenants` has
+no overload-count guard in its own verify block, the same G3-trap class
+this repo's skill exists to catch — a later migration adding a defaulted
+parameter would silently create an ambiguous overload.
+
+**016, confirmed:** the forward migration's `pg_trigger`-derived seeding
+mechanism is real, not faked — both reviewers verified this independently.
+BLOCKED entirely on its rollback: `DELETE FROM core.ref_formats WHERE NOT
+EXISTS (allocated)` is unqualified across the whole table, so it deletes
+every unallocated ref_format row in the database, including ones an
+operator configured by hand before 016 ever ran — not only the rows 016
+itself seeded. This is confirmed the identical class of defect that
+blocked 014's rollback.
+
+**017, confirmed the highest blast-radius pack in the PR, with four
+serious findings:**
+
+1. **CRITICAL** — SST is meant to be resolved from policy per ruling R-C,
+   never a column default, but every quotation is stamped `sst_rate=0,
+sst_reason='STANDARD_RATED'` with no trigger and no write-path call to
+   `app.resolve_tax_policy()` anywhere. Every taxable quotation is
+   silently under-taxed at zero.
+2. The file runs as one transaction start to finish. Its header claims
+   `ADD CONSTRAINT NOT VALID` + `VALIDATE` avoids a long lock, but inside
+   a single transaction `VALIDATE` still holds the same lock to commit —
+   the claimed safety property does not exist as implemented; it is
+   operationally identical to a plain `ADD CONSTRAINT`.
+3. An unguarded `VALIDATE` on `evaluation_responses_overall_score_range`
+   has no pre-flight row-count check, and the file's own header concedes
+   a legacy 4.5-point Likert score is accepted today — this aborts
+   `VALIDATE` on any database carrying one such row, with no row
+   identified in the error.
+4. The rollback's header claims only non-customer data is lost. The body
+   actually drops `core.data_breach_register` (a statutory PDPA s.12B
+   register), `data_retention_policies`, consent-evidence columns from
+   `contact_consents`, and the SST columns from already-issued quotations
+   — confirmed the "no customer data" claim is false as stated.
+
+Also confirmed: catalog pin `T3b` never executes — its fixture selects
+`FROM core.engagements LIMIT 1` against a table with zero rows in that
+pin, so the dependent `IF FOUND` is false and the assertion it claims to
+prove silently never runs. The review's own words: "the same
+false-catalog-claim mechanism that hid 014's defect, reproduced here."
+
+**Pin-edit audit confirmed: 14 hunks across 10 files, all legitimate
+adaptations** to 016's provisioning trigger and 017's new tables — none a
+weakened assertion, and two recomputed counts independently re-verified
+correct by execution.
+
+**`check:grants` ruling confirmed: the `pg_temp` SECURITY DEFINER flag on
+`test_014:513` is a false positive.** `pg_temp` objects cannot persist an
+escalation past their own transaction; the standing fix is a
+`check:grants` exemption for `pg_temp.*`, not a change to the test.
+
+**G6 confirmed run clean on all 17 migrations** — forward, all pins,
+rollback 017→015, re-apply, all clean. This proves internal consistency
+only, exactly as the first pass already established; several of today's
+findings are specifically NOT pin-detectable, including the lock-safety
+claim, which is false for structural reasons no pin could ever catch.
+
+**Everything is routed to `fix-014`, which now covers all four packs
+(014–017), not just 014.** Hosted apply stays gated on the eventual clean
+verdict for all of them.
+
+⚠ **Negative result, and a genuine pattern rather than a coincidence:
+two packs in the same PR (014 and 016) shipped rollbacks that destroy
+state they never created and assert the broken result as correct.** The
+same failure mode landing twice in one day, in two different migrations
+authored by the same lane, is worth a standing checklist line rather than
+two separate findings: **"a rollback restores PRIOR state, not empty
+state."** Added to the migration-authoring/review checklist.
+
+**Two smaller items, both resolved rather than left open:**
+
+- The SST discrepancy flagged in the previous block is resolved, not a
+  false report either way: the team lead's own follow-up confirms the fix
+  (quote at 017's default policy `SST-G-TRAINING-8`, pinned against the
+  policy row) "is applied next by the seeds lane" — matching exactly what
+  this log found by reading `quotationsSql` directly and seeing no
+  `sst_rate` change yet. Recorded as queued, not landed, as of `e1dca98`.
+- A scratchpad collision: the session scratchpad is shared across lanes,
+  and `lane/seeds` and `lane/rpc-018` both wrote a `pr-body.md` at its
+  root, briefly leaking PR #11's description into PR #16 before it was
+  caught and fixed. Recorded as reported (this is a fleet/filesystem
+  incident, not something in git history to independently verify). **New
+  convention for every future multi-lane blast this spine records:**
+  lane-specific scratch files go under `<scratchpad>/<lane-name>/`, never
+  the scratchpad root.
+
+**One thing worth telling future-me:** when a review pass lands on a
+branch with no PR yet, read it anyway rather than waiting — the findings
+are real regardless of packaging, and recording "confirmed, not yet on
+main" is more useful to the next session than waiting for a PR number
+that may not exist for a while. The caveat belongs at the top of the
+entry, not buried, so nobody mistakes a branch-only review for a merged
+one.
+
+---
+
 ## 2026-09-13 21:3x — PR #17 merged, PR #11 rebased with five confirmed findings, an SST fix reported but not found in the diff
 
 **PR #17 confirmed MERGED at `e20e1ba`.** Line references checked, not

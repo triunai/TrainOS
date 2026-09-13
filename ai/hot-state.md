@@ -236,8 +236,32 @@ FUNCTION` confirmed load-bearing (a bare `CREATE OR REPLACE` with a
 > 0%/STANDARD_RATED; recorded as an open discrepancy. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 21:3x — PR #17 merged; PR #11 rebased with
-> 5 confirmed findings; SST fix reported but not found in PR #16's diff.
+> **BLAST 13 Sep 21:4x +08** — **Second D-012 pass confirmed via `git
+show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
+> main, no PR open.** All four of 014–017 now BLOCK or worse: 014 BLOCK
+> (unchanged), 015 MERGE-WITH-FIXES (one real gap: `reap_jobs_all_tenants`
+> missing an overload guard; its "2 cron jobs, 0 outbound HTTP" safety
+> claim verified true), 016 BLOCK (rollback deletes every unallocated
+> `ref_formats` row, not only its own — same defect class as 014), 017
+> BLOCK (four findings, all confirmed: SST silently defaults every
+> quotation to zero tax with no write-path call to the resolver; the
+> claimed lock-safety property is false inside a single transaction; an
+> unguarded VALIDATE will abort on an existing legacy 4.5-point score; the
+> rollback drops a statutory PDPA breach register while claiming no
+> customer data is lost; catalog pin T3b never executes against an empty
+> table). Pin-edit audit (14 hunks/10 files) and the `check:grants`
+> `pg_temp` false-positive ruling both confirmed. Everything routed to
+> `fix-014`, now covering all four packs. **Negative result: two packs in
+> one PR shipped rollbacks that destroy state they never created — added
+> "rollback restores PRIOR state, not empty state" to the checklist.**
+> The earlier SST discrepancy is resolved: confirmed it's queued, not a
+> false report — the seeds lane applies it next. Scratchpad collision
+> between `lane/seeds` and `lane/rpc-018` recorded; new convention:
+> lane files go under `<scratchpad>/<lane-name>/`. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 21:4x — second D-012 pass: all of 014-017
+> now BLOCK/MERGE-WITH-FIXES; not yet on main; SST fix confirmed queued.
 
 ### Focus
 
