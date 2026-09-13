@@ -185,6 +185,18 @@ export interface Participant extends EntityEnvelope {
   email?: string | null;
   phone?: string | null;
   certificateId?: string | null;
+  /**
+   * Ruling R17: when the certificate was issued.
+   *
+   * `certificateId` alone says a certificate exists and not when it was
+   * awarded, and the date is the half HRD Corp cares about — a claim packet
+   * cites the participant records, and a certificate dated after the claim
+   * window closed is a different conversation from one dated inside it.
+   *
+   * A `DateOnly`, not a timestamp: a certificate is issued on a day and the
+   * document prints a day. Absent wherever `certificateId` is absent.
+   */
+  certificateIssuedAt?: DateOnly | null;
 }
 
 /* ------------------------------------------------------------------ *

@@ -24,8 +24,16 @@ import * as data from "../data";
  * `evidenceRefs` holds questionnaire question ids (`Q4`, `Q7`) and
  * `signatureRef` holds an opaque signature blob id; neither addresses an
  * entity in this dataset.
+ *
+ * `certificateId` (ruling R17) is the number printed on a document the
+ * academy issues, in the same family: it identifies an artefact that lives
+ * outside this dataset rather than pointing at a record inside it. Registering
+ * the ids so they resolved to themselves would have made this test pass while
+ * asserting nothing. What they DO need — one per attendee, unique, dated after
+ * delivery — is asserted in `cohort-rosters.test.ts`, where the attendance
+ * sheet is in scope to check them against.
  */
-const NOT_A_REFERENCE = new Set(["evidenceRefs", "signatureRef"]);
+const NOT_A_REFERENCE = new Set(["evidenceRefs", "signatureRef", "certificateId"]);
 
 const REFERENCE_KEY = /^refs?$|Refs?$|Ids?$/;
 

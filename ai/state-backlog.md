@@ -166,6 +166,46 @@ Split to `ai/decisions.md` then, and leave a pointer.
 
 ---
 
+## Opened on 2026-09-13 by the contract lane
+
+**OPEN (2026-09-13, contract) — THERE IS NO ASSESSMENT DOMAIN.** The contract
+publishes no assessment type and §13 lists no assessment endpoint, so
+`features/assessments` is built on what the contract actually has: the
+`EVALUATION_SUMMARY` key on an engagement's checklist. That is honest and it is
+not a domain — a checklist item records that an evaluation summary was
+compiled, and says nothing about who was assessed, on what, or with what
+result. The screen therefore reports compilation status and cannot report a
+score, which is the whole subject.
+**Owner:** the contract lane, once the API owner declares the domain.
+**Trigger:** the first request to show an assessment RESULT rather than its
+status. Closing it swaps one leaf module; the register above it is unaffected.
+
+**OPEN (2026-09-13, contract) — THERE IS NO CERTIFICATE DOMAIN.** Same shape,
+one screen over. `features/certificates` runs on the `CERTIFICATES_ISSUED`
+checklist key plus `Participant.certificateId` and, since ruling R17,
+`certificateIssuedAt`. Between them those carry the fact of issuance and its
+date and nothing else — no template, no revocation, no reissue, no verification
+URL, and no `GET /v1/certificates` to list them by. The register is a join the
+screen performs because the API cannot.
+**Owner:** the contract lane, once the API owner declares the domain.
+**Trigger:** the first requirement that a certificate be reissued, revoked or
+verified by a third party. Until then the two fields are enough and adding a
+domain would be inventing one.
+
+**OPEN (2026-09-13, contract + web) — A THIRD CHECKLIST-KEYED REGISTER MUST
+PROMOTE `checklistState`.** Two screens now derive a register from an
+engagement checklist item — assessments from `EVALUATION_SUMMARY`, certificates
+from `CERTIFICATES_ISSUED` — and each wrote its own state derivation. CLAUDE.md
+standardises a pattern once it appears on more than two screens, and the
+certificates module says so in a comment rather than leaving the next author to
+notice. Two is the last time writing it out is the cheaper answer.
+**Owner:** the web lane. **Trigger:** the third register of this shape. It
+promotes `checklistState(engagement, key, today)` into the engagements
+feature's barrel and migrates BOTH existing registers onto it in the same pass
+— a third copy plus a helper is worse than three copies.
+
+---
+
 ## Carried from the scaffold (2026-09-12), still open
 
 These are the five items `ai/state.md` recorded when the repository floor

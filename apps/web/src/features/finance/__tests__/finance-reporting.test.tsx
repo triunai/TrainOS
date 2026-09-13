@@ -101,13 +101,18 @@ describe("Finance › Profitability", () => {
     expect(screen.getByText(/blended margin/)).toBeInTheDocument();
   });
 
-  it("states the floor beside each margin and reports none breached", async () => {
+  /* This asserted "none breached" while the seed had no engagement under its
+     floor, so the banner and the danger chip were only ever proven ABSENT — a
+     control nothing had exercised. Safety Leadership now runs at 29% against a
+     35% floor, so both paths are live and both are asserted. */
+  it("states the floor beside each margin and names the engagement that breached it", async () => {
     renderScreen(<ProfitabilityScreen />);
 
     const table = await screen.findByRole("table", { name: "Engagement profitability" });
     expect(within(table).getAllByText("floor 35.0%").length).toBeGreaterThan(0);
-    expect(screen.getByText(/none below floor/)).toBeInTheDocument();
-    expect(screen.queryByText(/delivered below the margin floor/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 below floor/)).toBeInTheDocument();
+    expect(screen.getByText(/1 engagement delivered below the margin floor/)).toBeInTheDocument();
+    expect(within(table).getByText(/Safety Leadership Essentials/)).toBeInTheDocument();
   });
 
   it("keeps a cancelled engagement out of the realised tab and off the chart", async () => {

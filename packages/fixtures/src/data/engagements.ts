@@ -438,12 +438,64 @@ const auroraAttendanceSheets: Record<string, AttendanceSheet> = {
 };
 
 /**
+ * Ruling R17 · the certificates the three cohorts say they issued.
+ *
+ * Three engagements carry `CERTIFICATES_ISSUED` as done while no participant
+ * record carried a `certificateId`, so the roll-up and the per-person records
+ * disagreed — and the claim packet cites the PARTICIPANT records, which makes
+ * that the expensive direction to be wrong in. `CertificatesScreen` renders
+ * the disagreement as a banner rather than hiding it, which was the right call
+ * for a gap that existed; it is not a gap that should exist.
+ *
+ * Issued the working day after the last delivery day, which is when a trainer
+ * files the declaration and the certificates go out. Only participants who
+ * were actually PRESENT get one: attendance is what a certificate certifies,
+ * and issuing to an absentee is the failure an auditor looks for.
+ */
+const CERTIFICATE_ISSUE: Record<string, string> = {
+  [ENGAGEMENT_WINDOW_CLOSING]: "2026-05-22",
+  [ENGAGEMENT_AURORA_AT_RISK]: "2026-05-18",
+  [ENGAGEMENT_MERIDIAN]: "2026-10-12",
+};
+
+/** `CERT-2026-0189-01`: the year, the engagement's number, the seat. */
+const certificateId = (engagementRef: string, seat: number): string =>
+  `CERT-2026-${engagementRef.replace(/^ENG-/, "")}-${String(seat).padStart(2, "0")}`;
+
+const withCertificates = (roster: Participant[]): Participant[] => {
+  const seats = new Map<string, number>();
+  return roster.map((participant) => {
+    const issuedAt = CERTIFICATE_ISSUE[participant.engagementRef];
+    if (!issuedAt) return participant;
+    const attended = attendanceSheetsSay(participant.engagementRef, participant.ref);
+    if (!attended) return participant;
+    const seat = (seats.get(participant.engagementRef) ?? 0) + 1;
+    seats.set(participant.engagementRef, seat);
+    return {
+      ...participant,
+      certificateId: certificateId(participant.engagementRef, seat),
+      certificateIssuedAt: issuedAt,
+    };
+  });
+};
+
+/** Present on the last day of the cohort — the day the certificate certifies. */
+function attendanceSheetsSay(engagementRef: string, participantRef: string): boolean {
+  const lastDay = cohortAttendanceSheets[`${engagementRef}::2`] ?? cohortAttendanceSheets[`${engagementRef}::1`];
+  const row = lastDay?.rows.find((entry) => entry.participantRef === participantRef);
+  return Boolean(row?.am.present && row?.pm.present);
+}
+
+/**
  * §8 `GET /v1/engagements/{id}/participants`, every cohort.
  *
  * ENG-0231's thirty first, so its refs stay PAR-1182 through PAR-1211 and
  * every fixture, test and screenshot that names one still means that person.
  */
-export const participants: Participant[] = [...auroraParticipants, ...cohortParticipants];
+export const participants: Participant[] = [
+  ...auroraParticipants,
+  ...withCertificates(cohortParticipants),
+];
 
 /** §8 `GET /v1/engagements/{id}/attendance?day=`, every cohort. */
 export const attendanceSheets: Record<string, AttendanceSheet> = {
@@ -559,8 +611,30 @@ export const engagements: Engagement[] = [
     finance: {
       invoiceRef: "INV-2026-0288",
       syncState: "VALIDATED",
-      trainerPayable: myr(560000),
-      realisedMarginRate: 0.38,
+      /*
+       * Two days at Noora Idris's RM 2,800 plus the half-day the cohort ran
+       * over. Aurora added a night-shift group late and the second day was
+       * extended to cover them, which nobody repriced — the sell price was
+       * already agreed at RM 16,200.
+       */
+      trainerPayable: myr(700000),
+      /*
+       * THE ONE ENGAGEMENT BELOW ITS MARGIN FLOOR, and it is here on purpose.
+       *
+       * Every other realised margin in the seed sits above the 0.35 the rate
+       * card sets for SAFETY, so the profitability screen's warning banner and
+       * its danger chip were only ever proven ABSENT — a control nothing had
+       * exercised. `margin-floor` in `cohort-rosters.test.ts` now asserts at
+       * least one below-floor row exists, so deleting this one fails rather
+       * than quietly retiring the screen's only unhappy path.
+       *
+       * The arithmetic: RM 16,200 sold, RM 1,400 of unbilled trainer time on
+       * top of a direct cost that already ran to RM 10,044, leaves about
+       * RM 4,756 of margin — 0.29, six points under the floor. A half day, not
+       * a whole one: the point is a cost overrun a manager would recognise,
+       * not a catastrophe nobody would have let happen.
+       */
+      realisedMarginRate: 0.29,
     },
     ruleSetVersion: RULE_SET_2026_06_15,
   },
