@@ -18,7 +18,7 @@ Read this first in the new session, then `ai/hot-state.md`, then `docs/design/20
 ## Next blast (launch after the three above are committed and gates are green)
 
 A. **kit-tighten** (Opus): brief §1–§9 + §10/10a (segmented control) at kit/token level: `--font-ui/--font-code`, tabular numerals, radius scale (6/10/999), surface layers L0–L3, mono down 70–80%, flatten ContentCard → page-as-component, DataTable typography + zebra where artboards draw it, FilterBar unboxed, section caption component. Verify on /dev/kit, Programmes, Collections both themes.
-B. **screens-migrate** (2–3 Opus, split by feature groups as in the session scratchpad screen-blast assignments): move all 27 screens to page-as-component, apply §16 (enquiry rows/detail; money/date as data, provenance only on exceptions), §11 per-screen fidelity checklist from each artboard annotation, propagate the RecordHeader upgrade if the prototype is approved.
+B. **screens-migrate** (2–3 Opus, split by feature groups as in the ai/briefs/screen-blast-assignments.md): move all 27 screens to page-as-component, apply §16 (enquiry rows/detail; money/date as data, provenance only on exceptions), §11 per-screen fidelity checklist from each artboard annotation, propagate the RecordHeader upgrade if the prototype is approved.
 C. **fixtures-persona** (Sonnet): MD `/me` = Alex Selvarajah (§13); demo index narrated to him; ProfileModal fields.
 D. **verifier** (Opus): every route, light + dark, 1440×900 + 1920×1080, screenshot vs artboard twin, per-screen checklist, blue budget, one primary, a11y, no scrollbars at rest, root gates; findings file + fix list.
 E. **i18n pass** (§17) and **Supabase 011–016 via Codex** in parallel with D.
