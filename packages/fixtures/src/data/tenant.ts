@@ -376,6 +376,18 @@ export const permissionsFor = (id: string): string[] =>
 /**
  * §5 / §8 `GET /v1/config/pipelines?object=`.
  *
+ * Ruling R16 adds `terminal` and `outcome`. Note what is NOT here: only
+ * OPPORTUNITY has a negative terminal, because only OPPORTUNITY has a stage
+ * for losing. An engagement that falls over is `status: CANCELLED`, which is
+ * the record's state rather than a rung of its delivery ladder, and the §8
+ * example lists exactly the nine stages below with no tenth. Inventing a LOST
+ * stage into the engagement pipeline to make the three symmetrical would have
+ * contradicted the contract to satisfy a test.
+ *
+ * `PAID` and `DELIVERY` are terminal with NO outcome, and that is the case the
+ * pair of fields exists to express: they end their pipeline without winning or
+ * losing anything, because the winning already happened upstream.
+ *
  * `ENGAGEMENT` is the §8 delivery lifecycle the engagement detail renders.
  * `DEAL_CHAIN` is the compact strip the §5 relations panel renders on each
  * engagement row — a different set of keys in the same contract, see the
@@ -385,38 +397,38 @@ export const pipelines: PipelineConfig[] = [
   {
     object: "ENGAGEMENT",
     stages: [
-      { key: "WON", label: "Won", order: 1 },
-      { key: "TRAINER_CONFIRMED", label: "Trainer confirmed", order: 2 },
-      { key: "SCHEDULED", label: "Scheduled", order: 3 },
-      { key: "REGISTERED", label: "Registered", order: 4 },
-      { key: "DELIVERED", label: "Delivered", order: 5 },
-      { key: "ATTENDANCE_LOCKED", label: "Attendance locked", order: 6 },
-      { key: "HRDC_CLAIM", label: "HRDC claim", order: 7 },
-      { key: "INVOICED", label: "Invoiced", order: 8 },
-      { key: "PAID", label: "Paid", order: 9 },
+      { key: "WON", label: "Won", order: 1, terminal: false },
+      { key: "TRAINER_CONFIRMED", label: "Trainer confirmed", order: 2, terminal: false },
+      { key: "SCHEDULED", label: "Scheduled", order: 3, terminal: false },
+      { key: "REGISTERED", label: "Registered", order: 4, terminal: false },
+      { key: "DELIVERED", label: "Delivered", order: 5, terminal: false },
+      { key: "ATTENDANCE_LOCKED", label: "Attendance locked", order: 6, terminal: false },
+      { key: "HRDC_CLAIM", label: "HRDC claim", order: 7, terminal: false },
+      { key: "INVOICED", label: "Invoiced", order: 8, terminal: false },
+      { key: "PAID", label: "Paid", order: 9, terminal: true },
     ],
   },
   {
     object: "DEAL_CHAIN",
     stages: [
-      { key: "ENQUIRY", label: "Enquiry", order: 1 },
-      { key: "TNA", label: "TNA", order: 2 },
-      { key: "PROPOSAL", label: "Proposal", order: 3 },
-      { key: "APPROVAL", label: "Approval", order: 4 },
-      { key: "SENT", label: "Sent", order: 5 },
-      { key: "DELIVERY", label: "Delivery", order: 6 },
+      { key: "ENQUIRY", label: "Enquiry", order: 1, terminal: false },
+      { key: "TNA", label: "TNA", order: 2, terminal: false },
+      { key: "PROPOSAL", label: "Proposal", order: 3, terminal: false },
+      { key: "APPROVAL", label: "Approval", order: 4, terminal: false },
+      { key: "SENT", label: "Sent", order: 5, terminal: false },
+      { key: "DELIVERY", label: "Delivery", order: 6, terminal: true },
     ],
   },
   {
     object: "OPPORTUNITY",
     stages: [
-      { key: "NEW", label: "New", order: 1 },
-      { key: "QUALIFYING", label: "Qualifying", order: 2 },
-      { key: "TNA_SENT", label: "TNA sent", order: 3 },
-      { key: "PROPOSAL_SENT", label: "Proposal sent", order: 4 },
-      { key: "NEGOTIATION", label: "Negotiation", order: 5 },
-      { key: "WON", label: "Won", order: 6 },
-      { key: "LOST", label: "Lost", order: 7 },
+      { key: "NEW", label: "New", order: 1, terminal: false },
+      { key: "QUALIFYING", label: "Qualifying", order: 2, terminal: false },
+      { key: "TNA_SENT", label: "TNA sent", order: 3, terminal: false },
+      { key: "PROPOSAL_SENT", label: "Proposal sent", order: 4, terminal: false },
+      { key: "NEGOTIATION", label: "Negotiation", order: 5, terminal: false },
+      { key: "WON", label: "Won", order: 6, terminal: true, outcome: "WON" },
+      { key: "LOST", label: "Lost", order: 7, terminal: true, outcome: "LOST" },
     ],
   },
 ];

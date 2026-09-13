@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { Contact, Money, Template, TemplateType } from "@trainos/contract";
+import type { Contact, MessageChannel, Money, Template, TemplateType } from "@trainos/contract";
 import {
   DataTable,
   EmptyState,
@@ -53,7 +53,7 @@ import { useContacts, useTemplates } from "./api";
  */
 
 /** The channel a template sends on, or null when it is a document. */
-const TEMPLATE_CHANNEL: Record<TemplateType, "EMAIL" | "WHATSAPP" | null> = {
+const TEMPLATE_CHANNEL: Record<TemplateType, MessageChannel | null> = {
   PROPOSAL: null,
   QUOTATION: null,
   CERTIFICATE: null,
@@ -68,7 +68,7 @@ const TEMPLATE_CHANNEL: Record<TemplateType, "EMAIL" | "WHATSAPP" | null> = {
 const ALL_TAB = "all";
 
 /** Whether this contact may be written to on this channel. */
-function reachable(contact: Contact, channel: "EMAIL" | "WHATSAPP"): boolean {
+function reachable(contact: Contact, channel: MessageChannel): boolean {
   if (contact.pdpaFlag) return false;
   return channel === "EMAIL" ? contact.consent.email : contact.consent.whatsapp;
 }
@@ -111,7 +111,7 @@ export function MarketingPage() {
     [messageTemplates, tab],
   );
 
-  const reachOn = (channel: "EMAIL" | "WHATSAPP") =>
+  const reachOn = (channel: MessageChannel) =>
     contactRows.filter((contact) => reachable(contact, channel)).length;
 
   const blocked = contactRows.filter(
@@ -220,7 +220,7 @@ export function MarketingPage() {
               { id: ALL_TAB, label: "All", count: messageTemplates.length },
               ...channels.map((channel) => ({
                 id: channel as string,
-                label: channelLabel(channel as "EMAIL" | "WHATSAPP"),
+                label: channelLabel(channel as MessageChannel),
                 count: messageTemplates.filter((row) => TEMPLATE_CHANNEL[row.type] === channel)
                   .length,
               })),

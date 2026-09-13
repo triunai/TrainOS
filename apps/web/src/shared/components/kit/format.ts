@@ -1,6 +1,7 @@
 import type {
   DateOnly,
   LifecycleStep,
+  MessageChannel as ContractMessageChannel,
   Money,
   PipelineStage,
   TierKey,
@@ -328,19 +329,21 @@ export function plural(count: number, one: string, many?: string): string {
  * brand name can be wrong and which reached two screenshots before anyone
  * noticed.
  *
- * The union is written out here because the contract inlines
- * `'EMAIL' | 'WHATSAPP'` at each of its four use sites and exports no name for
- * it — noted as a contract gap. The map is keyed by the union, so a third
- * channel is a compile error here rather than a silently lower-cased name.
+ * The union used to be written out here because the contract inlined
+ * `'EMAIL' | 'WHATSAPP'` at five sites and exported no name. Ruling R15
+ * publishes `MessageChannel`, so this re-exports it rather than keeping a
+ * second spelling of one vocabulary. The map is keyed by the union, so a third
+ * channel added to the contract is a compile error here rather than a silently
+ * lower-cased name.
  */
-export type MessageChannel = "EMAIL" | "WHATSAPP";
+export type { MessageChannel } from "@trainos/contract";
 
-const CHANNEL_LABEL: Record<MessageChannel, string> = {
+const CHANNEL_LABEL: Record<ContractMessageChannel, string> = {
   EMAIL: "Email",
   WHATSAPP: "WhatsApp",
 };
 
-export function channelLabel(channel: MessageChannel): string {
+export function channelLabel(channel: ContractMessageChannel): string {
   return CHANNEL_LABEL[channel];
 }
 

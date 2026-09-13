@@ -122,12 +122,14 @@ setSinglePrimaryCheck(false);
 const money = (amount: number): Money => ({ amount, currency: "MYR" });
 
 const PIPELINE: PipelineStage[] = [
-  { key: "ENQUIRY", label: "Enquiry", order: 1 },
-  { key: "TNA", label: "TNA", order: 2 },
-  { key: "PROPOSAL", label: "Proposal", order: 3 },
-  { key: "DELIVERY", label: "Delivery", order: 4 },
-  { key: "HRDC_CLAIM", label: "HRDC claim", order: 5 },
-  { key: "INVOICE", label: "Invoice", order: 6 },
+  { key: "ENQUIRY", label: "Enquiry", order: 1, terminal: false },
+  { key: "TNA", label: "TNA", order: 2, terminal: false },
+  { key: "PROPOSAL", label: "Proposal", order: 3, terminal: false },
+  { key: "DELIVERY", label: "Delivery", order: 4, terminal: false },
+  { key: "HRDC_CLAIM", label: "HRDC claim", order: 5, terminal: false },
+  /* Ruling R16. Terminal with no outcome: the chain ends here, and getting
+     paid is neither winning nor losing — the winning happened upstream. */
+  { key: "INVOICE", label: "Invoice", order: 6, terminal: true },
 ];
 
 const CHAIN_DONE: LifecycleStep[] = [

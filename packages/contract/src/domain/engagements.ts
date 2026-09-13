@@ -21,6 +21,7 @@ import type {
   EngagementStatus,
   LifecycleState,
   PipelineObject,
+  StageOutcome,
   SyncState,
 } from '../enums';
 
@@ -75,6 +76,24 @@ export interface PipelineStage {
   key: string;
   label: string;
   order: number;
+  /**
+   * Ruling R16: this stage ends the pipeline. Nothing follows it.
+   *
+   * Without it a screen has to infer an ending from `order`, and the highest
+   * order is simply the last row — which is how a computed chain puts LOST
+   * after WON rather than beside it.
+   */
+  terminal: boolean;
+  /**
+   * Ruling R16: which way a terminal stage ended, when it ended at all.
+   *
+   * Absent on every non-terminal stage, and absent on a terminal stage that is
+   * neither a win nor a loss — the engagement pipeline's last rung is `PAID`,
+   * which completes delivery rather than winning or losing anything. Present
+   * exactly where a screen needs to say "in play" instead of "across the
+   * book": a pipeline's open work is the stages with no outcome.
+   */
+  outcome?: StageOutcome;
 }
 
 /* ------------------------------------------------------------------ *

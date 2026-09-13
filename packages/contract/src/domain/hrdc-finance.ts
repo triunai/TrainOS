@@ -21,11 +21,13 @@ import type {
   CheckState,
   CollectionNextActionStatus,
   CollectionStage,
+  ContactChannel,
   DocumentPresence,
   HRDCDocumentType,
   HRDCScheme,
   HrdcDeadlineStatus,
   InvoiceStatus,
+  MessageChannel,
   PacketStatus,
   RuleChangeOp,
   RuleResolutionBasis,
@@ -449,7 +451,8 @@ export interface CollectionsQueueResponse {
 export interface CollectionRule {
   stage: CollectionStage;
   afterDays: number;
-  channel?: 'EMAIL' | 'WHATSAPP' | 'PHONE';
+  /** Ruling R15: `PHONE` is the day-60 human call, which carries no template. */
+  channel?: ContactChannel;
   autonomy: AutonomyLevel;
   requiresApprovalFromRole?: string;
 }
@@ -457,7 +460,7 @@ export interface CollectionRule {
 /** §9 `POST /v1/actions` `type: REMINDER_SEND` (policy FIN-03). */
 export interface ReminderSendPayload {
   invoiceRef?: Ref;
-  channel: 'EMAIL' | 'WHATSAPP';
+  channel: MessageChannel;
   templateId: string;
   stage?: CollectionStage;
   body?: string;

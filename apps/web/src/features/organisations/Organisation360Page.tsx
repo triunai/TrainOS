@@ -454,7 +454,10 @@ function RecordHeaderBlock({
 }: {
   org: NonNullable<ReturnType<typeof useOrganisation>["data"]>;
   currentEngagement: RelatedEngagement | undefined;
-  stages: { key: string; label: string; order: number }[] | undefined;
+  /* Ruling R16 gave `PipelineStage` a `terminal` flag, and this prop had been
+     a structural copy of the old three fields — a fourth spelling of a
+     contract type, which is how a stage list silently loses a field. */
+  stages: PipelineStage[] | undefined;
   onNewOpportunity: () => void;
 }) {
   const metrics = org.metrics;

@@ -62,6 +62,50 @@ export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
 export const ENQUIRY_CHANNELS = ['EMAIL', 'WHATSAPP', 'WEB_FORM', 'PHONE'] as const;
 export type EnquiryChannel = (typeof ENQUIRY_CHANNELS)[number];
 
+/**
+ * §4 / §9 the channels a templated message can go out on.
+ *
+ * Ruling R15. The contract inlined `'EMAIL' | 'WHATSAPP'` at five sites and
+ * exported no name, so `shared/components/kit/format.ts` wrote the union out
+ * again to key its label map — and that map exists because `humanise`
+ * lower-cases WhatsApp into "Whatsapp", which is wrong in the only way a brand
+ * name can be wrong and reached two screenshots before anyone noticed. Two
+ * spellings of one vocabulary is how a third channel gets added to one of them.
+ *
+ * Not `EnquiryChannel`, which has four members: an enquiry can ARRIVE by web
+ * form or phone call, and neither is something a template can be sent on.
+ */
+export const MESSAGE_CHANNELS = ['EMAIL', 'WHATSAPP'] as const;
+export type MessageChannel = (typeof MESSAGE_CHANNELS)[number];
+
+/**
+ * §9 the channels a collections rung may use, including the one that carries
+ * no message at all.
+ *
+ * Ruling R15. `PHONE` is the day-60 `HUMAN_CALL` rung: a person rings, so
+ * there is no template and no per-message rate. That is exactly why it is a
+ * separate union rather than a third member of `MESSAGE_CHANNELS` — every
+ * site that takes a `MessageChannel` also takes a `templateId`.
+ */
+export const CONTACT_CHANNELS = ['EMAIL', 'WHATSAPP', 'PHONE'] as const;
+export type ContactChannel = (typeof CONTACT_CHANNELS)[number];
+
+/**
+ * §5 / §8 how a pipeline stage ends the thing it is tracking.
+ *
+ * Ruling R16. `PipelineStage` carried key, label and order, so nothing said
+ * which stages END a pipeline or which way they end it. The sales screens
+ * could not tell WON from LOST and hedged to "across the book" where they
+ * meant "in play", and a chain computed from `order` alone would put LOST
+ * after WON because LOST is simply the last row.
+ *
+ * UPPER_SNAKE, not the lower-case the request suggested: §1 makes every enum
+ * value in this contract UPPER_SNAKE, and one enum spelled the other way is a
+ * second convention rather than a shorter name.
+ */
+export const STAGE_OUTCOMES = ['WON', 'LOST'] as const;
+export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
+
 /** §12 `EnquiryStatus` */
 export const ENQUIRY_STATUSES = [
   'OPEN',

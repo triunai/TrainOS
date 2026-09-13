@@ -21,6 +21,7 @@ import type {
   EnquiryStatus,
   EvidenceType,
   MessageCategory,
+  MessageChannel,
   OpportunityStage,
   OrganisationMatchReason,
   RateSource,
@@ -175,7 +176,7 @@ export type FollowUpStatus = (typeof FOLLOW_UP_STATUSES)[number];
 
 /** §4 recorded PDPA consent for a channel. */
 export interface ChannelConsent {
-  channel: 'EMAIL' | 'WHATSAPP';
+  channel: MessageChannel;
   granted: boolean;
   recordedAt: Timestamp | null;
 }
@@ -226,7 +227,7 @@ export interface AlternativeCategoryRate {
  * This does not answer Q4. It stops the client answering it by accident.
  */
 export interface MessageDraft {
-  channel: 'EMAIL' | 'WHATSAPP';
+  channel: MessageChannel;
   templateId: string;
   category: MessageCategory;
   body: string;
@@ -253,7 +254,7 @@ export interface MessageDraft {
  * gets `202 EXECUTED`.
  */
 export interface FollowUpSendPayload {
-  channel: 'EMAIL' | 'WHATSAPP';
+  channel: MessageChannel;
   templateId: string;
   body?: string;
 }

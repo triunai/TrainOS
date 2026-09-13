@@ -21,6 +21,7 @@ import type {
   EvidenceType,
   GapPriority,
   HRDCScheme,
+  MessageChannel,
   ProgrammeStatus,
   ProposalStatus,
   QuotationStatus,
@@ -510,7 +511,7 @@ export interface DiscountApprovePayload {
 
 /** §3 `POST /v1/actions` `type: PROPOSAL_SEND`. */
 export interface ProposalSendPayload {
-  channel: 'EMAIL' | 'WHATSAPP';
+  channel: MessageChannel;
   templateId: string;
   to: string[];
   cc?: string[];

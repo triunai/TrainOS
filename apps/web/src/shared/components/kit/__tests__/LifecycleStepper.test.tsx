@@ -63,7 +63,7 @@ describe("LifecycleStepper", () => {
   });
 
   it("falls back to the matching PipelineStage label, then to its key, when a step has no label", () => {
-    const stages: PipelineStage[] = [{ key: "signed", label: "Signed", order: 1 }];
+    const stages: PipelineStage[] = [{ key: "signed", label: "Signed", order: 1, terminal: false }];
     const steps: LifecycleStep[] = [
       { key: "signed", state: "DONE" },
       { key: "unmapped-key", state: "PENDING" },

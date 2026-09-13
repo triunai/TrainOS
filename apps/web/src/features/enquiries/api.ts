@@ -4,6 +4,7 @@ import type {
   ActionResponse,
   Actor,
   EnquiryExtractionPatch,
+  MessageChannel,
   PageRequest,
   Role,
 } from "@trainos/contract";
@@ -106,7 +107,7 @@ export function useFollowUps(page?: PageRequest) {
   });
 }
 
-export function useFollowUpDraft(id: string | undefined, channel: "EMAIL" | "WHATSAPP") {
+export function useFollowUpDraft(id: string | undefined, channel: MessageChannel) {
   const client = useApi();
   return useQuery({
     queryKey: [...queryKeys.followUps.detail(id ?? ""), "draft", channel] as const,

@@ -4,10 +4,11 @@ import type {
   ActionResponse,
   Actor,
   CollectionRule,
+  CollectionsQueueResponse,
   Invoice,
   ListResponse,
+  MessageChannel,
   MessageDraft,
-  CollectionsQueueResponse,
   PaymentRecordRequest,
   ReceivablesAging,
 } from "@trainos/contract";
@@ -203,7 +204,7 @@ export function useSendReminder(invoiceRef: string | null) {
   return useMutation<
     ActionResponse,
     unknown,
-    { channel: "EMAIL" | "WHATSAPP"; templateId: string; stage: string; body: string }
+    { channel: MessageChannel; templateId: string; stage: string; body: string }
   >({
     mutationFn: (payload) => {
       const requestedBy = requireActor(actor);

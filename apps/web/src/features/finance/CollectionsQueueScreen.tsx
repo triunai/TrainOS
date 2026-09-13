@@ -1,6 +1,12 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ActionResponse, CollectionRule, MessageDraft, Receivable } from "@trainos/contract";
+import type {
+  ActionResponse,
+  CollectionRule,
+  MessageChannel,
+  MessageDraft,
+  Receivable,
+} from "@trainos/contract";
 import {
   ActionOutcome,
   AIChip,
@@ -97,7 +103,7 @@ export function CollectionsQueueScreen() {
 
   const [tab, setTab] = useState<TabId>("approval");
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
-  const [channel, setChannel] = useState<"EMAIL" | "WHATSAPP" | null>(null);
+  const [channel, setChannel] = useState<MessageChannel | null>(null);
   const [outcome, setOutcome] = useState<ActionResponse | undefined>(undefined);
 
   const rows = useMemo(() => queue.data?.data ?? [], [queue.data]);
@@ -335,8 +341,8 @@ function DraftPanel({
   row: Receivable;
   draft: MessageDraft | undefined;
   loading: boolean;
-  channel: "EMAIL" | "WHATSAPP";
-  onChannel: (channel: "EMAIL" | "WHATSAPP") => void;
+  channel: MessageChannel;
+  onChannel: (channel: MessageChannel) => void;
   onOpenInvoice: () => void;
 }) {
   return (
@@ -379,7 +385,7 @@ function DraftPanel({
             <PillTabGroup
               label="Channel"
               activeId={channel}
-              onSelect={(id) => onChannel(id as "EMAIL" | "WHATSAPP")}
+              onSelect={(id) => onChannel(id as MessageChannel)}
               tabs={[
                 { id: "EMAIL", label: "Email" },
                 { id: "WHATSAPP", label: "WhatsApp" },

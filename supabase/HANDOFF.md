@@ -56,3 +56,6 @@ for 013 ai-ops (not started):
   run ledger. The invariant to enforce or test: summed over a period,
   `offPeak / (peak + offPeak)` equals the `offPeakShare` the monthly rollup
   publishes.
+| `core.message_channel` | `EMAIL · WHATSAPP` | 003 (type) + 005 enquiries / 010 collections — the channels a TEMPLATED message goes out on. Every column of this type sits beside a template id |
+| `core.contact_channel` | `EMAIL · WHATSAPP · PHONE` | 003 (type) + 010 finance/collections — the collections ladder's rungs, including the day-60 human call, which carries no template. Deliberately a separate type from `message_channel` |
+| `core.stage_outcome` | `WON · LOST` | 003 (type) + 004 shell config, on the pipeline stage table. Nullable: a terminal stage may end a pipeline without winning or losing it, which is what `PAID` and `DELIVERY` do |
