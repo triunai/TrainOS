@@ -1,10 +1,25 @@
+import { GOVERNED_ACTION_TYPES, JURY_MODES, type GovernedActionType, type TierKey } from '@trainos/contract';
 import { describe, expect, it } from 'vitest';
 
 import { MockProvider } from '../src/providers/mock';
 import { ProviderRegistry } from '../src/providers/resolve';
 import { ProviderError, type LLMProvider } from '../src/providers/types';
 import { BudgetExceededError, BudgetLedger } from '../src/routing/budget';
-import { DEFAULT_ROUTING_CONFIG, withRouting } from '../src/routing/config';
+import {
+  DEFAULT_ROUTING_CONFIG,
+  DEFAULT_TIERS,
+  ESCALATE_JURY,
+  GATE_JURY,
+  HostNotAllowedError,
+  INBOUND_CONTENT_TIERS,
+  SAMPLE_JURY,
+  assertHostAllowed,
+  entryFor,
+  hasIndependentJury,
+  isHostAllowed,
+  vendorFor,
+  withRouting,
+} from '../src/routing/config';
 import { NoProviderError, Router } from '../src/routing/router';
 
 /** A provider that answers under a chosen id, so a tier can be aimed at it. */
@@ -23,7 +38,10 @@ describe('tier resolution', () => {
   });
 
   it('falls back to the default tier for an unmapped action', () => {
-    expect(router.tierFor('PAYMENT_RECORD')).toBe('MID');
+    // All 24 GOVERNED_ACTION_TYPES have an explicit row now (see below), so
+    // there is no real action type left to prove the fallback with — a cast
+    // stands in for "a future type nobody has routed yet".
+    expect(router.tierFor('NOT_A_REAL_ACTION_TYPE' as GovernedActionType)).toBe('MID');
     expect(router.tierFor(undefined)).toBe('MID');
   });
 
@@ -164,5 +182,72 @@ describe('provider registry aliasing', () => {
     const mock = providerAs('mock', new MockProvider());
     const registry = new ProviderRegistry([mock]);
     expect(registry.has('mock')).toBe(true);
+  });
+});
+
+describe('STRONG jury vendor independence', () => {
+  it('draws each of the three jury policies from three distinct, identified vendors', () => {
+    expect(vendorFor(DEFAULT_TIERS.STRONG_1)).toBe('anthropic');
+    expect(vendorFor(DEFAULT_TIERS.STRONG_2)).toBe('google');
+    expect(vendorFor(DEFAULT_TIERS.STRONG_3)).toBe('openai');
+
+    for (const policy of [ESCALATE_JURY, SAMPLE_JURY, GATE_JURY]) {
+      expect(hasIndependentJury(policy)).toBe(true);
+    }
+  });
+
+  it('would catch a jury that regressed to two tiers on one vendor', () => {
+    const collapsed = { ...ESCALATE_JURY, tiers: ['STRONG_1', 'STRONG_1', 'STRONG_3'] as TierKey[] };
+    expect(hasIndependentJury(collapsed)).toBe(false);
+  });
+});
+
+describe('host constraint enforcement', () => {
+  it('pins every DeepSeek/Qwen tier reading inbound content to the non-China allow-list', () => {
+    for (const key of INBOUND_CONTENT_TIERS) {
+      const binding = DEFAULT_TIERS[key];
+      expect(binding.hostConstraint).toBeDefined();
+      expect(binding.hostConstraint?.allowedHosts.length).toBeGreaterThan(0);
+
+      // Every allow-listed host is actually allowed.
+      for (const host of binding.hostConstraint?.allowedHosts ?? []) {
+        expect(isHostAllowed(binding, host)).toBe(true);
+        expect(() => assertHostAllowed(binding, host)).not.toThrow();
+      }
+
+      // OpenRouter's un-pinned default (and an explicit China host) are not.
+      expect(isHostAllowed(binding, 'openrouter-default')).toBe(false);
+      expect(isHostAllowed(binding, 'deepseek-cn')).toBe(false);
+      expect(() => assertHostAllowed(binding, 'deepseek-cn')).toThrow(HostNotAllowedError);
+    }
+  });
+
+  it('does not constrain a tier with no compliance-driven allow-list', () => {
+    // STRONG_1 (Anthropic) and FAST_UI (Groq, already US-hosted) carry none.
+    expect(DEFAULT_TIERS.STRONG_1.hostConstraint).toBeUndefined();
+    expect(isHostAllowed(DEFAULT_TIERS.STRONG_1, 'anything')).toBe(true);
+    expect(DEFAULT_TIERS.FAST_UI.hostConstraint).toBeUndefined();
+  });
+});
+
+describe('every tier has a fallback', () => {
+  it('gives every configured tier a non-empty fallback chain', () => {
+    for (const binding of Object.values(DEFAULT_TIERS)) {
+      expect(binding.fallbackChain.length).toBeGreaterThan(0);
+      // A tier never lists itself as its own fallback.
+      expect(binding.fallbackChain).not.toContain(binding.key);
+    }
+  });
+});
+
+describe('full action-type coverage', () => {
+  it('gives all 24 GOVERNED_ACTION_TYPES an explicit routing entry with a jury mode', () => {
+    expect(GOVERNED_ACTION_TYPES.length).toBe(24);
+    for (const actionType of GOVERNED_ACTION_TYPES) {
+      const entry = entryFor(DEFAULT_ROUTING_CONFIG, actionType);
+      expect(entry, `missing routing entry for ${actionType}`).toBeDefined();
+      expect(JURY_MODES).toContain(entry?.jury.mode);
+      expect(DEFAULT_TIERS[entry!.tier]).toBeDefined();
+    }
   });
 });
