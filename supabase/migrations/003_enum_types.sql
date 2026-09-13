@@ -86,6 +86,174 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
+-- ─── 0 · Hosted remediation: 002's public tables under auto-expose ──────────
+--
+-- Hosted Supabase ships default privileges for owner `postgres` IN SCHEMA
+-- public: ALL on tables, EXECUTE on functions, USAGE/SELECT/UPDATE on sequences
+-- to anon, authenticated and service_role. 001 revokes them (1c), but the hosted
+-- project had 001 applied from a revision before that revoke existed and then
+-- 002 on top, so 002's five public tables were born with all three roles holding
+-- ALL. 014's verify refuses exactly that. This section brings such a database to
+-- the state a fresh install reaches, and is a no-op on one that already is.
+--
+-- 1. The default-privilege revoke, identical to 001's, for anything 004-017
+--    create in public.
+-- 2. On 002's five tables, the API roles keep exactly 002's own grant set
+--    (002:696-701) and lose everything else. The catalogue cannot tell a default
+--    grant from a deliberate one — both are granted by postgres — so the target
+--    is written out, and it is the set measured on a fresh install (001 with the
+--    revoke, then 002). supabase_auth_admin's SELECTs (002:665) and the owner's
+--    rights are not the API roles' and are not touched.
+-- 3. Fail closed unless the API roles' privileges on every public relation,
+--    column, function and sequence equal that set exactly, in both directions,
+--    and no default grant to them survives.
+--
+-- Scoped by a preflight to the state 003 runs in: public holds 002's five
+-- tables and nothing else, so a later object's deliberate grant cannot be
+-- mistaken for a default one. Not reversed by the rollback; see there.
+DO $hosted_public_acl$
+DECLARE
+  v_role     text;
+  v_extra    text;
+  v_rel      record;
+  v_leftover text;
+  v_missing  text;
+BEGIN
+  SELECT pg_catalog.string_agg(object_name, ', ') INTO v_extra
+    FROM (SELECT class.relname::text AS object_name
+            FROM pg_catalog.pg_class AS class
+           WHERE class.relnamespace = 'public'::regnamespace
+             AND class.relkind IN ('r','p','v','m','f','S')
+             AND class.relname NOT IN ('tenants','teams','team_members','memberships','user_profiles')
+          UNION ALL
+          SELECT procedure.oid::regprocedure::text
+            FROM pg_catalog.pg_proc AS procedure
+           WHERE procedure.pronamespace = 'public'::regnamespace) AS unexpected;
+  IF v_extra IS NOT NULL THEN
+    RAISE EXCEPTION '003 hosted remediation: public holds objects 002 did not create: %. '
+      'This section is written for the state directly after 002 and will not guess '
+      'which grants on them are deliberate.', v_extra;
+  END IF;
+
+  FOREACH v_role IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = v_role) THEN
+      EXECUTE pg_catalog.format(
+        'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %I', v_role);
+      EXECUTE pg_catalog.format(
+        'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM %I', v_role);
+      EXECUTE pg_catalog.format(
+        'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I', v_role);
+    END IF;
+  END LOOP;
+
+  CREATE TEMPORARY TABLE t003_api_acl_target (
+    relname text NOT NULL, grantee text NOT NULL, privilege text NOT NULL
+  ) ON COMMIT DROP;
+  INSERT INTO t003_api_acl_target (relname, grantee, privilege) VALUES
+    ('tenants',       'authenticated', 'SELECT'),
+    ('tenants',       'authenticated', 'UPDATE'),
+    ('teams',         'authenticated', 'SELECT'),
+    ('teams',         'authenticated', 'INSERT'),
+    ('teams',         'authenticated', 'UPDATE'),
+    ('teams',         'authenticated', 'DELETE'),
+    ('team_members',  'authenticated', 'SELECT'),
+    ('team_members',  'authenticated', 'INSERT'),
+    ('team_members',  'authenticated', 'UPDATE'),
+    ('team_members',  'authenticated', 'DELETE'),
+    ('memberships',   'authenticated', 'SELECT'),
+    ('memberships',   'authenticated', 'INSERT'),
+    ('memberships',   'authenticated', 'UPDATE'),
+    ('user_profiles', 'authenticated', 'SELECT'),
+    ('user_profiles', 'authenticated', 'INSERT'),
+    ('user_profiles', 'authenticated', 'UPDATE');
+
+  -- Where an API role holds anything beyond the target on a table, revoke all
+  -- of that role's rights there and grant the target back. The net change is
+  -- exactly the excess; doing it as revoke-then-grant also leaves the aclitem
+  -- array in the order a fresh install produces, so the ACL is byte-identical
+  -- and not merely equivalent. None of the five tables carries a column-level
+  -- grant, so the table-level REVOKE removes nothing the target keeps; the
+  -- assertion below checks columns regardless. A role with no excess is not
+  -- touched, which is what makes this a no-op on a fresh install.
+  FOR v_rel IN
+    SELECT DISTINCT excess.relname, excess.grantee,
+           (SELECT pg_catalog.string_agg(target.privilege, ', ')
+              FROM t003_api_acl_target AS target
+             WHERE target.relname = excess.relname
+               AND target.grantee = excess.grantee) AS keep
+      FROM (SELECT class.relname::text AS relname,
+                   pg_catalog.pg_get_userbyid(item.grantee) AS grantee,
+                   item.privilege_type AS privilege
+              FROM pg_catalog.pg_class AS class
+              CROSS JOIN LATERAL pg_catalog.aclexplode(class.relacl) AS item
+             WHERE class.relnamespace = 'public'::regnamespace
+               AND pg_catalog.pg_get_userbyid(item.grantee) IN ('anon','authenticated','service_role')
+            EXCEPT
+            SELECT relname, grantee, privilege FROM t003_api_acl_target) AS excess
+  LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON TABLE public.%I FROM %I',
+                              v_rel.relname, v_rel.grantee);
+    IF v_rel.keep IS NOT NULL THEN
+      EXECUTE pg_catalog.format('GRANT %s ON TABLE public.%I TO %I',
+                                v_rel.keep, v_rel.relname, v_rel.grantee);
+    END IF;
+  END LOOP;
+
+  WITH actual AS (
+    SELECT class.relname::text AS relname, NULL::text AS attname,
+           pg_catalog.pg_get_userbyid(item.grantee) AS grantee, item.privilege_type AS privilege
+      FROM pg_catalog.pg_class AS class
+      CROSS JOIN LATERAL pg_catalog.aclexplode(class.relacl) AS item
+     WHERE class.relnamespace = 'public'::regnamespace
+    UNION ALL
+    SELECT class.relname::text, attribute.attname::text,
+           pg_catalog.pg_get_userbyid(item.grantee), item.privilege_type
+      FROM pg_catalog.pg_attribute AS attribute
+      JOIN pg_catalog.pg_class AS class ON class.oid = attribute.attrelid
+      CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS item
+     WHERE class.relnamespace = 'public'::regnamespace
+    UNION ALL
+    SELECT procedure.oid::regprocedure::text, NULL,
+           pg_catalog.pg_get_userbyid(item.grantee), item.privilege_type
+      FROM pg_catalog.pg_proc AS procedure
+      CROSS JOIN LATERAL pg_catalog.aclexplode(procedure.proacl) AS item
+     WHERE procedure.pronamespace = 'public'::regnamespace
+  ), api AS (
+    SELECT * FROM actual WHERE grantee IN ('anon','authenticated','service_role')
+  )
+  SELECT
+    (SELECT pg_catalog.string_agg(pg_catalog.concat_ws('.', relname, attname) || ':'
+                                  || grantee || ':' || privilege, ', ')
+       FROM (SELECT relname, attname, grantee, privilege FROM api
+             EXCEPT
+             SELECT relname, NULL::text, grantee, privilege FROM t003_api_acl_target) AS extra),
+    (SELECT pg_catalog.string_agg(relname || ':' || grantee || ':' || privilege, ', ')
+       FROM (SELECT relname, grantee, privilege FROM t003_api_acl_target
+             EXCEPT
+             SELECT relname, grantee, privilege FROM api WHERE attname IS NULL) AS gone)
+    INTO v_leftover, v_missing;
+  IF v_leftover IS NOT NULL OR v_missing IS NOT NULL THEN
+    RAISE EXCEPTION '003 hosted remediation: public ACLs for the API roles differ from '
+      'a fresh install. Beyond it: %. Missing from it: %.',
+      COALESCE(v_leftover, 'none'), COALESCE(v_missing, 'none');
+  END IF;
+
+  SELECT pg_catalog.string_agg(
+           COALESCE(namespace.nspname, '(global)') || ':' || acl.defaclobjtype::text
+             || ':' || pg_catalog.pg_get_userbyid(item.grantee), ', ')
+    INTO v_leftover
+    FROM pg_catalog.pg_default_acl AS acl
+    LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = acl.defaclnamespace
+    CROSS JOIN LATERAL pg_catalog.aclexplode(acl.defaclacl) AS item
+   WHERE acl.defaclrole = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+     AND pg_catalog.pg_get_userbyid(item.grantee) IN ('anon','authenticated','service_role');
+  IF v_leftover IS NOT NULL THEN
+    RAISE EXCEPTION '003 hosted remediation: default privileges still grant the API '
+      'roles: %. Every table 004-017 creates would be born exposed.', v_leftover;
+  END IF;
+END;
+$hosted_public_acl$;
+
 -- ─── Enums generated from packages/contract/src/enums.ts ───────────────────
 
 DO $$ BEGIN

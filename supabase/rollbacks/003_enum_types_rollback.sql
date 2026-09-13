@@ -33,6 +33,12 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- Forward section 0 (the hosted remediation of 002's public-table ACLs and the
+-- default-privilege revoke) is deliberately NOT reversed, for the reason 001's
+-- rollback gives for its own 1c: the prior state was environment-specific, and
+-- restoring it means handing anon ALL on tenants, memberships, teams,
+-- team_members and user_profiles. 002's own rollback drops those tables.
+
 DO $preflight$
 DECLARE v_cols text;
 BEGIN
