@@ -217,17 +217,21 @@ describe("the one-solid-primary rule", () => {
     renderScreen(<ProposalBuilderPage />, { path: builderPath, route: BUILDER_ROUTE });
     await screen.findByRole("heading", { name: new RegExp(PROPOSAL_AURORA) });
 
-    /* Two buttons, one action, one label — the header keeps the primary
-       reachable and the editor puts it where the decision is made. */
+    /* Two buttons, one action, one label — the header carries the view's solid
+       primary and the editor offers the same action where the decision is made,
+       as a SecondaryButton. Compared as an ARRAY, not a Set: wrapping it in a
+       Set deduplicated, so the assertion passed with one primary, two or twenty
+       sharing a label and could not fail on the defect the line above it
+       describes. */
     expect(screen.getAllByRole("button", { name: "Send for approval" })).toHaveLength(2);
-    expect(new Set(currentPrimaries())).toEqual(new Set(["Send for approval"]));
+    expect(currentPrimaries()).toEqual(["Send for approval"]);
   });
 
   it("claims a single primary on the costing worksheet", async () => {
     renderScreen(<CostingWorksheetPage />, { path: costingPath, route: COSTING_ROUTE });
     await screen.findByRole("heading", { name: `${QUOTATION_AURORA} · costing` });
 
-    expect(new Set(currentPrimaries())).toEqual(new Set(["Apply to proposal"]));
+    expect(currentPrimaries()).toEqual(["Apply to proposal"]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { createContext, useContext, useEffect } from "react";
 
 /**
  * The one-solid-primary-button rule, enforced at runtime in development.
@@ -16,13 +16,39 @@ import { useEffect } from "react";
  * locked states with no primary at all, which this cannot fire on). A view that
  * genuinely needs a second solid button is a design defect, not a prop.
  *
- * The check compares labels rather than counting mounts, because the same
- * action legitimately renders twice at once: `RecordHeader` keeps a copy of the
- * primary in its 48px condensed bar so it stays reachable at any scroll depth.
- * Same label, same action, no warning. Two different labels is the defect.
+ * ## Why this counts instances, not labels
+ *
+ * It used to compare LABELS, and deliberately ignored a repeated one, because
+ * `RecordHeader` keeps a copy of the primary in its 48px condensed bar so the
+ * action stays reachable at any scroll depth. Same label, same action — a real
+ * exemption, wrongly generalised. Exempting every repeated label meant four
+ * screens rendered a header primary that only OPENS a drawer plus the drawer's
+ * own submit button, both solid, both labelled "Record payment" or "Add rule",
+ * and the guard could not fire on the thing it was built to catch.
+ *
+ * So the exemption is now attached to the surface that earns it rather than to
+ * the coincidence of a matching string: `CondensedRecordHeader` marks its
+ * subtree an ECHO, an echo never claims and never warns, and TWO claims are a
+ * violation however they are labelled.
  */
 
-const mounted = new Map<symbol, string>();
+/**
+ * Inside the condensed scroll bar, a primary is a re-rendering of one claimed
+ * above it rather than a second claim.
+ *
+ * `CondensedRecordHeader` is the only thing that may provide this, which is
+ * what keeps the exemption specific: a screen cannot opt its own second solid
+ * button out of the rule by wrapping it.
+ */
+export const CondensedPrimaryEcho = createContext(false);
+
+interface Claim {
+  label: string;
+  /** A condensed-bar re-render of a claim made above it, not a new one. */
+  echo: boolean;
+}
+
+const mounted = new Map<symbol, Claim>();
 
 let enabled = true;
 
@@ -38,9 +64,17 @@ export function setSinglePrimaryCheck(value: boolean): void {
   enabled = value;
 }
 
-/** Test seam: the labels currently claiming the view's single primary. */
+/**
+ * Test seam: the labels currently CLAIMING the view's single primary.
+ *
+ * Echoes are excluded on purpose. A screen with a `RecordHeader` would
+ * otherwise report its one action twice and force every caller to deduplicate
+ * — which is how the assertion in `proposals.test.tsx` came to be wrapped in a
+ * `Set` and stopped being able to fail. One claim per solid button on screen,
+ * so `toEqual(["Send for approval"])` means what it says.
+ */
 export function currentPrimaries(): string[] {
-  return [...mounted.values()];
+  return [...mounted.values()].filter((claim) => !claim.echo).map((claim) => claim.label);
 }
 
 /** Test seam: forget every registration. Call between renders in a test file. */
@@ -55,28 +89,30 @@ export function resetPrimaries(): void {
  * @param label the button's visible text, used to name the clash
  */
 export function useSinglePrimary(label: string): void {
+  const echo = useContext(CondensedPrimaryEcho);
+
   useEffect(() => {
     if (!import.meta.env.DEV || !enabled) return;
 
     const token = Symbol(label);
-    /* A DIFFERENT label is the violation. The same label twice is the same
-       action rendered in two places at once — a RecordHeader's primary and the
-       copy its condensed scroll bar keeps reachable — which the design pack
-       explicitly requires, so it must not warn. */
-    const clashes = [...mounted.values()].filter((other) => other !== label);
-    mounted.set(token, label);
+    /* Read before registering, so this mount does not clash with itself. */
+    const held = [...mounted.values()].filter((other) => !other.echo).map((other) => other.label);
+    mounted.set(token, { label, echo });
 
-    if (clashes.length > 0) {
-      /* A design-rule violation must be loud in development. */
+    if (!echo && held.length > 0) {
+      /* A design-rule violation must be loud in development. Naming both
+         labels matters most when they are the SAME one: "Add rule" opening a
+         drawer and "Add rule" submitting it is the case the old label
+         comparison waved through. */
       console.warn(
-        `[kit] Two solid primary buttons are rendering at once: "${clashes.join(
+        `[kit] Two solid primary buttons are rendering at once: "${held.join(
           '", "',
-        )}" and "${label}". CLAUDE.md allows one per view — demote the lesser action to SecondaryButton.`,
+        )}" and "${label}". CLAUDE.md allows one per view — demote the lesser action to SecondaryButton. A button that only OPENS a drawer is not the view's action.`,
       );
     }
 
     return () => {
       mounted.delete(token);
     };
-  }, [label]);
+  }, [label, echo]);
 }

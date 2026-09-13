@@ -186,7 +186,8 @@ export function RulesRegistryScreen() {
           <SecondaryButton onClick={() => navigate("/compliance/rule-changes")}>
             Rule changes
           </SecondaryButton>
-          <PrimaryButton onClick={() => setAdding(true)}>Add rule</PrimaryButton>
+          {/* The drawer's own "Add rule" is the solid one; this only opens it. */}
+          <SecondaryButton onClick={() => setAdding(true)}>Add rule</SecondaryButton>
         </div>
       </div>
 

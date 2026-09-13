@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import { PrimaryButton } from "@/shared/components/kit/Button";
+import { CondensedRecordHeader } from "@/shared/components/kit/RecordHeader";
 import { resetPrimaries, currentPrimaries } from "@/shared/components/kit/useSinglePrimary";
 
 describe("useSinglePrimary", () => {
@@ -29,7 +30,11 @@ describe("useSinglePrimary", () => {
     warn.mockRestore();
   });
 
-  it("does not warn when two PrimaryButtons share the SAME label", () => {
+  it("warns when two PrimaryButtons share the SAME label — W-04's hole", () => {
+    /* This used to be asserted the other way round. Exempting every repeated
+       label was meant to cover one case, RecordHeader's condensed bar, and it
+       covered four screens that rendered "Add rule" opening a drawer beside
+       "Add rule" submitting it. Two solid buttons is two solid buttons. */
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     render(
       <>
@@ -37,7 +42,27 @@ describe("useSinglePrimary", () => {
         <PrimaryButton>Save quotation</PrimaryButton>
       </>,
     );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("Save quotation");
+    warn.mockRestore();
+  });
+
+  it("does not warn for the condensed bar's copy of a primary already claimed", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const action = <PrimaryButton>Send for approval</PrimaryButton>;
+
+    render(
+      <>
+        {action}
+        <CondensedRecordHeader title="PRO-2026-0184" primaryAction={action} />
+      </>,
+    );
+
     expect(warn).not.toHaveBeenCalled();
+    /* One claim, though two buttons are on screen: the echo is the same action
+       kept reachable, which is the exemption the label comparison generalised
+       into a hole. */
+    expect(currentPrimaries()).toEqual(["Send for approval"]);
     warn.mockRestore();
   });
 

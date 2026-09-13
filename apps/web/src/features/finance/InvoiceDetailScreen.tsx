@@ -136,12 +136,16 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
           </SecondaryButton>
         }
         primaryAction={
-          <PrimaryButton
+          /* Opening a drawer is not the view's action — the drawer's own
+             "Record payment" is, and it is solid. This keeps the header slot,
+             because that is what the condensed bar carries and reachability is
+             the slot's job, but it is no longer a second solid button. */
+          <SecondaryButton
             onClick={() => setRecording(true)}
             disabled={data.outstanding.amount === 0}
           >
             Record payment
-          </PrimaryButton>
+          </SecondaryButton>
         }
         metrics={[
           { label: "Total", value: <MoneyText value={data.total} compact /> },

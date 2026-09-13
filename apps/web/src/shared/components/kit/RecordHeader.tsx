@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Ref } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MetricStrip, type MetricCellProps } from "./MetricStrip";
+import { CondensedPrimaryEcho } from "./useSinglePrimary";
 
 /**
  * The RecordHeader. Kit.dc.html §09, verbatim: "One component, configured per
@@ -166,20 +167,27 @@ export function CondensedRecordHeader({
   const firstChip = Array.isArray(chips) ? chips[0] : chips;
 
   return (
-    <div
-      className={cn(
-        "sticky top-0 z-20 flex h-12 items-center gap-2.5 border-b border-border bg-card px-4",
-        className,
-      )}
-    >
-      <span className="truncate text-[14px] font-semibold">{title}</span>
-      {firstChip}
-      {primaryAction || stickyAction ? (
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          {stickyAction}
-          {primaryAction}
-        </div>
-      ) : null}
-    </div>
+    /* The primary in here is the SAME action as the one in the full header,
+       rendered a second time so it stays in reach — not a second claim on the
+       view's one solid button. Marking the subtree an echo is what lets
+       `useSinglePrimary` count instances rather than compare labels, and so
+       catch a header primary and a drawer primary that happen to share one. */
+    <CondensedPrimaryEcho.Provider value={true}>
+      <div
+        className={cn(
+          "sticky top-0 z-20 flex h-12 items-center gap-2.5 border-b border-border bg-card px-4",
+          className,
+        )}
+      >
+        <span className="truncate text-[14px] font-semibold">{title}</span>
+        {firstChip}
+        {primaryAction || stickyAction ? (
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {stickyAction}
+            {primaryAction}
+          </div>
+        ) : null}
+      </div>
+    </CondensedPrimaryEcho.Provider>
   );
 }

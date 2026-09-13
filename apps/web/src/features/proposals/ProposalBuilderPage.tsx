@@ -115,10 +115,21 @@ export function ProposalBuilderPage() {
     send.mutate(sendRequest(), { onSuccess: (response) => setQueued(response) });
   };
 
+  /* The view's one solid action, in the header, where RecordHeader's condensed
+     bar keeps it reachable at any scroll depth. */
   const sendButton = (
     <PrimaryButton type="button" disabled={send.isPending} onClick={onSend}>
       {send.isPending ? "Sending…" : "Send for approval"}
     </PrimaryButton>
+  );
+
+  /* The same action at the foot of the editor, where the decision is actually
+     made. It was the same element, so two solid blue buttons rendered at once
+     — invisible to a guard that exempted a repeated label. */
+  const sendFromEditor = (
+    <SecondaryButton type="button" disabled={send.isPending} onClick={onSend}>
+      {send.isPending ? "Sending…" : "Send for approval"}
+    </SecondaryButton>
   );
 
   return (
@@ -221,7 +232,7 @@ export function ProposalBuilderPage() {
               setDraftBody(null);
             }}
             policyNote={policyNote(proposal)}
-            sendButton={sendButton}
+            sendAction={sendFromEditor}
           />
 
           <LivePreview proposal={proposal} />
@@ -428,7 +439,7 @@ function SectionEditor({
   flagged,
   onOpenFlagged,
   policyNote: note,
-  sendButton,
+  sendAction,
 }: {
   section: ProposalSection | undefined;
   draftBody: string | null;
@@ -441,7 +452,7 @@ function SectionEditor({
   flagged: ProposalSection[];
   onOpenFlagged: (n: number) => void;
   policyNote: string;
-  sendButton: ReactNode;
+  sendAction: ReactNode;
 }) {
   if (!section) {
     return (
@@ -560,7 +571,7 @@ function SectionEditor({
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-divider pt-4">
         <p className="max-w-[52ch] text-[12px] text-ink-secondary">{note}</p>
-        {sendButton}
+        {sendAction}
       </div>
     </div>
   );

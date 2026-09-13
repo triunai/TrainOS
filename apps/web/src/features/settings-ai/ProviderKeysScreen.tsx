@@ -127,7 +127,9 @@ export function ProviderKeysScreen() {
           </>
         }
         primaryAction={
-          <PrimaryButton onClick={() => setDrawerOpen(true)}>Add provider key</PrimaryButton>
+          /* AddProviderKeyDrawer's footer holds the solid "Add provider key".
+             This opens the drawer, which is not the view's action. */
+          <SecondaryButton onClick={() => setDrawerOpen(true)}>Add provider key</SecondaryButton>
         }
         metrics={[
           { label: "Keys valid", value: `${valid} of ${keys.length}` },
