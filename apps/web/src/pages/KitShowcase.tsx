@@ -16,6 +16,9 @@ import {
   AgingStrip,
   AIChip,
   AgentRunCard,
+  CalendarGrid,
+  CalendarList,
+  formatDate,
   AllowedHoursStrip,
   ApprovalBanner,
   AutonomyChip,
@@ -45,6 +48,8 @@ import {
   ExternalMinimalShell,
   Fab,
   FilterBar,
+  FilterSearch,
+  FilterSelect,
   GhostButton,
   IconButton,
   JuryChip,
@@ -395,6 +400,31 @@ const LEADS: LeadRow[] = [
   },
 ];
 
+/** Sample entries for the calendar grid. Literals, not fixtures. */
+const CALENDAR_ENTRIES = [
+  {
+    id: "cal-1",
+    day: "2026-11-12",
+    title: "Leading Through Change",
+    meta: "Aurora HQ Shah Alam · Farah Aziz",
+    badge: <StatusChip tone="info">Day 1</StatusChip>,
+  },
+  {
+    id: "cal-2",
+    day: "2026-11-13",
+    title: "Leading Through Change",
+    meta: "Aurora HQ Shah Alam · Farah Aziz",
+    badge: <StatusChip tone="info">Day 2</StatusChip>,
+  },
+  {
+    id: "cal-3",
+    day: "2026-11-25",
+    title: "Data Literacy for Managers",
+    meta: "Akademi Perdana, Petaling Jaya",
+    badge: <StatusChip tone="neutral">Confirmed</StatusChip>,
+  },
+];
+
 /* ------------------------------------------------------------------ *
  * Page furniture
  * ------------------------------------------------------------------ */
@@ -454,6 +484,8 @@ function Stack({ children }: { children: ReactNode }) {
 export default function KitShowcase() {
   const [tab, setTab] = useState("mine");
   const [density, setDensity] = useState<Density>("comfortable");
+  const [facetQuery, setFacetQuery] = useState("");
+  const [facetStage, setFacetStage] = useState("ALL");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [sortKey, setSortKey] = useState("value");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
@@ -797,6 +829,25 @@ export default function KitShowcase() {
               { id: "owner", label: "Owner", value: "Amirah", locked: true },
             ]}
           >
+            {/* The two controls a facet row is made of. They sit in
+                `FilterBar`'s children slot beside the density toggle, which is
+                the only place they are meant to appear. */}
+            <FilterSearch
+              label="Search"
+              value={facetQuery}
+              onChange={setFacetQuery}
+              placeholder="Name or reference"
+            />
+            <FilterSelect
+              label="Stage"
+              value={facetStage}
+              onChange={setFacetStage}
+              options={[
+                { value: "ALL", label: "Any stage" },
+                { value: "QUALIFYING", label: "Qualifying" },
+                { value: "PROPOSAL_SENT", label: "Proposal sent" },
+              ]}
+            />
             <DensityToggle value={density} onChange={setDensity} />
           </FilterBar>
           <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
@@ -1141,6 +1192,31 @@ export default function KitShowcase() {
               </p>
             </ExternalMinimalShell>
           </div>
+        </Stack>
+      </Entry>
+
+      <Entry
+        id="calendar"
+        title="Calendar grid and its list fallback · added 13 Sep 2026"
+        note="No artboard draws a calendar, so the grid follows the kit's own grammar rather than a reference: hairline seams instead of a border per cell, today as a weight change and a ring rather than a filled cell, and the DataTable's exact selection treatment. Status colour stays on the chip the entry passes through. The list is the same entries at a width where seven columns cannot hold a legible title."
+      >
+        <Stack>
+          <CalendarGrid
+            label="Deliveries"
+            anchor="2026-11-01"
+            view="month"
+            today="2026-11-14"
+            selectedId="cal-1"
+            onSelect={() => undefined}
+            entries={CALENDAR_ENTRIES}
+          />
+          <CalendarList
+            label="Deliveries"
+            entries={CALENDAR_ENTRIES}
+            selectedId="cal-1"
+            onSelect={() => undefined}
+            formatDay={formatDate}
+          />
         </Stack>
       </Entry>
 
