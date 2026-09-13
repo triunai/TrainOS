@@ -83,7 +83,7 @@ describe("/settings/templates", () => {
       route: "/settings/templates",
     });
     await screen.findByRole("table", { name: "Templates" });
-    await userEvent.click(screen.getByRole("tab", { name: /Whatsapp/i }));
+    await userEvent.click(screen.getByRole("tab", { name: /Messages/i }));
 
     const table = screen.getByRole("table", { name: "Templates" });
     /* UTILITY at RM 0.06 against MARKETING at RM 0.35 is the gap the column
@@ -93,19 +93,24 @@ describe("/settings/templates", () => {
     expect(within(table).getAllByText("Marketing").length).toBeGreaterThan(0);
   });
 
-  it("builds its tabs from the kinds present, not from the contract's enum", async () => {
+  it("groups the kinds instead of giving each one a segment", async () => {
     renderScreen(<TemplatesSettingsScreen />, {
       path: "/settings/templates",
       route: "/settings/templates",
     });
     await screen.findByRole("table", { name: "Templates" });
-    /* A tab for a kind the tenant has no template of can only ever show an
-       empty state. */
-    const tabs = screen.getAllByRole("tab");
-    expect(tabs.length).toBeGreaterThan(1);
-    for (const tab of tabs) {
-      expect(tab.textContent).not.toMatch(/\b0$/);
-    }
+
+    /* Nine segments overflowed the track at 1440 and clipped the ninth label
+       mid-word. Three groups fit; the exact kind stays a column. */
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+
+    await userEvent.click(screen.getByRole("tab", { name: /Documents/i }));
+    const table = screen.getByRole("table", { name: "Templates" });
+    expect(within(table).getByText("Standard proposal")).toBeInTheDocument();
+    /* Nothing is lost to the grouping: documents is the complement of
+       messages, so an unanticipated kind lands here rather than nowhere. */
+    expect(within(table).getByText("Standard needs analysis")).toBeInTheDocument();
+    expect(within(table).queryByText("Proposal follow-up")).not.toBeInTheDocument();
   });
 
   it("marks the AI-drafted sections with the tint and a word, never a fill", async () => {
@@ -147,14 +152,22 @@ describe("/settings/policies", () => {
     expect(within(table).getAllByText("Every time").length).toBeGreaterThan(0);
   });
 
-  it("names the escalation, or says there is none", async () => {
+  it("names the escalation in the detail, where there is room to say it", async () => {
     renderScreen(<PoliciesSettingsScreen />, {
       path: "/settings/policies",
       route: "/settings/policies",
     });
-    const table = await screen.findByRole("table", { name: "Approval policies" });
-    expect(within(table).getAllByText(/Md · 360 min/).length).toBeGreaterThan(0);
-    expect(within(table).getAllByText("No escalation").length).toBeGreaterThan(0);
+    await screen.findByRole("table", { name: "Approval policies" });
+
+    /* SLA and escalation are NOT master columns. At 1440 the detail panel
+       takes a third of the row and the last two columns fell off the right
+       edge — worse than not showing them, because nothing said they were
+       missing. The panel says both in sentences. */
+    expect(screen.getByText("240 minutes")).toBeInTheDocument();
+    expect(screen.getByText(/after 360 minutes/)).toBeInTheDocument();
+
+    const table = screen.getByRole("table", { name: "Approval policies" });
+    expect(within(table).queryByText("SLA")).not.toBeInTheDocument();
   });
 
   it("offers no write on a read-only endpoint and points at the live view", async () => {

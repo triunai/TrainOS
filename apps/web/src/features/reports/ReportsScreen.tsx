@@ -110,14 +110,19 @@ export function ReportsScreen() {
       value: hours.data ? `${hours.data.hours}` : "—",
       ...(hours.data
         ? {
-            sub: `${humanise(hours.data.basis).toLowerCase()} · ×${hours.data.haircut} haircut`,
+            /* The basis is NOT repeated here. It is the card's chip below and
+               the caveat's first word, and the three of them on one line read
+               as "illustrative · illustrative · illustrative", which is how a
+               screen ends up looking like nobody read it back. The sub carries
+               the one fact neither of the others does: the haircut. */
+            sub: `×${hours.data.haircut} haircut`,
             /* Short, because the card below states the baseline version and
                the arithmetic. What the caveat has to do here is stop the
                number travelling without it. */
             estimate:
               hours.data.basis === "MEASURED"
                 ? "Measured against the discovery baseline."
-                : "Illustrative: the baseline has not been measured yet.",
+                : "The baseline has not been measured yet.",
           }
         : {}),
     },

@@ -97,6 +97,16 @@ export function PoliciesSettingsScreen() {
     return rows.length;
   };
 
+  /**
+   * Three columns, not five.
+   *
+   * SLA and the escalation used to be here and were being clipped: at 1440 the
+   * detail panel takes a third of the row, and five columns do not fit what is
+   * left — the last two simply fell off the right edge, which is worse than
+   * not showing them, because nothing said they were missing. Both are in the
+   * panel, in full sentences. A master column identifies and triages; the
+   * detail holds the rest.
+   */
   const columns: Column<Policy>[] = [
     {
       key: "policy",
@@ -111,7 +121,7 @@ export function PoliciesSettingsScreen() {
     {
       key: "when",
       label: "Fires when",
-      width: "168px",
+      width: "184px",
       accessor: (policy) =>
         policy.conditions.length === 0 ? (
           /* No conditions is not "never" — it is "always", and the two read
@@ -128,28 +138,6 @@ export function PoliciesSettingsScreen() {
       label: "Approver",
       width: "148px",
       accessor: (policy) => <StatusChip tone="neutral">{humanise(policy.approverRole)}</StatusChip>,
-    },
-    {
-      key: "sla",
-      label: "SLA",
-      width: "88px",
-      align: "right",
-      accessor: (policy) => (
-        <span className="tabular-nums text-ink-secondary">{`${policy.slaMinutes} min`}</span>
-      ),
-    },
-    {
-      key: "escalation",
-      label: "Escalates",
-      width: "160px",
-      accessor: (policy) =>
-        policy.escalateToRole ? (
-          <span className="text-[12px] text-ink-secondary">
-            {`${humanise(policy.escalateToRole)}${policy.escalateAfterMinutes ? ` · ${policy.escalateAfterMinutes} min` : ""}`}
-          </span>
-        ) : (
-          <span className="text-[12px] text-ink-muted">No escalation</span>
-        ),
     },
   ];
 

@@ -33,27 +33,53 @@ import { useTemplates } from "./api";
  * no rate render a dash rather than RM 0.00 — free and unpriced are different
  * facts, and `dashWhenZero` is the kit's way of saying so.
  *
- * The tabs are built from the types PRESENT in the response, not from the
- * contract's nine-value enum. A tab for a type the tenant has no template of is
- * a tab that can only ever show an empty state.
+ * THE TABS GROUP, THEY DO NOT ENUMERATE. Nine kinds is nine segments, and nine
+ * segments overflow the track at 1440 and stop being a control — it was built
+ * that way first and the ninth label was clipped mid-word. Messages and
+ * documents is the split the page is actually about, and the exact kind stays a
+ * column on every row.
  */
 
-/** Types whose templates cost money to send. */
-const PRICED: TemplateType[] = ["WHATSAPP"];
+/**
+ * The two kinds that are SENT as a message. Everything else produces a
+ * document.
+ *
+ * This grouping is the screen's, not the contract's, and it is stated as a
+ * constant for that reason. It is safe in a way a policy-to-stage map is not:
+ * the third group is computed as the COMPLEMENT, so a template type nobody
+ * anticipated lands in "Documents" and stays visible instead of vanishing from
+ * every tab. Getting it wrong misfiles a row; it cannot lose one.
+ *
+ * Why group at all: nine kinds is nine segments, and a segmented control with
+ * nine segments overflows its track at 1440 and stops being a control. The
+ * exact kind is still a column on every row and is never hidden.
+ */
+const MESSAGE_TYPES: TemplateType[] = ["EMAIL", "WHATSAPP"];
+
+const GROUPS = {
+  all: "All",
+  messages: "Messages",
+  documents: "Documents",
+} as const;
+
+type GroupId = keyof typeof GROUPS;
+
+function groupOf(template: Template): Exclude<GroupId, "all"> {
+  return MESSAGE_TYPES.includes(template.type) ? "messages" : "documents";
+}
 
 export function TemplatesSettingsScreen() {
   useBreadcrumb([{ label: "Settings" }, { label: "Templates" }]);
 
   const templates = useTemplates();
-  const [type, setType] = useState<"all" | TemplateType>("all");
+  const [group, setGroup] = useState<GroupId>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const rows = useMemo(() => templates.data?.data ?? [], [templates.data]);
 
-  /* Present types, in the order the server returned them. Sorting alphabetically
-     would put CERTIFICATE before PROPOSAL, which is not the order anyone thinks
-     about these in. */
-  const types = useMemo(() => {
+  /* Present kinds, in the order the server returned them. Counted for the
+     header line only — the tabs group them, the Kind column names each one. */
+  const kinds = useMemo(() => {
     const seen: TemplateType[] = [];
     for (const template of rows) {
       if (!seen.includes(template.type)) seen.push(template.type);
@@ -62,8 +88,8 @@ export function TemplatesSettingsScreen() {
   }, [rows]);
 
   const visible = useMemo(
-    () => (type === "all" ? rows : rows.filter((template) => template.type === type)),
-    [rows, type],
+    () => (group === "all" ? rows : rows.filter((template) => groupOf(template) === group)),
+    [rows, group],
   );
 
   const selected = useMemo(
@@ -132,15 +158,6 @@ export function TemplatesSettingsScreen() {
           <span className="text-ink-muted">—</span>
         ),
     },
-    {
-      key: "fields",
-      label: "Merge fields",
-      width: "108px",
-      align: "right",
-      accessor: (template) => (
-        <span className="tabular-nums text-ink-secondary">{template.mergeFields.length}</span>
-      ),
-    },
   ];
 
   if (templates.isPending) return <LoadingState rows={8} label="Loading the templates" />;
@@ -161,7 +178,7 @@ export function TemplatesSettingsScreen() {
         title="Templates"
         meta={[
           `${rows.length} templates`,
-          `${types.length} kinds`,
+          `${kinds.length} kinds`,
           priced > 0 ? `${priced} priced per message` : null,
           "read-only",
         ]}
@@ -171,20 +188,20 @@ export function TemplatesSettingsScreen() {
         <ListToolbar
           tabs={
             <PillTabGroup
-              label="Template kinds"
-              activeId={type}
+              label="Template groups"
+              activeId={group}
               onSelect={(id) => {
-                setType(id as "all" | TemplateType);
+                setGroup(id as GroupId);
                 setSelectedId(null);
               }}
-              tabs={[
-                { id: "all", label: "All", count: rows.length },
-                ...types.map((entry) => ({
-                  id: entry,
-                  label: humanise(entry),
-                  count: rows.filter((template) => template.type === entry).length,
-                })),
-              ]}
+              tabs={(Object.keys(GROUPS) as GroupId[]).map((id) => ({
+                id,
+                label: GROUPS[id],
+                count:
+                  id === "all"
+                    ? rows.length
+                    : rows.filter((template) => groupOf(template) === id).length,
+              }))}
             />
           }
           filters={<FilterBar filters={[]} shown={visible.length} total={rows.length} />}
@@ -200,7 +217,7 @@ export function TemplatesSettingsScreen() {
           onRowClick={(template) => setSelectedId(template.id)}
           empty={
             <EmptyState
-              title="No template of this kind"
+              title="No template in this group"
               description="Nothing is configured for this kind yet. Templates are resolved server-side, so one added there appears here without a release."
             />
           }

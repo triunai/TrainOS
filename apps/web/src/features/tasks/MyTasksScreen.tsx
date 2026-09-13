@@ -15,6 +15,8 @@ import {
   EmptyState,
   ErrorState,
   FOLLOW_UP_TONE,
+  FilterBar,
+  ListToolbar,
   LoadingState,
   MoneyText,
   PillTabGroup,
@@ -374,19 +376,29 @@ export function MyTasksScreen() {
 
       {!pending && failed.length < sources.length ? (
         <>
+          {/* One control surface, not two bands. The kit's ListToolbar landed
+              on 13 Sep as the newer variant of "tabs above a filter row above a
+              table", and CLAUDE.md says the newer one wins and the older is
+              migrated in the same pass. The counter on the right is the result
+              of both halves, which is why it sits furthest from the tabs. */}
           <div className="px-5">
-            <PillTabGroup
-              label="Task kinds"
-              activeId={tab}
-              onSelect={(id) => setTab(id as TabId)}
-              tabs={TABS.map((entry) => ({
-                id: entry.id,
-                label: entry.label,
-                count:
-                  entry.id === "all"
-                    ? tasks.length
-                    : tasks.filter((task) => task.kind === entry.id).length,
-              }))}
+            <ListToolbar
+              tabs={
+                <PillTabGroup
+                  label="Task kinds"
+                  activeId={tab}
+                  onSelect={(id) => setTab(id as TabId)}
+                  tabs={TABS.map((entry) => ({
+                    id: entry.id,
+                    label: entry.label,
+                    count:
+                      entry.id === "all"
+                        ? tasks.length
+                        : tasks.filter((task) => task.kind === entry.id).length,
+                  }))}
+                />
+              }
+              filters={<FilterBar filters={[]} shown={visible.length} total={tasks.length} />}
             />
           </div>
 
