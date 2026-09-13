@@ -46,3 +46,14 @@ Source of truth for the target look: **the Collections page (M13-S05) compositio
 ### 12a. Sidebar footer (final spec, 13 Sep 11:32)
 Row 1: Help & support (drawer: docs, contact, Report an issue pre-filled with version + route) · Shortcuts (⌘K + list). Row 2: profile dropdown — avatar initials, name, role; menu: Theme radio, DEV role switcher, Sign out. Row 3: "TrainOS 0.1.0 · API v1 · contract 0.1.0" + status dot. Collapse-sidebar toggle at the footer edge (64px icon rail, localStorage). Topbar keeps only breadcrumb · search ⌘K · bell.
 Amendment 11:34: role switcher is its own full-width DROP-UP row (not in the profile menu); Help & support is its own full-width item. Footer order: Help & support · Shortcuts · Role (drop-up) · Profile (menu: Theme, Sign out) · version line.
+
+## 14. Scrollbars (site-wide, user rule 11:38)
+No scrollbar visible anywhere at rest. Thin overlay scrollbar appears only while scrolling, fades 800ms after. Global CSS + one delegated scroll listener at the shell. (Assigned to shell-fix.)
+
+## 15. RecordHeader upgrade (approval detail as the reference; applies to every record screen)
+Reference screenshot: "Send proposal · Aurora Manufacturing Sdn Bhd" header on M02-S02.
+- **Collapsible header.** Collapsed = one row: title · status chip · action cluster (Reject / Request changes / Approve) · chevron. Expanded = the collapsed row plus the meta line (refs · policy · SLA) and the metric band. Eased open/close (same leak-free grid-rows transition as the sidebar accordion). Default expanded on first visit; state remembered per record type.
+- **Metric band becomes its own card** spanning the full header width: **soft blue gradient** background (from `primary` at 6% tint to ~12% tint, left→right or top→bottom; tokenised as `--surface-accent-gradient`), ink text, no border, `--radius-panel`. Caution: keep within the pack's 5–15% blue budget — soft tint, never saturated; Approve stays the only solid blue.
+- **That gradient card is itself a dropdown**: its header row shows the metrics (Value · Agent · Confidence · Margin · Risk); expanding it reveals the record's detail sections beneath ("Why this needs you", recommendation, evidence, deviations, risk, diff) inside the same card, so the metrics act as the summary row of the detail. Chevron on the right; eased.
+- **Spread the metrics out:** equal-width grid across the full band (`grid-template-columns: repeat(n, 1fr)`), dividers between cells, not clustered left.
+- Kit owns it: extend `RecordHeader` (collapsible, `metricsCard` slot) and `MetricStrip` (`variant="accentCard"`, `expandable` with children). Screens pass the sections as children; no per-screen composition.
