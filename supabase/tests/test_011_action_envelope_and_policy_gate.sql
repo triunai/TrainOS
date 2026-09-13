@@ -152,6 +152,14 @@ VALUES
 -- approval diff hash move. Without them T18's record-change half SKIPS, and a
 -- skipped assertion in a pin about a guard that could never fire is the same
 -- vacuous pass the guard itself was.
+-- A REAL aal2 session. `app.aal2_verified()` checks auth.sessions rather than
+-- trusting the claim, so a money-moving action needs a row here and not just
+-- "aal":"aal2" in the JWT — which is the point of that function and is why T19's
+-- QUOTATION_APPLY could not otherwise be staged at all.
+INSERT INTO auth.sessions (id,user_id,aal) VALUES
+  ('00000011-5e55-0000-0000-00000000000a','00000011-0000-0000-0000-0000000000a1','aal2'),
+  ('00000011-5e55-0000-0000-00000000000b','00000011-0000-0000-0000-0000000000a3','aal2');
+
 INSERT INTO core.rate_cards (id,tenant_id,version,status,effective_from) VALUES
   ('00000011-0fff-0fff-0fff-0fffffffffe1','00000011-1111-1111-1111-111111111111',
    'v1-t011','DRAFT','2026-01-01');
@@ -162,6 +170,11 @@ INSERT INTO core.quotations
 VALUES
   ('00000011-0977-0977-0977-097777777771','00000011-1111-1111-1111-111111111111',
    '00000011-eeee-eeee-eeee-eeeeeeeeeee1','00000011-0fff-0fff-0fff-0fffffffffe1',
+   30,1850000,1091500,1390000,0.3500),
+  -- A second one, so T19 can approve an UNCHANGED record and a CHANGED one
+  -- without the first decision consuming the only fixture.
+  ('00000011-0977-0977-0977-097777777772','00000011-1111-1111-1111-111111111111',
+   '00000011-eeee-eeee-eeee-eeeeeeeeeee2','00000011-0fff-0fff-0fff-0fffffffffe1',
    30,1850000,1091500,1390000,0.3500);
 
 INSERT INTO core.enquiries
@@ -226,6 +239,25 @@ BEGIN
     v_body := app.decide_approval(p_id,p_decision,p_note,NULL,NULL);
     RETURN pg_catalog.jsonb_build_object(
       'ok',true,'http',pg_catalog.current_setting('response.status',true),'body',v_body);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    RETURN pg_catalog.jsonb_build_object(
+      'ok',false,'sqlstate',SQLSTATE,'message',SQLERRM,'detailText',v_detail);
+  END;
+END;
+$fn$;
+
+CREATE FUNCTION pg_temp.t011_decide_hash(p_id uuid,p_decision text,p_note text,p_hash text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $fn$
+DECLARE v_body jsonb; v_detail text;
+BEGIN
+  BEGIN
+    v_body := app.decide_approval(p_id,p_decision,p_note,p_hash,NULL);
+    RETURN pg_catalog.jsonb_build_object('ok',true,'body',v_body);
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
     RETURN pg_catalog.jsonb_build_object(
@@ -1239,6 +1271,141 @@ BEGIN
     'different effect plans still hash differently.';
 END;
 $t18$;
+
+
+
+-- ─── T19 · HIGH · the diff the approver saw is the diff they approve ────────
+-- THE CANONICAL FORM, written down here because it is a contract between three
+-- places and was previously implied by none of them.
+--
+--   The approval's `diff_hash` is computed SERVER-SIDE, once, at queue time, over
+--   `{"effects": <app.plan_effects(...)>, "value": <app.action_value(...)>}`
+--   rendered as jsonb text and SHA-256'd. It is stored on the approval row and
+--   exposed on `core.v_approval_requests`. The client READS it with the approval
+--   and ECHOES it back as `p_expected_diff_hash`; it does not compute one.
+--   `apps/web/src/features/approvals/ApprovalDetail.tsx:170` passes
+--   `detail.diffHash` verbatim, and the only `hashDiff()` in the repository lives
+--   in `packages/fixtures`, which is the mock client and not this path.
+--
+-- That is deliberate and it is the cheaper half of a choice. A client-computed
+-- hash would have to agree, byte for byte, with a server-side canonical
+-- serialisation forever — two implementations of one format in two languages,
+-- which is the drift this repo's rules exist to prevent. An echoed server hash
+-- has one implementation and one place to change it.
+--
+-- WHAT THE ECHO IS FOR, since a value the client merely returns cannot detect a
+-- change the client made. It detects the gap between READ and DECIDE: the
+-- approver loaded a diff, something else moved the underlying record, and the
+-- hash they echo no longer matches the one the row carries now. That is the only
+-- failure this guard was ever able to catch, and until the hash covered
+-- `app.action_value` it could not catch even that — `app.plan_effects` is
+-- IMMUTABLE and reads no row, so the fresh hash equalled the stored one by
+-- construction (see T18).
+
+-- The quotation refs, read as the owner before any role swap.
+SELECT pg_catalog.set_config('t011.qref_a',
+  (SELECT ref FROM core.quotations WHERE id='00000011-0977-0977-0977-097777777771'), true);
+SELECT pg_catalog.set_config('t011.qref_b',
+  (SELECT ref FROM core.quotations WHERE id='00000011-0977-0977-0977-097777777772'), true);
+
+-- ⚠ THE APPROVALS ARE STAGED DIRECTLY, NOT THROUGH app.perform_action, and the
+-- reason is worth stating rather than hiding. QUOTATION_APPLY is the only action
+-- type whose `value_source` is QUOTATION — it is the one whose value READS the
+-- record this pin edits — and in this file's fixtures it dispatches straight to
+-- EXECUTING rather than queueing, because this tenant carries no matching
+-- `core.action_policies` row. Routing through perform_action would therefore make
+-- this a test of policy seeding, which T16 and T17 already cover, and would never
+-- reach the guard that is actually under test.
+--
+-- What is staged is exactly what perform_action writes: an action request, and an
+-- approval whose `diff_hash` is the canonical
+-- SHA-256 over {"effects": plan_effects(...), "value": action_value(...)}.
+-- If that expression ever diverges from 011's, T19a fails immediately — an
+-- approval whose stored hash does not match what decide_approval recomputes is
+-- refused on the FIRST, unchanged case.
+INSERT INTO core.action_requests
+  (id,tenant_id,ref,action_type,target_ref,requested_by_kind,requested_by_id,status)
+VALUES
+  ('00000011-ac19-0000-0000-00000000000a','00000011-1111-1111-1111-111111111111',
+   'ACT-T019-A','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_a'),
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL'),
+  ('00000011-ac19-0000-0000-00000000000b','00000011-1111-1111-1111-111111111111',
+   'ACT-T019-B','QUOTATION_APPLY',pg_catalog.current_setting('t011.qref_b'),
+   'HUMAN','00000011-0000-0000-0000-0000000000a1','QUEUED_FOR_APPROVAL');
+
+INSERT INTO core.approval_requests
+  (id,tenant_id,action_request_id,policy_id,action_type,subject,target_ref,
+   requested_by_kind,requested_by_id,reason,diff,diff_hash,approver_role,
+   sla_due_at,expires_at,bulk_approvable)
+SELECT
+  q.approval_id, '00000011-1111-1111-1111-111111111111', q.request_id,
+  'pol_t019','QUOTATION_APPLY','quotation', q.ref,
+  'HUMAN','00000011-0000-0000-0000-0000000000a1','T019 diff-hash probe',
+  app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+  pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+    pg_catalog.jsonb_build_object(
+      'effects', app.plan_effects('QUOTATION_APPLY', q.ref, '{}'::jsonb),
+      'value',   app.action_value('QUOTATION_APPLY','00000011-1111-1111-1111-111111111111',
+                   q.quotation_id, '{}'::jsonb))::text,'UTF8')),'hex'),
+  'MD', pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', false
+FROM (VALUES
+  ('00000011-a919-0000-0000-00000000000a'::uuid,'00000011-ac19-0000-0000-00000000000a'::uuid,
+   '00000011-0977-0977-0977-097777777771'::uuid, pg_catalog.current_setting('t011.qref_a')),
+  ('00000011-a919-0000-0000-00000000000b'::uuid,'00000011-ac19-0000-0000-00000000000b'::uuid,
+   '00000011-0977-0977-0977-097777777772'::uuid, pg_catalog.current_setting('t011.qref_b'))
+) AS q(approval_id, request_id, quotation_id, ref);
+
+DO $t19$
+DECLARE
+  v_ap_a    uuid := '00000011-a919-0000-0000-00000000000a';
+  v_ap_b    uuid := '00000011-a919-0000-0000-00000000000b';
+  v_read_a  text;
+  v_read_b  text;
+  v_res     jsonb;
+BEGIN
+  -- Read the hash the way the product does: off the approval, through the view
+  -- the detail screen reads.
+  SELECT diff_hash INTO v_read_a FROM core.v_approval_requests WHERE id = v_ap_a;
+  SELECT diff_hash INTO v_read_b FROM core.v_approval_requests WHERE id = v_ap_b;
+
+  ASSERT v_read_a IS NOT NULL AND v_read_b IS NOT NULL,
+    'T19 SETUP FAIL: core.v_approval_requests does not expose diff_hash, so the '
+    'client has nothing to echo and the guard cannot work at all.';
+
+  -- (a) NOTHING CHANGED between read and decide: the echoed hash is accepted.
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    '{"sub":"00000011-0000-0000-0000-0000000000a3","role":"authenticated","tenant_id":"00000011-1111-1111-1111-111111111111","app_role":"MD","actor_kind":"HUMAN","aal":"aal2","session_id":"00000011-5e55-0000-0000-00000000000b"}',true);
+  v_res := pg_temp.t011_decide_hash(v_ap_a,'APPROVE',NULL,v_read_a);
+  ASSERT (v_res->>'ok')::boolean,
+    pg_catalog.format('T19a FAIL: an APPROVE echoing the hash it just read, with '
+      'nothing changed underneath, was refused. The guard must admit the '
+      'unchanged case or every approval in the product fails: %s', v_res::text);
+
+  -- (b) THE RECORD MOVES between read and decide: the echoed hash is refused.
+  -- This is the scenario the whole mechanism exists for — a quotation repriced
+  -- after the approver opened it — and before the hash covered app.action_value
+  -- it was undetectable, because plan_effects cannot see a quotation.
+  UPDATE core.quotations SET sell_price_sen = sell_price_sen + 250000
+   WHERE id = '00000011-0977-0977-0977-097777777772';
+
+  v_res := pg_temp.t011_decide_hash(v_ap_b,'APPROVE',NULL,v_read_b);
+  ASSERT NOT (v_res->>'ok')::boolean,
+    pg_catalog.format('T19b FAIL: the quotation was repriced after the approver '
+      'read the diff, and the APPROVE echoing the hash from that read was '
+      'ACCEPTED. The approver has just approved a number they were never shown: %s',
+      v_res::text);
+  ASSERT v_res->>'detailText' LIKE '%DIFF_CHANGED%',
+    pg_catalog.format('T19b2 FAIL: the stale APPROVE was refused, but not as '
+      'DIFF_CHANGED, so the client cannot tell the approver to reload rather than '
+      'to sign in again: %s', COALESCE(v_res->>'detailText','<none>'));
+
+  RAISE NOTICE
+    'T19 PASS - the approval hash is computed server-side over {effects, value}, '
+    'exposed on core.v_approval_requests and echoed by the client. An APPROVE is '
+    'admitted when nothing moved between read and decide, and refused as '
+    'DIFF_CHANGED when the underlying quotation was repriced in between.';
+END;
+$t19$;
 
 
 ROLLBACK;
