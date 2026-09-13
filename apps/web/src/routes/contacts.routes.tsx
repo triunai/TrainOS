@@ -1,9 +1,23 @@
+import { lazy, Suspense } from "react";
 import type { RouteObject } from "react-router-dom";
+import { LoadingState } from "@/shared/components/states";
+import { CONTACTS_DIRECTORY_PATH } from "@/features/contacts";
 
-/**
- * Route stub pre-wired by the lead on 2026-09-13 so the contacts lane never edits
- * routes.tsx. The lane replaces this array with its lazy screen entries.
- */
-export const routes: RouteObject[] = [];
+/** Sales › Contacts. One route; the generated placeholder stops rendering. */
+
+const ContactsDirectoryPage = lazy(() =>
+  import("@/features/contacts").then((module) => ({ default: module.ContactsDirectoryPage })),
+);
+
+export const routes: RouteObject[] = [
+  {
+    path: CONTACTS_DIRECTORY_PATH,
+    element: (
+      <Suspense fallback={<LoadingState label="Loading the contact directory" />}>
+        <ContactsDirectoryPage />
+      </Suspense>
+    ),
+  },
+];
 
 export const contactsRoutes = routes;
