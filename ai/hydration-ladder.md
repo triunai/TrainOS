@@ -7,6 +7,9 @@
 **Level 0 — orient (always):**
 
 - `README.md` — what TrainOS is
+- `ai/workstreams.md` — every thread and its cold-startable `Resume:` line.
+  Read this BEFORE `hot-state.md`: seven threads are in flight and only one of
+  them is the one the newest session block happens to describe.
 - `ai/hot-state.md` — what is happening right now
 
 **Level 1 — what is in flight:**
@@ -18,8 +21,14 @@
 
 **Level 2 — standing context:**
 
-- `ai/state.md` — backlog, decisions, session log
-- `CLAUDE.md` Part 3 — rules R1 to R10
+- `ai/state.md` — decisions `D-100` onward, and the session log in short form
+- `ai/state-backlog.md` — what is owed, by which lane, and what makes it due
+- `ai/findings-log.md` — the eleven defects execution found, and which of them
+  are still unpinned. Read it before adding any control: the recurring shape is
+  a construct that is valid, reads as careful, and does nothing
+- `ai/project-log.md` — the full per-lane journal, and the numbered "things
+  worth telling future-me" lists, which are where the refuted assumptions live
+- `CLAUDE.md` Part 3 — rules R1 to R11
 
 **Level 3 — rules and architecture (before touching a contract):**
 
