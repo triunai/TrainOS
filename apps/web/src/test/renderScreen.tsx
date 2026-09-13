@@ -5,8 +5,10 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Me, Role } from "@trainos/contract";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
+import { BreadcrumbProvider } from "@/shared/components/layout";
 import { ApiProvider } from "@/shared/api";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
+import { BreadcrumbTrailProbe } from "./BreadcrumbTrailProbe";
 
 /**
  * One harness for every feature's screen tests.
@@ -82,12 +84,20 @@ export function renderScreen(
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
+  /* `BreadcrumbProvider` wraps the router because `useBreadcrumb` is a no-op
+     outside it: without this, every screen's declared trail was unasserted and
+     a screen that quietly stopped declaring one failed silently. The probe
+     writes the labels to an attribute rather than to text, so no query in the
+     existing suites gains a second match. */
   const routed = (
-    <MemoryRouter initialEntries={[options.path ?? "/"]}>
-      <Routes>
-        <Route path={options.route ?? "/"} element={element} />
-      </Routes>
-    </MemoryRouter>
+    <BreadcrumbProvider>
+      <BreadcrumbTrailProbe />
+      <MemoryRouter initialEntries={[options.path ?? "/"]}>
+        <Routes>
+          <Route path={options.route ?? "/"} element={element} />
+        </Routes>
+      </MemoryRouter>
+    </BreadcrumbProvider>
   );
 
   return render(
