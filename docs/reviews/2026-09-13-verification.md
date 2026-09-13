@@ -394,6 +394,12 @@ checked per file first), each verified before commit.
 | `7022caa` | `selectNav` graduates to strict; `tsconfig.strict.json` gets its first graduate | the two TS2339s are gone under `tsconfig.strict.json`; 6 existing tests pass; `typecheck:strict` now actually checks a file |
 | `34f32d8` | `renderScreen` mounts `BreadcrumbProvider` plus an attribute-only probe, so a declared trail is testable in all 103 suites | 834 web tests pass unchanged; eslint clean |
 | `b44ed77` | `automationApi.ts` and `automationPaths.ts` fold into `api.ts` and `paths.ts`, clearing both `TODO(consolidation)` notes | 28 agents tests pass; depcruise 327 modules where it cruised 328 |
+| `001a501` | Four breadcrumb trails stop at the list crumb (Organisation 360, invoice detail, attendance capture, claim packet) | 79 tests across the four features pass; the attendance test that PINNED the old shape is updated with it |
+| `cb75f9e` | The h1 names the record and `recordRef` carries the reference on the TNA detail, the claim packet and the invoice detail (§15a) | 908 web tests pass; two tests asserting the old concatenated headings are updated |
+
+Fix list rows 6 and 8 are therefore closed. The approval detail was dropped from
+row 6 because another lane had already fixed it between the snapshot and the
+commit — checked in the file, not taken from this report.
 
 `AutomationPoliciesScreen.tsx` was nearly clobbered in the third: the snapshot
 copy was 20 lines behind a comment another lane had committed after `091e3e0`.
