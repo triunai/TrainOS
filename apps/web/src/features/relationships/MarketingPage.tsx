@@ -8,6 +8,7 @@ import {
   FilterBar,
   ListToolbar,
   LoadingState,
+  MESSAGE_CATEGORY_TONE,
   MoneyText,
   PillTabGroup,
   plural,
@@ -150,7 +151,7 @@ export function MarketingPage() {
         row.category ? (
           /* MARKETING costs six times UTILITY per message. That is the one
              status on this screen worth a colour. */
-          <StatusChip tone={row.category === "MARKETING" ? "warning" : "neutral"}>
+          <StatusChip tone={MESSAGE_CATEGORY_TONE[row.category]}>
             {humanise(row.category)}
           </StatusChip>
         ) : (

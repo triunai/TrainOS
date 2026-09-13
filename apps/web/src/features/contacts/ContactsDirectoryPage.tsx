@@ -13,6 +13,7 @@ import {
   DateText,
   EmptyState,
   ErrorState,
+  HRDC_PACKET_PANEL_TONE,
   INVOICE_TONE,
   LifecycleStepper,
   ListToolbar,
@@ -571,7 +572,7 @@ function OrganisationSection({
                 {packets.map((packet) => (
                   <li key={packet.ref} className="flex flex-wrap items-center gap-2 text-[13px]">
                     <span className="font-mono text-[12px] text-ink">{packet.ref}</span>
-                    <StatusChip tone={packet.state === "BLOCKED" ? "warning" : "neutral"}>
+                    <StatusChip tone={HRDC_PACKET_PANEL_TONE[packet.state]}>
                       {humanise(packet.state)}
                     </StatusChip>
                     {typeof packet.missingDocuments === "number" ? (

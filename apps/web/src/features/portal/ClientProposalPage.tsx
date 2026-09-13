@@ -74,6 +74,11 @@ export function ClientProposalPage() {
           title="This proposal link cannot be opened"
           error={toApiError(proposal.error)}
           description="The link may have expired or been withdrawn. Contact the person who sent it to you for a new one."
+          /* An expired or withdrawn link is a domain refusal, and `ErrorState`
+             drops the button on those by itself. What is left is the case this
+             reader cannot diagnose and has no other route out of: a dropped
+             connection on a page with no navigation at all. */
+          onRetry={() => void proposal.refetch()}
         />
       ) : (
         <div className="flex h-full min-h-0 flex-col">

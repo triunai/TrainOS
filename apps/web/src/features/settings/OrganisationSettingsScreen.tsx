@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { PipelineObject } from "@trainos/contract";
 import {
   ContentCard,
+  EmptyState,
   ErrorState,
   LifecycleStepper,
   LoadingState,
@@ -86,7 +87,20 @@ function PipelineCard({ object, caption }: { object: PipelineObject; caption: st
         />
       ) : null}
 
-      {pipeline.data ? (
+      {pipeline.data && pipeline.data.stages.length === 0 ? (
+        /* A pipeline that loaded and has no stages. Distinct from the error
+           branch above and worth saying out loud: CLAUDE.md renders stage names
+           from configuration, so an unconfigured pipeline is the reason every
+           stepper for this object is blank, and an empty stepper would read as
+           a rendering fault instead. No action — the write does not exist here,
+           which is this screen's whole shape. */
+        <EmptyState
+          title="No stages configured"
+          description={`The ${humanise(object).toLowerCase()} pipeline has no stages, so every stepper for it renders empty. An administrator configures the stages and their order.`}
+        />
+      ) : null}
+
+      {pipeline.data && pipeline.data.stages.length > 0 ? (
         /* Every stage neutral: this is the configured pipeline, not a record
            moving through one. A "current" dot here would claim a position no
            record holds. */

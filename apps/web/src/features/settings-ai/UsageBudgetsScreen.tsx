@@ -6,6 +6,7 @@ import {
   BudgetBar,
   ContentCard,
   DataTable,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatMoney,
@@ -303,11 +304,21 @@ export function UsageBudgetsScreen() {
             />
           }
         >
-          <ul className="flex flex-col gap-3">
-            {breakdown.map((row) => (
-              <BreakdownRow key={row.key} row={row} max={maxSpend} />
-            ))}
-          </ul>
+          {breakdown.length === 0 ? (
+            /* Nothing spent in the period under this grouping. Not an error and
+               not a zero row: the server returned no rows at all, and the tab
+               the reader is on is the reason, so the sentence names it. */
+            <EmptyState
+              title="No spend in this period"
+              description={`Nothing has been billed by ${GROUPS.find((group) => group.id === groupBy)?.label.toLowerCase() ?? "this grouping"} for November 2026. A run appears here the moment it is billed.`}
+            />
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {breakdown.map((row) => (
+                <BreakdownRow key={row.key} row={row} max={maxSpend} />
+              ))}
+            </ul>
+          )}
           <p className="pt-3 text-[12px] text-ink-muted">
             Every row drills to the runs behind it. The query comes from the server with the row, so
             the number and the list it opens can never disagree.
@@ -350,6 +361,16 @@ export function UsageBudgetsScreen() {
             columns={budgetColumns}
             rows={budgetRows}
             rowKey={(budget) => `${budget.scope}:${budget.key}`}
+            /* No action: raising a cap goes through the approval queue and
+               SETTING the first one is not a write this console has. The
+               sentence says what the absence means, which is that nothing is
+               capped rather than that nothing loaded. */
+            empty={
+              <EmptyState
+                title="No caps set"
+                description="Nothing limits spend at any scope, so no run will be refused for cost. Caps are configured by the administrator and raised through the approval queue."
+              />
+            }
           />
         </ContentCard>
       </div>

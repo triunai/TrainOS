@@ -8,6 +8,7 @@ import {
   DisclosureButton,
   EmptyState,
   ErrorState,
+  HOURS_SAVED_TONE,
   LoadingState,
   PairedBars,
   PillTabGroup,
@@ -276,7 +277,7 @@ export function ReportsScreen() {
                     /* The basis is the status of the number. MEASURED is a
                        fact; ILLUSTRATIVE is a caveat, and the chip is the one
                        place status colour is allowed to say so. */
-                    tone={hours.data.basis === "MEASURED" ? "success" : "warning"}
+                    tone={HOURS_SAVED_TONE[hours.data.basis]}
                   >
                     {humanise(hours.data.basis)}
                   </StatusChip>

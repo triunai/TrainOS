@@ -7,6 +7,7 @@ import {
   BudgetBar,
   ContentCard,
   DataTable,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatMoney,
@@ -374,6 +375,15 @@ export function AiModelsScreen() {
             rows={tierRows}
             rowKey={(tier) => tier.key}
             stickyHeader
+            /* Tiers are infrastructure the server publishes; this console reads
+               them and never creates one, so the empty state carries no action.
+               Saying where they come from is the useful half. */
+            empty={
+              <EmptyState
+                title="No model tiers published"
+                description="Tiers come from the deployment's own configuration. Until one is published there is nothing for the assignment matrix below to route to."
+              />
+            }
           />
         </ContentCard>
       </div>
@@ -409,107 +419,118 @@ export function AiModelsScreen() {
               by nine tier columns does not fit 900px and does not fit the
               content card's width either. */}
           <div className="max-h-[440px] overflow-auto rounded-card border border-border">
-            <table
-              aria-label="Action type to tier assignment"
-              className="w-full min-w-[1120px] border-collapse text-left"
-            >
-              <thead className="sticky top-0 z-10 bg-surface">
-                <tr>
-                  <th
-                    scope="col"
-                    className="sticky left-0 z-10 bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                  >
-                    Action type
-                  </th>
-                  {TIER_KEYS.map((key) => (
+            {routingRows.length === 0 ? (
+              /* The empty state takes the table's place inside the pane, which
+                 is where `DataTable` puts its own. A sticky head over nine tier
+                 columns with no rows under it reads as a broken table rather
+                 than as an unconfigured one. */
+              <EmptyState
+                title="Nothing is routed yet"
+                description="No action type has been assigned a tier. Until one is, every run falls back to the deployment default rather than to a choice made here."
+              />
+            ) : (
+              <table
+                aria-label="Action type to tier assignment"
+                className="w-full min-w-[1120px] border-collapse text-left"
+              >
+                <thead className="sticky top-0 z-10 bg-surface">
+                  <tr>
                     <th
-                      key={key}
                       scope="col"
-                      className="px-2 py-2 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
+                      className="sticky left-0 z-10 bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
                     >
-                      {tierLabel(key)}
+                      Action type
                     </th>
-                  ))}
-                  <th
-                    scope="col"
-                    className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                  >
-                    Escalation ladder
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
-                  >
-                    Jury
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {routingRows.map((entry) => {
-                  const stagedTier = staged.get(entry.actionType);
-                  const current = stagedTier ?? entry.tier;
-
-                  return (
-                    <tr key={entry.actionType} className={stagedTier ? "bg-ai-tint" : undefined}>
+                    {TIER_KEYS.map((key) => (
                       <th
-                        scope="row"
-                        className="sticky left-0 z-10 border-t border-divider bg-card px-3 py-2 text-[13px] font-normal text-ink"
+                        key={key}
+                        scope="col"
+                        className="px-2 py-2 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
                       >
-                        <span className="flex flex-col gap-0.5">
-                          <span>{humanise(entry.actionType)}</span>
-                          {stagedTier ? (
-                            <span className="text-[11px] text-primary-hover">
-                              staged: {tierLabel(entry.tier)} → {tierLabel(stagedTier)}
-                            </span>
-                          ) : null}
-                        </span>
+                        {tierLabel(key)}
                       </th>
+                    ))}
+                    <th
+                      scope="col"
+                      className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
+                    >
+                      Escalation ladder
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted"
+                    >
+                      Jury
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {routingRows.map((entry) => {
+                    const stagedTier = staged.get(entry.actionType);
+                    const current = stagedTier ?? entry.tier;
 
-                      {TIER_KEYS.map((key) => (
-                        <td key={key} className="border-t border-divider px-2 py-2 text-center">
-                          <input
-                            type="radio"
-                            name={`routing-${entry.actionType}`}
-                            checked={current === key}
-                            aria-label={`Route ${humanise(entry.actionType)} to ${tierLabel(key)}`}
-                            onChange={() =>
-                              setStaged((previous) => {
-                                const next = new Map(previous);
-                                if (key === entry.tier) next.delete(entry.actionType);
-                                else next.set(entry.actionType, key);
-                                return next;
-                              })
-                            }
-                            className="h-3.5 w-3.5 accent-[rgb(var(--primary))]"
-                          />
+                    return (
+                      <tr key={entry.actionType} className={stagedTier ? "bg-ai-tint" : undefined}>
+                        <th
+                          scope="row"
+                          className="sticky left-0 z-10 border-t border-divider bg-card px-3 py-2 text-[13px] font-normal text-ink"
+                        >
+                          <span className="flex flex-col gap-0.5">
+                            <span>{humanise(entry.actionType)}</span>
+                            {stagedTier ? (
+                              <span className="text-[11px] text-primary-hover">
+                                staged: {tierLabel(entry.tier)} → {tierLabel(stagedTier)}
+                              </span>
+                            ) : null}
+                          </span>
+                        </th>
+
+                        {TIER_KEYS.map((key) => (
+                          <td key={key} className="border-t border-divider px-2 py-2 text-center">
+                            <input
+                              type="radio"
+                              name={`routing-${entry.actionType}`}
+                              checked={current === key}
+                              aria-label={`Route ${humanise(entry.actionType)} to ${tierLabel(key)}`}
+                              onChange={() =>
+                                setStaged((previous) => {
+                                  const next = new Map(previous);
+                                  if (key === entry.tier) next.delete(entry.actionType);
+                                  else next.set(entry.actionType, key);
+                                  return next;
+                                })
+                              }
+                              className="h-3.5 w-3.5 accent-[rgb(var(--primary))]"
+                            />
+                          </td>
+                        ))}
+
+                        <td className="border-t border-divider px-3 py-2">
+                          <span className="font-mono text-[11px] text-ink-secondary">
+                            {entry.escalationLadder.map(tierLabel).join(" → ")}
+                          </span>
                         </td>
-                      ))}
 
-                      <td className="border-t border-divider px-3 py-2">
-                        <span className="font-mono text-[11px] text-ink-secondary">
-                          {entry.escalationLadder.map(tierLabel).join(" → ")}
-                        </span>
-                      </td>
-
-                      <td className="border-t border-divider px-3 py-2">
-                        <div className="flex flex-col items-start gap-1">
-                          <JuryChip policy={entry.jury} />
-                          {/* The mode word, because §4 asks this column to
+                        <td className="border-t border-divider px-3 py-2">
+                          <div className="flex flex-col items-start gap-1">
+                            <JuryChip policy={entry.jury} />
+                            {/* The mode word, because §4 asks this column to
                               render the jury OBJECT and not a boolean. The
                               full sentence — quorum, triggers, whether it ever
                               blocks — is on the chip's title, from the kit's
                               own `describeJuryPolicy`, so the two cannot
                               disagree. */}
-                          <span className="text-[11px] text-ink-muted">
-                            {humanise(entry.jury.mode)}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            <span className="text-[11px] text-ink-muted">
+                              {humanise(entry.jury.mode)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </ContentCard>
       </div>

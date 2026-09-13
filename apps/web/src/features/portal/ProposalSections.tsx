@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { PortalInvestment, PortalSection } from "@trainos/contract";
-import { MoneyText } from "@/shared/components/kit";
+import { EmptyState, MoneyText } from "@/shared/components/kit";
 
 /**
  * The document body of M07-S07.
@@ -13,6 +13,20 @@ import { MoneyText } from "@/shared/components/kit";
  */
 
 export function ProposalSections({ sections }: { sections: PortalSection[] }) {
+  if (sections.length === 0) {
+    /* A projection that carries the commercials but no prose. The reader is a
+       client with nothing to click, so the action is a person, not a button —
+       and naming one they can chase is more use than a control this page does
+       not have. The investment panel still renders below this. */
+    return (
+      <EmptyState
+        className="max-w-[74ch]"
+        title="This proposal has no written sections yet"
+        description="The commercial summary below is complete. Ask the person who sent you this link for the full document."
+      />
+    );
+  }
+
   return (
     <div className="flex max-w-[74ch] flex-col gap-4">
       {sections.map((section) => (
