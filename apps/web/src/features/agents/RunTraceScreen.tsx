@@ -8,11 +8,15 @@ import {
   DataTable,
   ErrorState,
   ExceptionBanner,
+  formatDuration,
+  formatMoney,
+  humanise,
   JuryChip,
   LoadingState,
   MoneyText,
   PrimaryButton,
   RecordHeader,
+  RefusalBanner,
   RUN_TONE,
   RunStepRow,
   SecondaryButton,
@@ -20,9 +24,6 @@ import {
   StatusChip,
   TierChip,
   TraceTreeNode,
-  formatDuration,
-  formatMoney,
-  humanise,
   type Column,
 } from "@/shared/components/kit";
 import { useAgentRegistry, useDeadLetterRun, useRetryRun, useRun, useRuns } from "./api";
@@ -331,11 +332,7 @@ export function RunTraceScreen() {
                 retry resumes from there rather than re-running the work that already succeeded.
               </p>
               {retry.isError ? (
-                <ExceptionBanner
-                  severity="DANGER"
-                  title="The retry was refused"
-                  subtitle={retry.error.message}
-                />
+                <RefusalBanner title="The retry was refused" error={retry.error} />
               ) : null}
               {retry.isSuccess ? (
                 <ExceptionBanner

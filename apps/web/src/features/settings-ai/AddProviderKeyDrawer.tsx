@@ -8,12 +8,12 @@ import {
   humanise,
   MoneyInput,
   PrimaryButton,
+  RefusalBanner,
   SecondaryButton,
   TextField,
   tierLabel,
 } from "@/shared/components/kit";
 import { Checkbox } from "@/shared/components/ui/checkbox";
-import { RefusalBanner } from "./RefusalBanner";
 import { useCreateProvider } from "./api";
 
 /**

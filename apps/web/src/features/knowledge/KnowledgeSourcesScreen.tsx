@@ -15,12 +15,13 @@ import {
   ErrorState,
   ExceptionBanner,
   GhostButton,
+  humanise,
   LoadingState,
   PrimaryButton,
   RecordHeader,
+  RefusalBanner,
   SecondaryButton,
   StatusChip,
-  humanise,
   type Column,
   type StatusTone,
 } from "@/shared/components/kit";
@@ -292,11 +293,7 @@ export function KnowledgeSourcesScreen() {
 
       {check.isError ? (
         <div className="px-5">
-          <ExceptionBanner
-            severity="DANGER"
-            title="The source check failed"
-            subtitle={check.error.message}
-          />
+          <RefusalBanner title="The source check failed" error={check.error} />
         </div>
       ) : null}
       {check.isSuccess ? (

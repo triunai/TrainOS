@@ -12,16 +12,17 @@ import {
   ExceptionBanner,
   formatMoney,
   GhostButton,
+  humanise,
   JuryChip,
   LoadingState,
   MoneyText,
   PillTabGroup,
   PrimaryButton,
   RecordHeader,
+  RefusalBanner,
   SecondaryButton,
   StatusChip,
   TierChip,
-  humanise,
   type Column,
   type PillTab,
 } from "@/shared/components/kit";
@@ -378,11 +379,7 @@ export function AgentRegistryScreen() {
 
       {pause.isError ? (
         <div className="px-5">
-          <ExceptionBanner
-            severity="DANGER"
-            title="The kill switch was refused"
-            subtitle={pause.error.message}
-          />
+          <RefusalBanner title="The kill switch was refused" error={pause.error} />
         </div>
       ) : null}
 

@@ -156,6 +156,7 @@ export { EscalationLadder, type EscalationLadderProps, type LadderRung } from ".
 export { ApprovalBanner, type ApprovalBannerProps } from "./ApprovalBanner";
 export { ActionOutcome, type ActionOutcomeProps } from "./ActionOutcome";
 export { ExceptionBanner, type ExceptionBannerProps } from "./ExceptionBanner";
+export { RefusalBanner, type RefusalBannerProps } from "./RefusalBanner";
 export { DiffBlock, type DiffBlockProps } from "./DiffBlock";
 export {
   ProposedActionCard,

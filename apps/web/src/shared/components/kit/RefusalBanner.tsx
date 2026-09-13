@@ -1,18 +1,22 @@
 import { isDomainError, type ApiError } from "@/shared/api";
-import { ExceptionBanner } from "@/shared/components/kit";
+import { ExceptionBanner } from "./ExceptionBanner";
 
 /**
- * What to show when the server refuses a write on this feature.
- *
- * All three §17 settings screens write through a role gate — ADMIN for tiers,
- * routing and reveal; the MD for raising a cap — so all three need the same
- * answer to the same question, and one component gives it once.
+ * What to show when the server refuses a write.
  *
  * A refusal is NOT a failure. `FORBIDDEN` with `details.requiredRole` is the
  * server telling the reader exactly who decides this, which is actionable
  * information and is rendered as such: the role is named, and the tone is
  * warning rather than danger because nothing is broken. Only a transport
  * failure — the request never got an answer — is drawn in danger.
+ *
+ * It lived in `features/settings-ai` because the three §17 screens needed it
+ * first. That is also why `agents` and `knowledge` each hand-rolled a worse
+ * version — `subtitle={error.message}` at `severity="DANGER"`, which paints a
+ * policy decision as a breakage and throws away `requiredRole`, the one piece
+ * of information that tells the reader what to do next. A component nobody
+ * outside one feature can import is a component everybody outside it rewrites,
+ * so it belongs here.
  */
 
 export interface RefusalBannerProps {

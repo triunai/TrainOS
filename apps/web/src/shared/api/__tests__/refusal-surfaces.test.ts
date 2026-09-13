@@ -51,9 +51,9 @@ const EXEMPT = new Map<string, string>([
   ["useRecordPayment", "InvoiceDetailScreen.tsx:412 renders recordPayment.error"],
   ["useRepushInvoice", "InvoiceDetailScreen.tsx:168 renders repush.error"],
   ["useSendReminder", "CollectionsQueueScreen.tsx:279 renders send.error through ActionOutcome"],
-  ["usePauseAgent", "AgentRegistryScreen.tsx:379 renders pause.isError"],
-  ["useRetryRun", "RunTraceScreen.tsx:333 renders retry.isError"],
-  ["useCheckSource", "KnowledgeSourcesScreen.tsx:293 renders check.isError"],
+  ["usePauseAgent", "AgentRegistryScreen.tsx:379 renders pause.error through RefusalBanner"],
+  ["useRetryRun", "RunTraceScreen.tsx:333 renders retry.error through RefusalBanner"],
+  ["useCheckSource", "KnowledgeSourcesScreen.tsx:293 renders check.error through RefusalBanner"],
   ["usePutAiRouting", "AiModelsScreen.tsx:358 renders apply.isError through RefusalBanner"],
   [
     "useCreateProvider",
