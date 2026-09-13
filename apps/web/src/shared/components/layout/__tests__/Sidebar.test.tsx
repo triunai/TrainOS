@@ -108,14 +108,16 @@ describe("Sidebar", () => {
     expect(selected[0]).toHaveTextContent("Engagements");
   });
 
-  it("scrolls the list, not the rail, so the footer stays pinned and no track is painted", () => {
-    const { container } = renderAt("/dashboard");
+  it("scrolls the list, not the rail, so the footer stays pinned", () => {
+    renderAt("/dashboard");
     const rail = screen.getByRole("navigation", { name: "Main" });
-    const scroller = container.querySelector(".scrollbar-none");
+    const scroller = rail.querySelector(".overflow-y-auto");
 
     expect(scroller).not.toBeNull();
-    expect(scroller).toHaveClass("overflow-y-auto");
     expect(rail.className).not.toMatch(/overflow-y-auto/);
+    /* Hiding the bar until it is scrolled is a site-wide base rule and a
+       delegated listener, not a class this component opts into. */
+    expect(rail.innerHTML).not.toMatch(/scrollbar-none/);
   });
 
   it("uses indent and one selected treatment, and no third hierarchy device", () => {

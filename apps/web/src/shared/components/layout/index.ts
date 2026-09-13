@@ -12,4 +12,5 @@ export { NavBadge } from "./NavBadge";
 export { SidebarFooter } from "./SidebarFooter";
 export { selectNav, useNavSelection, type NavSelection } from "./useNavSelection";
 export { useSidebarState, type SidebarState } from "./useSidebarState";
+export { useScrollbarReveal, SCROLLING_CLASS, HIDE_AFTER_MS } from "./useScrollbarReveal";
 export { APP_VERSION, API_VERSION, CONTRACT_VERSION, VERSION_LINE } from "./version";

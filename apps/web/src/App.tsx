@@ -5,6 +5,7 @@ import { ApiProvider, queryClient } from "@/shared/api";
 import { MeProvider } from "@/shared/hooks/MeProvider";
 import { ThemeProvider } from "@/shared/theme";
 import { AppRoutes } from "@/routes/routes";
+import { useScrollbarReveal } from "@/shared/components/layout";
 
 /**
  * The provider stack, in the order the dependencies actually run:
@@ -21,6 +22,10 @@ import { AppRoutes } from "@/routes/routes";
  * only thing that should be calling it for a failed write.
  */
 export default function App() {
+  /* Above the router on purpose: the rule is site-wide, and the external
+     proposal shell and the dev routes mount OUTSIDE `AppShell`. */
+  useScrollbarReveal();
+
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>

@@ -35,18 +35,68 @@
   }
 }
 
-@layer utilities {
-  /* A scroll container with no native scrollbar. The sidebar scrolls but must
-     not draw a track down its right edge: the rail's edge is where the content
-     card begins, and a scrollbar there reads as a border between two surfaces
-     that the pack draws as one. Scrolling, wheel, keyboard and overscroll all
-     behave normally — only the painted bar is gone. */
-  .scrollbar-none {
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* old Edge */
+@layer base {
+  /*
+   * SCROLLBARS ARE INVISIBLE UNTIL YOU SCROLL. Site-wide, every container: the
+   * rail, the content card, drawers, a table's scroll pane, a code block.
+   *
+   * The trick is WHICH property moves. A scrollbar that is absent at rest and
+   * present while scrolling changes the content box twice per scroll, and the
+   * text under the reader's eye jumps each time. So the gutter is reserved
+   * permanently and only the THUMB's colour changes — from transparent to
+   * `--border-strong` and back. Nothing reflows, ever, and at rest there is
+   * nothing to see. The track stays transparent in both states so the gutter
+   * reads as part of the surface behind it.
+   *
+   * A container only reserves the gutter when it actually overflows, so the
+   * universal selector costs nothing on the elements that do not scroll.
+   *
+   * Both vocabularies are needed and they are not interchangeable: Firefox
+   * honours `scrollbar-width`/`scrollbar-color` and ignores the pseudo
+   * elements; WebKit and Blink are the other way round. Note that defining
+   * `::-webkit-scrollbar` at all opts Chrome out of macOS overlay scrollbars,
+   * which is deliberate — overlay bars fade on the platform's schedule rather
+   * than ours, and the point here is one behaviour everywhere.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
   }
 
-  .scrollbar-none::-webkit-scrollbar {
-    display: none;
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+    transition: background-color 200ms ease-out;
+  }
+
+  /* `useScrollbarReveal` puts this on whichever element is scrolling and takes
+     it off 800ms after the last scroll event. */
+  .is-scrolling {
+    scrollbar-color: rgb(var(--border-strong)) transparent;
+  }
+
+  .is-scrolling::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--border-strong));
+  }
+
+  .is-scrolling::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--ink-disabled));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *::-webkit-scrollbar-thumb {
+      transition: none;
+    }
   }
 }

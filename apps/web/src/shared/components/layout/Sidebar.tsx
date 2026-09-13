@@ -30,9 +30,9 @@ import { useSidebarState } from "./useSidebarState";
  * one location is exactly the ambiguity the single-key selection removes.
  *
  * Scrolling belongs to the list between the brand and the footer, not to the
- * rail: the footer has to stay pinned, and the rail's right edge is where the
- * content card begins, so a scrollbar track there would draw the seam the
- * shared surface exists to remove.
+ * rail, so the footer stays pinned. The bar itself is invisible until the
+ * reader scrolls — that is `useScrollbarReveal` and the base rules in
+ * `index.css`, applied site-wide rather than opted into here.
  */
 
 const ROW_BASE =
@@ -65,7 +65,7 @@ export function Sidebar({ role }: { role: Role }) {
 
       {/* The scroll container. `-mx-1 px-1` keeps a focus ring from being
           clipped by the very overflow that makes this element scroll. */}
-      <div className="scrollbar-none -mx-1 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1">
+      <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1">
         {groups.map((group) => (
           <div key={group.caption} className="flex flex-col gap-0.5">
             {collapsed ? null : (
