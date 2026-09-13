@@ -21,3 +21,11 @@ Source of truth for the target look: **the Collections page (M13-S05) compositio
 - Then screen agents migrate the 27 screens to the page-as-component composition (mostly deletions).
 - Verifier: side-by-side of every screen vs the light Collections reference; blue budget; one primary; a11y.
 - Constraints unchanged: tokens only, no hex; status colour on chips only; AI tint rule; one primary per view.
+
+## 10. PillTabGroup → bounded segmented control (user reference: Vern "Available | Sold | All")
+- One full-width track: 1px hairline border, `--radius-control` (6–8px), surface L2, no pill.
+- Equal-width segments (or content-width with min 120px), separated by 1px hairline dividers, label + count inline, count in muted.
+- Selected segment: 6% primary tint background + 1px primary border (or primary-border token) + primary text; sits flush inside the track (inset 2px). Hover: L3 surface. Focus ring per kit.
+- Corporate tone, no uppercase tracking: sentence case, UI font, 13–14px, 500 weight.
+- Keyboard: roving tabindex, arrow keys, `role="tablist"`. Counts stay server-driven (saved views).
+- Replace every PillTabGroup usage (saved-view switchers on inbox/list screens, approvals urgency groups if used as tabs); density Comfortable/Compact uses the same control.
