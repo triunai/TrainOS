@@ -48,7 +48,17 @@ verifier in a fresh context that takes no premise from any commit message.
 real CI run, and before anything is applied to a hosted database.
 **Refs:** `docs/reviews/2026-09-12-ui-blast-lane-review.md`, `D-121`, `B-007`.
 
-**OPEN (2026-09-12, contract) — RULINGS R4 AND R5 ARE UNAPPLIED.** R4 adds
+**CLOSED 2026-09-13 by `e148a34` (2026-09-12, contract) — RULINGS R4 AND R5 ARE
+UNAPPLIED.** Struck rather than deleted: R4 to R8 landed a few minutes after
+this entry was written, from a concurrent lane in the same worktree, and a
+reader who half-remembers the entry needs the correction rather than silence.
+R5 widened `RunStatus` with a `RESUMABLE` member rather than blessing the
+runtime's wrapper, so the open question below is answered. **The agent runtime
+still reports a yielded run as `RUNNING` with the disposition outside the
+contract, and that is now owed work** — moved to the contract thread in
+`ai/workstreams.md`. Original text follows.
+
+**~~OPEN~~ (2026-09-12, contract) — RULINGS R4 AND R5 ARE UNAPPLIED.** R4 adds
 OPENROUTER to the provider vocabulary. R5 adds RESUMABLE as a run disposition,
 and it carries a shape question that has to be answered rather than assumed: the
 contract's `RunStatus` has no `RESUMABLE` member, so a yielded run currently
@@ -83,17 +93,26 @@ handoff is written and cold-startable now.
 **Refs:** `supabase/HANDOFF.md`, `docs/architecture/06-critic-review.md` Part 2,
 `D-111`.
 
-**OPEN (2026-09-12, contract) — TWELVE CONTRACT GAPS WERE REPORTED, NOT
-PATCHED.** The fixtures and screen lanes each hit places where the typed surface
-cannot express what the design or the rulings require, and reported rather than
-widened the contract unilaterally — which was right, and leaves the gaps open.
-Named ones: `Quotation` cannot say which floor binds; `Engagement.finance` is
-required, so the OPS projection needs its own type rather than a zeroed block;
-`CollectionNextAction.type` cannot hold the ruled action; and there is no
-permission vocabulary beyond `QUOTATION_PERMISSIONS`. Five places where the
-contract's own verbatim JSON examples are internally inconsistent are recorded
-alongside them.
-**Owner:** the contract lane. **Trigger:** with R4 and R5, as one batch.
+**OPEN (2026-09-12, contract) — EIGHT CONTRACT GAPS ARE STILL REPORTED, NOT
+PATCHED.** Corrected 2026-09-13: four of the original twelve were closed by R6,
+R7 and R8 in `e148a34`, and each took a local decorator or `Omit<>` out with it.
+`Quotation` now carries both floors and `bindingFloorBasis`,
+`Engagement.finance` is optional so the OPS projection types as an
+`Engagement`, and `CollectionNextAction.type` is widened to `AnyActionType`. The
+original entry read:
+
+> The fixtures and screen lanes each hit places where the typed surface
+> cannot express what the design or the rulings require, and reported rather
+> than widened the contract unilaterally — which was right, and leaves the gaps
+> open. Named ones: `Quotation` cannot say which floor binds;
+> `Engagement.finance` is required, so the OPS projection needs its own type
+> rather than a zeroed block; `CollectionNextAction.type` cannot hold the ruled
+> action; and there is no permission vocabulary beyond `QUOTATION_PERMISSIONS`.
+> Five places where the contract's own verbatim JSON examples are internally
+> inconsistent are recorded alongside them.
+
+**Owner:** the contract lane. **Trigger:** as one batch, the way R4 to R8 were
+taken — not one at a time as each screen trips over them.
 **Refs:** `packages/fixtures/README.md`, `1c73e18`, `705c54c`.
 
 **OPEN (2026-09-12, supabase) — `knowledge_chunks.embedding` DOES NOT EXIST.**

@@ -62,8 +62,18 @@ policy refusal, the exact R2 collapse CLAUDE.md warns about. Move one `useApi`
 and one `useAction` into `src/shared/api`, make `errors.ts` recognise a
 `ContractError` structurally rather than by `instanceof`, then delete the nine
 local copies and the two `StandInField.tsx` stand-ins once the kit ships
-`TextField`/`DateField`. The working tree already carries the finance and hrdc
-`ActionOutcome` deletions for this pass. The verifier pass runs after it.
+`TextField`/`DateField`. The verifier pass runs after it.
+
+**Updated 2026-09-13, later the same morning.** Two concurrent lanes landed
+while this block was being written. `af92507` finished the `ActionOutcome`
+consolidation — finance, hrdc and engagements all import the kit's now — and
+moved the last five screens that drew their own `Breadcrumb` onto the shell's
+slot, so those are done rather than in the working tree. `e148a34` landed
+contract rulings R4 to R8, which closes four of the twelve reported contract
+gaps and adds a `RESUMABLE` member to `RunStatus`; the agent runtime still
+reports a yielded run as `RUNNING` with the disposition on its own wrapper and
+should now be changed to use the contract's member. Neither changes the next
+action above: `useApi` and `useAction` are still declared seven times.
 
 ### Blockers
 

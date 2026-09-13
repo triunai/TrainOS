@@ -23,6 +23,23 @@ stop going through the kit's generic `humanise`, which rendered `SBL_KHAS` as
 "Sbl khas" — a proper noun is a table, not a transformation. `useApi` and
 `useAction` are the remaining duplicates and are the session's named next action.
 
+**Contract (contract).** Rulings R4 to R8 batched and applied in `e148a34`:
+`OPENROUTER` and `OTHER` join the provider vocabulary, so the provenance badge
+stops claiming an OpenRouter call was served by OpenAI; `RunStatus` gains
+`RESUMABLE`, so a yielded run no longer has to report `RUNNING` with its real
+disposition on a wrapper outside the contract; `Quotation` gains both floors and
+`bindingFloorBasis`; `Engagement.finance` becomes optional so the OPS projection
+types as an `Engagement` rather than as an `Omit<>`; and
+`CollectionNextAction.type` widens to `AnyActionType` so the collections
+ladder's last rung can name the action it performs. Each ruling removed a local
+decorator that had been computing the same thing outside the contract.
+
+**Fixtures (fixtures).** The dataset gains the records the screens' empty and
+at-risk states needed — a lost deal, a delivery at risk, a completed engagement
+whose claim window closes in three days, and the tax invoice its packet cites —
+because a screen reaching for a state the dataset cannot produce is how hardcoded
+data gets into a component.
+
 **Doc spine (docs).** Four living docs added that the spine did not have:
 `workstreams.md`, `state-backlog.md`, `project-log.md` and `findings-log.md`.
 Twenty-one rulings from 12 September recorded as `D-102` to `D-122`. The

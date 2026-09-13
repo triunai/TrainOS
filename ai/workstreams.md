@@ -95,9 +95,10 @@ one pattern exist, the newer one wins and the older is migrated in the same pass
 
 **State:** The kit has already absorbed `ActionOutcome` (five copies, three
 divergent), `ENQUIRY_TONE` and `FOLLOW_UP_TONE` (four copies), `formatDateRange`
-(two copies) and the breadcrumb (five screens drew their own). The working tree
-carries the finance and hrdc `ActionOutcome` deletions for the current pass.
-`useApi`/`useAction` is the last one and the largest.
+(two copies) and the breadcrumb (five screens drew their own). `af92507` landed
+the last three `ActionOutcome` deletions — finance, hrdc and engagements — and
+moved the five screens that drew their own `Breadcrumb` onto the shell's slot.
+`useApi`/`useAction` is the last duplicate and the largest.
 
 ⚠ **The error split is the load-bearing part, not the hook.** `toApiError`
 recognises only `ApiErrorException`, so a thrown `ContractError` arrives as an
@@ -110,32 +111,46 @@ already patch around it locally. Fix it at the boundary or the patches multiply.
 
 ---
 
-## 🟢 CONTRACT BATCH — R1 to R3 landed, R4 and R5 open (2026-09-12)
+## 🟢 CONTRACT BATCH — R1 to R8 landed; the reported gaps are the remainder (2026-09-12)
 
-**Resume:** Apply contract ruling R4 (OPENROUTER as a provider vocabulary
-member) and R5 (RESUMABLE as a run disposition). R5 has a known shape problem
-worth reading before starting: the contract's `RunStatus` has no `RESUMABLE`
-member, so the agent runtime currently reports a yielded run as `RUNNING` on the
-`AutomationRun` and carries the disposition on its own wrapper, the same
-arrangement `haltedBy` uses. Decide whether R5 widens `RunStatus` or blesses the
-wrapper, and say which in the ruling.
+**Resume:** Work the contract gaps that R4 to R8 did not cover. Four of the
+twelve reported are now closed by `e148a34`; the rest are listed in
+`packages/fixtures/README.md`, together with the five places the contract's own
+verbatim JSON examples contradict themselves. Take them as one batch, the way
+R4 to R8 were taken, rather than one at a time as each screen trips over them.
+
+⚠ **Corrected 2026-09-13, same day, concurrent lane.** This thread was written
+while R4 and R5 were open and `e148a34` landed them a few minutes later — along
+with R6, R7 and R8. R5's shape question is answered: `RunStatus` was widened
+with a `RESUMABLE` member rather than the runtime's wrapper being blessed, so
+the runtime can now stop reporting a yielded run as `RUNNING` with the real
+disposition outside the contract. The agent runtime has not yet been changed to
+use it; that is the first thing to do here.
 
 **Scope:** `packages/contract` — the typed surface both the fixture client and
 the Supabase schema code against. Types only; the sole runtime values are the
 enum arrays, the endpoint table and the fixture ids.
 
 **State:** R1 (`CREATE` normalises to `ADD`), R2 (`quotations`, not `costings`)
-and R3 (`ACCOUNT_TRADING_HOLD`) are applied. `packages/contract/src/enums.ts`
-generates 62 of the 69 database enum types, so a change there is a migration.
+and R3 (`ACCOUNT_TRADING_HOLD`) landed on 12 September; R4 (`OPENROUTER` and
+`OTHER` providers), R5 (`RESUMABLE` run status), R6 (both quotation floors plus
+`bindingFloorBasis`), R7 (`Engagement.finance` optional,
+`CollectionNextAction.type` widened) and R8 landed on 13 September in
+`e148a34`. `packages/contract/src/enums.ts` generates 62 of the 69 database enum
+types, so a change there is a migration — R4's two new provider members and R5's
+new run status are therefore schema changes the paused Supabase lane inherits.
 
 ⚠ **Twelve contract gaps were reported rather than patched** across the fixtures
-and screen lanes, including that `Quotation` cannot say which floor binds, that
-`Engagement.finance` is required so the OPS projection needs its own type, and
-that `CollectionNextAction.type` cannot hold the ruled action. They are listed
-in `packages/fixtures/README.md` and are owed a batch of their own.
+and screen lanes. Four are now closed by R6, R7 and R8: `Quotation` carries both
+floors and `bindingFloorBasis`, `Engagement.finance` is optional so the OPS
+projection types as an `Engagement`, and `CollectionNextAction.type` is widened
+to `AnyActionType` so the collections ladder's final rung can name the action it
+actually performs. The rest are listed in `packages/fixtures/README.md` and are
+owed a batch of their own. Each of the four had a local decorator or `Omit<>`
+standing in for it, and those come out with the ruling.
 
-**Refs:** `packages/contract/**`, `57ef512`, `273a12f`, `3d6e484`,
-`D-108`, `D-109`, `D-110`.
+**Refs:** `packages/contract/**`, `packages/contract/README.md`, `57ef512`,
+`273a12f`, `3d6e484`, `e148a34`, `D-108`, `D-109`, `D-110`.
 
 ---
 
