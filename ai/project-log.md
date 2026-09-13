@@ -15,6 +15,182 @@
 
 ---
 
+## 2026-09-13 23:8x — 019 split lands at 66ad184; the test_014-red discrepancy is resolved as a stale measurement; PR #27 closes the worker heartbeat bug (S4/T16)
+
+**`fix-018` pushed the M4 split to `origin/lane/rpc-018`, tip
+`66ad184`** (via `583249f`, `7307000`) — confirmed via `git ls-tree`
+that `supabase/migrations/019_pipeline_provisioning.sql`,
+`supabase/rollbacks/019_pipeline_provisioning_rollback.sql`, and
+`supabase/tests/test_019_pipeline_provisioning.sql` now exist as real
+files, not just a stated plan. **PR #11 confirmed retitled** to "018
+golden-path RPCs + 019 pipeline provisioning" — the split is reflected
+in the PR's own identity, not just described in its body text.
+
+**019 confirmed self-contained and confirmed carrying everything the
+earlier ruling specified.** The `app.seeded_pipelines` ledger, the four
+seed functions, the trigger, the loud backfill (RAISEs naming every
+tenant it could not seed), both rows in 016's `app.tenant_seed_checks`
+registry, and the full B6 rollback contract — delete exactly the rows
+the seed recorded inserting, refuse with a count and the blocking
+constraint names when live data references any of them, delete nothing
+on refusal. The new pin is confirmed self-contained by design: its own
+tenant, organisation, programme, and engagement, specifically so it
+does not depend on another pack's fixture surviving a future
+reordering. T1 covers provisioning, T2 the loud backfill, T3
+reversibility including the refusal path.
+
+**Proved end to end by execution, confirmed via the commit's own quoted
+transcript, not by reading the mechanism and trusting it**:
+
+```
+tenant inserted   pipelines/steps 2/16, ledger 18 rows
+019 rollback      "18 seeded pipeline/step row(s) removed"
+after             pipelines/steps 0/0, ledger and mechanism gone
+and               INSERT of a default ENGAGEMENT pipeline -> INSERT 0 1
+re-apply          backfill re-seeds the surviving tenant, verify green
+```
+
+**018 confirmed reduced to 48 objects and NO table**, modifying no
+existing table, function, view, policy, or grant. The dependency on 019
+is confirmed stated in 018's own header rather than left implicit —
+`core.navigation` and `core.get_pipeline_config` render stages from
+`core.pipeline_steps`, so a tenant with no rows gets an empty stage
+list regardless of which pack is "responsible" for that emptiness.
+**`V16b`/`V16c` confirmed moved out of 018's own verify block entirely**
+— a verify block checking another migration's object is confirmed, in
+the commit's own words, to "pass vacuously when that migration has not
+been applied," which the commit itself names as the exact class of
+defect R4 was already caught by once in this same pack.
+
+**`test_014` confirmed restored byte-for-byte, verified via the actual
+diff rather than the commit's own characterization of it**: 8
+insertions, 33 deletions — a net reversion. 018's three view grants are
+now asserted only in `test_018`'s T38, by name. **One assertion is
+explicitly left owed to the 014 lane, stated plainly rather than
+worked around, confirmed in the commit's own words: "THIS LEAVES AN
+ASSERTION FOR THE 014 LANE."** `test_014`'s T1c counts LIVE grants via
+`information_schema.table_privileges`, so it reads 124 once 018 is
+applied and fails unless scoped specifically to 014-time objects.
+Confirmed re-derived by execution on the shim, not assumed: 121 at the
+001–017 surface, 124 with 018 applied, a delta of exactly three named
+views (`core.v_organisation_relations`, `core.v_budgets`,
+`core.v_model_tiers`).
+
+**`test_008`/`test_009`'s pipeline-fixture amendments confirmed
+re-attributed to 019 at the line level, moved entirely out of 018's own
+diff.** A genuine pre-existing defect in 009 that this move made
+reachable is fixed alongside it: an unconstrained cross join wrote
+three engagements and kept an arbitrary one, now scoped with an
+explicit `AND pl.name = 'std'`.
+
+**The discrepancy this journal already recorded as open two rounds ago
+is confirmed RESOLVED — and confirmed as a stale-measurement issue
+rather than a genuine contradiction between the two lanes' checks.**
+`fix-018`'s earlier report of `test_014` already red on
+`cloud/migrations` at 001–017 alone is confirmed, in the PR body's own
+correction, to have been "measured against a stale extraction of the
+base (`21ec975`-era)." Re-measured at `0d9e00c`, `test_014` passes
+standalone, "which agrees with the 014 lane's own report" — confirmed
+quoted directly. **`test_014_rollback` refusing while 014 is applied is
+confirmed by design, not a failure** — the same apply-context pin
+pattern this journal has already recorded elsewhere in this migration
+line.
+
+**Two items confirmed still owed to `fix-014`'s own branch, both
+independently verified against scratch copies rather than guessed at**:
+`test_017` line 87 needs `'ENGAGEMENT','Standard delivery', true`
+flipped to `false`, confirmed to pass when applied; `test_016`'s T7b
+needs its `NOT EXISTS (core.ref_sequences)` exclusion dropped, since
+019's seed now triggers a real `PIP` ref allocation the old exclusion
+logic was never written to expect, dropping the matched count from 32
+to 31 — confirmed as a genuinely verified mechanism, with the choice
+between two valid fixes deliberately deferred to 016's own author
+rather than picked unilaterally.
+
+**Counts, confirmed exactly against the PR body's own quoted output.**
+This branch's own 001–019: 18 pass / 1 fail (`test_014`, tracked as B4,
+owed) through a full rollback/re-apply/pins-again cycle, identical
+after. Against `cloud/migrations`'s current base (`0d9e00c`): 17/1 at
+001–017 alone (`test_014_rollback`'s by-design refusal, not a real
+failure), 16/4 at 001–019 — the four confirmed as `test_014`,
+`test_014_rollback`, and the two owed 016/017 amendments, with "those
+three landed it is 19/19" confirmed quoted directly. `lint:sql`
+confirmed 57/57 (up from 53, three new 019 files now counted), `check:
+rpc` 4 pass/0 broken, `check:grants` one pre-existing finding confirmed
+unrelated to this split.
+
+---
+
+**Separately, `PR #27` confirmed MERGED at `963eda8`** (`gh pr view
+27`: mergedAt 2026-09-13T14:18:45Z, base `main`, four files entirely
+under `apps/worker/**`, +180/-10) — **S4/T16, the worker heartbeat
+lease bug, closed.**
+
+**Confirmed the root cause is entirely worker-side, not a database
+defect.** `app.heartbeat_job` (migration 012) already correctly sets
+`visible_after = now() + p_extend`, confirmed by reading the migration
+directly at `012:1747`. The actual bug was `apps/worker/src/loop.ts`
+passing `heartbeatSeconds` instead of `leaseSeconds` as the extend
+argument at **both** heartbeat call sites — the automatic interval
+tick and the handler-exposed manual heartbeat — confirmed exactly in
+the diff. Every beat therefore reset the lease to "now plus one
+heartbeat interval" instead of "now plus the full lease," letting a
+long-running job's lease expire while it was still actively being
+worked, and racing the reaper into reclaiming it out from under the
+worker still holding it. Confirmed no `supabase/**` change was needed,
+consistent with the diff touching only `apps/worker/**`.
+
+**`config.ts` now throws at startup if the configured heartbeat isn't
+strictly shorter than the lease, confirmed in the diff, closing a
+second, independent gap.** The old clamp checked the heartbeat against
+a global maximum (360 seconds) rather than the actual configured lease,
+so a 60-second-lease/300-second-heartbeat configuration was silently
+accepted and would have caused the same double-work even with a
+correctly-fixed extend value.
+
+**Simulation numbers confirmed directly in the test file's own
+comments, not merely asserted in the commit message**: a second
+heartbeat still in flight at t=210 seconds under simulated database
+contention; pre-fix, `visible_after` sits at 200 (already behind
+t=210, letting a concurrent reap wrongly reclaim a still-heartbeating
+job); post-fix, `visible_after` reaches 400 (comfortably covering the
+gap).
+
+**95/95 worker tests confirmed** (up from 90/90 before the fix),
+`npm run typecheck` and `npm run lint` clean, `npm run arch:graph`
+confirmed no dependency-graph violations (340 modules, 1171
+dependencies). Both `fix-worker-heartbeat` and `review-pr27` confirmed
+shut down via `git worktree list`.
+
+**Remaining backlog item from the 011-013 review, confirmed still open
+and correctly scoped rather than silently dropped**: `bulk_decide`'s
+response-shape mismatch (T4/F4) — the SQL side sits inside `fix-014`'s
+currently-open freeze window, the TS side reported routed to a web lane
+afterward.
+
+**Things worth telling future-me:**
+
+1. A discrepancy between two lanes' measurements of the same fact
+   doesn't have to mean one lane made an error — "measured at different
+   moments of a moving target" is a real, benign explanation, and this
+   journal's earlier decision to record the discrepancy as open rather
+   than guessing which side was right turned out to be the correct call:
+   the resolution came from re-measurement, not from picking a side.
+2. A migration pack explicitly stating what it leaves for another lane
+   ("THIS LEAVES AN ASSERTION FOR THE 014 LANE") rather than either
+   fixing it unilaterally or silently leaving a gap is the same pattern
+   this journal already praised for the 016 `dated`-flag ruling — worth
+   noting this is now a recurring, apparently deliberate house style in
+   this migration line, not a one-off.
+3. A bug that looks like it could be in either of two systems (a
+   database function and the client calling it) is worth checking both
+   independently before assuming which side owns the fix — here the SQL
+   side was already correct, and reading the migration directly rather
+   than assuming the bug was somewhere in the newer, more complex layer
+   is what confirmed that quickly.
+
+---
+
 ## 2026-09-13 23:7x — PR #26: 014's third-pass residuals genuinely closed, but a live bulk_decide diff-hash bypass reopens HIGH-4; freeze lifted for two named fixes
 
 **PR #26 confirmed MERGED at `664a477`**, one file **amended, not

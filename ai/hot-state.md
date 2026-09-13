@@ -599,8 +599,35 @@ ungate_tenant_policy()` (already fixed twice) passed a full 7-case
 > for exactly these two fixes on `fix-014`, re-freeze to follow;
 > `fix-018` holding its rebase.** Full detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:7x — PR #26: 014 BLOCK on a live
-> bulk_decide diff-hash bypass; freeze lifted for two named fixes.
+> **BLAST 13 Sep 23:8x +08** — `fix-018` pushed the M4 split at
+> `66ad184` (PR #11 retitled "018 golden-path RPCs + 019 pipeline
+> provisioning"), confirmed via `git ls-tree`: 019 now three real files
+> (migration, rollback, pin), not just a plan. 019 carries the seeded-
+> pipelines ledger, four functions, the trigger, the loud backfill, two
+> registry rows, and the full B6 rollback contract; self-contained pin
+> (T1/T2/T3). 018 now 48 objects and NO table, header states its
+> dependency on `pipeline_steps`. `test_014` restored byte-for-byte
+> (confirmed via the diff, a net reversion), with one assertion left
+> explicitly owed to fix-014 (T1c scoped to 014-time objects, since
+> 018's three view grants make the live count 124 not 121).
+> **Discrepancy this thread flagged as open is confirmed RESOLVED**: the
+> earlier "test_014 red at 001-017" report was measured against a stale
+> base; re-measured at `0d9e00c` it passes, and `test_014_rollback`
+> refusing pre-rollback is confirmed by design. Two more items owed to
+> fix-014's branch (a `test_017` boolean flip, a `test_016` T7b
+> exclusion), both independently verified against scratch copies.
+> Counts: branch 001-019 at 18/1 (only `test_014`, tracked); cloud base
+> 16/4 pending the three owed items; `lint:sql` 57/57. Separately, **PR
+> #27 confirmed MERGED (`963eda8`)**: the worker heartbeat bug (S4/T16)
+> closed, root cause entirely worker-side — `loop.ts` passed
+> `heartbeatSeconds` instead of `leaseSeconds` at both call sites,
+> confirmed in the diff; `config.ts` now throws at startup if heartbeat
+> isn't strictly shorter than the lease. 95/95 worker tests (up from
+> 90/90). Both lanes confirmed shut down. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:8x — 019 split lands at 66ad184,
+> test_014 discrepancy resolved (stale base); PR #27 closes S4/T16.
 
 ### Focus
 

@@ -287,6 +287,31 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:8x — 019 split lands at 66ad184; the test_014-red discrepancy is resolved as a stale measurement; PR #27 closes the worker heartbeat bug (S4/T16)
+
+- `fix-018` confirmed pushed the M4 split to `lane/rpc-018`, tip
+  `66ad184`: 019 now three real files (confirmed via `git ls-tree`)
+  carrying the seeded-pipelines ledger, four functions, trigger, loud
+  backfill, two registry rows, and the full B6 rollback contract, with
+  a self-contained pin. 018 reduced to 48 objects and NO table.
+  `test_014` restored byte-for-byte (confirmed via the diff), with one
+  assertion (T1c's live grant count) explicitly left owed to fix-014,
+  stated plainly rather than worked around. **The test_014-red
+  discrepancy this log flagged as open two rounds ago is confirmed
+  RESOLVED**: it was measured against a stale base; re-measured, it
+  passes and agrees with fix-014's own report. Two more items owed to
+  fix-014's branch, both independently verified. Counts: branch
+  001-019 at 18/1 (only test_014, tracked); cloud base 16/4 pending
+  three owed items; lint:sql 57/57.
+- Separately, PR #27 confirmed merged (`963eda8`): the worker heartbeat
+  bug (S4/T16) closed, root cause confirmed entirely worker-side —
+  `loop.ts` passed heartbeatSeconds instead of leaseSeconds at both
+  call sites (confirmed in the diff), while the SQL side was already
+  correct. config.ts now throws at startup if heartbeat isn't strictly
+  shorter than the lease. 95/95 worker tests (up from 90/90). Both
+  lanes confirmed shut down. See `ai/project-log.md` 23:8x block for
+  full detail.
+
 ## 2026-09-13 23:7x — PR #26: 014's third-pass residuals genuinely closed, but a live bulk_decide diff-hash bypass reopens HIGH-4; freeze lifted for two named fixes
 
 - PR #26 confirmed merged (`664a477`): amends the existing 015-017

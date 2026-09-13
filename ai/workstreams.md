@@ -1282,6 +1282,127 @@ with re-freeze to follow; `fix-018` reported holding its rebase**
 through this window — consistent with this thread's own record that
 the rebase has been deliberately held for a stable base throughout.
 
+✅ **`fix-018` pushed the M4 split to `origin/lane/rpc-018`, tip
+`66ad184`** (via `583249f`, `7307000`) — confirmed via `git ls-tree`
+that `019_pipeline_provisioning.sql` and its rollback and pin now exist
+as three real files, not just a stated plan. **PR #11 confirmed
+retitled** to "018 golden-path RPCs + 019 pipeline provisioning,"
+matching the split directly in the PR's own identity, not just its body
+text.
+
+- **019 confirmed self-contained and confirmed carrying everything the
+  ruling specified**: the `app.seeded_pipelines` ledger, four functions,
+  the trigger, the loud backfill (RAISEs naming every unseedable
+  tenant), the two rows in 016's `app.tenant_seed_checks` registry, and
+  the full B6 rollback contract (delete exactly the recorded rows,
+  refuse with a count and blocking constraint names when referenced,
+  delete nothing on refusal). Confirmed the pin (T1 provisioning, T2 the
+  loud backfill, T3 reversibility including the refusal path) is
+  self-contained — its own tenant, organisation, programme, and
+  engagement — specifically so it does not depend on another pack's
+  fixture surviving a future reordering.
+- **Proved end to end by execution, confirmed via the commit's own
+  quoted transcript**: tenant seeded to 2 pipelines/16 steps with an
+  18-row ledger; 019's rollback reports "18 seeded pipeline/step row(s)
+  removed"; after, pipelines/steps are 0/0 and the ledger and mechanism
+  are gone; a default `ENGAGEMENT` pipeline insert then succeeds
+  (`INSERT 0 1`); re-apply re-seeds the surviving tenant with a green
+  verify.
+- **018 confirmed reduced to 48 objects and NO table**, modifying no
+  existing table, function, view, policy, or grant — confirmed the
+  dependency on 019 is now stated in 018's own header rather than left
+  implicit, since `core.navigation` and `core.get_pipeline_config`
+  render stages from `core.pipeline_steps` and would return an empty
+  stage list for any tenant without 019 applied. Confirmed `V16b`/`V16c`
+  (verify-block checks about 019's own trigger) moved out of 018's
+  verify block entirely — a verify block checking another migration's
+  object is confirmed, in the commit's own words, to "pass vacuously
+  when that migration has not been applied," the exact R4 defect this
+  pack was already caught by once.
+- **`test_014` confirmed restored byte-for-byte, not just claimed** —
+  confirmed via the diff itself (8 insertions, 33 deletions, a net
+  reversion): 018's three view grants are now asserted only in
+  `test_018`'s T38 by name, with **an assertion explicitly left owed to
+  the 014 lane, stated rather than worked around**: `test_014`'s T1c
+  counts LIVE grants (`SELECT count(*) FROM information_schema.table_
+privileges WHERE ... privilege_type='SELECT'`), so it reads 124 once
+  018 is applied and fails unless scoped to 014-time objects — confirmed
+  re-derived by execution on the shim (121 at 001–017, 124 with 018, a
+  delta of exactly three named views), not assumed.
+- **`test_008`/`test_009`'s pipeline-fixture amendments confirmed
+  re-attributed to 019 at the line level**, moved out of 018's diff
+  entirely — confirmed the commit also found and fixed a genuine
+  pre-existing 009 defect this move made reachable: an unconstrained
+  cross join wrote three engagements and kept an arbitrary one, now
+  scoped with `AND pl.name = 'std'`.
+- **Discrepancy this thread already recorded as open, confirmed
+  RESOLVED, and confirmed as a stale-measurement issue rather than a
+  real contradiction between the two lanes.** `fix-018`'s earlier report
+  of `test_014` already red on `cloud/migrations` at 001–017 alone was
+  measured against a **stale extraction of the base** — confirmed via
+  the PR body's own correction: "That was measured against a stale
+  extraction of the base (`21ec975`-era). Re-measured at `0d9e00c`,
+  `test_014` passes standalone, which agrees with the 014 lane's own
+  report." **`test_014_rollback` refusing while 014 is applied is
+  confirmed by design, not a failure** — the exact same pattern this
+  thread has already recorded for other apply-context pins.
+- **Two items confirmed still owed to `fix-014`'s own branch, both
+  independently verified against scratch copies rather than guessed**:
+  `test_017` line 87 needs `'ENGAGEMENT','Standard delivery', true` →
+  `false` (confirmed passes when applied); `test_016`'s T7b needs its
+  `NOT EXISTS (core.ref_sequences)` exclusion dropped, since 019's seed
+  triggers a real `PIP` ref allocation that the old exclusion logic was
+  never written to expect, dropping the matched count from 32 to 31 —
+  confirmed as a real, verified mechanism, not a guess, with the
+  commit itself deferring the choice between two valid fixes to 016's
+  own author.
+- **Counts, confirmed exactly against the PR body's own quoted
+  output**: this branch's own 001–019 at 18 pass / 1 fail (`test_014`,
+  tracked as B4, owed) through a full rollback/re-apply/pins-again
+  cycle, identical after. Against `cloud/migrations`'s current base
+  (`0d9e00c`): 17/1 at 001–017 alone (`test_014_rollback` refusing by
+  design, not a real failure), 16/4 at 001–019 (the four confirmed as
+  `test_014`, `test_014_rollback`, and the two owed 016/017
+  amendments — "with those three landed it is 19/19," quoted directly).
+  `lint:sql` confirmed 57/57 (up from 53, three new 019 files counted),
+  `check:rpc` 4 pass/0 broken, `check:grants` one pre-existing finding
+  confirmed unrelated to this split.
+
+⛔ **PR #27 confirmed MERGED at `963eda8`** (`gh pr view 27`: mergedAt
+2026-09-13T14:18:45Z, base `main`, four files under `apps/worker/**`
+only — `loop.ts`, `config.ts`, and their two test files, +180/-10) —
+**S4/T16 (the worker heartbeat lease bug) closed.** Confirmed the root
+cause is entirely worker-side, not a database defect: `app.
+heartbeat_job` (migration 012) already correctly sets `visible_after =
+now() + p_extend`, confirmed by reading the migration directly; the bug
+was `apps/worker/src/loop.ts` passing `heartbeatSeconds` instead of
+`leaseSeconds` as the extend argument at **both** heartbeat call sites
+(the automatic interval tick and the handler-exposed manual heartbeat),
+confirmed exactly in the diff — so every beat reset the lease to "now
+plus one heartbeat interval" instead of "now plus the full lease,"
+letting a long job's lease expire while it was still being worked and
+race the reaper into reclaiming it. **No `supabase/**` change needed**,
+confirmed consistent with the diff touching only `apps/worker/**`.
+`config.ts` now throws at startup if the configured heartbeat is not
+strictly shorter than the lease, confirmed in the diff, closing a
+second, independent gap: the old clamp checked the heartbeat against a
+global maximum rather than the actual configured lease, so a
+60-second-lease/300-second-heartbeat configuration was silently
+accepted and would have caused the same double-work even with a correct
+extend value. **Simulation numbers confirmed directly in the test
+file's own comments**, not just asserted: a second heartbeat still in
+flight at t=210s under DB contention, pre-fix `visible_after=200`
+(already behind, letting a concurrent reap wrongly reclaim a
+still-heartbeating job), post-fix `visible_after=400` (comfortably
+covering the gap). **95/95 worker tests confirmed** (up from 90/90),
+`npm run typecheck` and `npm run lint` clean, `npm run arch:graph` no
+dependency violations (340 modules, 1171 dependencies). Both
+`fix-worker-heartbeat` and `review-pr27` confirmed shut down via
+`git worktree list`. **Remaining backlog item from the 011-013 review,
+confirmed still open and correctly scoped**: `bulk_decide`'s
+response-shape mismatch (T4/F4) — the SQL side is in `fix-014`'s open
+freeze window, the TS side reported routed to a web lane afterward.
+
 ✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
 `origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
 a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header
