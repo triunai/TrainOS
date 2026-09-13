@@ -6,7 +6,7 @@ import { currentPrimaries } from "@/shared/components/kit";
 import { EnquiryInboxPage } from "../EnquiryInboxPage";
 import { EnquiryDetailPage } from "../EnquiryDetailPage";
 import { FollowUpQueuePage } from "../FollowUpQueuePage";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 const DETAIL_ROUTE = "/sales/enquiries/:enquiryId";
 const DETAIL_PATH = "/sales/enquiries/ENQ-2026-0912";

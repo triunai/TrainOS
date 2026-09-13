@@ -6,7 +6,7 @@ import { ClaimPacketScreen } from "../ClaimPacketScreen";
 import { RulesRegistryScreen } from "../RulesRegistryScreen";
 import { RuleChangeReviewScreen } from "../RuleChangeReviewScreen";
 import { DEFAULT_PACKET_ENGAGEMENT_REF, DEFAULT_RULE_CHANGE_DOCUMENT_ID } from "../paths";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 /**
  * The states the design-pack inventory says each screen must render, asserted
@@ -15,7 +15,9 @@ import { renderScreen } from "./render-harness";
 
 describe("M12-S02 · claim packet", () => {
   it("renders two missing documents, the completeness bar and the six-month deadline", async () => {
-    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />);
+    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />, {
+      role: "FINANCE",
+    });
 
     expect(await screen.findByText("Claim packet · ENG-0231")).toBeInTheDocument();
 
@@ -31,7 +33,9 @@ describe("M12-S02 · claim packet", () => {
   });
 
   it("shows every rule check with its computed values and a no-model basis", async () => {
-    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />);
+    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />, {
+      role: "FINANCE",
+    });
 
     /* The FAIL that blocks the filing, with its working shown, not just a verdict. */
     expect(await screen.findByText("Required documents complete")).toBeInTheDocument();
@@ -45,7 +49,9 @@ describe("M12-S02 · claim packet", () => {
   });
 
   it("cites the six-month claim window, not the five-working-day reading", async () => {
-    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />);
+    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />, {
+      role: "FINANCE",
+    });
 
     const banner = await screen.findByText(/Claim window closes in 180 days/);
     expect(banner).toBeInTheDocument();
@@ -56,7 +62,9 @@ describe("M12-S02 · claim packet", () => {
   });
 
   it("disables the filing primary while the packet is incomplete and offers no submit-to-HRD-Corp button", async () => {
-    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />);
+    renderScreen(<ClaimPacketScreen engagementRef={DEFAULT_PACKET_ENGAGEMENT_REF} />, {
+      role: "FINANCE",
+    });
 
     const primary = await screen.findByRole("button", { name: "Mark as submitted on eTRIS" });
     expect(primary).toBeDisabled();
@@ -95,7 +103,7 @@ describe("M12-S02 · claim packet", () => {
 
 describe("M12-S07 · rules registry", () => {
   it("shows a superseded rule with the rule that replaced it", async () => {
-    renderScreen(<RulesRegistryScreen />);
+    renderScreen(<RulesRegistryScreen />, { role: "FINANCE" });
 
     await screen.findByText("HRD Corp rules");
     await userEvent.click(screen.getByRole("tab", { name: /Superseded/ }));
@@ -109,7 +117,7 @@ describe("M12-S07 · rules registry", () => {
   });
 
   it("shows an active rule whose replacement is dated but not yet in force", async () => {
-    renderScreen(<RulesRegistryScreen />);
+    renderScreen(<RulesRegistryScreen />, { role: "FINANCE" });
 
     await screen.findByText("HRD Corp rules");
     /* HRD-015 is a public-programme rule, so the SBL-Khas filter has to go. */
@@ -123,7 +131,7 @@ describe("M12-S07 · rules registry", () => {
   });
 
   it("shows a proposed rule as awaiting verification", async () => {
-    renderScreen(<RulesRegistryScreen />);
+    renderScreen(<RulesRegistryScreen />, { role: "FINANCE" });
 
     await screen.findByText("HRD Corp rules");
     await userEvent.click(screen.getByRole("tab", { name: /Proposed/ }));
@@ -133,7 +141,7 @@ describe("M12-S07 · rules registry", () => {
   });
 
   it("carries one primary that opens the add-rule drawer", async () => {
-    renderScreen(<RulesRegistryScreen />);
+    renderScreen(<RulesRegistryScreen />, { role: "FINANCE" });
 
     const primary = await screen.findByRole("button", { name: "Add rule" });
     await userEvent.click(primary);
@@ -145,7 +153,9 @@ describe("M12-S07 · rules registry", () => {
 
 describe("M12-S08 · rule change review", () => {
   it("highlights the source span the selected diff card was read from", async () => {
-    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />);
+    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />, {
+      role: "FINANCE",
+    });
 
     expect(await screen.findByText("Circular 09/2026 · proposed rule changes")).toBeInTheDocument();
 
@@ -157,7 +167,9 @@ describe("M12-S08 · rule change review", () => {
   });
 
   it("calls out the open engagements a change would break, before approval", async () => {
-    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />);
+    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />, {
+      role: "FINANCE",
+    });
 
     expect(await screen.findByText(/One change affects \d+ open engagements/)).toBeInTheDocument();
     expect(screen.getByText("ENG-0244")).toBeInTheDocument();
@@ -165,14 +177,18 @@ describe("M12-S08 · rule change review", () => {
   });
 
   it("withholds a change read below the confidence floor", async () => {
-    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />);
+    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />, {
+      role: "FINANCE",
+    });
 
     expect(await screen.findByText("Held for manual transcription")).toBeInTheDocument();
     expect(screen.getByText(/read at 0\.62 confidence, below the 0\.80 floor/)).toBeInTheDocument();
   });
 
   it("queues the approval rather than activating the rule", async () => {
-    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />);
+    renderScreen(<RuleChangeReviewScreen documentId={DEFAULT_RULE_CHANGE_DOCUMENT_ID} />, {
+      role: "FINANCE",
+    });
 
     const primary = await screen.findByRole("button", { name: "Approve selected" });
     expect(primary).toBeDisabled();

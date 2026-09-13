@@ -3,7 +3,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentRegistryScreen } from "../AgentRegistryScreen";
 import { RunTraceScreen } from "../RunTraceScreen";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 /**
  * The §4 "states rendered" for M18-S01 and M18-S04, asserted against the real

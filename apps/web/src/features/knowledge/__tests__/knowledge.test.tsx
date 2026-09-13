@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KnowledgeSourcesScreen } from "../KnowledgeSourcesScreen";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 /** The §4 "states rendered" for M16-S05, against the real fixture client. */
 

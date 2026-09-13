@@ -6,7 +6,7 @@ import { ProposalBuilderPage } from "../ProposalBuilderPage";
 import { CostingWorksheetPage } from "../CostingWorksheetPage";
 import { needsReview, originLabel } from "../sections";
 import { currentPrimaries } from "@/shared/components/kit";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 const BUILDER_ROUTE = "/sales/proposals/:proposalRef";
 const builderPath = `/sales/proposals/${PROPOSAL_AURORA}`;

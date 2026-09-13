@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { currentPrimaries } from "@/shared/components/kit";
 import { Organisation360Page } from "../Organisation360Page";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 const ROUTE = "/sales/organisations/:organisationId";
 const PATH = "/sales/organisations/ORG-0114";

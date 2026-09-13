@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AiModelsScreen } from "../AiModelsScreen";
 import { ProviderKeysScreen } from "../ProviderKeysScreen";
 import { UsageBudgetsScreen } from "../UsageBudgetsScreen";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 /**
  * The §4 "states rendered" for the three §17 settings screens.

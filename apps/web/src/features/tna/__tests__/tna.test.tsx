@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { currentPrimaries } from "@/shared/components/kit";
 import { TnaDetailPage } from "../TnaDetailPage";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 const ROUTE = "/sales/tna/:tnaId";
 const PATH = "/sales/tna/TNA-0042";

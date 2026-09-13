@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { CollectionsQueueScreen } from "../CollectionsQueueScreen";
 import { InvoiceDetailScreen } from "../InvoiceDetailScreen";
 import { DEFAULT_INVOICE_REF } from "../paths";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 /**
  * The states the design-pack inventory says each screen must render, asserted
@@ -13,7 +13,7 @@ import { renderScreen } from "./render-harness";
 
 describe("M13-S02 · invoice detail", () => {
   it("adds the lines up in front of the reader and puts SST on the net", async () => {
-    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />);
+    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />, { role: "FINANCE" });
 
     expect(await screen.findByRole("heading", { name: "INV-2026-0311" })).toBeInTheDocument();
 
@@ -29,7 +29,7 @@ describe("M13-S02 · invoice detail", () => {
   });
 
   it("keeps the failed sync attempt beside the validated state", async () => {
-    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />);
+    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />, { role: "FINANCE" });
 
     await screen.findByText("Accounting sync log");
 
@@ -44,7 +44,7 @@ describe("M13-S02 · invoice detail", () => {
   });
 
   it("shows the UIN exactly as MyInvois masked it", async () => {
-    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />);
+    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />, { role: "FINANCE" });
 
     const uins = await screen.findAllByText("MY-2026-XXXXXXXX-0311");
     expect(uins.length).toBeGreaterThan(0);
@@ -52,7 +52,7 @@ describe("M13-S02 · invoice detail", () => {
   });
 
   it("has no payments yet, and one primary that records one", async () => {
-    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />);
+    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />, { role: "FINANCE" });
 
     expect(await screen.findByText("No payments recorded")).toBeInTheDocument();
 
@@ -68,7 +68,7 @@ describe("M13-S02 · invoice detail", () => {
 
 describe("M13-S05 · collections queue", () => {
   it("renders the ageing buckets from the receivables ledger", async () => {
-    renderScreen(<CollectionsQueueScreen />);
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
 
     expect(await screen.findByRole("heading", { name: "Collections" })).toBeInTheDocument();
     expect(await screen.findByText("Current")).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe("M13-S05 · collections queue", () => {
   });
 
   it("shows the 48-day item as escalated past the agent's autonomy", async () => {
-    renderScreen(<CollectionsQueueScreen />);
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
 
     await screen.findByRole("heading", { name: "Collections" });
     await userEvent.click(screen.getByRole("tab", { name: /Escalated/ }));
@@ -90,7 +90,7 @@ describe("M13-S05 · collections queue", () => {
   });
 
   it("shows the 78-day item as a trading hold the MD owns", async () => {
-    renderScreen(<CollectionsQueueScreen />);
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
 
     await screen.findByRole("heading", { name: "Collections" });
     await userEvent.click(screen.getByRole("tab", { name: /Escalated/ }));
@@ -102,7 +102,7 @@ describe("M13-S05 · collections queue", () => {
   });
 
   it("renders the escalation ladder from the collection rules, not from code", async () => {
-    renderScreen(<CollectionsQueueScreen />);
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
 
     await screen.findByText("Escalation ladder");
     expect(await screen.findByText("7 days overdue")).toBeInTheDocument();
@@ -111,7 +111,7 @@ describe("M13-S05 · collections queue", () => {
   });
 
   it("shows the drafted reminder with its cost and consent", async () => {
-    renderScreen(<CollectionsQueueScreen />);
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
 
     /* The 34-day row is the one with a draft ready, and it is selected by default. */
     expect(await screen.findByText(/Dear Puan Nurul/)).toBeInTheDocument();
@@ -123,7 +123,7 @@ describe("M13-S05 · collections queue", () => {
   });
 
   it("queues the send for approval rather than sending it", async () => {
-    renderScreen(<CollectionsQueueScreen />);
+    renderScreen(<CollectionsQueueScreen />, { role: "FINANCE" });
 
     const primary = await screen.findByRole("button", { name: "Approve & send" });
     await waitFor(() => expect(primary).toBeEnabled());

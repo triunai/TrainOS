@@ -6,7 +6,7 @@ import { ProgrammesListPage } from "../ProgrammesListPage";
 import { ProgrammeDetailPage } from "../ProgrammeDetailPage";
 import { nearestWindow, poolRows } from "../availability";
 import { currentPrimaries } from "@/shared/components/kit";
-import { renderScreen } from "./render-harness";
+import { renderScreen } from "@/test/renderScreen";
 
 const DETAIL_ROUTE = "/training/programmes/:programmeRef";
 const detailPath = `/training/programmes/${PROGRAMME_LEADING_CHANGE}`;
