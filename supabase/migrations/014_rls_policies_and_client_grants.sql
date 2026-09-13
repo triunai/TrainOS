@@ -343,10 +343,12 @@ $preflight$;
 -- failure in the next migration, not a theoretical one. The DROP below is what
 -- stops it; §6 asserts the overload count is exactly one.
 DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text);
+DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text, text);
 
 CREATE OR REPLACE FUNCTION app.apply_tenant_policies(
   p_schema     text,
   p_table      text,
+  p_migration  text,
   p_permission text DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql
@@ -442,15 +444,30 @@ BEGIN
   -- through to the ELSE, which is the refusal, so the documented escape hatch was
   -- a dead branch that always raised. `UNGATE` is therefore tested FIRST and on
   -- its own. T16 now exercises all three branches.
-  IF p_permission = 'UNGATE' THEN
-    v_gate := '';
-  ELSIF p_permission IS NOT NULL THEN
+  IF p_permission IS NOT NULL THEN
     IF NOT EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.permission = p_permission) THEN
       RAISE EXCEPTION
         'apply_tenant_policies: permission % names no row in app.role_permissions, '
         'so the gate on %.% would refuse every role including ADMIN. A gate nobody '
         'can satisfy is a broken screen, not security.', p_permission, p_schema, p_table;
     END IF;
+
+    -- ⚠ AND THAT IT NARROWS SOMETHING. Existing was not enough: a permission
+    -- every role holds — `dashboard:read`, say — passes an existence check and
+    -- produces a gate that gates nothing, silently. That is the same shape as the
+    -- dead `UNGATE` branch this function used to carry: a written control with a
+    -- failure mode nobody meets until they do. `verify (13)` already ran this
+    -- check on 014's own three tables; running it HERE makes it true for every
+    -- caller, including 018's.
+    IF (SELECT pg_catalog.count(*) FROM app.role_permissions rp
+         WHERE rp.permission = p_permission)
+       >= (SELECT pg_catalog.count(DISTINCT rp.role) FROM app.role_permissions rp) THEN
+      RAISE EXCEPTION
+        'apply_tenant_policies: permission % is held by every role that holds any '
+        'permission, so a gate on %.% built from it narrows nothing and is '
+        'decoration with the shape of security.', p_permission, p_schema, p_table;
+    END IF;
+
     v_gate := pg_catalog.format(' AND (SELECT app.has_permission(%L))', p_permission);
   ELSE
     -- ⚠ A TWO-ARGUMENT CALL MUST NOT BE ABLE TO STRIP AN EXISTING GATE.
@@ -468,7 +485,13 @@ BEGIN
     -- policy it is about to drop — the database is the manifest, the same way the
     -- rollback's `migration:014` stamp is — and makes removing one a thing you
     -- have to write down.
-    SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid) INTO v_existing
+    -- BOTH halves, not just USING. A gate that reached WITH CHECK and not USING
+    -- (or the reverse) is a half-gate, and reading one half would let a
+    -- two-argument call quietly finish removing it.
+    SELECT pg_catalog.concat_ws(' | ',
+             pg_catalog.pg_get_expr(p.polqual, p.polrelid),
+             pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid))
+      INTO v_existing
       FROM pg_catalog.pg_policy p
      WHERE p.polrelid = v_oid AND p.polname = v_iso_pol;
 
@@ -477,10 +500,11 @@ BEGIN
         'apply_tenant_policies: %.% already carries a role gate and this call '
         'passes no permission, which would silently remove it. Its current '
         'isolation predicate is: %. Pass the same permission again to keep the '
-        'gate, pass a different one to change it, or pass the literal string '
-        '''UNGATE'' to remove it on purpose — spelled that way so it cannot be '
-        'typed by accident and shows up in a diff as what it is.',
-        p_schema, p_table, v_existing;
+        'gate, pass a different one to change it, or call %s to remove it on '
+        'purpose.',
+        p_schema, p_table, v_existing,
+        pg_catalog.format('app.ungate_tenant_policy(%L, %L, %L)',
+          p_schema, p_table, p_migration);
     END IF;
   END IF;
 
@@ -505,12 +529,119 @@ BEGIN
     'CREATE POLICY %I ON %I.%I AS RESTRICTIVE FOR ALL TO authenticated '
     'USING (%s%s) WITH CHECK (%s%s)',
     v_iso_pol, p_schema, p_table, v_read, v_gate, v_write, v_gate);
+
+  -- ⚠ THE STAMP IS WRITTEN HERE, BY THE FUNCTION, FROM A REQUIRED ARGUMENT.
+  --
+  -- It used to be written by the CALLER, in prose, after the call — and 014 did
+  -- it while 017's three calls to the same function did not. One convention, two
+  -- ownership stories in two files, and the rollback that drops by the stamp had
+  -- to reason about which was true. Making it an argument with no default means
+  -- a caller cannot create a policy here without saying which migration owns it,
+  -- and there is exactly one place that turns that answer into a comment.
+  --
+  -- THE ONE CASE THIS DOES NOT MAKE TIDY, stated here and nowhere else so the two
+  -- files cannot disagree again: re-applying 014 on top of an already-applied 017
+  -- re-creates 017's three tables' policies, because 014's loop covers every
+  -- tenant-scoped core table that exists when it runs — and they come out stamped
+  -- `014`, because 014 really was the last thing to create them. That is why
+  -- 014's ROLLBACK refuses to run while 017 is applied rather than trying to
+  -- reason about provenance after the fact. Reverse order is the only order in
+  -- which the stamp and the truth agree.
+  EXECUTE pg_catalog.format(
+    'COMMENT ON POLICY %I ON %I.%I IS %L', v_select_pol, p_schema, p_table,
+    pg_catalog.format(
+      'migration:%s — permissive tenant-scoped SELECT.%s', p_migration,
+      CASE WHEN v_gate = '' THEN ''
+           ELSE ' Narrowed by the restrictive isolation policy beside it, which '
+                'carries a permission term.' END));
+
+  EXECUTE pg_catalog.format(
+    'COMMENT ON POLICY %I ON %I.%I IS %L', v_iso_pol, p_schema, p_table,
+    pg_catalog.format(
+      'migration:%s — restrictive FOR ALL tenant isolation%s. Correct on the day '
+      'somebody grants a write, which is the only day the write half decides '
+      'anything.', p_migration,
+      CASE WHEN p_permission IS NULL THEN ''
+           ELSE ' AND role gate on ' || p_permission ||
+                ': tenant membership is not sufficient authorization here' END));
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION app.apply_tenant_policies(text, text, text) FROM PUBLIC, anon, authenticated;
+-- ── THE ESCAPE, AS A NAME RATHER THAN A STRING ─────────────────────────────
+-- Removing a role gate is a deliberate act and now looks like one at the call
+-- site. It used to be `apply_tenant_policies('core','x','UNGATE')` — a magic
+-- string in the same argument that otherwise names a permission, so "what gate"
+-- and "may this drop one" were fused into one three-way branch whose safety
+-- rested on the order the branches were tested in. That ordering had already
+-- produced one dead-code bug: the literal was excluded from the branch that set
+-- the gate but not from the one that refused, so the documented escape raised on
+-- every call and removed nothing.
+--
+-- A separate function cannot have that bug. There is no argument to mis-order and
+-- no string to mistype into a permission lookup: `grep ungate_tenant_policy` finds
+-- every place a gate has ever been removed.
+CREATE OR REPLACE FUNCTION app.ungate_tenant_policy(
+  p_schema    text,
+  p_table     text,
+  p_migration text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_oid     pg_catalog.oid;
+  v_iso_pol text := p_table || '_tenant_isolation';
+  v_before  text;
+BEGIN
+  v_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', p_schema, p_table));
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'ungate_tenant_policy: %.% does not exist', p_schema, p_table;
+  END IF;
 
-COMMENT ON FUNCTION app.apply_tenant_policies(text, text, text) IS
+  SELECT pg_catalog.concat_ws(' | ',
+           pg_catalog.pg_get_expr(p.polqual, p.polrelid),
+           pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid))
+    INTO v_before
+    FROM pg_catalog.pg_policy p
+   WHERE p.polrelid = v_oid AND p.polname = v_iso_pol;
+
+  IF v_before IS NULL OR pg_catalog.strpos(v_before, 'has_permission') = 0 THEN
+    RAISE EXCEPTION
+      'ungate_tenant_policy: %.% carries no role gate, so there is nothing to '
+      'remove. Calling this on an ungated table is a sign the caller believes a '
+      'gate exists that does not.', p_schema, p_table;
+  END IF;
+
+  RAISE WARNING
+    'ungate_tenant_policy: REMOVING the role gate on %.% (was: %). Every principal '
+    'of the tenant can now read every row of it. Migration % is doing this on '
+    'purpose.', p_schema, p_table, v_before, p_migration;
+
+  -- ⚠ DROP THE GATED POLICY FIRST, then rebuild ungated. Calling
+  -- apply_tenant_policies straight through would hit its own refusal — the gate
+  -- is still standing at this point, which is exactly the condition that function
+  -- refuses on — and the escape would be as dead as the magic string it replaced.
+  -- Found by running it, not by reading it, for the second time on this control.
+  EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON %I.%I',
+    v_iso_pol, p_schema, p_table);
+
+  PERFORM app.apply_tenant_policies(p_schema, p_table, p_migration, NULL);
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.ungate_tenant_policy(text, text, text) FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION app.ungate_tenant_policy(text, text, text) IS
+  'Removes the role gate from a tenant-scoped table''s isolation policy, loudly. '
+  'The deliberate counterpart to apply_tenant_policies refusing a call that would '
+  'remove one by accident. A separate named function rather than a magic string in '
+  'the permission argument, so the escape is greppable and cannot depend on branch '
+  'order. Refuses on a table that carries no gate. 014.';
+
+REVOKE ALL ON FUNCTION app.apply_tenant_policies(text, text, text, text) FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION app.apply_tenant_policies(text, text, text, text) IS
   'Stamps the standard two-policy tenant posture on a tenant-scoped table: a '
   'PERMISSIVE SELECT policy and a RESTRICTIVE FOR ALL isolation policy, both TO '
   'authenticated, both resolving the tenant through (SELECT app.require_tenant_id()). '
@@ -583,7 +714,7 @@ DECLARE
   v_count   integer := 0;
 BEGIN
   FOR r IN
-    SELECT c.relname, g.perm, g.why
+    SELECT c.relname, g.perm
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       -- ⚠ THE GATED SET, DECLARED ONCE AND NOWHERE ELSE. §4b explains which
@@ -595,13 +726,41 @@ BEGIN
       -- spelling on a table that already carries a gate — correctly, because that
       -- spelling is how a later migration would strip one by accident.
       LEFT JOIN (VALUES
-        ('ai_provider_keys',    'ai:provider:read',
-         'masked key prefix, fingerprint and key_ref; 002:1135 makes ai:provider:read ADMIN-only'),
-        ('run_node_io',         'run:read',
-         'raw agent prompt and completion text; 002:1116/1212 make run:read MD and ADMIN only'),
-        ('public_share_tokens', 'portal:token:issue',
-         'the portal token hashes and which proposal or TNA each opens; 002 gives portal:token:issue to SALES, SALES_MANAGER, MD and ADMIN')
-      ) AS g(relname, perm, why) ON g.relname = c.relname
+        ('ai_provider_keys',    'ai:provider:read'),
+        -- ⚠ ALL SEVEN TABLES `run:read` GOVERNS, not the one the first review
+        -- happened to name. 013 creates seven, and gating one of them while
+        -- arguing "restore the decision 002 already wrote down" restores it for a
+        -- seventh of the surface. `run_state_cards` is WORSE than the table that
+        -- was gated: 013's own header concedes it is not subject to the 30-day
+        -- redaction sweep `run_node_io` gets, and it carries goal, plan and open
+        -- questions as free text. `run_snapshots.response` is every tool call's
+        -- raw output for every run in the tenant.
+        --
+        -- `runs`, `run_nodes` and `run_events` are included too, and that is a
+        -- choice rather than caution: they are the trace's spine, `run:read` is
+        -- the permission 002 wrote for reading a run, and a metadata-only
+        -- exception would mean deciding that agent_id, model, token counts, cost
+        -- and event detail are not part of "reading a run" — which is a product
+        -- decision nobody has made and which this file is the wrong place to make
+        -- silently. MD and ADMIN hold `run:read`; the AI-ops screens are theirs.
+        ('runs',                'run:read'),
+        ('run_nodes',           'run:read'),
+        ('run_node_io',         'run:read'),
+        ('run_events',          'run:read'),
+        ('run_state_cards',     'run:read'),
+        ('run_checkpoints',     'run:read'),
+        ('run_snapshots',       'run:read'),
+          -- ⚠ ROLE HALF ONLY, AND THE HEADER SAYS SO. 002 annotates SALES's and
+        -- SALES_MANAGER's `portal:token:issue` as `-- scope-narrowed`, meaning it
+        -- was meant to compose with `app.client_scope()` / `app.team_scope()`, not
+        -- stand alone. This gate restores the role half and NOT the scope half, so
+        -- a SALES principal still reads every share-token row in the tenant rather
+        -- than only their own clients'. Adding the scope term needs an owner
+        -- column on the table that 007 did not give it — `created_by_id` is text
+        -- and not a user id — so it is a schema change, not a predicate change,
+        -- and it is recorded as a gap with an owner rather than done badly here.
+        ('public_share_tokens', 'portal:token:issue')
+      ) AS g(relname, perm) ON g.relname = c.relname
      WHERE n.nspname = 'core'
        AND c.relkind = 'r'
        AND EXISTS (
@@ -610,36 +769,7 @@ BEGIN
                 AND a.attnum > 0 AND NOT a.attisdropped)
      ORDER BY c.relname
   LOOP
-    PERFORM app.apply_tenant_policies('core', r.relname, r.perm);
-
-    -- ⚠ THE MANIFEST. Each policy is stamped with the migration that created it,
-    -- in its COMMENT, and the rollback drops by that stamp rather than by the
-    -- `<table>_tenant_select` / `<table>_tenant_isolation` naming convention.
-    --
-    -- Why the convention is not good enough: `app.apply_tenant_policies` is a
-    -- FUNCTION, and 017 already calls it for three of its own tables. Anything
-    -- later that calls it — or that simply names a policy the same way by hand —
-    -- gets policies indistinguishable from 014's, and a convention-matching
-    -- rollback of 014 would drop them. The stamp is written by the CALLER, here,
-    -- not inside the shared function, so 017's three tables are NOT stamped 014
-    -- and are not 014's to drop.
-    EXECUTE pg_catalog.format(
-      'COMMENT ON POLICY %I ON core.%I IS %L',
-      r.relname || '_tenant_select', r.relname,
-      'migration:014 — permissive tenant-scoped SELECT. Predicate derived from '
-      'tenant_id''s NOT NULL flag by app.apply_tenant_policies.');
-    EXECUTE pg_catalog.format(
-      'COMMENT ON POLICY %I ON core.%I IS %L',
-      r.relname || '_tenant_isolation', r.relname,
-      CASE WHEN r.perm IS NULL THEN
-        'migration:014 — restrictive FOR ALL tenant isolation. Correct on the day '
-        'somebody grants a write, which is the only day it decides anything.'
-      ELSE
-        pg_catalog.format(
-          'migration:014 — restrictive FOR ALL tenant isolation AND role gate on %s: %s. '
-          'Tenant membership is not sufficient authorization on this table.',
-          r.perm, r.why)
-      END);
+    PERFORM app.apply_tenant_policies('core', r.relname, '014', r.perm);
 
     v_count := v_count + 1;
   END LOOP;
@@ -835,7 +965,11 @@ $views$;
 -- wrote the decision down as a permission that only some roles hold:
 --
 --   core.ai_provider_keys      `ai:provider:read`     ADMIN only        (002:1135)
---   core.run_node_io           `run:read`             MD and ADMIN      (002:1116,1212)
+--   core.runs, run_nodes,      `run:read`             MD and ADMIN      (002:1116,1212)
+--     run_node_io, run_events,
+--     run_state_cards,
+--     run_checkpoints,
+--     run_snapshots
 --   core.public_share_tokens   `portal:token:issue`   SALES, SALES_MANAGER,
 --                                                     MD, ADMIN         (002:861,919,1102,1196)
 --
@@ -847,13 +981,22 @@ $views$;
 -- is a tenant-isolation failure; both are an authorization failure INSIDE a
 -- tenant, which is a different question that the tenant predicate cannot answer.
 --
--- WHY THESE THREE AND NOT MORE. These are the three the 2026-09-13 retrofit
--- review named, each with the permission that already gates it in 002. Every
--- other `core` table keeps the blanket tenant-scoped SELECT, and that is a
--- POSTURE, not an oversight: within-tenant read authorization for the rest is
--- deferred to the RPC layer, where doc 09 puts it. It is recorded as a carried
--- item in the catalog so that the next person to widen a read surface finds the
--- decision rather than re-deriving it.
+-- WHY THESE NINE. Each is governed by a permission 002 already wrote, and the
+-- set is now the FULL extent of those permissions rather than the tables a
+-- review happened to name. An earlier version of this block gated three, and
+-- justified the other six of `run:read`'s seven with "the review did not name
+-- them" — which is a provenance argument wearing the clothes of a security one,
+-- and is precisely the rationalised gap this pack exists to close. `run:read`
+-- governs seven tables in 013; all seven are here.
+--
+-- WHAT IS STILL NOT GATED, and honestly. Every other `core` table keeps the
+-- blanket tenant-scoped SELECT. That is NOT a considered posture table by table:
+-- it is the state 014 found, narrowed where 002 had already written a permission
+-- that says otherwise, and left alone everywhere else because within-tenant read
+-- authorization for the rest has not been designed. Doc 09 puts it at the RPC
+-- layer. Until that exists, any principal of a tenant can read any other row of
+-- it, and the catalog records that as a GAP with an owner rather than as a
+-- decision somebody made.
 --
 -- WHY RESTRICTIVE AND FOR ALL. RESTRICTIVE so it ANDs with the permissive SELECT
 -- policy §2 created and with any permissive policy a later migration adds — a
@@ -889,7 +1032,13 @@ BEGIN
   FOR r IN
     SELECT relname, perm FROM (VALUES
       ('ai_provider_keys',    'ai:provider:read'),
+      ('runs',                'run:read'),
+      ('run_nodes',           'run:read'),
       ('run_node_io',         'run:read'),
+      ('run_events',          'run:read'),
+      ('run_state_cards',     'run:read'),
+      ('run_checkpoints',     'run:read'),
+      ('run_snapshots',       'run:read'),
       ('public_share_tokens', 'portal:token:issue')
     ) AS t(relname, perm)
   LOOP
@@ -1056,6 +1205,28 @@ AS $fn$
     p_confidence, p_reasoning, p_evidence, p_idempotency_key));
 $fn$;
 
+-- ⚠ AND THE HASH IS REQUIRED ON APPROVE, WHICH IS WHY THIS ONE IS plpgsql.
+--
+-- 011:2781-2787 compares `p_expected_diff_hash` only when it is non-NULL, so an
+-- APPROVE that omits it silently skips the optimistic-concurrency check. That is
+-- not hypothetical: `decideApproval` omitted the argument entirely until PR #17
+-- (`e20e1ba` on main) added it, and for that whole period the guard the header
+-- calls "protected" decided nothing on every real call. It is the 037 shape — a
+-- client omission defeating a server-side guard, invisible until it isn't.
+--
+-- The contract now makes it mandatory: `ApprovalDecideRequest.diffHash` is
+-- `string`, not `string | undefined`, with the comment "Required, not optional:
+-- the only caller always has one, having just read it off the same approval it is
+-- now deciding." So the database can require it too, and a guard that both sides
+-- enforce cannot be re-disabled by one of them changing.
+--
+-- ONLY ON APPROVE, deliberately: REJECT and REQUEST_CHANGES do not apply the
+-- diff, and 011 does not compare the hash for them either. Refusing them for a
+-- missing hash would be a new rule wearing this one's clothes.
+--
+-- LANGUAGE plpgsql rather than sql purely because a SQL function cannot RAISE.
+-- The body is still `app.ok(app.decide_approval(...))` and nothing else, which is
+-- what T10b reads.
 CREATE OR REPLACE FUNCTION core.decide_approval(
   p_approval_id        uuid,
   p_decision           text,
@@ -1063,13 +1234,27 @@ CREATE OR REPLACE FUNCTION core.decide_approval(
   p_expected_diff_hash text DEFAULT NULL,
   p_idempotency_key    text DEFAULT NULL
 ) RETURNS jsonb
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 SET statement_timeout = '10s'
 AS $fn$
-  SELECT app.ok(app.decide_approval(
+BEGIN
+  IF p_decision = 'APPROVE'
+     AND NULLIF(pg_catalog.btrim(COALESCE(p_expected_diff_hash, '')), '') IS NULL THEN
+    RAISE EXCEPTION
+      'an APPROVE must carry the diff hash the approver was shown'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED',
+              'fields', pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object(
+                  'field','diffHash','reason','REQUIRED')))::text;
+  END IF;
+
+  RETURN app.ok(app.decide_approval(
     p_approval_id, p_decision, p_note, p_expected_diff_hash, p_idempotency_key));
+END;
 $fn$;
 
 -- All five arguments, in order. Doc 09 §12: "Assert `core.decide_approval` passes
@@ -1114,7 +1299,10 @@ COMMENT ON FUNCTION core.perform_action(text,text,jsonb,jsonb,numeric,text,jsonb
 COMMENT ON FUNCTION core.decide_approval(uuid,text,text,text,text) IS
   'Wraps app.decide_approval (011), passing all five arguments including '
   'p_expected_diff_hash — dropping it silently disables the optimistic-concurrency '
-  'check with no visible symptom. Doc 09 §12. 014.';
+  'check with no visible symptom. REFUSES an APPROVE that carries no hash, because '
+  '011 compares it only when non-NULL and the client omitted it entirely until '
+  'PR #17; the contract now types diffHash as required, so both sides enforce it '
+  'and neither can re-disable it alone. Doc 09 §12. 014.';
 
 COMMENT ON FUNCTION core.bulk_decide_approvals(uuid[],text,text,text) IS
   'Wraps app.bulk_decide (011). Named for its consumer: rpcClient.ts:533 calls '
@@ -1404,7 +1592,13 @@ BEGIN
   FOR v_missing IN
     SELECT x FROM pg_catalog.unnest(ARRAY[
       'ai_provider_keys:ai:provider:read',
+      'runs:run:read',
+      'run_nodes:run:read',
       'run_node_io:run:read',
+      'run_events:run:read',
+      'run_state_cards:run:read',
+      'run_checkpoints:run:read',
+      'run_snapshots:run:read',
       'public_share_tokens:portal:token:issue']) AS t(x)
   LOOP
     DECLARE

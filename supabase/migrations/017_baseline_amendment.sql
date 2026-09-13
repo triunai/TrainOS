@@ -1436,9 +1436,9 @@ COMMENT ON FUNCTION core.retrieve_knowledge(extensions.vector,integer,uuid) IS
 -- `core.data_breach_register` does not (its `tenant_id` is NOT NULL — a breach
 -- always belongs to somebody).
 
-SELECT app.apply_tenant_policies('core','tax_policies');
-SELECT app.apply_tenant_policies('core','data_retention_policies');
-SELECT app.apply_tenant_policies('core','data_breach_register');
+SELECT app.apply_tenant_policies('core','tax_policies','017');
+SELECT app.apply_tenant_policies('core','data_retention_policies','017');
+SELECT app.apply_tenant_policies('core','data_breach_register','017');
 
 -- And the grant layer, matching 014: SELECT only, authenticated only.
 GRANT SELECT ON core.tax_policies             TO authenticated;

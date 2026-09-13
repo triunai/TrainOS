@@ -820,16 +820,42 @@ was reachable, since `authenticated` had no `USAGE ON SCHEMA core`". By the same
 is false — 001:232 granted it. 017's REVOKEs are correct and unaffected; only the reachability
 framing is wrong, and it understates when the exposure began. **Owner: whoever next amends 017.**
 
-**THE DELIBERATE POSTURE ON FINDING #5, NAMED SO IT IS NOT RE-DERIVED.** Three `core` tables carry
-a permission term. **The other 110 keep the blanket tenant-scoped SELECT**, and that is a decision,
-not an oversight: within-tenant read authorization for the rest is deferred to the RPC layer, where
-doc 09 puts it. The three were chosen because 002 had already written a permission for each —
-`ai:provider:read` (ADMIN), `run:read` (MD, ADMIN), `portal:token:issue` (SALES, SALES_MANAGER, MD,
-ADMIN) — so the gate restates an existing decision rather than inventing one. **The residual, named:**
-`core.run_snapshots` (tool arguments and responses), `core.run_state_cards` (goal and plan text) and
-`core.run_events` are the same data class as `run_node_io` and are NOT gated, because the review did
-not name them and widening the gated set is a product decision about who can see agent traces.
-**Owner: 018, alongside the run-trace RPCs.**
+**FINDING #5, RE-OPENED BY THE RE-REVIEW AND NOW CLOSED PROPERLY.** The first fix gated three
+tables and called the rest a deliberate posture on the grounds that "the review did not name them".
+The 014 re-review (`docs/reviews/2026-09-13-codex-retrofit-014-rereview.md`, N-1, HIGH) took that
+apart correctly: `run:read` governs **seven** `core` tables in 013, not one, and `run_state_cards`
+is worse than the table that got gated — 013's own header concedes it escapes the 30-day redaction
+sweep `run_node_io` gets, and it carries goal, plan and open questions as free text, while
+`run_snapshots.response` is every tool call's raw output for the tenant. Provenance is not a
+security argument. **All nine tables the three permissions govern are now gated**, the full extent
+of each permission rather than the subset a review happened to check:
+
+| Permission | Roles | Tables gated |
+|---|---|---|
+| `ai:provider:read` | ADMIN | `ai_provider_keys` |
+| `run:read` | MD, ADMIN | `runs`, `run_nodes`, `run_node_io`, `run_events`, `run_state_cards`, `run_checkpoints`, `run_snapshots` — all seven |
+| `portal:token:issue` | SALES, SALES_MANAGER, MD, ADMIN | `public_share_tokens` |
+
+`runs`, `run_nodes` and `run_events` are included rather than kept as a metadata-only exception:
+carving them out would mean deciding that agent id, model, token counts, cost and event detail are
+not part of "reading a run", which is a product decision nobody has made and which a grants
+migration is the wrong place to make silently.
+
+**⚠ AND THE REST IS A GAP, NOT A POSTURE.** Every other `core` table keeps the blanket tenant-scoped
+SELECT to `authenticated`. This catalog previously called that a deliberate posture. It is not one:
+it is the state 014 found, narrowed where 002 had already written a permission that says otherwise,
+and left alone everywhere else **because within-tenant read authorization has not been designed**.
+Doc 09 puts it at the RPC layer. Until that exists, any principal of a tenant can read any other row
+of it. **Owner: 018, with the run-trace and AI-ops RPCs.**
+
+**One further residue, named because the re-review was right that the header overclaimed.**
+`public_share_tokens`'s gate restores the ROLE half of 002's decision and not the SCOPE half: 002
+annotates SALES's and SALES_MANAGER's `portal:token:issue` as `-- scope-narrowed`, meaning it was
+meant to compose with `app.client_scope()` / `app.team_scope()`. A SALES principal therefore still
+reads every share-token row in the tenant rather than only their own clients'. Adding the scope term
+needs an owner column the table does not have — 007 gave it `created_by_id text`, not a user id — so
+it is a schema change rather than a predicate change. **Owner: whoever next touches 007's portal
+tables.** The pin concedes the same thing by probing this table with `OPS` rather than `SALES`.
 
 Sources: `docs/architecture/09-golden-path-rpc-specs.md` §0, §1, §2 and §12 (the
 wrapper posture, the envelope, and the approval-view prohibition); `docs/architecture/02` §4.1

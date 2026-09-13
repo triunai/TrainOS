@@ -280,11 +280,18 @@ DROP POLICY IF EXISTS memberships_no_client_delete ON public.memberships;
 -- stops meaning anything.
 DROP INDEX IF EXISTS core.rule_set_versions_tenant_idx;
 
--- BOTH signatures. 014 changed this function from two arguments to three and
--- dropped the two-argument form as it went; a database rolled back from an
--- earlier 014 could still be carrying either.
+-- EVERY signature this function has ever had. 014 grew it from two arguments to
+-- three (an optional permission) and then to four (a required migration stamp),
+-- dropping the previous form as it went; a database rolled back from an earlier
+-- 014 could be carrying any of them, and dropping only the current spelling would
+-- strand the others.
+DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text, text, text);
 DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text, text);
 DROP FUNCTION IF EXISTS app.apply_tenant_policies(text, text);
+
+-- And its deliberate escape hatch, which exists only to undo what that function
+-- does and must not outlive it.
+DROP FUNCTION IF EXISTS app.ungate_tenant_policy(text, text, text);
 
 -- ── POST-CONDITIONS ─────────────────────────────────────────────────────────
 DO $verify$
@@ -336,10 +343,22 @@ BEGIN
     RAISE EXCEPTION 'ROLLBACK 014 incomplete: a core wrapper survives';
   END IF;
 
+  -- By NAME across every overload, never `to_regproc`, which returns NULL for an
+  -- ambiguous bare name and would report "gone" for a function that had grown a
+  -- second signature — the precise failure mode this pack keeps meeting.
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
                JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-              WHERE n.nspname = 'app' AND p.proname = 'apply_tenant_policies') THEN
-    RAISE EXCEPTION 'ROLLBACK 014 incomplete: app.apply_tenant_policies survives';
+              WHERE n.nspname = 'app'
+                AND p.proname IN ('apply_tenant_policies','ungate_tenant_policy')) THEN
+    RAISE EXCEPTION
+      'ROLLBACK 014 incomplete: 014''s policy machinery survives (%)',
+      (SELECT pg_catalog.string_agg(
+                pg_catalog.format('%s(%s)', p.proname,
+                  pg_catalog.pg_get_function_identity_arguments(p.oid)), ', ')
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname='app'
+          AND p.proname IN ('apply_tenant_policies','ungate_tenant_policy'));
   END IF;
 
   -- No client grant survives in `core` or `app` — which is 013's state, because
