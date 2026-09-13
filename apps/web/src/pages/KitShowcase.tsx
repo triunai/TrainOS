@@ -17,6 +17,7 @@ import {
   AIChip,
   AgentRunCard,
   CalendarGrid,
+  KanbanBoard,
   CalendarList,
   formatDate,
   AllowedHoursStrip,
@@ -400,6 +401,26 @@ const LEADS: LeadRow[] = [
     value: money(320000),
     score: 0.31,
     bulkApprovable: true,
+  },
+];
+
+/** Sample cards for the board. Literals, not fixtures. */
+const BOARD_DEALS = [
+  {
+    ref: "OPP-0498",
+    lane: "qualifying",
+    name: "Kenanga Retail Group Berhad",
+    topic: "48 store managers",
+    value: "RM 67,200",
+    owner: "Amirah Yusof",
+  },
+  {
+    ref: "OPP-0451",
+    lane: "won",
+    name: "Aurora Manufacturing Sdn Bhd",
+    topic: "Conflict resolution",
+    value: "RM 18,500",
+    owner: "Amirah Yusof",
   },
 ];
 
@@ -923,13 +944,24 @@ export default function KitShowcase() {
             }
             detailLabel="Enquiry preview"
             detailHeader={
-              <div className="flex items-center gap-3">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              /* `flex-wrap` because this catalogue renders every entry TWICE
+                 side by side, so the detail pane here is about 280px — well
+                 under the 360px the component's own grid guarantees a screen.
+                 Without it the demo truncated its title to "Quo…" and taught
+                 the opposite of the header it is demonstrating. A real screen
+                 keeps these on one line; this one wraps rather than lies. */
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                {/* `min-w-[180px]` is what makes the wrap actually fire: with
+                    `min-w-0` the title column just shrank to nothing and the
+                    button stayed on the line, which is how the title got
+                    truncated in the first place. On a real screen `flex-1`
+                    grows far past 180 and the button never wraps. */}
+                <div className="flex min-w-[180px] flex-1 flex-col gap-0.5">
                   <h3 className="truncate text-[16px] font-semibold leading-6 text-ink">
-                    Quotation request · 48 store managers
+                    Quotation request
                   </h3>
                   <p className="truncate font-mono text-[12px] leading-[18px] text-ink-muted">
-                    ENQ-2026-0912 · Amirah Yusof
+                    ENQ-2026-0912
                   </p>
                 </div>
                 <SecondaryButton>Open</SecondaryButton>
@@ -1304,6 +1336,48 @@ export default function KitShowcase() {
             formatDay={formatDate}
           />
         </Stack>
+      </Entry>
+
+      <Entry
+        id="board"
+        title="Kanban board · added 13 Sep 2026, brief §19"
+        note="No artboard draws a board either. The lane is a fixed 300px and the row scrolls sideways rather than squeezing seven lanes into the viewport and truncating every name — that truncation is the defect this component was built to end. The lane surface runs to the bottom because it IS the drop target: sized to its contents, the empty lane would be the smallest target on the screen. A terminal lane folds to a 56px rail with its count turned on its side. The component knows nothing about a deal; the screen renders the card and decides what a move means."
+      >
+        <KanbanBoard<(typeof BOARD_DEALS)[number]>
+          label="Pipeline stages"
+          className="h-[280px]"
+          emptyLabel="No deals"
+          emptyHint="Drop a deal here"
+          onMove={() => undefined}
+          itemKey={(deal) => deal.ref}
+          lanes={[
+            { id: "new", label: "New", summary: "0 deals · —", items: [] },
+            {
+              id: "qualifying",
+              label: "Qualifying",
+              summary: "1 deal · RM 67,200",
+              items: BOARD_DEALS.filter((deal) => deal.lane === "qualifying"),
+            },
+            {
+              id: "won",
+              label: "Won",
+              summary: "1 deal · RM 18,500",
+              collapsible: true,
+              items: BOARD_DEALS.filter((deal) => deal.lane === "won"),
+            },
+          ]}
+          renderItem={(deal) => (
+            <div className="rounded-panel border border-border bg-card px-3 py-3">
+              <p className="text-[14px] font-semibold leading-snug text-ink">{deal.name}</p>
+              <p className="mt-0.5 text-[12px] leading-snug text-ink-secondary">{deal.topic}</p>
+              <p className="mt-2 text-[17px] font-semibold tabular-nums leading-none text-ink">
+                {deal.value}
+              </p>
+              <p className="mt-2 text-[12px] text-ink-secondary">{deal.owner}</p>
+              <p className="mt-2 font-mono text-[11px] text-ink-muted">{deal.ref}</p>
+            </div>
+          )}
+        />
       </Entry>
 
       <Entry
