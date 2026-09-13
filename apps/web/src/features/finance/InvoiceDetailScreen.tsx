@@ -108,6 +108,9 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
   return (
     <div className="flex flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="invoice"
         title={data.ref}
         recordRef={data.organisationRef}
         meta={[
