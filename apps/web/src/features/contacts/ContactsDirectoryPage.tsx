@@ -13,9 +13,9 @@ import {
   DateText,
   EmptyState,
   ErrorState,
-  FilterBar,
   INVOICE_TONE,
   LifecycleStepper,
+  ListToolbar,
   LoadingState,
   MoneyText,
   ORGANISATION_TONE,
@@ -24,7 +24,6 @@ import {
   PrimaryButton,
   RecordHeader,
   SecondaryButton,
-  SPLIT_HEADER_HEIGHT,
   StatusChip,
   channelLabel,
   humanise,
@@ -36,11 +35,16 @@ import { cn } from "@/shared/lib/utils";
 import { useContact, useContactConsent, useContacts, useOrganisationRelations } from "./api";
 
 /**
- * Sales › Contacts. No artboard. The composition is the enquiry inbox's
- * master/detail template and the pane's anatomy is M04-S02's — identity line,
- * then the relations panel behind a tab group — which is the brief's
- * instruction and also the only anatomy in the pack for "a record and the
- * things attached to it".
+ * Sales › Contacts. No artboard. The pane's anatomy is M04-S02's — identity
+ * line, then the relations panel behind a tab group — which is the only anatomy
+ * in the pack for "a record and the things attached to it".
+ *
+ * THE SPLIT, per the 13 Sep ruling that reversed the morning's aligned 72px
+ * header: two independent panes, no shared header row, no shared hairline. The
+ * directory starts immediately under the toolbar because the tab row already
+ * counts it, and the record pane owns a sticky header and its own scroll.
+ * `minmax(360px, 40%) 1fr`. The kit's `SplitWorkspace` had not landed when this
+ * was written, so the rules are built here; adopting it is a deletion.
  *
  * TWO DECISIONS THE ANATOMY FORCED, both recorded rather than quietly taken:
  *
@@ -134,24 +138,27 @@ export function ContactsDirectoryPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col border-b border-border">
-        <RecordHeader
-          withoutCondensed
-          title="Contacts"
-          meta={[
-            contacts.data ? `${plural(contacts.data.page.total, "contact")} on record` : null,
-            rows.some(consentMissing)
-              ? `${rows.filter(consentMissing).length} cannot be contacted`
-              : null,
-          ]}
-          actions={
-            <SecondaryButton onClick={() => navigate("/relationships/marketing")}>
-              Marketing reach
-            </SecondaryButton>
-          }
-        />
+      <RecordHeader
+        withoutCondensed
+        title="Contacts"
+        meta={[
+          contacts.data ? `${plural(contacts.data.page.total, "contact")} on record` : null,
+          rows.some(consentMissing)
+            ? `${rows.filter(consentMissing).length} cannot be contacted`
+            : null,
+        ]}
+        actions={
+          <SecondaryButton onClick={() => navigate("/relationships/marketing")}>
+            Marketing reach
+          </SecondaryButton>
+        }
+      />
 
-        <div className="px-5 pb-4">
+      {/* Brief §10b: tabs and any narrowing share one row. No FilterBar — the
+          tabs ARE the narrowing here, and each already carries its count. */}
+      <ListToolbar
+        className="px-5 pb-4"
+        tabs={
           <PillTabGroup
             tabs={tabs}
             activeId={tab}
@@ -161,24 +168,14 @@ export function ContactsDirectoryPage() {
             }}
             label="Contact views"
           />
-        </div>
-      </div>
+        }
+      />
 
-      <div className="flex min-h-0 flex-1">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_1fr] grid-rows-[minmax(0,1fr)]">
         <section
           aria-label="Contact directory"
-          className="flex w-[420px] shrink-0 flex-col border-r border-border"
+          className="flex min-h-0 min-w-0 flex-col border-r border-border"
         >
-          <FilterBar
-            filters={[]}
-            shown={visible.length}
-            total={contacts.data?.page.total}
-            className={cn(
-              SPLIT_HEADER_HEIGHT,
-              "shrink-0 flex-nowrap overflow-hidden border-b border-border py-0",
-            )}
-          />
-
           <div className="min-h-0 flex-1 overflow-auto">
             {contacts.isPending ? (
               <LoadingState rows={6} label="Loading the contact directory" />
@@ -209,7 +206,10 @@ export function ContactsDirectoryPage() {
           </div>
         </section>
 
-        <section aria-label="Contact record" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <section
+          aria-label="Contact record"
+          className="flex min-h-0 min-w-0 flex-col overflow-auto"
+        >
           {detail.isPending && current ? (
             <LoadingState rows={5} label="Loading the contact" />
           ) : detail.isError ? (
@@ -225,12 +225,10 @@ export function ContactsDirectoryPage() {
             />
           ) : (
             <>
-              <div
-                className={cn(
-                  SPLIT_HEADER_HEIGHT,
-                  "flex shrink-0 items-center gap-3 overflow-hidden border-b border-border px-5",
-                )}
-              >
+              {/* This pane's own sticky header, not a row shared with the
+                  directory: the name, the refs and the primary stay reachable
+                  at any scroll depth without moving the list. */}
+              <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card px-5 py-3.5">
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <h2 className="truncate text-[16px] font-semibold leading-6">
                     {detail.data.name}
@@ -250,7 +248,9 @@ export function ContactsDirectoryPage() {
                 </PrimaryButton>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto px-5 pb-6 pt-5">
+              {/* Blocks separated by spacing, not rules — removing the border
+                  leaves no relationship ambiguous, which is CLAUDE.md's test. */}
+              <div className="flex flex-col gap-8 px-5 pb-8 pt-6">
                 <ReachSection
                   contact={detail.data}
                   consent={consent.data?.data}
@@ -464,7 +464,7 @@ function OrganisationSection({
   ];
 
   return (
-    <section className="flex flex-col gap-2.5 border-t border-divider pt-4">
+    <section className="flex flex-col gap-2.5">
       <div className="flex flex-wrap items-baseline gap-2.5">
         <h3 className="text-[13px] font-semibold text-ink">Their organisation</h3>
         {organisation ? (
@@ -595,8 +595,17 @@ function OrganisationSection({
 }
 
 /**
- * One row, three layers — §16. The person is the strongest line, the ref is
- * muted machine context on the right, and the only chips are exceptions.
+ * One row, three layers — §16, with the 13 Sep ruling's amendment that a chip
+ * never gets a row to itself.
+ *
+ *   Nurul Hassan
+ *   CON-0233 · HR Manager · Aurora Manufacturing Sdn Bhd
+ *   [Primary]                                       updated 15 Sep 2026
+ *
+ * The person is the strongest line, the ref and their place are muted machine
+ * context, and the third row pairs whatever chips apply with the date — so a
+ * contact carrying no exception still has three layers and the rows stay the
+ * same height down the list.
  */
 function ContactRow({
   contact,
@@ -620,27 +629,23 @@ function ContactRow({
           selected && "bg-surface shadow-[inset_2px_0_0_rgb(var(--ink))]",
         )}
       >
-        <span className="flex items-baseline gap-2">
-          <span className="truncate text-[15px] font-semibold text-ink">{contact.name}</span>
-          <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-muted">
-            {contact.ref}
-          </span>
+        <span className="truncate text-[15px] font-semibold text-ink">{contact.name}</span>
+
+        <span className="truncate font-mono text-[11px] text-ink-muted">
+          {`${contact.ref} · ${contact.role} · ${organisationName}`}
         </span>
 
-        <span className="truncate text-[13px] text-ink-secondary">
-          {`${contact.role} · ${organisationName}`}
-        </span>
-
-        {contact.primary || consentMissing(contact) ? (
-          <span className="flex flex-wrap items-center gap-1.5 pt-0.5">
-            {contact.primary ? <StatusChip>Primary</StatusChip> : null}
-            {consentMissing(contact) ? (
-              <StatusChip tone="warning">
-                {contact.pdpaFlag ? pdpaLabel(contact.pdpaFlag) : "No consent"}
-              </StatusChip>
-            ) : null}
+        <span className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {contact.primary ? <StatusChip>Primary</StatusChip> : null}
+          {consentMissing(contact) ? (
+            <StatusChip tone="warning">
+              {contact.pdpaFlag ? pdpaLabel(contact.pdpaFlag) : "No consent"}
+            </StatusChip>
+          ) : null}
+          <span className="ml-auto shrink-0 text-[12px] tabular-nums text-ink-muted">
+            updated <DateText value={contact.updatedAt} />
           </span>
-        ) : null}
+        </span>
       </button>
     </li>
   );

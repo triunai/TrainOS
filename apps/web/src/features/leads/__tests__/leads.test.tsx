@@ -40,7 +40,8 @@ describe("Sales › Leads", () => {
     /* `ORG-0121` is a machine value; the queue shows the client. */
     expect(await within(queue).findByText("Kenanga Retail Group Berhad")).toBeInTheDocument();
     expect(within(queue).getByText("Perdana Utilities Berhad")).toBeInTheDocument();
-    expect(within(queue).getByText("OPP-0498")).toBeInTheDocument();
+    /* The ref and the owner share row two, so they are one text node. */
+    expect(within(queue).getByText("OPP-0498 · Amirah Yusof")).toBeInTheDocument();
   });
 
   it("calls out the one lead whose close date has passed", async () => {
@@ -52,7 +53,7 @@ describe("Sales › Leads", () => {
     expect(await within(queue).findAllByText("Close date passed")).not.toHaveLength(0);
   });
 
-  it("filters the queue to one stage and says how many are shown", async () => {
+  it("filters the queue to one stage, and counts it once", async () => {
     renderScreen(<LeadsQueuePage />, { path: "/sales/leads", route: "/sales/leads" });
 
     await screen.findByRole("tablist", { name: "Pipeline stages" });
@@ -61,7 +62,23 @@ describe("Sales › Leads", () => {
     /* Nothing is at NEW in the seed, so this is the real empty state and not a
        spinner that never resolves. */
     expect(await screen.findByText("No leads at this stage")).toBeInTheDocument();
-    expect(screen.getByText(/0 of 5 shown/)).toBeInTheDocument();
+
+    /* The 13 Sep ruling: the tab row carries the count and the list pane has no
+       header of its own, so there is no second "n of m shown" saying it again. */
+    expect(screen.queryByText(/of 5 shown/)).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^New/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("keeps the two panes independent, each scrolling on its own", async () => {
+    renderScreen(<LeadsQueuePage />, { path: "/sales/leads", route: "/sales/leads" });
+
+    const queue = await screen.findByRole("region", { name: "Lead queue" });
+    const preview = screen.getByRole("region", { name: "Lead preview" });
+
+    /* No shared header row and no shared hairline: the rule between the panes
+       is the only line, and each pane owns its scroll. */
+    expect(preview.className).toContain("overflow-auto");
+    expect(queue.className).toContain("border-r");
   });
 
   it("renders the deal, the client and the people as typography, not badges", async () => {

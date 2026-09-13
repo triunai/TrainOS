@@ -16,8 +16,9 @@ describe("Sales › Contacts", () => {
     const directory = await screen.findByRole("region", { name: "Contact directory" });
 
     expect(await within(directory).findByText("Nurul Hassan")).toBeInTheDocument();
+    /* Row two carries the ref, the role and the company as one muted line. */
     expect(
-      within(directory).getByText("HR Manager · Aurora Manufacturing Sdn Bhd"),
+      within(directory).getByText("CON-0233 · HR Manager · Aurora Manufacturing Sdn Bhd"),
     ).toBeInTheDocument();
   });
 
@@ -47,7 +48,14 @@ describe("Sales › Contacts", () => {
     const directory = screen.getByRole("region", { name: "Contact directory" });
     expect(await within(directory).findByText("Ravi Subramaniam")).toBeInTheDocument();
     expect(within(directory).queryByText("Nurul Hassan")).not.toBeInTheDocument();
-    expect(screen.getByText(/1 of 6 shown/)).toBeInTheDocument();
+
+    /* The 13 Sep ruling: the tab carries the count and the directory pane has
+       no header, so nothing repeats it as "n of m shown". */
+    expect(screen.queryByText(/of 6 shown/)).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Consent missing/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("shows the dated consent record, not just the record's booleans", async () => {

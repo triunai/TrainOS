@@ -5,17 +5,16 @@ import {
   DateText,
   EmptyState,
   ErrorState,
-  FilterBar,
   formatMoney,
   LoadingState,
   MoneyText,
   OPPORTUNITY_TONE,
   plural,
+  ListToolbar,
   PillTabGroup,
   PrimaryButton,
   RecordHeader,
   SecondaryButton,
-  SPLIT_HEADER_HEIGHT,
   StatusChip,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
@@ -25,10 +24,22 @@ import { useContacts, useOpportunities, useOpportunity, useOpportunityStages } f
 
 /**
  * Sales › Leads. No artboard: M03 draws the enquiry inbox and M04-S02 the
- * organisation record, and the design pack never draws this screen. So the
- * composition is the enquiry inbox's — queue on the left, the record being
- * decided about on the right, one hairline shared across both header blocks —
- * and the rules are CLAUDE.md's and the tightening brief's.
+ * organisation record, and the design pack never draws this screen.
+ *
+ * THE SPLIT, per the 13 Sep ruling that reversed the morning's aligned
+ * 72px header. The two panes are INDEPENDENT: there is no shared header row and
+ * no shared hairline, only the rule between them. The list has no header block
+ * at all — it starts immediately under the toolbar, because the tab row already
+ * says how many are in view and a second count under it was the same fact
+ * twice. The detail pane owns a sticky header of its own and scrolls on its
+ * own, so the title, the refs and the actions stay reachable at any scroll
+ * position without the list moving with them.
+ *
+ * `minmax(360px, 40%) 1fr`: the list needs a floor wide enough for a client
+ * name and a money column, and a ceiling that stops it eating the record.
+ *
+ * The kit's `SplitWorkspace` had not landed when this was written, so the rules
+ * are built here. Adopting it is a deletion, not a rewrite.
  *
  * A lead here is a §5 `Opportunity`: the thing an accepted enquiry becomes.
  * `/sales/pipeline` shows the same objects as a board. Two views of one object
@@ -138,39 +149,40 @@ export function LeadsQueuePage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* A list screen's header is a RecordHeader with no `recordRef` and no
-          condensed bar — the kit's ruling, and there is no PageHeader to reach
-          for. The count line is meta, not a chip: "5 leads" is a fact about the
-          query and a chip is how a status looks. */}
-      <div className="flex flex-col border-b border-border">
-        <RecordHeader
-          withoutCondensed
-          title="Leads"
-          meta={[
-            leads.data ? plural(leads.data.page.total, "lead") : null,
-            /* "across the book", not "in play": pipeline configuration marks no
-               stage as terminal, so this total includes the won and the lost
-               and the screen must not claim otherwise. */
-            bookValue ? `${formatMoney(bookValue, true)} across the book` : null,
-          ]}
-          actions={
-            <SecondaryButton onClick={() => navigate("/sales/pipeline")}>
-              Pipeline board
-            </SecondaryButton>
-          }
-        />
+      <RecordHeader
+        withoutCondensed
+        title="Leads"
+        meta={[
+          leads.data ? plural(leads.data.page.total, "lead") : null,
+          /* "across the book", not "in play": pipeline configuration marks no
+             stage as terminal, so this total includes the won and the lost and
+             the screen must not claim otherwise. */
+          bookValue ? `${formatMoney(bookValue, true)} across the book` : null,
+        ]}
+        actions={
+          <SecondaryButton onClick={() => navigate("/sales/pipeline")}>
+            Pipeline board
+          </SecondaryButton>
+        }
+      />
 
-        {stages.isPending ? null : stages.isError ? (
-          <div className="px-5 pb-4">
-            <ErrorState
-              title="The stage list did not load"
-              description="Stage names come from pipeline configuration, so the queue cannot be split by stage until this loads."
-              error={toApiError(stages.error)}
-              onRetry={() => void stages.refetch()}
-            />
-          </div>
-        ) : (
-          <div className="px-5 pb-4">
+      {stages.isError ? (
+        <div className="px-5 pb-4">
+          <ErrorState
+            title="The stage list did not load"
+            description="Stage names come from pipeline configuration, so the queue cannot be split by stage until this loads."
+            error={toApiError(stages.error)}
+            onRetry={() => void stages.refetch()}
+          />
+        </div>
+      ) : stages.isPending ? null : (
+        /* Brief §10b: the tabs and any narrowing share ONE row, with the work
+           directly beneath. There is no FilterBar here because this screen has
+           no filter beyond the tabs — a bar rendering only "5 of 5 shown" would
+           be the count the tab row already carries. */
+        <ListToolbar
+          className="px-5 pb-4"
+          tabs={
             <PillTabGroup
               tabs={tabs}
               activeId={activeStage}
@@ -180,25 +192,18 @@ export function LeadsQueuePage() {
               }}
               label="Pipeline stages"
             />
-          </div>
-        )}
-      </div>
+          }
+        />
+      )}
 
-      <div className="flex min-h-0 flex-1">
+      {/* Two independent panes. The only line between them is the rule, and
+          each scrolls on its own — a shared scroll would drag one pane's header
+          out of the other's sight line. */}
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_1fr] grid-rows-[minmax(0,1fr)]">
         <section
           aria-label="Lead queue"
-          className="flex w-[496px] shrink-0 flex-col border-r border-border"
+          className="flex min-h-0 min-w-0 flex-col border-r border-border"
         >
-          <FilterBar
-            filters={[]}
-            shown={visible.length}
-            total={leads.data?.page.total}
-            className={cn(
-              SPLIT_HEADER_HEIGHT,
-              "shrink-0 flex-nowrap overflow-hidden border-b border-border py-0",
-            )}
-          />
-
           <div className="min-h-0 flex-1 overflow-auto">
             {leads.isPending ? (
               <LoadingState rows={6} label="Loading the lead queue" />
@@ -231,7 +236,7 @@ export function LeadsQueuePage() {
           </div>
         </section>
 
-        <section aria-label="Lead preview" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <section aria-label="Lead preview" className="flex min-h-0 min-w-0 flex-col overflow-auto">
           {detail.isPending && current ? (
             <LoadingState rows={5} label="Loading the lead" />
           ) : detail.isError ? (
@@ -247,12 +252,10 @@ export function LeadsQueuePage() {
             />
           ) : (
             <>
-              <div
-                className={cn(
-                  SPLIT_HEADER_HEIGHT,
-                  "flex shrink-0 items-center gap-3 overflow-hidden border-b border-border px-5",
-                )}
-              >
+              {/* The detail pane's own header. Sticky rather than fixed-height:
+                  it belongs to this pane's scroll, not to a row shared with the
+                  list, and the primary stays reachable at any scroll depth. */}
+              <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card px-5 py-3.5">
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <h2
                     className="truncate text-[16px] font-semibold leading-6"
@@ -283,7 +286,10 @@ export function LeadsQueuePage() {
                 </PrimaryButton>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto px-5 pb-6 pt-5">
+              {/* Blocks are separated by SPACING, not rules: removing a border
+                  here leaves no relationship ambiguous, which CLAUDE.md says is
+                  the test for keeping one. */}
+              <div className="flex flex-col gap-8 px-5 pb-8 pt-6">
                 {/* Money and dates are typography, not badges — §16. The stage
                     is the one value that gets a chip, because it is the one
                     that is a status. */}
@@ -317,7 +323,7 @@ export function LeadsQueuePage() {
                   </dl>
                 </section>
 
-                <section className="flex flex-col gap-2.5 border-t border-divider pt-4">
+                <section className="flex flex-col gap-2.5">
                   <h3 className="text-[13px] font-semibold text-ink">The client</h3>
                   {directory.query.isPending ? (
                     <LoadingState rows={2} label="Loading the organisation" />
@@ -350,7 +356,7 @@ export function LeadsQueuePage() {
                   )}
                 </section>
 
-                <section className="flex flex-col gap-2.5 border-t border-divider pt-4">
+                <section className="flex flex-col gap-2.5">
                   <h3 className="text-[13px] font-semibold text-ink">Who to talk to</h3>
                   {contacts.isPending ? (
                     <LoadingState rows={2} label="Loading the contacts" />
@@ -418,10 +424,17 @@ function DetailCell({ label, value }: { label: string; value: React.ReactNode })
 }
 
 /**
- * One row, three layers — the shape §16 sets for every list/master-detail
- * screen: the client is the strongest line, the ref and the owner are muted
- * machine context, and money sits in a fixed right column in tabular numerals
- * rather than in a badge.
+ * One row, three layers — the shape §16 sets for every list screen, with the
+ * 13 Sep ruling's amendment: a chip never gets a row to itself.
+ *
+ *   Aurora Manufacturing Sdn Bhd                              RM 18,500
+ *   OPP-0512 · Amirah Yusof
+ *   [Won]  [Close date passed]                              30 Sep 2026
+ *
+ * The client is the strongest line, the ref and the owner are muted machine
+ * context, and money sits in a fixed right column in tabular numerals rather
+ * than in a badge. The third row pairs the stage chip with the date, so the
+ * chip is carried by a line that says something rather than floating alone.
  */
 function LeadRow({
   lead,
@@ -445,7 +458,7 @@ function LeadRow({
         aria-current={selected ? "true" : undefined}
         onClick={onSelect}
         className={cn(
-          "flex w-full flex-col gap-1.5 border-b border-border px-4 py-3 text-left hover:bg-surface-hover",
+          "flex w-full flex-col gap-1 border-b border-border px-4 py-3 text-left hover:bg-surface-hover",
           selected && "bg-surface shadow-[inset_2px_0_0_rgb(var(--ink))]",
         )}
       >
@@ -454,22 +467,20 @@ function LeadRow({
           <MoneyText value={lead.value} compact className="ml-auto shrink-0 text-[13px] text-ink" />
         </span>
 
-        <span className="flex items-baseline gap-2 font-mono text-[11px] text-ink-muted">
-          <span>{lead.ref}</span>
-          <span aria-hidden="true">·</span>
-          <span className="truncate">{lead.owner.name}</span>
-          {lead.expectedCloseDate ? (
-            <span className="ml-auto shrink-0">
-              <DateText value={lead.expectedCloseDate} />
-            </span>
-          ) : null}
+        <span className="flex items-baseline gap-2 truncate font-mono text-[11px] text-ink-muted">
+          {`${lead.ref} · ${lead.owner.name}`}
         </span>
 
-        <span className="flex flex-wrap items-center gap-1.5">
+        <span className="flex flex-wrap items-center gap-1.5 pt-0.5">
           <StatusChip tone={OPPORTUNITY_TONE[lead.stage]}>
             {stageLabelOf(lead.stage, stages)}
           </StatusChip>
           {isOverdue ? <StatusChip tone="warning">Close date passed</StatusChip> : null}
+          {lead.expectedCloseDate ? (
+            <span className="ml-auto shrink-0 text-[12px] tabular-nums text-ink-muted">
+              <DateText value={lead.expectedCloseDate} />
+            </span>
+          ) : null}
         </span>
       </button>
     </li>
