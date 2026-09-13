@@ -287,6 +287,26 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:1x — fix-018 clears PR #20's thermo BLOCK at 5612e65; M4 measured (4 pins, not 2); 019 split and B4 rulings made, not yet coded; test_014-red discrepancy open
+
+- `fix-018` confirmed pushed `5612e65` to `lane/rpc-018` (PR #11 body):
+  all five original 018 blockers addressed with pins confirmed failing
+  pre-fix (B1/H2/H3 shared keyset helpers, B3 view-filter gate, H1
+  regenerate now enqueues via 012, B2/B5 catalog+wrapper), plus H5/M8
+  and H4 (superseded by 017's own new trigger). Two new defects found by
+  running the pin: list_follow_ups was a latent ambiguous-column 500;
+  the §17 jury badge is unreachable (provenance allowlist gap, filed
+  elsewhere). M4 measured with a number: applying 018 on cloud/
+  migrations' CURRENT 014-017 turns FOUR pins red (test_008/009/016/017),
+  not two. RULING (not yet coded): pipeline seed splits into its own
+  019_pipeline_provisioning pack. B4 ruling (not yet coded): 018 must
+  not edit test_014, test_018 asserts its own delta instead. Open
+  discrepancy: fix-018 reports test_014/test_014_rollback already red
+  on cloud/migrations' current 001-017, contradicting fix-014's own
+  17/17 — timestamps show fix-018's check came after ff01f2b; not yet
+  reconciled, fix-018 asked for the failing text. See
+  `ai/project-log.md` 23:1x block for full detail.
+
 ## 2026-09-13 23:0x — fix-014 folds in PR #23's 014 re-review items at ff01f2b; N-1 fully closed (9 tables), T11a fixed, HIGH-4 closed both sides
 
 - `fix-014` confirmed pushed `ff01f2b` to `cloud/migrations` (not yet a

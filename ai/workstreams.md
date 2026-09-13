@@ -1020,6 +1020,105 @@ range mismatch, and HIGH-4, confirmed against the commit body:
 - **Next on `fix-014`, reported: the 011–013 amendments** (PR #24's
   findings) — not yet independently confirmed by this thread.
 
+✅ **`fix-018` pushed a fix pass to `origin/lane/rpc-018`, tip `5612e65`**
+(PR #11's own body, section "Review fixes — thermonuclear BLOCK
+cleared") — confirmed against seven commits on top of `fc9550c`, closing
+every finding from PR #20's thermo review with a pin that is confirmed
+to fail against the pre-fix SQL before it passes:
+
+- **B1/H2/H3 fixed (T31, `9530e5b`)**: the five list RPCs' opposite
+  pagination bugs are closed by two extracted shared helpers
+  (`app._keyset_scope`, `app._next_cursor`) all five now call, confirmed
+  via the quoted pre-fix failure text (`page.total shrank across pages:
+4 then 2`). **A second, real defect found only by the pin, not the
+  review**: `list_follow_ups` used bare column names against a
+  three-way join where two joined tables both carry `id`/`status`/
+  `created_at`, so any paged or status-filtered call raised `column
+reference "id" is ambiguous` — a 500, latent only because nothing had
+  ever paged that list before.
+- **B3 fixed (T32, `efe87d4`)**: confirmed via the quoted pre-fix probe
+  (`list_proposals(p_view=>...)` returning every tenant row, silently,
+  with nothing in `appliedFilters` to say the view was ignored — exactly
+  the failure the file's own §5 forbids). `list_enquiries` and
+  `list_approvals` gained the object gate too, confirmed they lacked it
+  before (an `ENQUIRY` view resolved against `list_approvals` and
+  applied enquiry filters to approval columns).
+- **H1 fixed (T33, `67ace2d`)**: confirmed via the quoted pre-fix
+  failure — `regenerate_proposal_section` wrote a `RUNNING` run and
+  enqueued nothing, forever. Routed through 012's event path
+  (`app.emit_event` → a new `app.event_subscriptions` row) rather than
+  011's action envelope, confirmed as a deliberate scope call: 011's
+  planner has no action type for this and 018 may not add one without
+  editing 001–017. `REGENERATE_NOT_ROUTED` now refuses if the enqueue
+  didn't land, so a disabled routing row can't silently return 200 on
+  nothing again.
+- **M1 fixed (T34, `fdc937b`)**: confirmed via the quoted pre-fix
+  cross-tenant read. **New finding, filed for the pack that owns §17,
+  not 018's to close**: `core.provenance.subject_table`'s FK'd allowlist
+  does not contain `approval_requests`, so `get_approval`'s
+  `modelAgreement` jury badge can match no row on any database as
+  shipped — the §17 badge is unreachable, not merely unpinned.
+- **M5 fixed (T35, `5f02f5a`)**: confirmed via the quoted pre-fix log —
+  a tenant the backfill couldn't seed was left with zero pipeline
+  configuration while the migration printed `018 completed` as if
+  nothing were wrong. Now a function (not an inline `DO` block, since an
+  assertion about a `DO` block's own behavior can't be written) that
+  visits every tenant before raising once, naming every tenant it
+  couldn't seed.
+- **B2 and B5 fixed (`5612e65`)**: the same-commit catalog rule and a
+  transaction wrapper on both forward and rollback, confirmed present.
+- **H5/M8 fixed (`3abf572`)**: four provably-unfalsifiable assertions
+  replaced with the assertion each was reaching for, confirmed via the
+  diff's own before/after table; the vacuous-pass class closed
+  structurally by routing all extraction sites through one helper that
+  raises on a non-success envelope.
+- **H4 fixed then superseded, confirmed exactly**: `put_quotation`'s tax
+  rewrite is fixed to run only when needed, but `cloud/migrations`'
+  017 has since grown its own `trg_quotations_resolve_sst` trigger — the
+  better half of the same fix — so 018's check is now "does the trigger
+  exist," not a version check, confirmed as deliberate given the branch
+  is unrebased against two different 017s.
+- **M2, M7 explicitly deferred rather than silently dropped**: M2 needs
+  a 002 change outside this pack's non-goals, filed against that lane;
+  M7 is a refactor of a 311-line writer's whole validation loop, not a
+  defect fix.
+
+⚠ **M4 measured with a number attached, confirmed exactly against the
+PR body's own table — the blast radius is larger than the original
+review could see, because `origin/cloud/migrations` moved past this
+branch's base.** Applying 018 on top of `cloud/migrations`' current
+014–017 turns **four** currently-green pins red, not the two this
+branch already amends: `test_008` and `test_009` (already amended here,
+against their older versions — will need re-checking against the
+current ones), plus **`test_016` and `test_017`, newly affected and
+outside this branch's stated scope**, both failing on
+`pipelines_one_default_uq`. **RULING, recorded here as a decision being
+made now, not yet implemented in code — no `019_*` file exists anywhere
+in the repo as of this check**: the per-tenant pipeline seed leaves 018
+and becomes its own pack, `019_pipeline_provisioning` (trigger,
+backfill, registry row, B6's rollback contract, and the four fixture
+amendments), to be built in the same PR #11 lane going forward.
+
+⚠ **B4 ruling, also recorded as a decision, not yet implemented**: 018's
+current fix moves `test_014`'s own SELECT-grant count from 121 to 124,
+confirmed explicitly flagged in the PR body itself as a rebase-conflict
+risk against `fix-014`'s already-rewritten `test_014` (which still
+expects 121, per this thread's own PR #23/`ff01f2b` entries above). The
+ruling: **018 is not to edit `test_014` at all; `test_018` asserts its
+own three-grant delta instead** — the same "don't edit a file you don't
+own" principle `fix-014` already applied to 015–017's own amendments.
+
+⚠ **Open discrepancy, confirmed present in the PR body's own validation
+log, not resolved here — a question for `fix-014`, not an error to
+correct on this side.** `fix-018`'s own run against `origin/cloud/
+migrations`' current 001–017 (no 018 applied at all) reports
+`PASS=16 FAIL=2`, naming `test_014` and `test_014_rollback` as **already
+red** on that branch — timestamped after `ff01f2b`, this thread's own
+most recent confirmation of `fix-014`'s "17/17 pins pass." Both claims
+were independently true readings of what each lane checked; not yet
+reconciled which pin, if either, is stale. `fix-018` has asked for the
+exact failing text.
+
 ⚠ **Hard rule, confirmed baked directly into 018's own test file as a
 runtime assertion, not just stated in a report:** every `core` table is
 `ENABLE ROW LEVEL SECURITY` **and** `FORCE ROW LEVEL SECURITY` with **zero

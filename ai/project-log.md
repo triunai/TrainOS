@@ -15,6 +15,163 @@
 
 ---
 
+## 2026-09-13 23:1x — fix-018 clears PR #20's thermo BLOCK at 5612e65; M4 measured (4 pins, not 2); 019 split and B4 rulings made, not yet coded; test_014-red discrepancy open
+
+**`fix-018` pushed `5612e65` to `origin/lane/rpc-018`** — confirmed via
+PR #11's own body, section "Review fixes — thermonuclear BLOCK cleared."
+Seven commits on top of `fc9550c` close every finding from PR #20's
+thermo-018 review. Every fix carries a pin confirmed, by the PR body's
+own quoted output, to fail against the pre-fix SQL before it passes —
+not asserted, actually shown for each one.
+
+**B1/H2/H3 fixed (pin T31, commit `9530e5b`).** The five list RPCs'
+opposite pagination bugs (one counting after the keyset clause so
+`page.total` shrank across pages, four deciding "next page" from an
+arithmetic comparison that holds on every exact-multiple last page) are
+closed by two extracted shared helpers, `app._keyset_scope` and
+`app._next_cursor`, which all five RPCs now call. Confirmed via the
+quoted pre-fix failure text: `page.total shrank across pages: 4 then 2`.
+**A second, genuinely new defect found only by running the pin, not
+named in the original review**: `list_follow_ups` applied bare column
+names against a three-way join where two joined tables both carry `id`,
+`status` and `created_at` columns, so any paged or status-filtered call
+raised `column reference "id" is ambiguous` — a 500, not a refusal,
+latent only because nothing had ever paged that particular list before.
+
+**B3 fixed (pin T32, commit `efe87d4`).** Confirmed via the quoted
+pre-fix probe: `list_proposals(p_view=>...)` returned every proposal in
+the tenant, silently, with nothing in `appliedFilters` telling the
+caller their view had been ignored — exactly the failure the file's own
+§5 forbids in its own words. `list_enquiries` and `list_approvals`
+gained the same object gate, confirmed they had lacked it before (an
+`ENQUIRY` view resolved against `list_approvals` and applied enquiry
+filters to approval columns).
+
+**H1 fixed (pin T33, commit `67ace2d`).** Confirmed via the quoted
+pre-fix failure: `regenerate_proposal_section` inserted a `RUNNING` run
+row and enqueued nothing, forever — five presses left five orphan runs
+and an unchanged section. Now routed through migration 012's event path
+(`app.emit_event` into a new `app.event_subscriptions` row) rather than
+011's action envelope, confirmed as a deliberate scope decision: 011's
+`app.perform_action` gates on `app.action_types`, which has no entry for
+regenerating a section, and 018 is not permitted to add one to 011's
+global catalog (that would be a 001–017 edit). `REGENERATE_NOT_ROUTED`
+now refuses loudly if the enqueue didn't actually land, closing off the
+path back to silently returning 200 on nothing.
+
+**M1 fixed (pin T34, commit `fdc937b`), plus one new finding filed
+elsewhere, not 018's to close.** The cross-tenant provenance read is
+fixed. Found while pinning: `core.provenance.subject_table`'s foreign-key
+allowlist (`core.provenance_subjects`, nine rows) does not contain
+`approval_requests`, so `get_approval`'s `modelAgreement` jury badge
+cannot match a row on any database as shipped — the §17 badge is
+unreachable, not merely unpinned. The provenance query itself is fixed;
+the allowlist gap is filed against whichever pack owns §17.
+
+**M5 fixed (pin T35, commit `5f02f5a`).** Confirmed via the quoted
+pre-fix log: a tenant the backfill couldn't seed was left with zero
+pipeline configuration while the migration printed "018 completed" as
+if nothing were wrong. The loop now lives in a function rather than an
+inline `DO` block — an assertion about a `DO` block's own behavior
+cannot be written, which is exactly why nothing caught this before —
+and it visits every tenant before raising once, naming every tenant it
+could not seed.
+
+**B2 and B5 fixed (commit `5612e65`).** The same-commit catalog hard
+rule and a transaction wrapper on both the forward migration and its
+rollback, confirmed present in the diff.
+
+**H5/M8 fixed (commit `3abf572`).** Four provably-unfalsifiable
+assertions (a self-comparison masquerading as a check, two
+never-distinct primary keys compared for equality, a check sitting below
+a branch that already excluded its own input, a fixture filter matching
+zero rows unconditionally) are each replaced with the assertion it was
+actually reaching for, confirmed via the diff's own before/after table.
+The vacuous-pass class is closed structurally, not just patched at the
+four found sites: every extraction site now routes through one helper
+that raises on a non-success envelope.
+
+**H4 fixed, then superseded — confirmed exactly, worth recording as a
+genuine "the fix became unnecessary mid-flight" case rather than a
+defect.** `put_quotation`'s tax-treatment rewrite is fixed to run only
+when the treatment is absent or the price moved. But `origin/cloud/
+migrations`'s own 017 has since grown its own `trg_quotations_resolve_sst`
+trigger — the better half of the same underlying fix — so 018's check is
+now "does the trigger exist," not a version check, confirmed as
+deliberate given the branch is unrebased against two different versions
+of 017 that both currently exist.
+
+**M2 and M7 explicitly deferred, not silently dropped.** M2 needs a
+change to migration 002 outside this pack's stated non-goals, filed
+against that lane. M7 is a refactor of a 311-line writer's entire
+validation loop, not a defect fix, and is filed rather than attempted
+under this pass.
+
+**M4 measured with a number attached, confirmed exactly against the PR
+body's own table — the blast radius is larger than the original review
+could see, because the merge target has moved.** `origin/cloud/
+migrations` has newer, larger versions of 014 through 017 than this
+branch's own base (`fc9550c`), and applying 018 on top of the CURRENT
+014–017 turns **four** currently-green pins red, not the two this branch
+already amends: `test_008` and `test_009` (already amended here, but
+against their _older_ versions — will need re-checking against the
+current ones on rebase), plus **`test_016` and `test_017`, newly
+affected and outside this branch's stated non-goals**, both failing on
+`pipelines_one_default_uq`.
+
+**RULING, recorded here as a decision being made now, confirmed not yet
+implemented in code — no `019_*` migration file exists anywhere in the
+repo as of this check.** The per-tenant pipeline seed leaves migration
+018 and becomes its own pack, `019_pipeline_provisioning` — the trigger,
+the backfill, a registry row, B6's rollback contract, and the four
+fixture amendments — to be built in the same PR #11 lane going forward.
+
+**B4 ruling, also recorded as a decision, also not yet implemented.**
+018's current fix moves `test_014`'s own SELECT-grant count assertion
+from 121 to 124 — explicitly flagged in the PR body itself as a
+rebase-conflict risk, since `fix-014`'s own rewritten `test_014` (this
+thread's own PR #23/`ff01f2b` entries above) still expects 121. The
+ruling: 018 is not to edit `test_014` at all going forward; `test_018`
+should assert its own three-grant delta instead — the same "don't edit a
+file you don't own" principle `fix-014` already applied when it left
+015–017's amendments to their own files.
+
+**Open discrepancy, confirmed present in the PR body's own validation
+log, not resolved here — a question routed back to `fix-014`, not an
+error on either side to silently pick a winner for.** `fix-018`'s own
+run against `origin/cloud/migrations`'s CURRENT 001–017 (no 018 applied
+at all) reports `PASS=16 FAIL=2`, naming `test_014` and
+`test_014_rollback` as **already red** on that branch — timestamped
+after `ff01f2b` (21:46 vs. 21:41), which is this thread's own most
+recent confirmation of "17/17 pins pass" from `fix-014`. Both claims are
+independently true readings of what each lane actually checked; which
+one (if either) is stale has not been reconciled. `fix-018` has asked
+for the exact failing text, which is the right next step rather than
+guessing.
+
+**Things worth telling future-me:**
+
+1. "All N blockers fixed" in a PR body's own headline and "one of those
+   N is deferred, deliberately, with the window named" three sections
+   later in the SAME document are not a contradiction to silently
+   resolve one way — both sentences are true on their own terms (four of
+   five ORIGINAL blockers are fixed; the fifth, B4, is deferred with a
+   named reason), and recording both, plainly, is more useful than
+   picking the headline or the caveat as "the real answer."
+2. A ruling that names a future artifact (a migration number, a pack
+   name) is not the same claim as that artifact existing — checking
+   `git ls-tree` for it before recording it as done is cheap and this is
+   now the second time this session it mattered (the 016 `dated` ruling
+   was the first).
+3. Two lanes each reporting a clean pin count against what looks like
+   the same target can both be right if they ran against different
+   moments of a moving branch — `fix-018`'s discrepancy with `fix-014`
+   is a timing question first, a correctness question second, and it's
+   worth checking commit timestamps before assuming either side made a
+   mistake.
+
+---
+
 ## 2026-09-13 23:0x — fix-014 folds in PR #23's 014 re-review items at ff01f2b; N-1 fully closed, T11a fixed, HIGH-4 closed both sides
 
 **`fix-014` pushed `ff01f2b` to `origin/cloud/migrations`** — confirmed

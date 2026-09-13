@@ -429,8 +429,34 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > grant count still 121. Next on `fix-014`: the 011-013 amendments. Full
 > detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:0x — fix-014 folds in PR #23's items at
-> ff01f2b; N-1 fully closed (9 tables), T11a fixed, HIGH-4 closed.
+> **BLAST 13 Sep 23:1x +08** — `fix-018` pushed `5612e65` to
+> `origin/lane/rpc-018` (PR #11's "Review fixes" body), closing PR #20's
+> thermo-018 BLOCK with a pin confirmed to fail pre-fix before it passes:
+> B1/H2/H3 (shared keyset helpers), B3 (view-filter gate on all five
+> lists), H1 (`regenerate_proposal_section` now actually enqueues via
+> 012's event path), M1 (tenant-scoped provenance read), M5 (backfill
+> raises loudly instead of warning), B2/B5 (catalog row + transaction
+> wrapper), H5/M8 (four unfalsifiable assertions fixed). Two new defects
+> found only by running the pin: `list_follow_ups` was a latent 500 on
+> any paged/filtered call (ambiguous join columns), and the §17 jury
+> badge is unreachable because `core.provenance`'s allowlist never
+> included `approval_requests` (filed against that pack, not 018's to
+> fix). **M4 measured with a number attached: applying 018 on top of
+> `cloud/migrations`'s CURRENT 014-017 turns four pins red, not two** —
+> `test_016`/`test_017` newly affected, outside this branch's scope.
+> **RULING (decision only, no code yet): the pipeline seed becomes its
+> own pack, `019_pipeline_provisioning`, same PR #11 lane.** **B4 ruling
+> (decision only): 018 must not edit `test_014` at all; `test_018`
+> asserts its own three-grant delta instead.** **Open discrepancy, not
+> resolved**: `fix-018` reports `test_014`/`test_014_rollback` already
+> red on `cloud/migrations`'s current 001-017 alone, contradicting this
+> thread's own confirmed "17/17 pins pass" from `fix-014`'s `ff01f2b` —
+> `fix-018` has asked for the failing text. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:1x — fix-018 clears PR #20's BLOCK at
+> 5612e65; 019 split and B4 rulings made (not yet coded); test_014 red
+> discrepancy open between fix-018 and fix-014.
 
 ### Focus
 
