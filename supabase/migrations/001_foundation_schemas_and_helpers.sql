@@ -270,11 +270,14 @@ CREATE EXTENSION IF NOT EXISTS vector     WITH SCHEMA extensions;
 GRANT USAGE ON SCHEMA cron TO postgres;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
 
-COMMENT ON SCHEMA cron IS
-  'pg_cron''s own schema. Created by the extension, not by TrainOS. Every TrainOS '
-  'job is scheduled in 015 and named there; cron.job is the inventory. '
-  'cron.job_run_details is reaped by 015 - Postgres does not clean it up and it '
-  'grows without bound (critic C-07).';
+-- No COMMENT ON SCHEMA cron: on hosted Supabase the `cron` schema is owned by
+-- supabase_admin and the migration role `postgres` is not superuser, so the
+-- statement fails with 42501 "must be owner of schema cron". The note it
+-- carried, kept here instead:
+--   pg_cron's own schema. Created by the extension, not by TrainOS. Every
+--   TrainOS job is scheduled in 015 and named there; cron.job is the inventory.
+--   cron.job_run_details is reaped by 015 - Postgres does not clean it up and
+--   it grows without bound (critic C-07).
 
 -- ─── 3 · Shared trigger functions ───────────────────────────────────────────
 
