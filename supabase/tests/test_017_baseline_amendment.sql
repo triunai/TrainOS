@@ -82,9 +82,14 @@ INSERT INTO core.programmes (id, tenant_id, name, category, days, list_price_sen
 VALUES ('00000017-0ddd-0ddd-0ddd-0ddddddddde1','00000017-1111-1111-1111-111111111111',
         'Leading Through Change','LEADERSHIP',2,1850000,30,1390000,0.3500,'ACTIVE');
 
+-- ⚠ `is_default = false`. 019 seeds a default ENGAGEMENT pipeline for every
+-- tenant at provision time, so a second default on the same object would collide
+-- with it. Nothing here depends on this pipeline being the default — the
+-- engagement below just needs a pipeline_id — so the fixture yields rather than
+-- competing with the seeded one.
 INSERT INTO core.pipelines (id, tenant_id, object, name, is_default, status)
 VALUES ('00000017-0eee-0eee-0eee-0eeeeeeeeee1','00000017-1111-1111-1111-111111111111',
-        'ENGAGEMENT','Standard delivery', true,'ACTIVE');
+        'ENGAGEMENT','Standard delivery', false,'ACTIVE');
 
 INSERT INTO core.opportunities (id, tenant_id, organisation_id, owner_id, value_sen)
 VALUES ('00000017-0bbb-0bbb-0bbb-0bbbbbbbbbb1','00000017-1111-1111-1111-111111111111',

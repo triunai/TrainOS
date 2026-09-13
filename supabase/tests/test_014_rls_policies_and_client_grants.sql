@@ -258,14 +258,38 @@ BEGIN
   -- authenticated both inherit. Today's revokes make the two spellings agree;
   -- this pin exists for the day a `GRANT ... TO PUBLIC` makes them disagree, and
   -- has_table_privilege is the one that would still be right.
+  -- ⚠ SCOPED TO 014-TIME OBJECTS, so a later pack adding a granted relation does
+  -- not fail a pin that is not about it. 018 adds three views
+  -- (v_organisation_relations, v_budgets, v_model_tiers) and would take this from
+  -- 121 to 124; that delta is 018's own T38 to assert, not this file's.
+  --
+  -- TABLES are scoped by the policy stamp — the manifest 014 writes and its
+  -- rollback drops by — so a table belongs to this count only if the pack that
+  -- created its policies is 017 or earlier. VIEWS carry no policy and therefore
+  -- no stamp, so the four that are granted are named, which they already were in
+  -- this assertion's own message. A fifth granted view is then a deliberate edit
+  -- here rather than a silent drift, which is the property worth keeping.
   SELECT pg_catalog.count(*) INTO v_grants
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-   WHERE n.nspname='core' AND c.relkind IN ('r','v','m','p','f')
-     AND has_table_privilege('authenticated', c.oid, 'SELECT');
+   WHERE n.nspname='core'
+     AND has_table_privilege('authenticated', c.oid, 'SELECT')
+     AND (
+       -- a table this pack or an earlier one policied
+       (c.relkind = 'r' AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_policy p
+            JOIN pg_catalog.pg_description d
+              ON d.objoid = p.oid
+             AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+           WHERE p.polrelid = c.oid
+             AND pg_catalog.substring(d.description, 'migration:([0-9]{3})') <= '017'))
+       -- or one of the four views 014 and 017 grant, by name
+       OR c.relname IN ('audit_entries','v_contact_consent_current',
+                        'v_tax_policy_unverified','v_trainer_accreditation'));
   ASSERT v_grants = 121,
     pg_catalog.format('T1c FAIL: expected 121 SELECT grants in core to '
-      'authenticated — 117 tables (114 from 014 + 3 from 017) plus four views: '
+      'authenticated ON 014-TIME OBJECTS — 117 tables (114 from 014 + 3 from 017, '
+      'identified by the migration stamp on their policies) plus four views: '
       'core.audit_entries, core.v_contact_consent_current, and 017''s '
       'v_tax_policy_unverified and v_trainer_accreditation. Three views are '
       'deliberately excluded: v_approval_requests (doc 09 §12) and budget_status '
@@ -310,10 +334,15 @@ BEGIN
         v_fn, COALESCE(v_conf::text,'NULL'));
   END LOOP;
 
+  -- ⚠ INTERPOLATED, NOT WRITTEN OUT. This line said "118 SELECT grants" while the
+  -- assertion twenty lines above required 121 — a success message describing a
+  -- database two packs old, which is the exact drift every count in this file is
+  -- re-derived to avoid. A number in a NOTICE is still a claim.
   RAISE NOTICE
-    'T1 PASS - 113 tenant policy pairs, the one no-tenant exception granted by '
-    'name, 118 SELECT grants, zero writes to a client role, zero anon privileges, '
-    'and three wrappers carrying the exact stored search_path="".';
+    'T1 PASS - % tenant policy pairs, the one no-tenant exception granted by '
+    'name, % SELECT grants, zero writes to a client role, zero anon privileges, '
+    'and three wrappers carrying the exact stored search_path="".',
+    v_pairs, v_grants;
 END;
 $t1$;
 

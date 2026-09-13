@@ -389,9 +389,27 @@ DECLARE
 BEGIN
   v_tenant := app.provision_tenant('t016-rbk','T016 Rollback Probe','Asia/Kuala_Lumpur');
 
+  -- ⚠ COUNTED THE SAME WAY THE DELETE SET IS, allocation clause included.
+  --
+  -- 019 seeds a default ENGAGEMENT pipeline per tenant at provision time, and
+  -- that seed's `assign_ref('PIP')` ALLOCATES a ref — which writes a
+  -- core.ref_sequences row. The rollback deliberately refuses to delete a format
+  -- a tenant has allocated against: refs are immutable once issued, so removing
+  -- the format that shapes them would strand every ref already in the wild. That
+  -- clause is correct and stays.
+  --
+  -- So it is `v_seeded` that was wrong, not the rollback. Counting ALL of the
+  -- tenant's formats and comparing against a delete set that excludes the
+  -- allocated ones compares two different populations, and the moment any seed
+  -- allocates during provisioning — which 019 now does — the numbers part by
+  -- exactly that many. Both sides now ask the same question: of the rows 016
+  -- seeded, how many are still unallocated.
   SELECT pg_catalog.count(*) INTO v_seeded
-    FROM core.ref_formats WHERE tenant_id = v_tenant;
-  ASSERT v_seeded > 0, 'T7 SETUP FAIL: the probe tenant was seeded no ref_formats.';
+    FROM core.ref_formats AS f
+   WHERE f.tenant_id = v_tenant
+     AND NOT EXISTS (SELECT 1 FROM core.ref_sequences AS s
+                      WHERE s.tenant_id = f.tenant_id AND s.prefix = f.prefix);
+  ASSERT v_seeded > 0, 'T7 SETUP FAIL: the probe tenant was seeded no unallocated ref_formats.';
 
   -- A row no trigger could have produced: a prefix that is not any assign_ref
   -- argument, an entity that is not a table, a width that is not the derived 4.
@@ -466,9 +484,10 @@ BEGIN
     'ref_sequences row.';
 
   RAISE NOTICE
-    'T7 PASS - the rollback''s delete set is exactly the % rows 016 seeded for a '
-    'fresh tenant and excludes an operator-configured row that the old '
-    'unqualified predicate would have taken.', v_seeded;
+    'T7 PASS - the rollback''s delete set is exactly the % unallocated rows 016 '
+    'seeded for a fresh tenant, excludes an operator-configured row that the old '
+    'unqualified predicate would have taken, and excludes any format the tenant '
+    'has already allocated a ref against.', v_seeded;
 END;
 $t7$;
 
