@@ -32,7 +32,11 @@ const REPO = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "
 
 /** Every path git tracks, as absolute paths, for O(1) membership tests. */
 const tracked = new Set(
-  execFileSync("git", ["ls-files", "-z"], { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+  execFileSync("git", ["ls-files", "-z"], {
+    cwd: REPO,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
     .split("\0")
     .filter(Boolean)
     .map((rel) => path.join(REPO, rel)),
@@ -59,9 +63,7 @@ function barrels(dir) {
  * a doc block cannot be mistaken for a real one.
  */
 function specifiers(source) {
-  const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   return [...code.matchAll(/\bfrom\s*["']([^"']+)["']/g)].map((m) => m[1]);
 }
 
@@ -108,7 +110,9 @@ if (unresolved.length > 0) {
 if (untracked.length > 0) {
   console.error(`\n✖ ${untracked.length} barrel export(s) point at a file git does not track:`);
   for (const line of untracked) console.error(`    ${line}`);
-  console.error("  A clone of this commit cannot resolve them. `git add` the file with the barrel.");
+  console.error(
+    "  A clone of this commit cannot resolve them. `git add` the file with the barrel.",
+  );
 }
 
 process.exit(1);
