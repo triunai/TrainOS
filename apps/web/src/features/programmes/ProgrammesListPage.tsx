@@ -7,6 +7,7 @@ import {
   EmptyState,
   ErrorState,
   FilterBar,
+  FilterSelect,
   humanise,
   LoadingState,
   MoneyText,
@@ -65,40 +66,6 @@ function matches(programme: Programme, facets: Facets): boolean {
   if (facets.claimable === "NOT_CLAIMABLE" && programme.hrdcClaimable) return false;
   if (facets.duration !== "ALL" && durationBand(programme.days) !== facets.duration) return false;
   return true;
-}
-
-/**
- * A plain select. The kit has no filter-select control yet, so the facets are
- * native `<select>`s dropped into `FilterBar`'s own children slot — which is
- * exactly what that slot is for — rather than a second chip vocabulary.
- */
-function FacetSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-[12px] text-ink-secondary">
-      <span>{label}</span>
-      <select
-        className="h-7 rounded-[6px] border border-border bg-surface px-2 text-[12px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
 }
 
 export function ProgrammesListPage() {
@@ -204,7 +171,7 @@ export function ProgrammesListPage() {
           onRemove={(id) => setFacets((current) => ({ ...current, [id]: "ALL" }))}
           onClearAll={() => setFacets(EMPTY_FACETS)}
         >
-          <FacetSelect
+          <FilterSelect
             label="Category"
             value={facets.category}
             onChange={(value) => setFacets((current) => ({ ...current, category: value }))}
@@ -213,7 +180,7 @@ export function ProgrammesListPage() {
               ...categories.map((category) => ({ value: category, label: humanise(category) })),
             ]}
           />
-          <FacetSelect
+          <FilterSelect
             label="HRDC"
             value={facets.claimable}
             onChange={(value) =>
@@ -225,7 +192,7 @@ export function ProgrammesListPage() {
               { value: "NOT_CLAIMABLE", label: "Not claimable" },
             ]}
           />
-          <FacetSelect
+          <FilterSelect
             label="Duration"
             value={facets.duration}
             onChange={(value) =>
