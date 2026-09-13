@@ -34,7 +34,7 @@ describe("two independent price floors, the higher binding", () => {
       code: "FLOOR_PRICE_BREACH",
       http: 422,
       details: {
-        bindingFloor: "MARGIN",
+        bindingFloorBasis: "MARGIN",
         floorPrice: { amount: 1753846, currency: "MYR" },
         absoluteFloorPrice: { amount: 1390000, currency: "MYR" },
         resultingMarginRate: 0.08,
@@ -52,7 +52,7 @@ describe("two independent price floors, the higher binding", () => {
     ).rejects.toMatchObject({
       code: "FLOOR_PRICE_BREACH",
       details: {
-        bindingFloor: "ABSOLUTE",
+        bindingFloorBasis: "ABSOLUTE",
         floorPrice: { amount: 735000, currency: "MYR" },
         marginFloorPrice: { amount: 587692, currency: "MYR" },
       },

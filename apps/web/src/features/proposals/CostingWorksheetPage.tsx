@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import type {
   ActionRequest,
   ActionResponse,
+  FloorPriceBreachDetails,
   Money,
   QuotationApplyPayload,
   QuotationLine,
@@ -41,7 +42,6 @@ import {
   useQuotation,
   useRateCard,
   useSaveQuotation,
-  type FloorBreach,
 } from "./api";
 import { PROPOSAL_BUILDER_PATH, QUOTATIONS_LIST_PATH } from "./paths";
 
@@ -80,7 +80,7 @@ export function CostingWorksheetPage() {
   const [proposed, setProposed] = useState<Money | null>(null);
   const [applied, setApplied] = useState<ActionResponse | null>(null);
 
-  const breach = useMemo<FloorBreach | null>(
+  const breach = useMemo<FloorPriceBreachDetails | null>(
     () => floorBreachOf(apply.error) ?? floorBreachOf(save.error),
     [apply.error, save.error],
   );
@@ -191,7 +191,7 @@ export function CostingWorksheetPage() {
 
       <ApplyOutcome response={applied} proposalRef={quotation.proposalRef} />
 
-      {breach ? <FloorBreachBanner breach={breach} quotation={quotation} /> : null}
+      {breach ? <FloorBreachBanner breach={breach} /> : null}
 
       {apply.isError && !breach ? (
         <div className="px-5 pb-4">
@@ -421,14 +421,12 @@ function ApplyOutcome({
  * binding floor, the margin the price would yield and the policy that could
  * still let it through, so the banner says all three rather than "invalid".
  */
-function FloorBreachBanner({
-  breach,
-  quotation,
-}: {
-  breach: FloorBreach;
-  quotation: QuotationWithFloors;
-}) {
-  const basis = breach.bindingFloorBasis ?? quotation.bindingFloorBasis;
+function FloorBreachBanner({ breach }: { breach: FloorPriceBreachDetails }) {
+  /* The refusal names its own binding basis now (§6), so the banner no longer
+     needs the quotation at all. It had been falling back to the stored basis,
+     which belongs to the price the user has just replaced — the one case where
+     the two can disagree is exactly the case the banner is rendered for. */
+  const basis = breach.bindingFloorBasis;
   return (
     <div className="px-5 pb-4">
       <ExceptionBanner

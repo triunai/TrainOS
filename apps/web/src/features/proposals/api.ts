@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ActionRequest,
   ActionResponse,
-  Money,
+  FloorPriceBreachDetails,
   ProposalSectionWrite,
   QuotationLine,
   QuotationWrite,
@@ -49,22 +49,41 @@ export type ActionPayload<P> = P & Record<string, unknown>;
 /* ---- Error helpers --------------------------------------------------- */
 
 /**
- * The `FLOOR_PRICE_BREACH` detail bag, as `client/pricing.ts` builds it. Both
- * floors and the binding basis travel with the refusal, so the worksheet can
- * say WHICH constraint is doing the work instead of just "too low".
+ * The `FLOOR_PRICE_BREACH` detail bag (§6 `FloorPriceBreachDetails`).
+ *
+ * This used to be a local interface re-declaring three fields the contract did
+ * not have, read off a cast (W-65). The contract declares them now, so the
+ * only thing left to do here is narrow: `ErrorDetails` is one bag keyed by
+ * code, every key optional, because a caller that has not checked `code` has
+ * no business assuming any of them are present.
+ *
+ * The narrowing is a check, not a cast. A refusal that arrives without both
+ * floors is not a floor breach this screen can explain — returning a
+ * half-populated object would put `undefined` into the banner's sentence, so
+ * it returns null and the screen falls back to the generic refusal surface.
  */
-export interface FloorBreach {
-  floorPrice: Money;
-  resultingMarginRate: number;
-  requiresPolicy: string;
-  absoluteFloorPrice?: Money;
-  marginFloorPrice?: Money;
-  bindingFloorBasis?: "ABSOLUTE" | "MARGIN";
-}
-
-export function floorBreachOf(error: unknown): FloorBreach | null {
+export function floorBreachOf(error: unknown): FloorPriceBreachDetails | null {
   if (!isContractError(error) || error.code !== "FLOOR_PRICE_BREACH") return null;
-  return (error.details ?? null) as FloorBreach | null;
+  const details = error.details;
+  if (
+    !details ||
+    details.floorPrice === undefined ||
+    details.resultingMarginRate === undefined ||
+    details.requiresPolicy === undefined ||
+    details.absoluteFloorPrice === undefined ||
+    details.marginFloorPrice === undefined ||
+    details.bindingFloorBasis === undefined
+  ) {
+    return null;
+  }
+  return {
+    floorPrice: details.floorPrice,
+    resultingMarginRate: details.resultingMarginRate,
+    requiresPolicy: details.requiresPolicy,
+    absoluteFloorPrice: details.absoluteFloorPrice,
+    marginFloorPrice: details.marginFloorPrice,
+    bindingFloorBasis: details.bindingFloorBasis,
+  };
 }
 
 /* ---- Proposals (M07-S02) -------------------------------------------- */

@@ -370,9 +370,23 @@ export interface QuotationWrite {
  * `type: DISCOUNT_APPROVE`.
  */
 export interface FloorPriceBreachDetails {
+  /** Whichever of the two floors below is the higher one. */
   floorPrice: Money;
   resultingMarginRate: Rate;
   requiresPolicy: string;
+  /**
+   * Ruling R6 applied to the refusal as well as to the record.
+   *
+   * `floorPrice` alone says a price is too low; it does not say WHICH
+   * constraint made it too low, and the two are acted on differently — an
+   * absolute breach is a conversation about the tier, a margin breach is a
+   * conversation about cost. `features/proposals/api.ts` re-declared these
+   * three locally and read them off a cast (W-65), which is the same fields
+   * arriving with none of the contract's guarantees.
+   */
+  absoluteFloorPrice: Money;
+  marginFloorPrice: Money;
+  bindingFloorBasis: BindingFloorBasis;
 }
 
 /* ------------------------------------------------------------------ *

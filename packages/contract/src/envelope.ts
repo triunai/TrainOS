@@ -8,6 +8,7 @@
 import type {
   ActorKind,
   BadgeSeverity,
+  BindingFloorBasis,
   EvidenceType,
   FilterOp,
   FilterSource,
@@ -286,10 +287,19 @@ export interface ErrorDetails {
   /** POLICY_APPROVAL_REQUIRED (§1). */
   policyId?: string;
   threshold?: Money;
-  /** FLOOR_PRICE_BREACH (§1, §6). */
+  /**
+   * FLOOR_PRICE_BREACH (§1, §6). The full shape is
+   * `FloorPriceBreachDetails` in `domain/proposals`; every key is optional
+   * here because this one bag is keyed by code, and a caller that has not
+   * checked `code` has no business assuming any of them are present.
+   */
   floorPrice?: Money;
   resultingMarginRate?: Rate;
   requiresPolicy?: string;
+  /** Ruling R6: which constraint produced `floorPrice`, and both candidates. */
+  absoluteFloorPrice?: Money;
+  marginFloorPrice?: Money;
+  bindingFloorBasis?: BindingFloorBasis;
   /** SYNC_FAILED (§1). */
   provider?: string;
   providerCode?: string;

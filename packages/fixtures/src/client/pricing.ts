@@ -113,7 +113,10 @@ export const floorPriceBreach = (
       requiresPolicy: "APV-02",
       absoluteFloorPrice: evaluation.absoluteFloorPrice,
       marginFloorPrice: evaluation.marginFloorPrice,
-      bindingFloor: evaluation.bindingFloor,
+      /* `bindingFloorBasis` is the contract's name (§6). The `bindingFloor`
+         sibling this bag used to carry alongside it was the fixture package's
+         own alias, and two keys for one fact is how a consumer ends up reading
+         whichever one it happened to see first. */
       bindingFloorBasis: evaluation.bindingFloor,
     },
   );
