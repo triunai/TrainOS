@@ -275,3 +275,38 @@ describe("M02-S01 approval inbox", () => {
     expect(reviewNext.closest("[data-list-toolbar]")).toBeNull();
   });
 });
+
+describe("M02-S01 approval inbox · a payload with no diffHash", () => {
+  beforeEach(() => {
+    resetFixtures();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /* `core.bulk_decide_approvals` refuses an APPROVE item with no hash, so the
+     screen says so before sending a batch that cannot succeed. */
+  it("refuses a bulk approve before sending, and says why", async () => {
+    const user = userEvent.setup();
+    const original = fixtureClient.listApprovals.bind(fixtureClient);
+    vi.spyOn(fixtureClient, "listApprovals").mockImplementation(async (page) => {
+      const answer = await original(page);
+      return {
+        ...answer,
+        data: answer.data.map((row) => ({ ...row, diffHash: undefined as unknown as string })),
+      };
+    });
+    const bulkDecide = vi.spyOn(fixtureClient, "bulkDecideApprovals");
+    renderScreen(<ApprovalInbox />, { path: APPROVALS_PATH, pattern: APPROVALS_PATH });
+
+    const bulkable = (await screen.findByText(/Approve 1 rule change/)).closest(
+      "tr",
+    ) as HTMLElement;
+    await user.click(within(bulkable).getByRole("checkbox"));
+    await user.click(await screen.findByRole("button", { name: "Bulk approve" }));
+
+    expect(await screen.findByText(/Nothing was approved/)).toBeVisible();
+    expect(bulkDecide).not.toHaveBeenCalled();
+  });
+});

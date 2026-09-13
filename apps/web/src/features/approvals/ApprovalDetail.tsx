@@ -102,7 +102,12 @@ export function ApprovalDetail() {
 
   const approval = useApproval(ref);
   const audit = useApprovalAudit(ref);
-  const decide = useDecideApproval(ref);
+  /* The decide takes the approval's ID. The route carries its REF, which
+     `core.decide_approval(p_approval_id uuid, …)` cannot parse (22P02); the
+     fixture client accepts either, which is why fixtures never showed it. The
+     buttons only render once the detail has loaded, so the id is always there
+     by the time a decision is sent. */
+  const decide = useDecideApproval(approval.data?.id ?? ref);
 
   /* The queue rail. The same grouped read the inbox uses, so the rail and the
      inbox can never disagree about what is next. */
@@ -127,6 +132,11 @@ export function ApprovalDetail() {
   const detail = approval.data;
   const decided = decide.data;
   const pending = detail?.status === "PENDING" && decided === undefined;
+  /* An APPROVE must echo the diff hash it was shown, and the database refuses
+     one without it. A payload that carries none — an environment whose
+     approval read predates the field — cannot be approved from here, so the
+     button says so instead of sending a request that is certain to fail. */
+  const canApprove = typeof detail?.diffHash === "string" && detail.diffHash.trim().length > 0;
 
   /* A · R · C, the pack's keystrokes. Bound only while the approval is still
      open, so a decided record cannot be decided twice by a stray key. */
@@ -154,6 +164,7 @@ export function ApprovalDetail() {
        which already implies `detail` is loaded — this is for the type
        checker, not a reachable branch. */
     if (!detail) return;
+    if (decision === "APPROVE" && !canApprove) return;
     const needsNote = NEEDS_NOTE.includes(decision);
     if (needsNote && note.trim().length === 0) {
       setArmed(decision);
@@ -269,7 +280,7 @@ export function ApprovalDetail() {
       <SecondaryButton onClick={() => submit("REQUEST_CHANGES")} disabled={decide.isPending}>
         Request changes
       </SecondaryButton>
-      <PrimaryButton onClick={() => submit("APPROVE")} disabled={decide.isPending}>
+      <PrimaryButton onClick={() => submit("APPROVE")} disabled={decide.isPending || !canApprove}>
         {decide.isPending ? "Deciding…" : "Approve"}
       </PrimaryButton>
     </>
@@ -504,6 +515,14 @@ export function ApprovalDetail() {
               subtitle={`${decided.effects.length} change${
                 decided.effects.length === 1 ? "" : "s"
               } applied`}
+            />
+          ) : null}
+
+          {pending && !canApprove ? (
+            <ExceptionBanner
+              severity="INFO"
+              title="Approving is not available here yet"
+              subtitle="This environment does not send the change fingerprint an approval must echo back, so an approve would be refused. Reject and request changes still work."
             />
           ) : null}
 

@@ -222,6 +222,24 @@ export function unwrapEnvelope(body: unknown): Result<unknown> {
   return ok(keys.length === 1 && keys[0] === "data" ? rest.data : rest);
 }
 
+/**
+ * The contract's audit resource type, in the database's spelling.
+ *
+ * The contract addresses a trail by its ROUTE SEGMENT — `/v1/approvals/{id}/audit`,
+ * plural and lowercase, which is also the fixture store's key. The database
+ * keys it by AGGREGATE TYPE: `core.audit_entries.subject_type` is CHECKed
+ * `^[A-Z][A-Z0-9_]*$` (012:598) and written as the singular entity upper-cased
+ * (`app.aggregate_type_for`, 012:1010). Sent as-is, `approvals` can never match
+ * a row, and the trail is empty rather than an error — which is why nobody saw
+ * it. The rule is derived rather than listed so a new record type needs no entry
+ * here: singular, kebab to snake, upper-cased. A value already in UPPER_SNAKE
+ * passes through untouched.
+ */
+export function aggregateTypeOf(resourceType: string): string {
+  if (/^[A-Z][A-Z0-9_]*$/.test(resourceType)) return resourceType;
+  return resourceType.replace(/s$/, "").replace(/-/g, "_").toUpperCase();
+}
+
 /** A supabase-js failure, split into the domain and transport branches. */
 export function classifyTransportFailure(failure: TransportFailure): ApiError {
   const code = failure.code ?? "";
@@ -659,7 +677,7 @@ export class SupabaseRpcClient implements TrainOsClient {
    */
   audit(resourceType: string, id: string): Promise<Result<ListResponse<AuditEntry>>> {
     return this.call<ListResponse<AuditEntry>>("get_audit", {
-      p_resource_type: resourceType,
+      p_resource_type: aggregateTypeOf(resourceType),
       p_id: id,
     });
   }

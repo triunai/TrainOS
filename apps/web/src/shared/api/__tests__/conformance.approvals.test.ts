@@ -49,10 +49,20 @@ const bulkWireCalls: { items: WireItem[]; idempotencyKey: string }[] = [];
 /** What `decide_approval` was actually called with, in call order. */
 const decideWireCalls: Record<string, unknown>[] = [];
 
+/** What `get_audit` was actually called with, in call order. */
+const auditWireCalls: Record<string, unknown>[] = [];
+
 const FUNCTIONS: RpcHandlers = {
   list_approvals: (args, oracle) => oracle.listApprovals(toPageRequest(args)),
   get_approval: (args, oracle) => oracle.getApproval(String(args.p_id)),
-  get_audit: (args, oracle) => oracle.getAudit(String(args.p_resource_type), String(args.p_id)),
+  /* `core.audit_entries.subject_type` is UPPER_SNAKE (012:598), so the handler
+     answers the SQL spelling and maps it back to the fixture store's
+     `approvals::{ref}` key — an oracle that accepted the route segment would
+     hide the drift this handler exists to catch. */
+  get_audit: (args, oracle) => {
+    auditWireCalls.push({ ...args });
+    return oracle.getAudit(`${String(args.p_resource_type).toLowerCase()}s`, String(args.p_id));
+  },
   decide_approval: (args, oracle) => {
     decideWireCalls.push({ ...args });
     return oracle.decideApproval(
@@ -112,6 +122,7 @@ describe("M02 · the two clients answer the approval screens the same", () => {
   beforeEach(() => {
     bulkWireCalls.length = 0;
     decideWireCalls.length = 0;
+    auditWireCalls.length = 0;
     oracle = createFixtureClient({ latencyMs: 0, actorId: USER_KELVIN });
     fixtures = createFixtureClient({ latencyMs: 0, actorId: USER_KELVIN });
     __setTransportForTests(oracleTransport(oracle, FUNCTIONS, VIEWS));
@@ -448,6 +459,18 @@ describe("M02 · the two clients answer the approval screens the same", () => {
     expect(isContractError(fromRpc) && fromRpc.details).toEqual(
       isContractError(fromFixtures) && fromFixtures.details,
     );
+  });
+
+  /**
+   * The contract addresses a trail by its route segment (`/v1/approvals/{id}/audit`);
+   * the database keys it by aggregate type, CHECKed `^[A-Z][A-Z0-9_]*$` (012:598).
+   * The lowercase plural can never match a row, so the trail was always empty
+   * and never errored.
+   */
+  it("sends the audit trail's resource type in the database's UPPER_SNAKE spelling", async () => {
+    await rpc.getAudit("approvals", APPROVAL_AURORA);
+
+    expect(auditWireCalls).toEqual([{ p_resource_type: "APPROVAL", p_id: APPROVAL_AURORA }]);
   });
 
   /**
