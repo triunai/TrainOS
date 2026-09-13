@@ -13,7 +13,11 @@ import {
   type ListResponse,
 } from "@trainos/contract";
 import { fixtureClient, forbidden, type FixtureClient } from "@trainos/fixtures";
-import { EngagementDetailPage } from "@/features/engagements";
+import {
+  AttendanceCapturePage,
+  ATTENDANCE_CAPTURE_PATTERN,
+  EngagementDetailPage,
+} from "@/features/engagements";
 import { Organisation360Page } from "@/features/organisations";
 import { TnaDetailPage } from "@/features/tna";
 import { EnquiryDetailPage } from "@/features/enquiries";
@@ -21,6 +25,9 @@ import { ProposalBuilderPage, CostingWorksheetPage } from "@/features/proposals"
 import { RuleChangeReviewScreen, RulesRegistryScreen } from "@/features/hrdc";
 import { RunTraceScreen } from "@/features/agents";
 import { ApprovalDetail } from "@/features/approvals";
+import { ClientProposalPage } from "@/features/portal";
+import { OrganisationSettingsScreen } from "@/features/settings";
+import { AiModelsScreen, UsageBudgetsScreen } from "@/features/settings-ai";
 import { renderScreen } from "@/test/renderScreen";
 
 /**
@@ -326,5 +333,154 @@ describe("M12-S07 · rules registry", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Add rule" }));
 
     await waitFor(() => expect(screen.getByText("The rule was not added")).toBeInTheDocument());
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The carried-over empty branches — §5's nine screens with no EmptyState
+ *
+ * Same method as above and for the same reason: every one of these is a
+ * collection the server can genuinely return empty, on a screen whose happy
+ * path everyone has seen and whose empty path nobody has. Three of the nine
+ * (`EnquiryDetailPage`, `CostingWorksheetPage`, `ClaimPacketScreen`) belong to
+ * other lanes tonight and are deliberately absent here.
+ * ------------------------------------------------------------------ */
+
+describe("M10-S06 · attendance capture", () => {
+  const at = {
+    path: `/training/participants/${ENGAGEMENT_AURORA}/attendance`,
+    route: ATTENDANCE_CAPTURE_PATTERN,
+    role: "OPS" as const,
+  };
+
+  it("says the sheet exists but the roster is empty, rather than drawing a headed table with no rows", async () => {
+    emptied("getAttendance", (sheet) => ({ ...sheet, rows: [] }));
+
+    renderScreen(<AttendanceCapturePage />, at);
+
+    expect(await screen.findByText("Nobody is registered for this day")).toBeInTheDocument();
+    expect(screen.getByText(/Participants are enrolled on the engagement/)).toBeInTheDocument();
+  });
+
+  it("offers the retry the engagement read had no way to reach", async () => {
+    vi.spyOn(fixtureClient, "getEngagement").mockRejectedValue(new Error("network"));
+
+    renderScreen(<AttendanceCapturePage />, at);
+
+    await screen.findByText("This engagement could not be opened");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("still withholds the retry when the engagement is refused rather than unreachable", async () => {
+    refuses("getEngagement", "This engagement is not yours to read.");
+
+    renderScreen(<AttendanceCapturePage />, at);
+
+    await screen.findByText("This engagement could not be opened");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+});
+
+describe("M20-S19 · organisation settings", () => {
+  const at = { path: "/settings/organisation", route: "/settings/organisation" };
+
+  it("names an unconfigured pipeline instead of rendering a stepper with no steps", async () => {
+    emptied("getPipelineConfig", (config) => ({ ...config, stages: [] }));
+
+    renderScreen(<OrganisationSettingsScreen />, at);
+
+    expect((await screen.findAllByText("No stages configured")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/renders empty/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("M20-S20 · AI models, tiers and routing", () => {
+  const at = { path: "/settings/ai-models", route: "/settings/ai-models" };
+
+  it("says no tier is published rather than showing an empty tier table", async () => {
+    emptied("getAiTiers", (answer) => ({ ...answer, data: [] }));
+
+    renderScreen(<AiModelsScreen />, at);
+
+    expect(await screen.findByText("No model tiers published")).toBeInTheDocument();
+  });
+
+  it("replaces the assignment matrix with a sentence when nothing is routed", async () => {
+    emptied("getAiRouting", (answer) => ({ ...answer, data: [] }));
+
+    renderScreen(<AiModelsScreen />, at);
+
+    expect(await screen.findByText("Nothing is routed yet")).toBeInTheDocument();
+    /* The empty state takes the table's place rather than sitting under a
+       sticky head over nine tier columns with no rows beneath it. */
+    expect(screen.queryByRole("table", { name: "Action type to tier assignment" })).toBeNull();
+  });
+});
+
+describe("M20-S16 · usage and budgets", () => {
+  const at = { path: "/settings/usage", route: "/settings/usage" };
+
+  it("names the grouping the reader is on when that grouping has no spend", async () => {
+    emptied("getUsage", (answer) => ({ ...answer, breakdown: [] }));
+
+    renderScreen(<UsageBudgetsScreen />, at);
+
+    expect(await screen.findByText("No spend in this period")).toBeInTheDocument();
+  });
+
+  it("says nothing is capped, which is not the same as nothing loading", async () => {
+    emptied("getBudgets", (answer) => ({ ...answer, data: [] }));
+
+    renderScreen(<UsageBudgetsScreen />, at);
+
+    expect(await screen.findByText("No caps set")).toBeInTheDocument();
+    expect(screen.getByText(/no run will be refused for cost/)).toBeInTheDocument();
+  });
+});
+
+describe("M05-S02 · TNA detail, empty branches", () => {
+  const at = { path: `/sales/tna/${TNA_AURORA}`, route: "/sales/tna/:tnaId" };
+
+  it("says the questionnaire recorded no gaps rather than drawing an empty gaps table", async () => {
+    emptied("getTna", (tna) => ({ ...tna, gaps: [] }));
+
+    renderScreen(<TnaDetailPage />, at);
+
+    expect(await screen.findByText("No competency gaps recorded")).toBeInTheDocument();
+  });
+
+  it("drops the AI panel's tint when the agent ranked nothing, rather than framing an empty body", async () => {
+    emptied("getTnaRecommendations", (answer) => ({ ...answer, data: [] }));
+
+    renderScreen(<TnaDetailPage />, at);
+
+    expect(await screen.findByText("No programme matched")).toBeInTheDocument();
+    expect(screen.queryByText("Programme recommendation")).toBeNull();
+  });
+});
+
+describe("M07-S07 · client proposal portal", () => {
+  const at = { path: "/p/tok_aurora_pro_0184", route: "/p/:token" };
+
+  it("says the document has no written sections while keeping the commercial summary", async () => {
+    emptied("getPortalProposal", (proposal) => ({ ...proposal, sections: [] }));
+
+    renderScreen(<ClientProposalPage />, at);
+
+    expect(
+      await screen.findByText("This proposal has no written sections yet"),
+    ).toBeInTheDocument();
+    /* The investment panel is built from `investment`, not from the prose, so
+       it survives an empty body. */
+    expect(screen.getByText(/Ask the person who sent you this link/)).toBeInTheDocument();
+  });
+
+  it("offers a retry on the one page whose reader has nowhere else to go", async () => {
+    vi.spyOn(fixtureClient, "getPortalProposal").mockRejectedValue(new Error("network"));
+
+    renderScreen(<ClientProposalPage />, at);
+
+    await screen.findByText("This proposal link cannot be opened");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

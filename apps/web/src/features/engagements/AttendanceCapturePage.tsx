@@ -7,6 +7,7 @@ import {
   ContentCard,
   DataTable,
   describeActionError,
+  EmptyState,
   ErrorState,
   ExceptionBanner,
   formatDate,
@@ -96,6 +97,10 @@ export function AttendanceCapturePage() {
       <ErrorState
         title="This engagement could not be opened"
         error={toApiError(engagement.error)}
+        /* `ErrorState` withholds the button itself on a domain refusal, so
+           offering it here costs nothing on the branch where a retry is a lie
+           and recovers the transport branch where it is not. */
+        onRetry={() => void engagement.refetch()}
       />
     );
   }
@@ -105,6 +110,7 @@ export function AttendanceCapturePage() {
       <ErrorState
         title="No attendance sheet has been created yet"
         {...(failure ? { error: toApiError(failure.error) } : {})}
+        {...(failure ? { onRetry: () => void failure.refetch() } : {})}
       />
     );
   }
@@ -428,6 +434,16 @@ function AttendanceTable({
       rows={sheet.rows}
       rowKey={(row) => row.participantRef}
       density="compact"
+      /* A sheet exists for the day but nobody is on it. The action is on the
+         participants list, not here: this screen marks attendance, it does not
+         decide who is enrolled, and offering an "Add participant" button here
+         would put the roster behind two different doors. */
+      empty={
+        <EmptyState
+          title="Nobody is registered for this day"
+          description="The sheet was created but the roster is empty. Participants are enrolled on the engagement, and everyone enrolled appears here on every delivery day."
+        />
+      }
     />
   );
 }
