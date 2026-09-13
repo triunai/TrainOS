@@ -13,7 +13,7 @@
 --     019 pipelines, 016 ref formats and 011 action policies are read, never written;
 --   * never writes auth.users, memberships or user_profiles. Every user reference
 --     (owner_id, assigned_to_user_id, assigned_to_id, created_by) points at one of
---     the two real MD members below, alternating; AI-authored rows name an agent
+--     the three real MD members below, spread across them; AI-authored rows name an agent
 --     in the text actor columns, which carry no foreign key;
 --   * never disables a trigger. Gated statuses (011 core.state_transitions) are
 --     reached only over ungated edges, as the table owner would: rows are
@@ -51,10 +51,13 @@ CREATE TEMP TABLE demo_ctx ON COMMIT DROP AS
 SELECT tenant.id                                  AS t,
        'd1449fad-b732-4ee2-93c9-37f338e01358'::uuid AS u1,
        'ad615910-2d87-42a4-9855-58f52409ec6d'::uuid AS u2,
+       '415dad6e-c53f-4a84-ab50-bf8e9e65223f'::uuid AS u3,
        (SELECT p.display_name FROM public.user_profiles p
          WHERE p.tenant_id = tenant.id AND p.user_id = 'd1449fad-b732-4ee2-93c9-37f338e01358') AS u1n,
        (SELECT p.display_name FROM public.user_profiles p
          WHERE p.tenant_id = tenant.id AND p.user_id = 'ad615910-2d87-42a4-9855-58f52409ec6d') AS u2n,
+       (SELECT p.display_name FROM public.user_profiles p
+         WHERE p.tenant_id = tenant.id AND p.user_id = '415dad6e-c53f-4a84-ab50-bf8e9e65223f') AS u3n,
        now()                                      AS at
   FROM public.tenants AS tenant
  WHERE tenant.slug = 'akademi-perdana';
@@ -71,10 +74,10 @@ BEGIN
   SELECT count(*) INTO v_md
     FROM public.memberships m
    WHERE m.tenant_id = v_ctx.t
-     AND m.user_id IN (v_ctx.u1, v_ctx.u2)
+     AND m.user_id IN (v_ctx.u1, v_ctx.u2, v_ctx.u3)
      AND m.role = 'MD' AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
-  IF v_md <> 2 OR v_ctx.u1n IS NULL OR v_ctx.u2n IS NULL THEN
-    RAISE EXCEPTION 'hosted demo seed: expected both MD users as ACTIVE members with profiles, found % membership(s)', v_md;
+  IF v_md <> 3 OR v_ctx.u1n IS NULL OR v_ctx.u2n IS NULL OR v_ctx.u3n IS NULL THEN
+    RAISE EXCEPTION 'hosted demo seed: expected all three MD users as ACTIVE members with profiles, found % membership(s)', v_md;
   END IF;
 END
 $pre$;
@@ -167,16 +170,16 @@ SELECT pg_temp.demo_id(v.k), c.t, pg_temp.demo_id('rc:2026'), v.role::app.app_ro
 -- ── Parties ──────────────────────────────────────────────────────────────────
 
 INSERT INTO core.organisations (id, tenant_id, name, industry, location, owner_id, status, hrdc_registered, hrdc_employer_code, health_score, city, created_at, created_by_kind, created_by_id, created_by_name)
-SELECT pg_temp.demo_id(v.k), c.t, v.name, v.industry, v.city, CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END,
+SELECT pg_temp.demo_id(v.k), c.t, v.name, v.industry, v.city, CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END,
        v.status::core.organisation_status, true, v.hrdc, v.health, v.city, c.at - v.age, 'HUMAN',
-       CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END::text, CASE v.u WHEN 1 THEN c.u1n ELSE c.u2n END
+       CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END::text, CASE v.u WHEN 1 THEN c.u1n WHEN 2 THEN c.u2n ELSE c.u3n END
   FROM demo_ctx c, (VALUES
     ('org:aurora',   'Aurora Manufacturing Sdn Bhd', 'MANUFACTURING', 'Shah Alam',    1, 'ACTIVE_CLIENT', 'HRDC-2201-8834', 74, interval '900 days'),
     ('org:kenanga',  'Kenanga Retail Group Berhad',  'RETAIL',        'Kuala Lumpur', 2, 'ACTIVE_CLIENT', 'HRDC-1908-4417', 81, interval '1100 days'),
     ('org:meridian', 'Meridian Logistics Sdn Bhd',   'LOGISTICS',     'Port Klang',   1, 'ACTIVE_CLIENT', 'HRDC-2102-6620', 62, interval '680 days'),
     ('org:sutera',   'Sutera Hospitality Group',     'HOSPITALITY',   'Kuala Lumpur', 2, 'DORMANT',       'HRDC-2007-3312', 38, interval '1580 days'),
-    ('org:perdana',  'Perdana Utilities Berhad',     'UTILITIES',     'Cyberjaya',    2, 'PROSPECT',      'HRDC-1806-9021', 55, interval '115 days'),
-    ('org:auroratl', 'Aurora Precision Tooling Sdn Bhd', 'MANUFACTURING', 'Klang',    1, 'PROSPECT',      'HRDC-2204-1190', 50, interval '26 days')
+    ('org:perdana',  'Perdana Utilities Berhad',     'UTILITIES',     'Cyberjaya',    3, 'PROSPECT',      'HRDC-1806-9021', 55, interval '115 days'),
+    ('org:auroratl', 'Aurora Precision Tooling Sdn Bhd', 'MANUFACTURING', 'Klang',    3, 'PROSPECT',      'HRDC-2204-1190', 50, interval '26 days')
   ) AS v(k, name, industry, city, u, status, hrdc, health, age)
  WHERE NOT EXISTS (SELECT 1 FROM core.organisations x WHERE x.id = pg_temp.demo_id(v.k))
  ORDER BY v.age DESC;
@@ -217,18 +220,18 @@ SELECT pg_temp.demo_id(v.k), c.t, v.channel::core.enquiry_channel, c.at - v.age,
        CASE WHEN v.org IS NOT NULL THEN pg_temp.demo_id(v.org) END,
        CASE WHEN v.con IS NOT NULL THEN pg_temp.demo_id(v.con) END,
        v.match::core.organisation_match_reason,
-       CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 END,
+       CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 WHEN 3 THEN c.u3 END,
        c.at - v.age, 'SYSTEM', 'ingest_email', 'Email ingest'
   FROM demo_ctx c, (VALUES
     ('enq:aurora',     'EMAIL',    interval '74 hours',  'Nurul Hassan',  'nurul.hassan@auroramfg.com.my', NULL, 'Leadership training for 30 managers', 'Hi, we''re looking for leadership training for approximately 30 managers, preferably in November, focused on conflict management and communication.', 'LEADERSHIP', 0.94, false, 1850000::bigint, 'org:aurora', 'con:nurul', 'EXACT_DOMAIN', 1),
     ('enq:kenanga',    'EMAIL',    interval '20 hours',  'Lim Wei Sheng', 'weisheng.lim@kenangaretail.com.my', NULL, 'Sales excellence programme for store managers', 'We would like to run a sales excellence programme for 48 store managers in Q1 2027, across Klang Valley and Johor.', 'SALES_EXCELLENCE', 0.92, false, 6720000, 'org:kenanga', 'con:weisheng', 'EXACT_DOMAIN', 2),
     ('enq:meridian',   'WEB_FORM', interval '44 hours',  'Faridah Omar',  'faridah.omar@meridianlog.com.my', '+60127788330', 'Data literacy refresher', 'Following last year''s cohort, we want a refresher for the planning team — about 22 people, ideally December.', 'DATA_LITERACY', 0.88, false, 4200000, 'org:meridian', 'con:faridah', 'EXACT_DOMAIN', 1),
-    ('enq:perdana',    'PHONE',    interval '30 hours',  'Ganesh Pillai', 'ganesh.pillai@perdanautilities.com.my', '+60133322990', 'Safety leadership — substation teams', 'Called to ask about safety leadership for substation supervisors. Around 35 people, wants HRD Corp claimable.', 'SAFETY', 0.86, false, 2730000, 'org:perdana', 'con:ganesh', 'MANUAL', 2),
+    ('enq:perdana',    'PHONE',    interval '30 hours',  'Ganesh Pillai', 'ganesh.pillai@perdanautilities.com.my', '+60133322990', 'Safety leadership — substation teams', 'Called to ask about safety leadership for substation supervisors. Around 35 people, wants HRD Corp claimable.', 'SAFETY', 0.86, false, 2730000, 'org:perdana', 'con:ganesh', 'MANUAL', 3),
     ('enq:sutera',     'EMAIL',    interval '52 hours',  'Suresh Kumaran', 'suresh@suterahospitality.com', NULL, 'Re-opening conversation on service recovery', 'We paused last year but would like to revisit service recovery training for front office, maybe 18 people.', 'SERVICE', 0.79, false, 980000, 'org:sutera', 'con:suresh', 'FUZZY_NAME', NULL),
     ('enq:unclear',    'WHATSAPP', interval '3 hours',   '+60 12-778 3410', NULL, '+60127783410', 'training?', 'hi do you all do the safety one ah', 'UNCLEAR', 0.41, true, NULL, NULL, NULL, NULL, NULL),
     ('enq:conference', 'EMAIL',    interval '62 hours',  'Conference Alerts', 'noreply@conferencealerts.example', NULL, 'Your invitation: ASEAN L&D Summit 2027', 'Register now for early-bird rates on the region''s largest L&D gathering. Group discounts available.', 'NOT_AN_ENQUIRY', 0.96, false, NULL, NULL, NULL, NULL, NULL),
     ('enq:penang',     'WHATSAPP', interval '68 hours',  '+60 19-220 8871', NULL, '+60192208871', 'Quotation request', 'Good morning, can I get a quote for a 1-day communication workshop for 25 staff in Penang?', 'COMMUNICATION', 0.83, false, 890000, NULL, NULL, NULL, NULL),
-    ('enq:nusantara',  'EMAIL',    interval '92 hours',  'Procurement — Nusantara Foods', 'procurement@nusantarafoods.example', NULL, 'RFQ: supervisory skills, 2 cohorts', 'Please find attached our RFQ for supervisory skills training, two cohorts of 25, delivery by March 2027.', 'SUPERVISORY', 0.90, false, 3600000, NULL, NULL, NULL, 1),
+    ('enq:nusantara',  'EMAIL',    interval '92 hours',  'Procurement — Nusantara Foods', 'procurement@nusantarafoods.example', NULL, 'RFQ: supervisory skills, 2 cohorts', 'Please find attached our RFQ for supervisory skills training, two cohorts of 25, delivery by March 2027.', 'SUPERVISORY', 0.90, false, 3600000, NULL, NULL, NULL, 3),
     ('enq:brightpath', 'WEB_FORM', interval '98 hours',  'Adeline Chong', 'adeline.chong@brightpath.example', NULL, 'Coaching for new team leads', 'We have 12 newly promoted team leads and no structured coaching. What do you recommend?', 'COACHING', 0.81, false, 1200000, NULL, NULL, NULL, NULL),
     ('enq:printworks', 'EMAIL',    interval '112 hours', 'Zul from PrintWorks', 'sales@printworks.example', NULL, 'Corporate gifts and lanyards', 'We supply lanyards, notebooks and corporate gifts at wholesale rates. Can we be your vendor?', 'VENDOR_PITCH', 0.94, false, NULL, NULL, NULL, NULL, NULL),
     ('enq:tenaga',     'EMAIL',    interval '120 hours', 'Hasnah Ibrahim', 'hasnah@tenagaklang.example', NULL, 'Change management for engineering', 'Our engineering division is restructuring and needs change management support for about 40 engineers.', 'LEADERSHIP', 0.87, false, 2450000, NULL, NULL, NULL, NULL),
@@ -271,13 +274,13 @@ SELECT pg_temp.demo_id('xf:' || v.enq || ':' || f.key), c.t, pg_temp.demo_id(v.e
 INSERT INTO core.opportunities (id, tenant_id, organisation_id, primary_contact_id, source_enquiry_id, owner_id, value_sen, probability, lost_reason, created_at, created_by_kind, created_by_id, created_by_name)
 SELECT pg_temp.demo_id(v.k), c.t, pg_temp.demo_id(v.org), pg_temp.demo_id(v.con),
        CASE WHEN v.enq IS NOT NULL THEN pg_temp.demo_id(v.enq) END,
-       CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END, v.value, v.prob, v.lost, c.at - v.age, 'HUMAN',
-       CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END::text, CASE v.u WHEN 1 THEN c.u1n ELSE c.u2n END
+       CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END, v.value, v.prob, v.lost, c.at - v.age, 'HUMAN',
+       CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END::text, CASE v.u WHEN 1 THEN c.u1n WHEN 2 THEN c.u2n ELSE c.u3n END
   FROM demo_ctx c, (VALUES
     ('opp:aurora',   'org:aurora',   'con:nurul',    'enq:aurora',   1, 1850000::bigint, 0.70, NULL,                        interval '72 hours'),
     ('opp:kenanga',  'org:kenanga',  'con:weisheng', 'enq:kenanga',  2, 6720000,         0.30, NULL,                        interval '18 hours'),
     ('opp:meridian', 'org:meridian', 'con:faridah',  'enq:meridian', 1, 4200000,         0.60, NULL,                        interval '42 hours'),
-    ('opp:perdana',  'org:perdana',  'con:ganesh',   'enq:perdana',  2, 2180000,         0.50, NULL,                        interval '28 hours'),
+    ('opp:perdana',  'org:perdana',  'con:ganesh',   'enq:perdana',  3, 2180000,         0.50, NULL,                        interval '28 hours'),
     ('opp:sutera',   'org:sutera',   'con:suresh',   NULL,           2,  980000,         0.00, 'Lost on price last year',   interval '130 days')
   ) AS v(k, org, con, enq, u, value, prob, lost, age)
  WHERE NOT EXISTS (SELECT 1 FROM core.opportunities x WHERE x.id = pg_temp.demo_id(v.k))
@@ -303,7 +306,7 @@ UPDATE core.opportunities AS o SET stage = 'LOST', stage_changed_at = now()
 
 INSERT INTO core.tnas (id, tenant_id, opportunity_id, questionnaire_template_id, audience_headcount, audience_level, audience_sites, audience_language, budget_sen, created_at, created_by_kind, created_by_id, created_by_name)
 SELECT pg_temp.demo_id(v.k), c.t, pg_temp.demo_id(v.opp), pg_temp.demo_id('tpl:tna'), v.headcount, v.level, v.sites, 'EN', v.budget,
-       c.at - v.age, 'HUMAN', CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END::text, CASE v.u WHEN 1 THEN c.u1n ELSE c.u2n END
+       c.at - v.age, 'HUMAN', CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END::text, CASE v.u WHEN 1 THEN c.u1n WHEN 2 THEN c.u2n ELSE c.u3n END
   FROM demo_ctx c, (VALUES
     ('tna:aurora',   'opp:aurora',   30, 'LINE_MANAGER',  ARRAY['Shah Alam','Klang'],     NULL::bigint, 1, interval '70 hours'),
     ('tna:meridian', 'opp:meridian', 22, 'PLANNER',       ARRAY['Port Klang'],            4200000,      1, interval '40 hours'),
@@ -412,11 +415,11 @@ SELECT pg_temp.demo_id('sec:' || v.pro || ':' || v.n), c.t, pg_temp.demo_id(v.pr
 
 INSERT INTO core.quotations (id, tenant_id, proposal_id, rate_card_id, pax, sell_price_sen, direct_cost_sen, programme_floor_price_sen, floor_margin_rate, commission_rate, commission_payable_on, created_at, created_by_kind, created_by_id, created_by_name)
 SELECT pg_temp.demo_id(v.k), c.t, pg_temp.demo_id(v.pro), pg_temp.demo_id('rc:2026'), v.pax, v.sell, v.cost, v.floor, 0.35, 0.08, 'COLLECTION',
-       c.at - v.age, 'HUMAN', CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END::text, CASE v.u WHEN 1 THEN c.u1n ELSE c.u2n END
+       c.at - v.age, 'HUMAN', CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END::text, CASE v.u WHEN 1 THEN c.u1n WHEN 2 THEN c.u2n ELSE c.u3n END
   FROM demo_ctx c, (VALUES
     ('quo:aurora',   'pro:aurora',   30, 1850000::bigint, 1140000::bigint, 1390000::bigint, 1, interval '47 hours'),
     ('quo:meridian', 'pro:meridian', 22, 1920000,         991000,          1440000,         1, interval '19 hours'),
-    ('quo:perdana',  'pro:perdana',  35, 2180000,         902500,          1417000,         2, interval '5 hours')
+    ('quo:perdana',  'pro:perdana',  35, 2180000,         902500,          1417000,         3, interval '5 hours')
   ) AS v(k, pro, pax, sell, cost, floor, u, age)
  WHERE NOT EXISTS (SELECT 1 FROM core.quotations x WHERE x.id = pg_temp.demo_id(v.k))
  ORDER BY v.age DESC;
@@ -449,16 +452,16 @@ INSERT INTO core.follow_ups (id, tenant_id, organisation_id, contact_id, proposa
 SELECT pg_temp.demo_id(v.k), c.t, pg_temp.demo_id(v.org), pg_temp.demo_id(v.con),
        CASE WHEN v.pro IS NOT NULL THEN pg_temp.demo_id(v.pro) END,
        v.reason, current_date + v.due, v.status::core.follow_up_status, v.autonomy::core.autonomy_level,
-       CASE v.u WHEN 1 THEN c.u1 ELSE c.u2 END, c.at - interval '6 hours', 'AGENT', 'agent_followup', 'Follow-up Agent'
+       CASE v.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END, c.at - interval '6 hours', 'AGENT', 'agent_followup', 'Follow-up Agent'
   FROM demo_ctx c, (VALUES
     ('fup:aurora',   'org:aurora',   'con:nurul',    'pro:aurora',   'Proposal drafted · confirm November dates before sending',   0,  'DUE',       'SUGGEST', 1),
     ('fup:kenanga',  'org:kenanga',  'con:weisheng', NULL,           'Discovery call requested · no reply to two emails',          -3, 'OVERDUE',   'SUGGEST', 2),
     ('fup:meridian', 'org:meridian', 'con:faridah',  'pro:meridian', 'Needs analysis complete · decision promised this week',      -1, 'OVERDUE',   'SUGGEST', 1),
-    ('fup:perdana',  'org:perdana',  'con:ganesh',   NULL,           'Start date still open · last contact two days ago',          1,  'DUE',       'SUGGEST', 2),
+    ('fup:perdana',  'org:perdana',  'con:ganesh',   NULL,           'Start date still open · last contact two days ago',          1,  'DUE',       'SUGGEST', 3),
     ('fup:sutera',   'org:sutera',   'con:suresh',   NULL,           'Re-opened conversation · send the service catalogue',        2,  'DUE',       'SUGGEST', 2),
     ('fup:ravi',     'org:aurora',   'con:ravi',     NULL,           'Named on the delivery brief · no PDPA consent recorded',     4,  'DUE',       'OBSERVE', 1),
     ('fup:faridah2', 'org:meridian', 'con:faridah',  NULL,           'Last year''s cohort certificates · resend requested',       -6, 'SENT',      'SUGGEST', 1),
-    ('fup:ganesh2',  'org:perdana',  'con:ganesh',   NULL,           'Safety brief shared · no response needed yet',               9,  'DISMISSED', 'OBSERVE', 2)
+    ('fup:ganesh2',  'org:perdana',  'con:ganesh',   NULL,           'Safety brief shared · no response needed yet',               9,  'DISMISSED', 'OBSERVE', 3)
   ) AS v(k, org, con, pro, reason, due, status, autonomy, u)
  WHERE NOT EXISTS (SELECT 1 FROM core.follow_ups x WHERE x.id = pg_temp.demo_id(v.k));
 
@@ -485,7 +488,7 @@ SELECT pg_temp.demo_id('msg:' || v.fup || ':' || v.channel), c.t, 'FOLLOWUP', v.
 
 -- ── Pending approvals ─────────────────────────────────────────────────────────────
 -- Envelope first (QUEUED_FOR_APPROVAL), then the approval, then the link.
--- Assigned to the MDs alternately so badge_counts is non-zero for both; SLAs are
+-- Assigned across the three MDs so badge_counts is non-zero for each (2/1/1); SLAs are
 -- relative to the seed run so the inbox shows every urgency group.
 
 CREATE TEMP TABLE demo_approvals ON COMMIT DROP AS
@@ -513,7 +516,7 @@ SELECT v.*,
      '["Below the catalogue floor, not only the margin floor."]',
      '{"level":"HIGH","note":"Sets the price anchor for a new account."}',
      '[{"op":"UPDATE","entity":"Quotation","description":"sellPrice RM 21,800 → RM 13,800"},{"op":"UPDATE","entity":"Proposal","description":"value RM 21,800 → RM 13,800"}]'),
-    ('followup-send', 'FOLLOWUP_SEND',    'APV-08', 'fup:kenanga',    'follow_up', 'AGENT', 'agent_followup',  'Follow-up Agent',  0.88,          'ACT_WITH_APPROVAL', NULL,            NULL,            2, interval '2 days',   true,
+    ('followup-send', 'FOLLOWUP_SEND',    'APV-08', 'fup:kenanga',    'follow_up', 'AGENT', 'agent_followup',  'Follow-up Agent',  0.88,          'ACT_WITH_APPROVAL', NULL,            NULL,            3, interval '2 days',   true,
      'Send follow-up · Kenanga Retail Group Berhad',
      'Two unanswered emails; a third touch goes to a human before it leaves.',
      '{"verdict":"SEND_AS_DRAFTED","rationale":"Contact has email consent on record and the tone is neutral."}',
@@ -558,7 +561,7 @@ $pol$;
 INSERT INTO core.action_requests (id, tenant_id, action_type, target_ref, target_entity, target_id, value_sen, currency, requested_by_kind, requested_by_id, requested_by_role, confidence, reasoning, evidence, autonomy_level, matched_policy_id, status, created_at)
 SELECT a.action_id, c.t, a.action_type, a.target_ref, a.entity, pg_temp.demo_id(a.target), a.value,
        CASE WHEN a.value IS NOT NULL THEN 'MYR' END,
-       a.kind, CASE WHEN a.kind = 'HUMAN' THEN c.u2::text ELSE a.agent_id END,
+       a.kind, CASE WHEN a.kind = 'HUMAN' THEN c.u3::text ELSE a.agent_id END,
        CASE WHEN a.kind = 'HUMAN' THEN 'MD' END,
        a.confidence, a.reason, a.evidence::jsonb, a.autonomy, a.policy_id, 'QUEUED_FOR_APPROVAL', c.at - interval '90 minutes'
   FROM demo_ctx c, demo_approvals a
@@ -568,11 +571,11 @@ SELECT a.action_id, c.t, a.action_type, a.target_ref, a.entity, pg_temp.demo_id(
 INSERT INTO core.approval_requests (id, tenant_id, action_request_id, policy_id, action_type, subject, target_ref, value_sen, currency, margin_rate, requested_by_kind, requested_by_id, requested_by_name, confidence, autonomy, reason, recommendation, evidence, deviations, risk, diff, diff_hash, approver_role, assigned_to_id, assigned_to_name, sla_due_at, expires_at, bulk_approvable, status, created_at)
 SELECT a.approval_id, c.t, a.action_id, a.policy_id, a.action_type, a.subject, a.target_ref, a.value,
        CASE WHEN a.value IS NOT NULL THEN 'MYR' END, a.margin,
-       a.kind, CASE WHEN a.kind = 'HUMAN' THEN c.u2::text ELSE a.agent_id END,
-       CASE WHEN a.kind = 'HUMAN' THEN c.u2n ELSE a.agent_name END,
+       a.kind, CASE WHEN a.kind = 'HUMAN' THEN c.u3::text ELSE a.agent_id END,
+       CASE WHEN a.kind = 'HUMAN' THEN c.u3n ELSE a.agent_name END,
        a.confidence, a.autonomy, a.reason, a.recommendation::jsonb, a.evidence::jsonb, a.deviations::jsonb, a.risk::jsonb,
        a.diff::jsonb, encode(sha256(convert_to(a.diff::jsonb::text, 'UTF8')), 'hex'),
-       'MD', CASE a.u WHEN 1 THEN c.u1 ELSE c.u2 END::text, CASE a.u WHEN 1 THEN c.u1n ELSE c.u2n END,
+       'MD', CASE a.u WHEN 1 THEN c.u1 WHEN 2 THEN c.u2 ELSE c.u3 END::text, CASE a.u WHEN 1 THEN c.u1n WHEN 2 THEN c.u2n ELSE c.u3n END,
        c.at + a.sla, c.at + a.sla + interval '1 day', a.bulk, 'PENDING', c.at - interval '90 minutes'
   FROM demo_ctx c, demo_approvals a
   JOIN core.action_requests r ON r.id = a.action_id

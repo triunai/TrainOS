@@ -1,7 +1,7 @@
 -- Pin for hosted_demo_akademi_perdana.sql and hosted_demo_wipe.sql. Ends in ROLLBACK.
 --
 -- Run from the repo root against a database where tenant `akademi-perdana` is
--- provisioned and both MD users are members (the hosted post-provision state):
+-- provisioned and all three MD users are members (the hosted post-provision state):
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/seeds/test_hosted_demo.sql
 --
 -- Counts are split into seed rows (id in the de30da7a-5eed-4… range) and every
@@ -10,7 +10,7 @@
 --
 -- T0  preconditions, and a snapshot of every tenant-scoped table (seed / other rows)
 -- T1  seed: exact seed-row counts per table; no other row count moved
--- T2  seed: legal states only, refs allocated, every user reference is a real MD
+-- T2  seed: legal states only, refs allocated, every user reference is one of the three MDs
 -- T3  the 018 read RPCs return rows for each MD, as `authenticated` with hook claims
 -- T4  second seed run changes nothing (counts, row versions, ref counters)
 -- T5  wipe: zero seed rows anywhere; every other row count as at T0 (ref counters excepted)
@@ -102,7 +102,7 @@ $t1$;
 DO $t2$
 DECLARE
   v_t  uuid := (SELECT id FROM public.tenants WHERE slug = 'akademi-perdana');
-  v_md uuid[] := ARRAY['d1449fad-b732-4ee2-93c9-37f338e01358','ad615910-2d87-42a4-9855-58f52409ec6d']::uuid[];
+  v_md uuid[] := ARRAY['d1449fad-b732-4ee2-93c9-37f338e01358','ad615910-2d87-42a4-9855-58f52409ec6d','415dad6e-c53f-4a84-ab50-bf8e9e65223f']::uuid[];
   v_n  bigint;
 BEGIN
   SELECT count(*) INTO v_n FROM core.enquiries WHERE tenant_id = v_t AND id::text LIKE 'de30da7a-5eed-4%'
@@ -120,7 +120,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM core.opportunities WHERE tenant_id = v_t AND id::text LIKE 'de30da7a-5eed-4%' AND owner_id <> ALL (v_md))
   OR EXISTS (SELECT 1 FROM core.organisations WHERE tenant_id = v_t AND id::text LIKE 'de30da7a-5eed-4%' AND owner_id <> ALL (v_md))
   OR EXISTS (SELECT 1 FROM core.follow_ups    WHERE tenant_id = v_t AND id::text LIKE 'de30da7a-5eed-4%' AND owner_id <> ALL (v_md)) THEN
-    RAISE EXCEPTION 'T2 FAIL: an owner_id is not one of the two MD users';
+    RAISE EXCEPTION 'T2 FAIL: an owner_id is not one of the three MD users';
   END IF;
   IF (SELECT string_agg(status::text, ',' ORDER BY status::text) FROM core.tnas
        WHERE tenant_id = v_t AND id::text LIKE 'de30da7a-5eed-4%') <> 'COMPLETE,COMPLETE,SENT' THEN
@@ -136,7 +136,7 @@ BEGIN
      AND a.assigned_to_id::uuid = ANY (v_md) AND a.target_ref IS NOT NULL
      AND EXISTS (SELECT 1 FROM core.action_policies p WHERE p.tenant_id = v_t AND p.id = a.policy_id AND p.action_type = a.action_type);
   IF v_n <> 4 THEN RAISE EXCEPTION 'T2 FAIL: % of 4 approvals are linked, PENDING, MD-assigned and policy-consistent', v_n; END IF;
-  RAISE NOTICE 'T2 PASS: legal states only, refs allocated, owners and assignees are the two MDs, 4 linked pending approvals';
+  RAISE NOTICE 'T2 PASS: legal states only, refs allocated, owners and assignees are the three MDs, 4 linked pending approvals';
 END
 $t2$;
 
@@ -161,7 +161,7 @@ BEGIN
          (SELECT ref FROM core.opportunities  WHERE id::text LIKE 'de30da7a-5eed-4%' ORDER BY ref LIMIT 1) AS opp
     INTO v_refs;
 
-  FOREACH v_uid IN ARRAY ARRAY['d1449fad-b732-4ee2-93c9-37f338e01358','ad615910-2d87-42a4-9855-58f52409ec6d']::uuid[] LOOP
+  FOREACH v_uid IN ARRAY ARRAY['d1449fad-b732-4ee2-93c9-37f338e01358','ad615910-2d87-42a4-9855-58f52409ec6d','415dad6e-c53f-4a84-ab50-bf8e9e65223f']::uuid[] LOOP
     v_claims := (app.custom_access_token_hook(jsonb_build_object('user_id', v_uid,
                   'claims', jsonb_build_object('sub', v_uid, 'role', 'authenticated'))) -> 'claims')::text;
     PERFORM set_config('request.jwt.claims', v_claims, true);
@@ -199,8 +199,8 @@ BEGIN
       v_line := v_line || format('%s=%s ', c.fn, COALESCE(v_rows::text, 'ok'));
     END LOOP;
     v := core.badge_counts();
-    IF (v -> 'data' ->> 'approvals')::int <> 2 THEN
-      v_bad := v_bad || format('badge_counts.approvals as %s = %s, expected 2', v_uid, v -> 'data' ->> 'approvals');
+    IF (v -> 'data' ->> 'approvals')::int <> (CASE WHEN v_uid = 'd1449fad-b732-4ee2-93c9-37f338e01358' THEN 2 ELSE 1 END) THEN
+      v_bad := v_bad || format('badge_counts.approvals as %s = %s', v_uid, v -> 'data' ->> 'approvals');
     END IF;
     IF core.me() -> 'data' ->> 'role' <> 'MD' THEN
       v_bad := v_bad || format('me.role as %s is not MD', v_uid);
@@ -210,7 +210,7 @@ BEGIN
   END LOOP;
   PERFORM set_config('request.jwt.claims', '', true);
   IF cardinality(v_bad) > 0 THEN RAISE EXCEPTION 'T3 FAIL: %', array_to_string(v_bad, ' | '); END IF;
-  RAISE NOTICE 'T3 PASS: 17 read RPCs succeed with rows for both MDs as authenticated; 2 approvals badged each';
+  RAISE NOTICE 'T3 PASS: 17 read RPCs succeed with rows for all three MDs as authenticated; approvals badged 2/1/1';
 END
 $t3$;
 

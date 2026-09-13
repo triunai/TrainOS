@@ -32,7 +32,7 @@ against the live project. It deliberately breaks two rules above, and says why i
   (`de30da7a-5eed-4…`, derived from a stable key); a re-run writes nothing and burns no refs.
 
 It never provisions a tenant, never writes `auth.users`, memberships or profiles, and points
-every user reference at the tenant's two MD users.
+every user reference at the tenant's three MD users.
 
 ```
 psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/hosted_demo_akademi_perdana.sql   # seed
