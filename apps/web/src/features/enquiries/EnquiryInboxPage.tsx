@@ -20,6 +20,7 @@ import {
   MoneyText,
   PillTabGroup,
   PrimaryButton,
+  RecordHeader,
   RefChip,
   SecondaryButton,
   StatusChip,
@@ -175,29 +176,39 @@ export function EnquiryInboxPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col gap-3 border-b border-border px-5 pb-3 pt-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-[20px] font-semibold tracking-[-0.01em]">Enquiry inbox</h1>
-          {enquiries.data ? (
-            <StatusChip>{`${enquiries.data.page.total} in view`}</StatusChip>
-          ) : null}
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <SecondaryButton>Columns</SecondaryButton>
-            <SecondaryButton>Export</SecondaryButton>
-            <SecondaryButton>Log enquiry</SecondaryButton>
-          </div>
-        </div>
+      {/* A list screen's header is a RecordHeader with no `recordRef` and no
+          condensed bar — the kit's ruling, and there is no PageHeader to reach
+          for. The bespoke `h1` + chip + button row this replaces was a second
+          visual language for a job the kit already does, which CLAUDE.md calls
+          a defect. The context count moves out of a StatusChip and onto the
+          meta line: "18 in view" is a fact about the query, not a status, and a
+          chip is how a status looks. */}
+      <div className="flex flex-col border-b border-border">
+        <RecordHeader
+          withoutCondensed
+          title="Enquiry inbox"
+          meta={[enquiries.data ? `${enquiries.data.page.total} in view` : null]}
+          actions={
+            <>
+              <SecondaryButton>Columns</SecondaryButton>
+              <SecondaryButton>Export</SecondaryButton>
+              <SecondaryButton>Log enquiry</SecondaryButton>
+            </>
+          }
+        />
 
         {views.isPending ? null : (
-          <PillTabGroup
-            tabs={tabs}
-            activeId={activeView}
-            onSelect={(id) => {
-              setActiveView(id);
-              setSelectedRef(null);
-            }}
-            label="Saved views"
-          />
+          <div className="px-5 pb-4">
+            <PillTabGroup
+              tabs={tabs}
+              activeId={activeView}
+              onSelect={(id) => {
+                setActiveView(id);
+                setSelectedRef(null);
+              }}
+              label="Saved views"
+            />
+          </div>
         )}
       </div>
 
