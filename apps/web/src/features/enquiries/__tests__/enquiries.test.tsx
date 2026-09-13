@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { fixtureClient } from "@trainos/fixtures";
-import { currentPrimaries, SPLIT_HEADER_HEIGHT } from "@/shared/components/kit";
+import { currentPrimaries } from "@/shared/components/kit";
 import { EnquiryInboxPage } from "../EnquiryInboxPage";
 import { EnquiryDetailPage } from "../EnquiryDetailPage";
 import { FollowUpQueuePage } from "../FollowUpQueuePage";
@@ -90,33 +90,68 @@ describe("M03-S01 · enquiry inbox", () => {
     expect(screen.getByText("Needs human classification")).toBeInTheDocument();
   });
 
-  /* Tightening brief §16: the two panes' header blocks are one composition, so
-     they are pinned to one height and their hairlines meet. jsdom does not lay
-     out, so the contract is checked where it is expressed — the shared height
-     class on both blocks, and neither block free to grow. */
-  it("pins both panes' header blocks to the same height so the hairlines meet", async () => {
+  /* Brief §16b, replacing the §16 alignment test this screen used to carry.
+     That one asserted both panes' header blocks shared SPLIT_HEADER_HEIGHT. The
+     user withdrew the premise: the panes are independent, the list pane has no
+     header at all, and the detail pane's header sticks to its own scroll. */
+  it("gives the list pane no header and sticks the detail header to its own scroll", async () => {
     renderScreen(<EnquiryInboxPage />, { path: "/sales/enquiries", route: "/sales/enquiries" });
 
     await screen.findByRole("heading", { name: "Enquiry inbox" });
 
-    const listHeader = await screen.findByRole("group", { name: "Filters" });
+    const queue = screen.getByRole("region", { name: "Enquiry queue" });
+
+    /* The rows start at the top of the pane. The summary bar that used to sit
+       above them moved out to the page toolbar, where it belongs to the query
+       rather than to one of the two panes reading it. */
+    expect(within(queue).queryByRole("group", { name: "Filters" })).toBeNull();
+    expect(within(queue).queryByRole("heading")).toBeNull();
+
+    /* Unfiltered, nothing counts anything. "All open 18" on the tab is the
+       whole answer, and "18 of 18 shown" underneath it was the defect. */
+    expect(screen.queryByText(/\d+ of \d+ shown/)).toBeNull();
+
     const preview = screen.getByRole("region", { name: "Enquiry preview" });
     const detailTitle = await within(preview).findByRole("heading", { level: 2 });
-    const detailHeader = detailTitle.closest("div")?.parentElement;
+    const detailHeader = detailTitle.closest("[data-split-detail-header]");
 
-    /* Asserted against the KIT constant, not against a copy of its value: the
-       point of promoting it out of this screen is that one edit moves every
-       master/detail pane, and a test carrying its own "h-[72px]" would keep
-       passing while the panes drifted apart. */
-    expect(listHeader.className).toContain(SPLIT_HEADER_HEIGHT);
-    expect(detailHeader?.className).toContain(SPLIT_HEADER_HEIGHT);
-    expect(listHeader.className.match(/h-\[\d+px\]/)?.[0]).toBe(
-      detailHeader?.className.match(/h-\[\d+px\]/)?.[0],
-    );
+    expect(detailHeader).not.toBeNull();
+    expect(detailHeader).toHaveClass("sticky");
 
-    /* Both would grow past 72px on a long subject or a third filter chip. */
-    expect(listHeader.className).toContain("flex-nowrap");
+    /* Sticky resolves against the nearest scrolling ancestor, so the pane has
+       to be the scroller. Put the scroll on a body element inside the pane —
+       which is what the old shared-height layout did — and the header scrolls
+       away with the content it is supposed to outlast. */
+    expect(detailHeader?.closest("[data-split-detail]")).toBe(preview);
+    expect(preview).toHaveClass("overflow-y-auto");
+    expect(queue).toHaveClass("overflow-y-auto");
+
+    /* A wrapping title would shorten every screenful beneath a sticky block. */
     expect(detailTitle.className).toContain("truncate");
+  });
+
+  /* §16b's row rule. The third row used to be nothing but chips, one of them a
+     StatusChip wrapped around a money value — the one thing CLAUDE.md reserves
+     chips against. */
+  it("puts the money in the row's own right column rather than in a chip", async () => {
+    renderScreen(<EnquiryInboxPage />, { path: "/sales/enquiries", route: "/sales/enquiries" });
+
+    await screen.findByRole("heading", { name: "Enquiry inbox" });
+
+    const queue = screen.getByRole("region", { name: "Enquiry queue" });
+    const [money] = await within(queue).findAllByText(/^RM/);
+    expect(money, "no enquiry in the seed carries an estimated value").toBeDefined();
+
+    /* `data-tone` is what a StatusChip renders and nothing else does, so this
+       is the assertion that the money is no longer wearing one. */
+    expect(money!.closest("[data-tone]")).toBeNull();
+    expect(money!.className).toContain("tabular-nums");
+
+    /* Row one holds the title and the money, and the row has no line that is
+       only chips — the shape §16b deleted. */
+    const row = money!.closest("button");
+    expect(row?.firstElementChild?.contains(money!)).toBe(true);
+    expect(row?.childElementCount).toBe(3);
   });
 });
 
