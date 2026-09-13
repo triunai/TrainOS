@@ -72,6 +72,11 @@ export function useReopenTna(id: string | undefined) {
     meta: { toastOnError: true },
     onSuccess: (tna) => {
       queryClient.setQueryData(queryKeys.tnas.detail(id ?? ""), tna);
+      /* The detail is not the only thing a reopen changes. The list renders
+         the status, and the recommendations hang off the detail key under
+         their own suffix, so neither is touched by `setQueryData` above and
+         both kept showing the pre-reopen answer. */
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tnas.all });
     },
   });
 }

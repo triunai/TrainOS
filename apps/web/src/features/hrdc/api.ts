@@ -108,6 +108,10 @@ export function useAttachDocument(engagementRef: string) {
     meta: { toastOnError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.claimPackets.all });
+      /* The checks count the packet's documents. Invalidating the packet alone
+         left `useComplianceChecks` saying "3 of 5 documents present" beside a
+         list that now had four. */
+      void queryClient.invalidateQueries({ queryKey: queryKeys.complianceRules.all });
     },
   });
 }

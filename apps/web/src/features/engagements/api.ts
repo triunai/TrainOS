@@ -166,6 +166,10 @@ export function useCaptureAttendance(id: string, day: number) {
     mutationFn: (body) => api.captureAttendance(id, day, body),
     onSuccess: (sheet) => {
       queryClient.setQueryData(engagementKeys.attendance(actorId, id, day), sheet);
+      /* `metrics.attendanceRate` is computed from the sheets and rendered on
+         both screens. Writing the sheet into cache without this left the rate
+         reading the value from before the capture. */
+      void queryClient.invalidateQueries({ queryKey: engagementKeys.all });
     },
   });
 }
