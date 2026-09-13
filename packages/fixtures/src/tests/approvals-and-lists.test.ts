@@ -207,6 +207,43 @@ describe("bulk decisions", () => {
   });
 
   /**
+   * 011:3474-3483 (11508ed): `app.bulk_decide` counts DISTINCT approval ids
+   * against the array length and refuses a batch naming one approval twice,
+   * AHEAD of the missing-hash check. The fixture applied the approval twice and
+   * returned two results.
+   */
+  it("refuses a batch that names one approval twice, ahead of the missing-hash check", async () => {
+    const ruleChange = await api.getApproval(APPROVAL_RULE_CHANGE);
+    const refusal = {
+      code: "VALIDATION_FAILED",
+      http: 422,
+      message: "items must be a non-empty set of distinct approvalId values",
+      details: { reason: "INVALID_APPROVAL_IDS" },
+    };
+    await expect(
+      api.bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+        ],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject(refusal);
+    /* A hashless duplicate still refuses as a duplicate: 011 checks ids first. */
+    await expect(
+      api.bulkDecideApprovals({
+        items: [
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: "" },
+          { approvalId: APPROVAL_RULE_CHANGE, diffHash: ruleChange.diffHash },
+        ],
+        decision: "APPROVE",
+      }),
+    ).rejects.toMatchObject(refusal);
+    const after = await api.getApproval(APPROVAL_RULE_CHANGE);
+    expect(after.status).toBe("PENDING");
+  });
+
+  /**
    * 011:3407-3479 (062e5e2): `core.bulk_decide_approvals` refuses an APPROVE
    * item with no hash BEFORE any item in the batch is applied — the fixture
    * oracle enforces the same order, or the guard is dead as soon as a caller

@@ -1092,12 +1092,27 @@ export class FixtureClient {
     options: RequestOptions = {},
   ): Promise<ApprovalBulkDecideResponse> {
     return this.#write(options, body, 200, () => {
-      /* 011:3455-3479 order, mirrored exactly: missing-hash before not-found,
-         not-found before bulk-approvable, bulk-approvable before
-         DIFF_CHANGED — so a batch mixing failure modes refuses on the same
-         one, on both clients, every time. */
+      /* `app.bulk_decide`'s refusal order (011 at 11508ed), so a batch mixing
+         failure modes refuses on the same one on both clients:
+           empty items          3462-3468
+           duplicate ids        3474-3483
+           missing APPROVE hash 3497-3511
+           not found            3550-3556
+           not bulk-approvable  3558-3571
+           stale hash           per item, via decide_approval, from 3573
+         The idempotency check between the hash and not-found checks
+         (3514-3548) is `#write`'s, which runs it before everything here — so
+         a key reused with a different, invalid body is the one case that refuses
+         differently. The stale hash is pre-scanned rather than raised mid-loop:
+         011 relies on the transaction rolling back the items already applied,
+         and a fixture has no transaction. */
       if (body.items.length === 0) {
         throw validationFailed("items must be a non-empty array", {
+          reason: "INVALID_APPROVAL_IDS",
+        });
+      }
+      if (new Set(body.items.map((item) => item.approvalId)).size !== body.items.length) {
+        throw validationFailed("items must be a non-empty set of distinct approvalId values", {
           reason: "INVALID_APPROVAL_IDS",
         });
       }
