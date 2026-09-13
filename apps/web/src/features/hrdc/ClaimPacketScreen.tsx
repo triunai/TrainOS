@@ -2,11 +2,12 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ActionResponse, ClaimPacket, RequiredDocument } from "@trainos/contract";
 import {
-  Breadcrumb,
+  ActionOutcome,
   CitationChip,
   CompletenessBar,
   ContentCard,
   DateText,
+  describeActionError,
   DocumentChecklistRow,
   ErrorState,
   ExceptionBanner,
@@ -20,9 +21,10 @@ import {
   StatusChip,
   humanise,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
-import { ActionOutcome } from "./ActionOutcome";
 import { StandInField } from "./StandInField";
+import { HRDC_PACKET_PATH } from "./paths";
 import {
   useAttachDocument,
   useClaimPacket,
@@ -47,6 +49,12 @@ import {
  */
 
 export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) {
+  useBreadcrumb([
+    { label: "Compliance" },
+    { label: "HRD Corp", href: HRDC_PACKET_PATH },
+    { label: `${engagementRef} packet` },
+  ]);
+
   const packet = useClaimPacket(engagementRef);
   const checks = useComplianceChecks(engagementRef);
   const attach = useAttachDocument(engagementRef);
@@ -88,21 +96,6 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
 
   return (
     <div className="flex flex-col">
-      <div className="px-6 pt-5">
-        <Breadcrumb
-          items={[
-            { label: "Compliance" },
-            { label: "HRD Corp", href: "/compliance/hrd-corp" },
-            { label: `${data.engagementRef} packet` },
-          ]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         title={`Claim packet · ${data.engagementRef}`}
         recordRef={data.employerCode}
@@ -295,9 +288,15 @@ export function ClaimPacketScreen({ engagementRef }: { engagementRef: string }) 
             <ActionOutcome
               className="mt-3"
               response={outcome}
-              error={markSubmitted.error}
+              error={
+                markSubmitted.error
+                  ? describeActionError(
+                      toApiError(markSubmitted.error),
+                      "The claim could not be marked as submitted",
+                    )
+                  : undefined
+              }
               subject={`Claim filing · ${data.engagementRef}`}
-              executedTitle="Recorded as submitted on eTRIS"
             />
           </ContentCard>
 

@@ -2,10 +2,11 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { ActionResponse, Invoice, Money, SyncEvent } from "@trainos/contract";
 import {
-  Breadcrumb,
+  ActionOutcome,
   ContentCard,
   DataTable,
   DateText,
+  describeActionError,
   Drawer,
   EmptyState,
   ErrorState,
@@ -24,10 +25,11 @@ import {
   humanise,
   type Column,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
-import { ActionOutcome } from "./ActionOutcome";
 import { StandInField } from "./StandInField";
 import { useInvoice, useInvoices, useRecordPayment, useRepushInvoice } from "./api";
+import { INVOICES_PATH } from "./paths";
 
 /**
  * M13-S02 · invoice detail.
@@ -53,6 +55,12 @@ function sumLines(invoice: Invoice): Money {
 }
 
 export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
+  useBreadcrumb([
+    { label: "Finance" },
+    { label: "Invoices", href: INVOICES_PATH },
+    { label: invoiceRef },
+  ]);
+
   const navigate = useNavigate();
   const invoice = useInvoice(invoiceRef);
   const invoices = useInvoices();
@@ -98,21 +106,6 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
 
   return (
     <div className="flex flex-col">
-      <div className="px-6 pt-5">
-        <Breadcrumb
-          items={[
-            { label: "Finance" },
-            { label: "Invoices", href: "/finance/invoices" },
-            { label: data.ref },
-          ]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         title={data.ref}
         recordRef={data.organisationRef}
@@ -171,9 +164,15 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
         <div className="flex flex-col gap-5">
           <ActionOutcome
             response={pushOutcome}
-            error={repush.error}
+            error={
+              repush.error
+                ? describeActionError(
+                    toApiError(repush.error),
+                    "The invoice was not pushed to the accounting package",
+                  )
+                : undefined
+            }
             subject={`Re-push · ${data.ref}`}
-            executedTitle="Pushed to the accounting package"
           />
 
           <ContentCard title="Line items" flush>
@@ -412,9 +411,11 @@ export function InvoiceDetailScreen({ invoiceRef }: { invoiceRef: string }) {
           />
           {recordPayment.error ? (
             <ActionOutcome
-              error={recordPayment.error}
+              error={describeActionError(
+                toApiError(recordPayment.error),
+                "The payment was not recorded",
+              )}
               subject={`Payment · ${data.ref}`}
-              executedTitle="Payment recorded"
             />
           ) : null}
         </div>

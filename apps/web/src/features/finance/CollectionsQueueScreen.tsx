@@ -3,13 +3,14 @@ import { Link, useNavigate } from "react-router-dom";
 import type { ActionResponse, CollectionRule, MessageDraft } from "@trainos/contract";
 import type { FixtureReceivable } from "@trainos/fixtures";
 import {
+  ActionOutcome,
   AIChip,
   AgingStrip,
   AutonomyChip,
-  Breadcrumb,
   ContentCard,
   DataTable,
   DateText,
+  describeActionError,
   EmptyState,
   ErrorState,
   EscalationLadder,
@@ -25,8 +26,8 @@ import {
   type Column,
   type LadderRung,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
-import { ActionOutcome } from "./ActionOutcome";
 import {
   useCollectionDraft,
   useCollectionRules,
@@ -88,6 +89,8 @@ function rungsFor(rules: CollectionRule[], stage: string | undefined): LadderRun
 }
 
 export function CollectionsQueueScreen() {
+  useBreadcrumb([{ label: "Finance" }, { label: "Collections" }, { label: "Overdue" }]);
+
   const navigate = useNavigate();
   const queue = useCollectionsQueue();
   const aging = useReceivablesAging();
@@ -185,17 +188,6 @@ export function CollectionsQueueScreen() {
 
   return (
     <div className="flex flex-col">
-      <div className="px-6 pt-5">
-        <Breadcrumb
-          items={[{ label: "Finance" }, { label: "Collections" }, { label: "Overdue" }]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <div className="flex flex-wrap items-center gap-3 px-6 pb-4 pt-3">
         <h1 className="text-[20px] font-semibold text-ink">Collections</h1>
         {arTotal ? (
@@ -283,9 +275,12 @@ export function CollectionsQueueScreen() {
         <div className="flex flex-col gap-4">
           <ActionOutcome
             response={outcome}
-            error={send.error}
+            error={
+              send.error
+                ? describeActionError(toApiError(send.error), "The reminder was not queued")
+                : undefined
+            }
             subject={selected ? `Collections reminder · ${selected.invoiceRef}` : "Reminder"}
-            executedTitle="Reminder sent"
           />
 
           {selected ? (
@@ -410,12 +405,21 @@ function DraftPanel({
             ) : null}
           </p>
 
+          {/* Pass the unrounded rate and the other category's rate straight
+              through: a per-message rate runs to four decimals, and the saving
+              line is the server's comparison, not one composed here. */}
           <WhatsAppCostStrip
             category={draft.category}
             templateLabel={draft.templateId}
             recipients={draft.recipients}
             ratePerMessage={draft.ratePerMessage}
             estimatedCost={draft.estimatedCost}
+            {...(draft.ratePerMessageExact
+              ? { ratePerMessageExact: draft.ratePerMessageExact }
+              : {})}
+            {...(draft.alternativeCategoryRate
+              ? { alternative: draft.alternativeCategoryRate }
+              : {})}
           />
 
           <p className="text-[12px] text-ink-secondary">

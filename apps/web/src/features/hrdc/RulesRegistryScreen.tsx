@@ -3,7 +3,6 @@ import { Link, useNavigate } from "react-router-dom";
 import type { ComplianceRule, ComplianceRuleExpression, RuleStatus } from "@trainos/contract";
 import {
   AIChip,
-  Breadcrumb,
   DataTable,
   DateText,
   Drawer,
@@ -18,6 +17,7 @@ import {
   type Column,
   type StatusTone,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
 import { useComplianceRules, useCreateComplianceRule } from "./api";
 import { StandInField } from "./StandInField";
@@ -72,6 +72,8 @@ const TAB_STATUS: Record<string, RuleStatus | null> = {
 };
 
 export function RulesRegistryScreen() {
+  useBreadcrumb([{ label: "Compliance" }, { label: "Rules" }, { label: "Registry" }]);
+
   const navigate = useNavigate();
   const rules = useComplianceRules();
   const create = useCreateComplianceRule();
@@ -175,17 +177,6 @@ export function RulesRegistryScreen() {
 
   return (
     <div className="flex flex-col">
-      <div className="px-6 pt-5">
-        <Breadcrumb
-          items={[{ label: "Compliance" }, { label: "Rules" }, { label: "Registry" }]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <div className="flex flex-wrap items-center gap-3 px-6 pb-4 pt-3">
         <h1 className="text-[20px] font-semibold text-ink">HRD Corp rules</h1>
         <span className="font-mono text-[12px] text-ink-muted">

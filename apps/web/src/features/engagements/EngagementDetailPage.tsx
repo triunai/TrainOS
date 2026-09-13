@@ -2,9 +2,11 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { EngagementSession } from "@trainos/contract";
 import {
+  ActionOutcome,
   ChecklistRow,
   ContentCard,
   DataTable,
+  describeActionError,
   ENGAGEMENT_TONE,
   ErrorState,
   ExceptionBanner,
@@ -24,7 +26,6 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { ActionOutcome } from "./ActionOutcome";
 import {
   asApiError,
   useAttendanceDays,
@@ -204,7 +205,14 @@ export function EngagementDetailPage() {
           {(closeOut.data || closeOut.error) && (
             <ActionOutcome
               {...(closeOut.data ? { response: closeOut.data } : {})}
-              {...(closeOut.error ? { error: asApiError(closeOut.error) } : {})}
+              {...(closeOut.error
+                ? {
+                    error: describeActionError(
+                      asApiError(closeOut.error),
+                      `${record.ref} could not be closed out`,
+                    ),
+                  }
+                : {})}
               subject={`Close out ${record.ref}`}
               onDismiss={() => closeOut.reset()}
             />

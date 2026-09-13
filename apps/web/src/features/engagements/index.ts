@@ -17,7 +17,6 @@ export const attendancePath = (ref: string, day?: number) =>
 
 export { EngagementDetailPage } from "./EngagementDetailPage";
 export { AttendanceCapturePage } from "./AttendanceCapturePage";
-export { ActionOutcome, type ActionOutcomeProps } from "./ActionOutcome";
 export {
   absentees,
   joinAttendance,

@@ -2,10 +2,11 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ActionResponse, DiffLine, RuleChange, RuleChangeSet } from "@trainos/contract";
 import {
+  ActionOutcome,
   AIChip,
-  Breadcrumb,
   ContentCard,
   DateText,
+  describeActionError,
   DiffBlock,
   ErrorState,
   formatDate,
@@ -18,9 +19,10 @@ import {
   StatusChip,
 } from "@/shared/components/kit";
 import { Checkbox } from "@/shared/components/ui/checkbox";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
-import { ActionOutcome } from "./ActionOutcome";
 import { useApproveRuleChanges, useRuleChangeSet } from "./api";
+import { HRDC_RULE_CHANGES_PATH } from "./paths";
 
 /**
  * M12-S08 · rule change review.
@@ -66,6 +68,13 @@ function diffOf(change: RuleChange): DiffLine[] {
 
 export function RuleChangeReviewScreen({ documentId }: { documentId: string }) {
   const changeSet = useRuleChangeSet(documentId);
+
+  useBreadcrumb([
+    { label: "Compliance" },
+    { label: "Rule changes", href: HRDC_RULE_CHANGES_PATH },
+    { label: changeSet.data?.title ?? documentId },
+  ]);
+
   const approve = useApproveRuleChanges(documentId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
@@ -123,21 +132,6 @@ export function RuleChangeReviewScreen({ documentId }: { documentId: string }) {
 
   return (
     <div className="flex flex-col">
-      <div className="px-6 pt-5">
-        <Breadcrumb
-          items={[
-            { label: "Compliance" },
-            { label: "Rule changes", href: "/compliance/rule-changes" },
-            { label: data.title },
-          ]}
-          linkAs={({ href, children, className }) => (
-            <Link to={href} className={className}>
-              {children}
-            </Link>
-          )}
-        />
-      </div>
-
       <RecordHeader
         title={`${data.title} · proposed rule changes`}
         recordRef={data.documentId}
@@ -214,9 +208,15 @@ export function RuleChangeReviewScreen({ documentId }: { documentId: string }) {
 
           <ActionOutcome
             response={outcome}
-            error={approve.error}
+            error={
+              approve.error
+                ? describeActionError(
+                    toApiError(approve.error),
+                    "The rule changes were not activated",
+                  )
+                : undefined
+            }
             subject={`Rule changes · ${data.title}`}
-            executedTitle="Rule changes activated"
           />
 
           {shown.map((change) => (

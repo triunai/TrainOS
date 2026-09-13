@@ -2,9 +2,11 @@ import { useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import type { AttendanceRow, AttendanceSheet, CaptureMethod } from "@trainos/contract";
 import {
+  ActionOutcome,
   ConfirmDialog,
   ContentCard,
   DataTable,
+  describeActionError,
   ErrorState,
   ExceptionBanner,
   LoadingState,
@@ -19,7 +21,6 @@ import {
   type Column,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { ActionOutcome } from "./ActionOutcome";
 import {
   asApiError,
   useAttendanceDays,
@@ -185,7 +186,14 @@ export function AttendanceCapturePage() {
         {(action.data || action.error) && (
           <ActionOutcome
             {...(action.data ? { response: action.data } : {})}
-            {...(action.error ? { error: asApiError(action.error) } : {})}
+            {...(action.error
+              ? {
+                  error: describeActionError(
+                    asApiError(action.error),
+                    `Day ${sheet.day} was not updated`,
+                  ),
+                }
+              : {})}
             subject={`${record.ref} day ${sheet.day}`}
             onDismiss={() => action.reset()}
           />
@@ -193,7 +201,10 @@ export function AttendanceCapturePage() {
 
         {capture.error ? (
           <ActionOutcome
-            error={asApiError(capture.error)}
+            error={describeActionError(
+              asApiError(capture.error),
+              `Attendance on day ${sheet.day} was not captured`,
+            )}
             subject={`Capture on day ${sheet.day}`}
             onDismiss={() => capture.reset()}
           />
