@@ -1,0 +1,51 @@
+# Railway service definition for the TrainOS job worker.
+#
+# Proposal §3.3 puts compute on Railway in Singapore, alongside the web app and
+# the portals, on one bill. The worker is a long-running process, not a cron
+# target: it owns its own loop so it can observe its own outcomes, which is the
+# failure `pg_net`'s fire-and-forget POST cannot report (doc 08 §10).
+#
+# Deploy order is SQL first, then this service, then any schedule — the
+# "edge-deploy-skew" trap. A worker deployed ahead of its migrations claims
+# nothing and logs a permission error on every tick.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm ci && npm run typecheck -w apps/worker && npm run test -w apps/worker"
+
+[deploy]
+startCommand = "node --experimental-strip-types apps/worker/src/index.ts"
+# Restart on a crash, but not forever: a worker that cannot reach the database
+# should stop and be visible, not flap.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+# /healthz reports degraded (503) once consecutive claims fail, so a worker that
+# is alive but cannot claim is replaced rather than left running.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+# SIGTERM stops the claim loop and lets in-flight jobs finish inside
+# WORKER_SHUTDOWN_GRACE_MS; anything still running is left to app.reap_jobs.
+numReplicas = 1
+
+[deploy.region]
+# Singapore, per proposal §3.3 and the hosted Supabase project's region.
+id = "asia-southeast1"
+
+[env]
+NODE_ENV = "production"
+PORT = "8080"
+# Bounded by app.claim_jobs, which raises above six minutes.
+WORKER_LEASE_SECONDS = "300"
+WORKER_HEARTBEAT_SECONDS = "60"
+WORKER_BATCH_SIZE = "5"
+WORKER_CONCURRENCY = "4"
+WORKER_REAP_INTERVAL_MS = "60000"
+# Only the types this worker implements. Leaving it unset claims every type,
+# including the five app.job_type_map produces that have no handler yet.
+WORKER_JOB_TYPES = "AGENT_RUN_SLICE,SEND_EMAIL,WHATSAPP_SEND,OUTBOX_PUBLISH"
+
+# Set in the Railway dashboard, never here:
+#   WORKER_DATABASE_URL   postgres connection string; the session assumes service_role
+#   RESEND_API_KEY        transactional email
+#   WORKER_EMAIL_FROM     default sender
+#   WORKER_BYOK_RPC       overrides app.provider_key_for_tenant once it exists

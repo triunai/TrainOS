@@ -1,0 +1,30 @@
+{
+  "name": "@trainos/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TrainOS job worker. Claims rows from app.outbox through migration 012's RPCs, dispatches by job type, heartbeats, and reports the outcome back through the same seam.",
+  "engines": {
+    "node": ">=24"
+  },
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@trainos/agent-runtime": "*",
+    "@trainos/contract": "*",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5",
+    "vitest": "^2"
+  }
+}
