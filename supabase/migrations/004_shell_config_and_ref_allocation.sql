@@ -118,7 +118,10 @@ SET LOCAL statement_timeout = '180s';
 --    rights are not the API roles' and are not touched.
 -- 3. Fail closed unless the API roles' privileges on every public relation,
 --    column, function and sequence equal that set exactly, in both directions,
---    and no default grant to them survives.
+--    and no default grant to them survives in a schema 004-019 create objects
+--    in (public, core, app) or globally. Hosted also ships postgres-owned
+--    defaults IN SCHEMA storage; nothing here creates objects there, they are
+--    Supabase's to keep, and an unscoped check refused to apply on them.
 --
 -- Scoped by a preflight to the state 004 starts from: public holds 002's five
 -- tables and nothing else, so a later object's deliberate grant cannot be
@@ -258,6 +261,7 @@ BEGIN
     LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = acl.defaclnamespace
     CROSS JOIN LATERAL pg_catalog.aclexplode(acl.defaclacl) AS item
    WHERE acl.defaclrole = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+     AND (acl.defaclnamespace = 0 OR namespace.nspname IN ('public','core','app'))
      AND pg_catalog.pg_get_userbyid(item.grantee) IN ('anon','authenticated','service_role');
   IF v_leftover IS NOT NULL THEN
     RAISE EXCEPTION '004 hosted remediation: default privileges still grant the API '
