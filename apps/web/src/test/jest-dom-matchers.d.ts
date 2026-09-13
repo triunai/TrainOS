@@ -10,7 +10,11 @@
 import type { TestingLibraryMatchers } from "@testing-library/jest-dom/matchers";
 
 declare module "@vitest/expect" {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // `any` mirrors jest-dom's own signature; narrowing it here would stop the
+  // interfaces merging. The hooks ESLint config does not define
+  // @typescript-eslint/no-explicit-any, so it cannot be disabled by name.
+  /* eslint-disable */
   interface Assertion<T = any> extends TestingLibraryMatchers<any, T> {}
   interface AsymmetricMatchersContaining extends TestingLibraryMatchers<any, any> {}
+  /* eslint-enable */
 }

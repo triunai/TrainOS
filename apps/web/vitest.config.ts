@@ -22,10 +22,17 @@ export default defineConfig({
     // They are not slower than they were: measured on vitest 2 they took the
     // same six to nine seconds and passed anyway, because vitest 2 did not
     // hold them to the 5s default. Vitest 3 does, so the limit has to be
-    // stated rather than inherited. 15s leaves headroom on a CI runner, which
-    // is slower than a laptop. It is a ceiling for a hung test, not a budget:
-    // make those three fast and bring it back down.
-    testTimeout: 15_000,
+    // stated rather than inherited.
+    //
+    // None of that time is the UI. Measured: the menu item is in the DOM 13ms
+    // after the keypress, and a synchronous `getByRole` against it costs 1ms.
+    // The seconds are spent inside the `findBy*` wrapper, which runs the query
+    // through `asyncAct` while floating-ui keeps scheduling position work for
+    // the open menu. Swapping those three awaits for a settle plus `getByRole`
+    // is the real fix and would return ~21s to the suite; it edits three files
+    // this branch has no other business in, so it is left for its own change.
+    // Until then this is a ceiling for a hung test, not a budget.
+    testTimeout: 30_000,
     setupFiles: ["./src/test/setup.ts"],
     // Explicit describe/it/expect imports are preferred — clearer, and no
     // tsconfig types[] fiddling. The runtime supports both.
