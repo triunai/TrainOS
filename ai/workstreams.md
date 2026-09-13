@@ -1204,6 +1204,84 @@ app.action_value(...)}` rendered as jsonb text, computed once at queue
   this thread already recorded for `eff8084`, consistent with a
   test-only diff (this commit touches exactly one file, the test file).
 
+⛔ **PR #26 confirmed MERGED at `664a477`**, one file modified —
+`docs/reviews/2026-09-13-codex-retrofit-015-017-rereview.md` grows a
+new "Part A" section covering 014's third pass at `ff01f2b`, confirmed
+via the diff (+189/-23) rather than a fresh file — a legitimate
+amendment to an existing multi-pack review doc, not a violation of the
+one-file review-branch convention. **014's second-pass residuals are
+all genuinely closed, confirmed by adversarial execution**: the
+`run:read` gate confirmed via direct catalog query to cover exactly
+nine `core` relations with the permission check in both `USING` and
+`WITH CHECK`; `app.ungate_tenant_policy()` — already fixed twice before
+this pass — confirmed to pass a full seven-case adversarial sweep with
+no third failure mode found (genuinely ungated, refuses cleanly on an
+already-ungated table, refuses cleanly on a nonexistent table, safe
+under case-mismatch, correctly refuses on both USING-only and
+WITH-CHECK-only half-gates); T11a confirmed proven non-tautological two
+independent ways, including by planting a real `GRANT DELETE ON
+public.memberships` on an otherwise-fixed database and confirming the
+new pin catches it while the OLD pin's own T11a/T11b0 both still pass on
+the same regressed database.
+
+⛔ **But 014 is BLOCK this pass on a genuinely new, currently-live
+defect, confirmed exactly — the fix commit's own "closed on both sides"
+claim about HIGH-4 is false for the bulk path.** `core.bulk_decide_
+approvals` — granted to `authenticated`, reachable from the client per
+its own comment — takes no hash argument at all and forwards to
+`app.bulk_decide`, which calls the underlying decision function with
+the hash **hardcoded NULL**. Since the hash is only compared when
+non-NULL, this is confirmed to be the exact same bypass HIGH-4 was
+originally filed against, still live, on a path the shipped `COMMENT`
+explicitly claims is closed. Confirmed the blast radius is bounded
+(monetary/money-moving approval types are excluded from bulk decide by
+an existing 011 check), but confirmed the doc's own distinction is the
+load-bearing one here: "bounded" is not "closed," and the shipped
+comment claims the latter.
+
+⚠ **Second finding, confirmed independently found by three separate
+lenses (thermonuclear, security, and G6) — worth recording as a strong
+convergence signal, not just a finding.** The new required `p_migration`
+argument on `app.apply_tenant_policies` validates its _position_ but not
+its _value_: `NULL`, empty string, and arbitrary text are all silently
+accepted and stamped verbatim into the policy comment. Two concrete
+consequences, both confirmed by execution: an ownerless policy the
+rollback's by-name drop cannot find and therefore cannot remove; and the
+**old three-argument calling convention still resolves**, silently
+binding the intended permission string into the migration-name slot
+instead and producing an ungated policy with no error — confirmed as
+the same "looks correct, nothing raises, gate is simply absent" failure
+shape the `run:read` gate itself was fixed to prevent. The
+migration-catalog's own API reference confirmed to still document the
+stale three-argument spelling as current.
+
+⚠ **MED, confirmed as a genuine improvement over the second pass even
+though the underlying gap remains**: seven more sensitive tables
+(`core.evals`, `core.agents`, `core.tier_keys`, `core.model_tiers`,
+`core.routing_matrix_versions`, `core.routing_entries`,
+`core.ai_budgets`) stay blanket-readable under permissions 002 already
+assigned — but confirmed the catalog now correctly calls this "a GAP,
+NOT A POSTURE," owned by 018, rather than rationalizing it as
+deliberate the way the second pass did. Flagged MED rather than HIGH
+specifically because it is honestly owned now, not silently missed.
+
+⚠ **Negative result for the log — this thread's own synthesis of the
+doc's finding, not a verbatim quote, but the substance confirmed exactly
+in the doc's own words.** "Closed on both sides" was asserted from
+`core.decide_approval`'s single-decide path without enumerating every
+caller of the underlying decision function — `bulk_decide_approvals`
+is exactly such a caller, and it was missed. Worth a standing check for
+this migration line specifically: whenever a fix pack claims a guard is
+closed "on all paths" or "on both sides," the claim needs to be checked
+against every actual caller of the underlying function, not just the
+path the fix was originally written against.
+
+**Freeze lifted for exactly these two fixes on `fix-014`** (the
+bulk-decide bypass and the `p_migration` validation gap), **reported
+with re-freeze to follow; `fix-018` reported holding its rebase**
+through this window — consistent with this thread's own record that
+the rebase has been deliberately held for a stable base throughout.
+
 ✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
 `origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
 a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header

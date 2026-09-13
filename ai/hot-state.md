@@ -575,8 +575,32 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > confirmed unchanged from `eff8084` (single test-file diff). Full
 > detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:6x — cloud/migrations frozen tip moves
-> to a20e6d8; T5 closed end to end with no client change required.
+> **BLAST 13 Sep 23:7x +08** — PR #26 confirmed MERGED (`664a477`), one
+> file amended (not a new file, +189/-23) — the 015-017 re-review doc
+> grows a "Part A" covering 014's third pass at `ff01f2b`. **014's
+> second-pass residuals all genuinely closed by adversarial execution**:
+> run:read gate confirmed covering exactly 9 tables, `app.
+ungate_tenant_policy()` (already fixed twice) passed a full 7-case
+> adversarial sweep with no third failure, T11a proven non-tautological
+> by planting a real DELETE grant and confirming the new pin catches it
+> while the OLD pin's own assertion still passes. **But 014 is BLOCK on
+> a genuinely new, live defect: `core.bulk_decide_approvals` forwards
+> with the diff hash hardcoded NULL, bypassing HIGH-4's guard on a path
+> granted to `authenticated` and reachable today** — the shipped comment
+> claims "closed on both sides," which is confirmed false for this path
+> (blast radius bounded by a monetary-type exclusion, but "bounded" ≠
+> "closed"). Second finding, confirmed found independently by three
+> lenses: `p_migration` validates position not value — NULL/empty string
+> silently accepted (ownerless, unremovable policy), and the OLD
+> three-argument calling spelling still resolves, silently producing an
+> ungated policy with no error. Negative result for the log: "closed on
+> both sides" was asserted from the single-decide path without
+> enumerating every caller of the underlying function. **Freeze lifted
+> for exactly these two fixes on `fix-014`, re-freeze to follow;
+> `fix-018` holding its rebase.** Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:7x — PR #26: 014 BLOCK on a live
+> bulk_decide diff-hash bypass; freeze lifted for two named fixes.
 
 ### Focus
 

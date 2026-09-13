@@ -15,6 +15,150 @@
 
 ---
 
+## 2026-09-13 23:7x — PR #26: 014's third-pass residuals genuinely closed, but a live bulk_decide diff-hash bypass reopens HIGH-4; freeze lifted for two named fixes
+
+**PR #26 confirmed MERGED at `664a477`**, one file **amended, not
+newly created** — `docs/reviews/2026-09-13-codex-retrofit-015-017-rereview.md`
+grows a new "Part A" section (confirmed via the diff: +189/-23) covering
+014's third pass at `ff01f2b`, alongside its existing 015/016/017
+content at `bdd49aa` left unchanged. Confirmed this is a legitimate
+amendment to an existing multi-pack review doc, not a violation of the
+one-file review-branch convention this thread's own memory records.
+
+**014's second-pass residuals are all genuinely closed, confirmed by
+adversarial execution rather than by reading the fix and trusting it:**
+
+- **The `run:read` gate expansion, confirmed via direct catalog
+  query**: exactly nine `core` relations carry a RESTRICTIVE policy with
+  `app.has_permission(...)` in BOTH `USING` and `WITH CHECK` — the seven
+  `run:read`-governed tables plus `ai_provider_keys` and
+  `public_share_tokens`. Both counts the fix commit uses ("all seven
+  run:read tables" and "all nine tables the three permissions govern")
+  are confirmed correct and not in tension with each other. Behavioral
+  probes confirmed clean denial (not an error) on every tested role
+  combination.
+- **`app.ungate_tenant_policy()` — already fixed twice before this pass,
+  confirmed to pass a full seven-case adversarial sweep with no third
+  failure mode found.** Genuinely removes a gate; refuses cleanly on an
+  already-ungated table; refuses cleanly on a nonexistent table; safe
+  under case-mismatched identifiers; correctly refuses on both
+  USING-only and WITH-CHECK-only half-gates — a case this review
+  constructed specifically to test the "reads both halves" claim.
+  Confirmed to work by dropping the gated policy BEFORE calling back
+  into the gate function, so the function's own refusal-on-an-existing-
+  gate logic never fires — a real fix, not a relocation of the same
+  order-dependent hazard the earlier `'UNGATE'` string had.
+- **T11a confirmed proven non-tautological two independent ways**:
+  side-by-side, the OLD pin's assertion passes on a database with
+  CRIT-1's defect artificially reintroduced, while the NEW pin's
+  assertion (reading from a GUC captured before the pin's own first
+  GRANT/REVOKE) correctly fails; and end-to-end, planting a real
+  `GRANT DELETE ON public.memberships TO authenticated` on an otherwise-
+  fixed database causes the NEW pin to fail specifically at the new
+  T11a with the correct diagnostic, while the OLD pin's own T11a and
+  T11b0 both still pass on the same regressed database — the defect
+  only surfacing two assertions later, in a behavioral test rather than
+  a privilege assertion.
+- **`core.decide_approval`'s hash requirement confirmed by execution
+  with real request/response envelopes**: a stale hash refuses, the
+  current hash succeeds, no hash (including whitespace-only) now
+  refuses with a named error, and a REJECT with no hash still succeeds
+  — correctly scoped to APPROVE only.
+
+**But 014 is BLOCK this pass on a genuinely new, currently-live defect
+— confirmed exactly, and confirmed the fix commit's own "closed on both
+sides" claim about HIGH-4 is false for the bulk path.** `core.
+bulk_decide_approvals` — granted to `authenticated`, called by the web
+client per its own reachability comment, covering every non-monetary
+bulk-approvable approval type — takes no hash argument at all and
+forwards to `app.bulk_decide`, which calls the underlying decision
+function with the hash **hardcoded NULL**. Since the hash is compared
+only when non-NULL, this is confirmed to be the exact same bypass
+HIGH-4 was originally filed against, still live, on a path the shipped
+`COMMENT` explicitly asserts is closed. **Confirmed the doc's own
+distinction is the load-bearing one**: the blast radius is bounded
+(monetary/money-moving approval types are excluded from bulk decide by
+an existing 011 check), but "bounded" is a different claim from
+"closed," and the shipped comment claims the latter — shipping a false
+closure claim in a security-relevant comment is confirmed, in the doc's
+own words, "the same class of defect CRIT-1's false header premise
+was."
+
+**Second finding, confirmed independently found by three separate
+lenses (thermonuclear, the security pass, and G6) — a genuine
+convergence worth recording as its own kind of evidence, not just
+tallying it as one more finding.** The new required `p_migration`
+argument on `app.apply_tenant_policies` validates its _position_ but
+not its _value_: `NULL`, empty string, and arbitrary text are all
+silently accepted and stamped verbatim into the policy comment. Two
+concrete consequences, both confirmed by execution: (1) `NULL`/`''`
+produce an ownerless policy the rollback's by-name (`migration:014 %`)
+drop cannot find, so it survives a rollback it should not; (2) the OLD
+three-argument calling convention (`schema, table, permission`) still
+resolves, silently binding the intended permission string into the
+_migration_ slot instead — producing an **ungated** policy with no
+error, confirmed as the same "looks correct, nothing raises, gate is
+simply absent" failure shape the `run:read` gate itself was fixed to
+prevent. The migration-catalog's own API reference section is confirmed
+to still document the stale three-argument spelling as current.
+
+**MED, confirmed a genuine improvement over the second pass even though
+the underlying gap remains open.** Seven more sensitive tables
+(`core.evals`, `core.agents`, `core.tier_keys`, `core.model_tiers`,
+`core.routing_matrix_versions`, `core.routing_entries`,
+`core.ai_budgets`) stay blanket-readable under permissions migration
+002 already assigned. Confirmed the catalog now correctly reclassifies
+this remainder as "a GAP, NOT A POSTURE," owned by 018 — a real
+improvement over the second pass, which had rationalized an equivalent
+gap as deliberate. Flagged MED rather than HIGH specifically because it
+is honestly owned now rather than silently missed, unlike N-1's
+original framing.
+
+**Negative result for the log — this thread's own synthesis of the
+finding's substance, not a verbatim quote, but confirmed to match the
+doc's own words exactly on the underlying fact.** "Closed on both sides"
+was asserted from `core.decide_approval`'s single-decide path without
+enumerating every actual caller of the underlying decision function —
+`bulk_decide_approvals` is exactly such a caller, and it was missed.
+Worth a standing check for this migration line specifically: whenever a
+fix pack claims a guard is closed "on all paths" or "on both sides," the
+claim needs to be checked against every real caller of the underlying
+function, not only the path the fix was originally written against.
+
+**Freeze lifted for exactly these two fixes on `fix-014`** (the
+bulk-decide bypass and the `p_migration` validation gap), **reported
+with re-freeze to follow. `fix-018` reported holding its rebase**
+through this window — consistent with this journal's own record that
+the rebase has been deliberately held for a stable base throughout this
+whole session.
+
+**Things worth telling future-me:**
+
+1. A doc amended in place (a new section added to an existing review
+   file, rather than a new file created) is still consistent with the
+   one-file-per-review-branch rule this repo established after the
+   stale-checkout incident — the rule was about not carrying unrelated
+   code changes onto a review branch, not about never touching a
+   previously-merged doc again. Worth keeping that distinction clear so
+   a future amendment doesn't get incorrectly flagged as a convention
+   violation.
+2. "Fixed on both sides" or "closed on all paths" is a claim about every
+   caller of a function, not about the caller the fix was tested
+   against — this is now the second time this session a claim like this
+   needed the actual call graph checked rather than the one path
+   exercised during development (the first being HIGH-4's own earlier,
+   simpler version). Worth treating any "on all paths" claim in a
+   security-relevant comment as a specific, checkable assertion rather
+   than reassuring prose.
+3. Three independent reviewers finding the same defect from different
+   angles (static reading, security reasoning, and live execution) is
+   strong evidence the defect is real and not an artifact of one
+   reviewer's framing — worth treating three-way convergence as
+   qualitatively different evidence from "one reviewer found this and
+   the others didn't contradict it."
+
+---
+
 ## 2026-09-13 23:6x — frozen tip moves to a20e6d8 (benign correction); T5 closed end to end with no client change, and the READ-to-DECIDE distinction made precise
 
 **Frozen-tip correction, confirmed benign rather than an error in this

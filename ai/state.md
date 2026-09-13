@@ -287,6 +287,28 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:7x — PR #26: 014's third-pass residuals genuinely closed, but a live bulk_decide diff-hash bypass reopens HIGH-4; freeze lifted for two named fixes
+
+- PR #26 confirmed merged (`664a477`): amends the existing 015-017
+  re-review doc with a new "Part A" on 014's third pass. All of 014's
+  second-pass residuals confirmed genuinely closed by adversarial
+  execution (run:read gate covers exactly 9 tables, ungate_tenant_policy
+  passed a 7-case adversarial sweep with no third failure, T11a proven
+  non-tautological by planting a real DELETE grant). **But 014 is BLOCK
+  on a live defect: core.bulk_decide_approvals forwards with the diff
+  hash hardcoded NULL, bypassing HIGH-4's guard on a path granted to
+  authenticated and reachable today** — the shipped comment's "closed
+  on both sides" claim is confirmed false for this path (bounded by a
+  monetary-type exclusion, but bounded ≠ closed). Second finding, found
+  independently by three lenses: p_migration validates position not
+  value (NULL/empty accepted, unremovable policy) and the old
+  three-argument calling spelling still silently produces an ungated
+  policy. Negative result: "closed on both sides" was asserted from the
+  single-decide path without enumerating every caller. Freeze lifted for
+  exactly these two fixes on fix-014, re-freeze to follow; fix-018
+  holding its rebase. See `ai/project-log.md` 23:7x block for full
+  detail.
+
 ## 2026-09-13 23:6x — frozen tip moves to a20e6d8 (benign correction); T5 closed end to end with no client change
 
 - Frozen tip corrected from `eff8084` to `a20e6d8` — confirmed benign,
