@@ -370,18 +370,18 @@ BEGIN
   INSERT INTO core.programmes (tenant_id, name, category, days, list_price_sen,
                                list_price_pax, floor_price_sen, floor_margin_rate)
   VALUES ('00000009-1111-1111-1111-111111111111','P','C',1,100000,10,90000,0.35);
-  -- `is_default` is false because 018 now seeds every tenant a DEFAULT
+  -- `is_default` is false because **019** seeds every tenant a DEFAULT
   -- ENGAGEMENT pipeline, and `pipelines_one_default_uq` is a partial unique
-  -- index on `(tenant_id, object) WHERE is_default`. Changed by 018.
+  -- index on `(tenant_id, object) WHERE is_default`. Changed by 019, the pack that made a default engagement pipeline a repo-wide fact; nothing about this migration changed.
   INSERT INTO core.pipelines (tenant_id, object, name, is_default)
   VALUES ('00000009-1111-1111-1111-111111111111','ENGAGEMENT','std', false);
 
   -- `AND pl.name = 'std'` for the same reason, and it is the load-bearing half.
-  -- This is an UNCONSTRAINED CROSS JOIN over `core.pipelines`: with 018's seed
+  -- This is an UNCONSTRAINED CROSS JOIN over `core.pipelines`: with **019**'s seed
   -- the tenant now owns three pipelines rather than one, so without the
   -- predicate this INSERT writes three engagements and `RETURNING … INTO
   -- v_eng` keeps whichever one happened to come last. Every assertion below
-  -- would then be measuring an arbitrary row. Changed by 018.
+  -- would then be measuring an arbitrary row. Changed by 019, the pack that made a default engagement pipeline a repo-wide fact; nothing about this migration changed.
   INSERT INTO core.engagements (tenant_id, organisation_id, programme_id, owner_id,
                                 pipeline_id, title)
   SELECT '00000009-1111-1111-1111-111111111111', v_org, p.id,
