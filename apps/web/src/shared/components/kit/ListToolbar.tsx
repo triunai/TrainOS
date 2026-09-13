@@ -28,6 +28,15 @@ import { cn } from "@/shared/lib/utils";
  * here rather than asking every screen for `className="px-0 py-0"` is the point
  * of naming the pattern — CLAUDE.md: the kit gains the component, the screens
  * use it.
+ *
+ * NO RULE OF ITS OWN, and do NOT wrap it in one. `DataTable`'s header already
+ * draws `border-b border-border`, so a `border-b` on the toolbar or on a div
+ * around it puts two hairlines a row apart with nothing between them — the same
+ * count §10b objects to, arriving from a different pair of elements. CLAUDE.md:
+ * if removing a border does not make a relationship ambiguous, remove it, and
+ * nothing here is ambiguous once the table head draws the line. §10b's wording
+ * is "the table directly beneath". Pass the page gutter (`px-5`, `px-6`) and
+ * the bottom spacing through `className`; pass no border.
  */
 
 export interface ListToolbarProps {
