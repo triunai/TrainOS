@@ -15,7 +15,7 @@ import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
  * double-clicked button is one approval or two. Four features built the key as
  * `${type}:${targetRef}:${Date.now()}` and two more from a fresh
  * `randomUUID()` — keys guaranteed unique per ATTEMPT, which is the exact
- * inverse of the purpose. On `usePerformAction`, the envelope every governed
+ * inverse of the purpose. On `useAction`, the envelope every governed
  * write in those features passes through, that meant a double-click or a retry
  * after a transport failure created two distinct money-or-approval actions.
  *

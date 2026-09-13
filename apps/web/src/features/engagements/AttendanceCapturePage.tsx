@@ -21,14 +21,14 @@ import {
   toast,
   type Column,
 } from "@/shared/components/kit";
-import { toApiError } from "@/shared/api";
+import { toApiError, useActor } from "@/shared/api";
 import { useBreadcrumb } from "@/shared/components/layout";
 import {
   useAttendanceDays,
   useCaptureAttendance,
   useEngagement,
   useExportAttendance,
-  usePerformAction,
+  useEngagementAction,
 } from "./api";
 import { absentees, markLabel } from "./attendanceModel";
 
@@ -64,7 +64,8 @@ export function AttendanceCapturePage() {
     [engagement.data],
   );
   const sheets = useAttendanceDays(id, days.length > 0 ? days : [1]);
-  const action = usePerformAction();
+  const action = useEngagementAction();
+  const actor = useActor();
   const exportSheet = useExportAttendance(id);
 
   const loaded = sheets.flatMap((query) => (query.data ? [query.data] : []));
@@ -152,6 +153,7 @@ export function AttendanceCapturePage() {
                   type: "ATTENDANCE_APPROVE",
                   targetRef: record.ref,
                   payload: { day: sheet.day },
+                  requestedBy: actor,
                 })
               }
             >
@@ -184,21 +186,21 @@ export function AttendanceCapturePage() {
       />
 
       <div className="flex flex-col gap-5 px-5 py-5">
-        {(action.data || action.error) && (
+        {/* The refusal is a VALUE on the result, not a rejection. Approving an
+            already-approved day answers `409 ATTENDANCE_LOCKED`, and the detail
+            names `ATTENDANCE_UNLOCK` as its own escape hatch — which is the
+            whole reason this banner renders the refusal rather than a toast. */}
+        {action.data ? (
           <ActionOutcome
-            {...(action.data ? { response: action.data } : {})}
-            {...(action.error
+            {...(action.data.kind === "error"
               ? {
-                  error: describeActionError(
-                    toApiError(action.error),
-                    `Day ${sheet.day} was not updated`,
-                  ),
+                  error: describeActionError(action.data.error, `Day ${sheet.day} was not updated`),
                 }
-              : {})}
+              : { response: action.data.response })}
             subject={`${record.ref} day ${sheet.day}`}
             onDismiss={() => action.reset()}
           />
-        )}
+        ) : null}
 
         {capture.error ? (
           <ActionOutcome
@@ -331,6 +333,7 @@ export function AttendanceCapturePage() {
             type: "ATTENDANCE_UNLOCK",
             targetRef: record.ref,
             payload: { reason: reason.trim(), day: sheet.day },
+            requestedBy: actor,
           });
           setUnlockOpen(false);
         }}

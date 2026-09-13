@@ -44,10 +44,6 @@ const EXEMPT = new Map<string, string>([
     "RuleChangeReviewScreen.tsx:127 awaits mutateAsync and renders the returned outcome",
   ],
   ["useCaptureAttendance", "AttendanceCapturePage.tsx:202 renders capture.error"],
-  [
-    "usePerformAction",
-    "AttendanceCapturePage.tsx:186 and EngagementDetailPage.tsx:205 render action.error",
-  ],
   ["useRecordPayment", "InvoiceDetailScreen.tsx:412 renders recordPayment.error"],
   ["useRepushInvoice", "InvoiceDetailScreen.tsx:168 renders repush.error"],
   ["useSendReminder", "CollectionsQueueScreen.tsx:279 renders send.error through ActionOutcome"],

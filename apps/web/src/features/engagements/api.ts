@@ -6,9 +6,6 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import type {
-  Actor,
-  ActionRequest,
-  ActionResponse,
   AttendanceCaptureRequest,
   AttendanceExport,
   AttendanceSheet,
@@ -19,7 +16,7 @@ import type {
   PipelineConfig,
 } from "@trainos/contract";
 import { type EngagementProjection } from "@trainos/fixtures";
-import { stableIdempotencyKey, useActor, useApi, type ApiError } from "@/shared/api";
+import { useAction, useActor, useApi } from "@/shared/api";
 
 /**
  * The engagements data boundary — M09-S02 and M10-S06.
@@ -41,15 +38,6 @@ import { stableIdempotencyKey, useActor, useApi, type ApiError } from "@/shared/
  *    rather than zeroing it, so the type is optional and the screen renders the
  *    panel only when the projection carries one.
  */
-
-/** `details.blockers[]` off a refusal, or an empty list when it carries none. */
-export function blockersOf(error: ApiError): string[] {
-  if (error.kind !== "domain") return [];
-  const blockers = (error.details as { blockers?: unknown } | undefined)?.blockers;
-  return Array.isArray(blockers)
-    ? blockers.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
 
 /**
  * Keys carry the ACTOR. Two roles get two different projections of the same
@@ -185,31 +173,25 @@ export function useExportAttendance(id: string) {
 }
 
 /**
- * The §3 action envelope. Every governed write on these two screens goes
- * through it, and every caller must handle all three outcomes — EXECUTED,
- * QUEUED_FOR_APPROVAL and SUGGESTED — because an approval is a success.
+ * The §3 action envelope, scoped to this feature's cache.
  *
- * `requestedBy` comes from `useActor()`, so it is the SAME principal the client
- * is signed in as. It used to be built from `me.id`, which is the shell's
- * display identity and not a principal the fixture roster contains — a request
- * stamped with an id the server has never heard of.
+ * This is `useAction` from `shared/api` with one thing added: what to
+ * invalidate afterwards. It used to be a hand-rolled second copy of that hook —
+ * its own `useMutation`, its own key derivation, its own `requestedBy` — which
+ * is the divergence CLAUDE.md calls a defect, and it had already drifted: the
+ * shared hook returns the refusal as a VALUE so a caller cannot mistake
+ * `QUEUED_FOR_APPROVAL` for a failure, and the local copy threw.
+ *
+ * Invalidation is skipped on a refusal. Nothing changed, so re-reading costs a
+ * round trip and tells the reader their failed write might have landed after
+ * all — which on these two screens means attendance.
  */
-export function usePerformAction() {
-  const api = useApi();
+export function useEngagementAction() {
   const queryClient = useQueryClient();
-  const requestedBy: Actor = useActor();
 
-  return useMutation<ActionResponse, unknown, Omit<ActionRequest, "requestedBy">>({
-    mutationFn: (request) => {
-      /* The key is derived from the INTENT, not the attempt. It used to end in
-         `Date.now()`, which made it unique per try and therefore incapable of
-         deduplicating anything: §3 recognises a repeat by the key, so a
-         double-click or a retry after a dropped connection arrived as two
-         unrelated governed actions on a screen whose writes lock attendance. */
-      const governed: ActionRequest = { ...request, requestedBy };
-      return api.performAction(governed, { idempotencyKey: stableIdempotencyKey(governed) });
-    },
-    onSuccess: () => {
+  return useAction({
+    onSettled: (result) => {
+      if (result.kind === "error") return;
       void queryClient.invalidateQueries({ queryKey: engagementKeys.all });
     },
   });

@@ -27,7 +27,6 @@ export {
   type ParticipantDay,
 } from "./attendanceModel";
 export {
-  blockersOf,
   engagementKeys,
   useAttendance,
   useAttendanceDays,
@@ -37,6 +36,6 @@ export {
   useEngagementParticipants,
   useExportAttendance,
   useOrganisation,
-  usePerformAction,
+  useEngagementAction,
   usePipelineConfig,
 } from "./api";

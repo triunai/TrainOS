@@ -25,14 +25,14 @@ import {
   toast,
   type Column,
 } from "@/shared/components/kit";
-import { toApiError } from "@/shared/api";
+import { toApiError, useActor } from "@/shared/api";
 import { useBreadcrumb } from "@/shared/components/layout";
 import {
   useAttendanceDays,
   useComplianceChecks,
   useEngagement,
   useOrganisation,
-  usePerformAction,
+  useEngagementAction,
   usePipelineConfig,
 } from "./api";
 import { joinAttendance, markLabel, type ParticipantAttendance } from "./attendanceModel";
@@ -78,7 +78,8 @@ export function EngagementDetailPage() {
   const organisation = useOrganisation(record?.organisationRef);
   const days = useMemo(() => (record?.sessions ?? []).map((session) => session.day), [record]);
   const sheets = useAttendanceDays(id, days);
-  const closeOut = usePerformAction();
+  const closeOut = useEngagementAction();
+  const actor = useActor();
 
   /* The top bar renders the path; this screen only declares it. Built inline —
      `useBreadcrumb` compares by value, so memoising it would be noise. */
@@ -169,7 +170,13 @@ export function EngagementDetailPage() {
         primaryAction={
           <PrimaryButton
             disabled={closeOut.isPending}
-            onClick={() => closeOut.mutate({ type: "ENGAGEMENT_CLOSE_OUT", targetRef: record.ref })}
+            onClick={() =>
+              closeOut.mutate({
+                type: "ENGAGEMENT_CLOSE_OUT",
+                targetRef: record.ref,
+                requestedBy: actor,
+              })
+            }
           >
             Close out
           </PrimaryButton>
@@ -217,21 +224,23 @@ export function EngagementDetailPage() {
 
       <div className="flex min-w-0 flex-col gap-5 px-5 py-5 xl:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-5">
-          {(closeOut.data || closeOut.error) && (
+          {/* The refusal is a VALUE on the result, not a rejection: a
+              `QUEUED_FOR_APPROVAL` close-out is a success and must not render
+              as one of these two branches by accident. */}
+          {closeOut.data ? (
             <ActionOutcome
-              {...(closeOut.data ? { response: closeOut.data } : {})}
-              {...(closeOut.error
+              {...(closeOut.data.kind === "error"
                 ? {
                     error: describeActionError(
-                      toApiError(closeOut.error),
+                      closeOut.data.error,
                       `${record.ref} could not be closed out`,
                     ),
                   }
-                : {})}
+                : { response: closeOut.data.response })}
               subject={`Close out ${record.ref}`}
               onDismiss={() => closeOut.reset()}
             />
-          )}
+          ) : null}
 
           {blockedStep && (showOverview || tab === "hrdc") ? (
             <ExceptionBanner
