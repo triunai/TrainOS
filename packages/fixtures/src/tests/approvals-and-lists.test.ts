@@ -46,7 +46,11 @@ describe("the approval inbox", () => {
 describe("deciding one approval", () => {
   it("returns effects that match the rendered diff, line for line", async () => {
     const detail = await api.getApproval(APPROVAL_AURORA);
-    const decision = await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const decision = await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
 
     expect(decision.status).toBe("APPROVED");
     expect(decision.effects).toHaveLength(detail.diff.length);
@@ -60,7 +64,12 @@ describe("deciding one approval", () => {
   });
 
   it("applies what the diff promised", async () => {
-    await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const detail = await api.getApproval(APPROVAL_AURORA);
+    await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
     const proposal = await api.getProposal(PROPOSAL_AURORA);
     expect(proposal.status).toBe("SENT");
     const opportunity = await api.getOpportunity("OPP-0512");
@@ -68,20 +77,55 @@ describe("deciding one approval", () => {
   });
 
   it("requires a note to reject", async () => {
+    const detail = await api.getApproval(APPROVAL_AURORA);
     await expect(
-      api.decideApproval(APPROVAL_AURORA, { decision: "REJECT", note: null }),
+      api.decideApproval(APPROVAL_AURORA, {
+        decision: "REJECT",
+        note: null,
+        diffHash: detail.diffHash,
+      }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED", http: 422 });
   });
 
   it("409s a second decision on an approval that already moved", async () => {
-    await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const detail = await api.getApproval(APPROVAL_AURORA);
+    await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
     await expect(
-      api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null }),
+      api.decideApproval(APPROVAL_AURORA, {
+        decision: "APPROVE",
+        note: null,
+        diffHash: detail.diffHash,
+      }),
     ).rejects.toMatchObject({ http: 409, details: { diffChanged: true } });
   });
 
+  /**
+   * §7 finding #6 (docs/reviews/2026-09-13-codex-retrofit-014-017.md): the
+   * fixture oracle must enforce the same optimistic-concurrency guard
+   * `011:2781-2787` does, or the guard is provably dead as soon as the client
+   * omits — or gets wrong — the hash it renders.
+   */
+  it("refuses to approve against a diff hash that no longer matches", async () => {
+    await expect(
+      api.decideApproval(APPROVAL_AURORA, {
+        decision: "APPROVE",
+        note: null,
+        diffHash: "stale-hash",
+      }),
+    ).rejects.toMatchObject({ code: "DIFF_CHANGED", http: 409, details: { diffChanged: true } });
+  });
+
   it("drops the badge count as approvals are cleared", async () => {
-    await api.decideApproval(APPROVAL_AURORA, { decision: "APPROVE", note: null });
+    const detail = await api.getApproval(APPROVAL_AURORA);
+    await api.decideApproval(APPROVAL_AURORA, {
+      decision: "APPROVE",
+      note: null,
+      diffHash: detail.diffHash,
+    });
     const badges = await api.getBadges();
     expect(badges.approvals).toBe(6);
   });

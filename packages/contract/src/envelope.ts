@@ -244,7 +244,13 @@ export type ErrorCode =
   | 'SYNC_FAILED'
   | 'AGENT_PAUSED'
   | 'SLA_BREACHED'
-  | 'IDEMPOTENT_REPLAY';
+  | 'IDEMPOTENT_REPLAY'
+  /**
+   * §7 `POST /v1/approvals/{id}/decide` — the rendered diff, or the
+   * `diffHash` the client sent for it, no longer matches the approval's
+   * current one (`011:2774`, `011:2781-2787`).
+   */
+  | 'DIFF_CHANGED';
 
 /**
  * §1 HTTP status each code maps to.
@@ -264,6 +270,7 @@ export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
   AGENT_PAUSED: 409,
   SLA_BREACHED: 200,
   IDEMPOTENT_REPLAY: 409,
+  DIFF_CHANGED: 409,
 } as const;
 
 /** §1 `VALIDATION_FAILED` detail row. */
@@ -309,6 +316,8 @@ export interface ErrorDetails {
   unlockActionType?: string;
   /** §7 `POST /v1/approvals/{id}/decide` when the world moved under the diff. */
   diffChanged?: boolean;
+  /** DIFF_CHANGED (§7) — the fresh diff's hash, alongside `diff` above. */
+  diffHash?: string;
   /** §8 `ENGAGEMENT_CLOSE_OUT` while incomplete. */
   blockers?: string[];
   [key: string]: unknown;

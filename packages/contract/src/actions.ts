@@ -282,6 +282,17 @@ export interface ApprovalRequest {
   slaRemainingMinutes?: number;
   slaBreached: boolean;
   status: ApprovalStatus;
+  /**
+   * SHA-256 hex digest of the rendered `diff[]`, computed server-side
+   * (`011:2635`) and stored on the approval row.
+   *
+   * `POST /decide` must echo this back so `core.decide_approval`'s
+   * optimistic-concurrency check (`011:2781-2787`) can tell a decision made
+   * against the diff still shown here from one made against a diff that has
+   * since changed underneath it. See the retrofit review's finding #6
+   * (`docs/reviews/2026-09-13-codex-retrofit-014-017.md`).
+   */
+  diffHash: string;
   bulkApprovable: boolean;
   urgencyGroup: UrgencyGroup;
 }

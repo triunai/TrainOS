@@ -290,6 +290,7 @@ const toApprovalRow = (approval: FixtureApproval): ApprovalRequest => ({
     : {}),
   slaBreached: approval.slaBreached,
   status: approval.status,
+  diffHash: approval.diffHash,
   bulkApprovable: approval.bulkApprovable,
   urgencyGroup: approval.urgencyGroup,
 });
@@ -1021,6 +1022,19 @@ export class FixtureClient {
           `${approval.ref} was already decided; the diff no longer applies.`,
           { diffChanged: true, diff: approval.diff },
         );
+      }
+      /**
+       * §7 finding #6 (docs/reviews/2026-09-13-codex-retrofit-014-017.md):
+       * the same optimistic-concurrency guard `011:2781-2787` applies on
+       * `APPROVE` only — a REJECT or REQUEST_CHANGES does not act on the
+       * diff, so a stale hash there is not a conflict.
+       */
+      if (body.decision === "APPROVE" && body.diffHash !== approval.diffHash) {
+        throw new ContractError("DIFF_CHANGED", "the rendered diff is stale", {
+          diffChanged: true,
+          diff: approval.diff,
+          diffHash: approval.diffHash,
+        });
       }
       const decidedBy = this.#actor();
       const effects: Effect[] = body.decision === "APPROVE" ? approval.diff.map(toEffect) : [];
@@ -2630,6 +2644,7 @@ export class FixtureClient {
       slaRemainingMinutes: policy.slaMinutes,
       slaBreached: false,
       status: "PENDING",
+      diffHash: hashDiff(diff),
       /** Server-decided: false for any action carrying a monetary value. */
       bulkApprovable: value === undefined,
       urgencyGroup: policy.slaMinutes <= 240 ? "TODAY" : "THIS_WEEK",
@@ -3059,6 +3074,27 @@ const toEffect = (line: DiffLine): Effect => ({
   ...(line.ref ? { ref: line.ref } : {}),
   description: line.description,
 });
+
+/**
+ * A short, stable digest of a rendered diff — the fixture stand-in for
+ * `011:2635`'s `sha256(...)` on `app.plan_effects(...)`.
+ *
+ * Not cryptographic: the only properties `decideApproval`'s guard needs are
+ * that the same diff always digests the same way and a different diff
+ * (almost certainly) digests differently, which FNV-1a already gives at this
+ * size. Mirrors the digest `apps/web/src/shared/api/idempotency.ts` uses for
+ * idempotency keys, kept local rather than shared because the two packages
+ * do not otherwise depend on each other.
+ */
+function hashDiff(diff: readonly DiffLine[]): string {
+  const input = JSON.stringify(diff);
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `diff_${hash.toString(36)}`;
+}
 
 /** Kept so the unused-import checker sees these contract types are load-bearing. */
 export type { AutonomyLevel, Badge, GovernedActionType, Timestamp };
