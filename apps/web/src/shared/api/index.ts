@@ -44,6 +44,7 @@ export {
 } from "./errors";
 
 export { useOrganisationDirectory, type OrganisationDirectory } from "./useOrganisationDirectory";
+export { useOpportunityIndex, type OpportunityIndex } from "./useOpportunityIndex";
 
 export { queryClient } from "./queryClient";
 export { queryKeys } from "./queryKeys";
