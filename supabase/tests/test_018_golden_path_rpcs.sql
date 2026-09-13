@@ -2488,5 +2488,98 @@ BEGIN
 END
 $t34$;
 
+DO $banner$ BEGIN RAISE NOTICE '════════ T35 · THE BACKFILL FAILS LOUDLY, NOT INTO A WARNING ════════'; END $banner$;
+DO $t35$
+DECLARE
+  v_tenant uuid := '11111111-1111-4111-8111-111111111111';
+  v_naked  uuid := '77777777-7777-4777-8777-777777777777';
+  v_total  integer;
+  v_detail text;
+  v_ok     boolean := false;
+BEGIN
+  -- A CLEAN RUN STILL RETURNS A COUNT. Every tenant here was provisioned by
+  -- the trigger, so re-seeding writes nothing and the invariant already holds.
+  v_total := app.seed_pipelines_all();
+  IF v_total <> 0 THEN
+    RAISE EXCEPTION 'T35a: re-seeding wrote % rows over already-seeded tenants', v_total;
+  END IF;
+
+  -- ── THE BLOCKER. A tenant with no PIP ref_format ─────────────────────────
+  -- The backfill caught `foreign_key_violation` and turned it into
+  -- `RAISE WARNING '... pipelines not seeded'`, then finished green. That
+  -- tenant has no `core.pipeline_steps` rows, and `core.navigation` and
+  -- `core.get_pipeline_config` render stages FROM those rows — so its shell
+  -- opened on an empty stage list that looks like configuration rather than
+  -- like a failed migration. A WARNING in a migration log is not a channel
+  -- anyone reads afterwards.
+  --
+  -- 016 seeds ref formats from its own AFTER INSERT trigger, so a tenant in
+  -- this state has to be constructed: insert one, then take its PIP format and
+  -- its pipelines away, which is exactly the shape of a tenant that predates
+  -- 016's backfill.
+  --
+  -- AGAINST THE PRE-FIX MIGRATION THIS ASSERTION FAILS WITH "function
+  -- app.seed_pipelines_all() does not exist", and that is not an accident of
+  -- the fix: the loop was INLINE IN A `DO` BLOCK, where nothing can call it and
+  -- therefore nothing can assert it. Running that same inline block against
+  -- this fixture is what shows the behaviour directly:
+  --
+  --   WARNING: 018 backfill: tenant 7777... has no PIP ref_format; not seeded.
+  --   NOTICE:  018 backfill: 0 pipeline and step row(s) seeded
+  --   018 completed; pipeline_steps for the unseeded tenant = 0
+  --
+  -- Green, with a tenant left with no pipeline configuration at all.
+  INSERT INTO public.tenants (id, slug, name, status, timezone, locale)
+  VALUES (v_naked, 'naked', 'Predates 016', 'ACTIVE', 'Asia/Kuala_Lumpur', 'en-MY');
+  DELETE FROM core.pipeline_steps WHERE tenant_id = v_naked;
+  DELETE FROM core.pipelines      WHERE tenant_id = v_naked;
+  DELETE FROM core.ref_formats    WHERE tenant_id = v_naked AND prefix = 'PIP';
+
+  BEGIN
+    PERFORM app.seed_pipelines_all();
+  EXCEPTION WHEN foreign_key_violation THEN
+    v_ok := true;
+    GET STACKED DIAGNOSTICS v_detail = MESSAGE_TEXT;
+    -- The message NAMES THE TENANT. "Some tenant somewhere was skipped" is not
+    -- actionable; the operator has to know which ref_formats to seed.
+    IF pg_catalog.strpos(v_detail, v_naked::text) = 0 THEN
+      RAISE EXCEPTION 'T35b: the refusal does not name the unseeded tenant: %', v_detail;
+    END IF;
+  END;
+  IF NOT v_ok THEN
+    RAISE EXCEPTION 'T35c: the backfill reported SUCCESS with a tenant left unseeded — '
+                    'its navigation renders an empty stage list and nothing says so';
+  END IF;
+
+  -- GIVE IT BACK ITS REF FORMAT AND THE SAME CALL SUCCEEDS. The refusal is
+  -- about the missing configuration, not about the tenant.
+  INSERT INTO core.ref_formats (tenant_id, prefix, entity, dated, width, gapless)
+  SELECT v_naked, format.prefix, format.entity, format.dated, format.width, format.gapless
+    FROM core.ref_formats AS format
+   WHERE format.tenant_id = v_tenant AND format.prefix = 'PIP';
+
+  v_total := app.seed_pipelines_all();
+  IF v_total < 1 THEN
+    RAISE EXCEPTION 'T35c2: the unseeded tenant was still not seeded after its ref '
+                    'format came back';
+  END IF;
+
+  -- AND THE INVARIANT THE BACKFILL EXISTS FOR IS STATED AS ONE. Every tenant
+  -- has both default pipelines and their steps.
+
+  IF EXISTS (
+    SELECT 1 FROM public.tenants AS t
+     WHERE NOT EXISTS (SELECT 1 FROM core.pipelines AS p
+                        WHERE p.tenant_id = t.id AND p.object = 'ENGAGEMENT')
+        OR NOT EXISTS (SELECT 1 FROM core.pipeline_steps AS s
+                        WHERE s.tenant_id = t.id)) THEN
+    RAISE EXCEPTION 'T35d: a tenant has no pipeline configuration after the backfill';
+  END IF;
+
+  RAISE NOTICE 'T35 PASS: the backfill raises and names every tenant it could not seed, '
+               'and every tenant ends the migration with a pipeline configuration.';
+END
+$t35$;
+
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
