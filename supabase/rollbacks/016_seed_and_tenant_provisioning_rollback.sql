@@ -54,6 +54,10 @@ $preflight$;
 DROP TRIGGER IF EXISTS trg_tenants_seed_ref_formats ON public.tenants;
 
 -- ── 2 · The functions ───────────────────────────────────────────────────────
+-- Both signatures. The three-argument form is the pre-amendment one; a database
+-- that was rolled back and forward around the amendment could carry either, and
+-- dropping only the current spelling would strand the other.
+DROP FUNCTION IF EXISTS app.provision_tenant(text,text,text,uuid);
 DROP FUNCTION IF EXISTS app.provision_tenant(text,text,text);
 DROP FUNCTION IF EXISTS app.seed_ref_formats_on_tenant();
 DROP FUNCTION IF EXISTS app.seed_ref_formats(uuid);

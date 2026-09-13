@@ -5,7 +5,7 @@
 
 **Migrations:** 17 · **Applied:** 0 · **Authored, not applied:** 17
 **Last snapshot of `tables/`:** never
-**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds)
+**Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane)
 
 ---
 
@@ -522,8 +522,37 @@ does not seed).
   `pg_trigger`. Returns the number of rows added. Idempotent, leaving existing rows alone.
 - **`app.seed_ref_formats_on_tenant()` + `trg_tenants_seed_ref_formats`** — `AFTER INSERT ON
   public.tenants`, the same shape as 011's policy seed.
-- **`app.provision_tenant(slug, name, timezone)`** — the explicit path, over the same mechanism,
-  with a post-condition that refuses a half-provisioned tenant.
+- **`app.provision_tenant(slug, name, timezone, id)`** — the explicit path, over the same
+  mechanism, with a post-condition that refuses a half-provisioned tenant.
+
+### ⚠ Amended 2026-09-13: `p_id`, at a consumer's request
+
+The seeds lane (PR #16) reported that it could not use this function at all. Its fixture world is
+keyed on fixed, memorable tenant ids — `supabase/seeds/README.md` requires them and the RPC tests
+and screenshots quote them literally — so roughly 5,000 seeded rows carry `tenant_id` as a
+constant, and a generated id cannot be retrofitted: `core.ref_formats`, `core.action_policies` and
+`core.check_keys` are already referencing the tenant by the time the function returns, and **none
+of those foreign keys is `ON UPDATE CASCADE`**. The lane's fallback was to insert the tenant row
+directly and re-implement half of provisioning inline, which would have rotted the day 018
+provisions a fourth table — the exact drift this migration exists to prevent.
+
+`p_id uuid DEFAULT NULL` with `COALESCE(p_id, gen_random_uuid())`. Every pre-amendment caller is
+byte-identical, and the parameter is independently right for a restore or a tenant migration,
+where the id is given rather than chosen. This follows the same rule that settled
+`bulk_decide_approvals` in 014: **the signature follows the consumer.**
+
+⚠ **The `DROP FUNCTION` in front of it is mandatory, and that was measured rather than assumed.**
+A bare `CREATE OR REPLACE` does not replace a function when the parameter LIST changes — it
+creates an OVERLOAD beside it. Both would then carry defaults covering a two- and three-argument
+call, and every existing caller, including this pack's own T3, would fail with
+`function app.provision_tenant(unknown, unknown) is not unique`. Reproduced on the shim before the
+line was written.
+
+T3 gained four assertions: the returned id AND the stored row carry the supplied value (a function
+that inserted one id and returned another would be worse than one that ignored the parameter);
+supplying an id does **not** bypass provisioning, which is the entire reason a seed calls this
+rather than inserting the row; explicit `NULL` still generates; and a duplicate id is refused by
+the primary key rather than silently attaching a new customer to another customer's rows.
 - **A backfill loop** for tenants that already exist, since a trigger only fires on rows
   inserted after it.
 - **Spine untouched.**

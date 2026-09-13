@@ -242,10 +242,36 @@ COMMENT ON TRIGGER trg_tenants_seed_ref_formats ON public.tenants IS
 -- AFTER INSERT triggers do the work, so there is exactly one implementation of
 -- "what a new tenant gets" and no second copy to drift from the first.
 
+-- ⚠ THE DROP IS MANDATORY AND IS NOT TIDINESS. `p_id` was added after the seeds
+-- lane found it needed one (see below), and a bare CREATE OR REPLACE does NOT
+-- replace a function when the parameter LIST changes — it creates an OVERLOAD
+-- beside it. Both would then carry defaults covering a two- and three-argument
+-- call, and every existing caller, this pack's own T3 included, would fail with
+-- `function app.provision_tenant(unknown, unknown) is not unique`. Measured on
+-- the shim before writing this line, not assumed.
+DROP FUNCTION IF EXISTS app.provision_tenant(text,text,text);
+
 CREATE OR REPLACE FUNCTION app.provision_tenant(
   p_slug     text,
   p_name     text,
-  p_timezone text DEFAULT 'Asia/Kuala_Lumpur'
+  p_timezone text DEFAULT 'Asia/Kuala_Lumpur',
+  -- ⚠ `p_id` EXISTS BECAUSE A CONSUMER COULD NOT USE THE FUNCTION WITHOUT IT, and
+  -- the alternative was worse in a way worth recording. The seed lane's fixture
+  -- world is keyed on fixed, memorable tenant ids — `supabase/seeds/README.md`
+  -- requires them, and the RPC tests and screenshots quote them literally — so
+  -- ~5,000 seeded rows carry `tenant_id` as a constant. A generated id cannot be
+  -- retrofitted: `core.ref_formats`, `core.action_policies` and `core.check_keys`
+  -- already reference the tenant by the time this function returns, and none of
+  -- those foreign keys is `ON UPDATE CASCADE`, so updating the id afterwards
+  -- fails. Deleting the provisioned children, changing the id and re-seeding
+  -- works and re-implements half of provisioning inside a seed, which rots the
+  -- day 018 provisions a fourth table.
+  --
+  -- Defaulting to NULL keeps every existing caller byte-identical, and the
+  -- parameter is independently right for a restore or a tenant migration, where
+  -- the id is given rather than chosen. A supplied id that already exists fails
+  -- on the primary key, which is the correct refusal and needs no check here.
+  p_id       uuid DEFAULT NULL
 ) RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -265,8 +291,8 @@ BEGIN
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
-  INSERT INTO public.tenants (slug, name, timezone)
-  VALUES (p_slug, p_name, p_timezone)
+  INSERT INTO public.tenants (id, slug, name, timezone)
+  VALUES (COALESCE(p_id, gen_random_uuid()), p_slug, p_name, p_timezone)
   RETURNING id INTO v_id;
 
   -- Both seeds are triggers, so by here they have run. Verifying that they DID is
@@ -296,15 +322,17 @@ BEGIN
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION app.provision_tenant(text,text,text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION app.provision_tenant(text,text,text,uuid) FROM PUBLIC, anon, authenticated;
 
-COMMENT ON FUNCTION app.provision_tenant(text,text,text) IS
+COMMENT ON FUNCTION app.provision_tenant(text,text,text,uuid) IS
   'Creates a tenant and returns its id, letting the AFTER INSERT triggers seed it '
   'so there is one implementation of what a new tenant gets. Refuses to return a '
   'tenant that has no ref_formats or no action_policies, because a tenant that '
   'looks provisioned and cannot write a ref''d row fails at the customer''s first '
-  'enquiry rather than here. Not granted to any client role: provisioning is an '
-  'operator act. 016.';
+  'enquiry rather than here. p_id lets a caller supply the tenant id instead of '
+  'generating one, which a seed with fixed fixture ids and a restore both need; '
+  'NULL keeps every other caller unchanged. Not granted to any client role: '
+  'provisioning is an operator act. 016.';
 
 -- ============================================================================
 -- §3 · Backfill any tenant that already exists

@@ -198,9 +198,56 @@ BEGIN
     'a tenant. A tenant that looks provisioned and has no ref_formats fails at the '
     'customer''s first enquiry instead of here.';
 
+  -- (e) The p_id path, which is the reason the parameter exists. A seed keyed on
+  -- fixed, memorable tenant ids cannot use a generated one: the provisioned
+  -- children are already referencing the tenant by the time this returns and none
+  -- of those foreign keys is ON UPDATE CASCADE, so there is no fixing it
+  -- afterwards. Asserted on the RETURNED id AND on the row, because a function
+  -- that inserted the supplied id and returned a different one would be worse
+  -- than one that ignored the parameter outright.
+  v_id := app.provision_tenant('t016-fixed','T016 Fixed','Asia/Kuala_Lumpur',
+                               '00000016-f1ed-4000-8000-000000000001'::uuid);
+  ASSERT v_id = '00000016-f1ed-4000-8000-000000000001'::uuid,
+    pg_catalog.format('T3e FAIL: provision_tenant was given an explicit id and '
+      'returned %s. A seed with fixed fixture ids cannot use a generated one, and '
+      'the children are already referencing the tenant by the time this returns.',
+      v_id);
+  ASSERT EXISTS (SELECT 1 FROM public.tenants
+                  WHERE id = '00000016-f1ed-4000-8000-000000000001'::uuid
+                    AND slug = 't016-fixed'),
+    'T3e2 FAIL: the tenant row does not carry the supplied id.';
+
+  SELECT pg_catalog.count(*) INTO v_formats
+    FROM core.ref_formats WHERE tenant_id = v_id;
+  ASSERT v_formats = 32,
+    pg_catalog.format('T3e3 FAIL: the explicitly-identified tenant got %s '
+      'ref_formats. Supplying the id must not bypass provisioning — that is the '
+      'whole reason a seed calls this rather than inserting the row itself.',
+      v_formats);
+
+  -- (f) Passing NULL is identical to omitting it. This is what keeps every
+  -- pre-amendment caller correct, so it is asserted rather than assumed.
+  v_id := app.provision_tenant('t016-nullid','T016 Null Id','Asia/Kuala_Lumpur', NULL);
+  ASSERT v_id IS NOT NULL,
+    'T3f FAIL: an explicit NULL p_id did not generate an id.';
+
+  -- (g) A duplicate id is refused by the primary key rather than silently
+  -- reusing or overwriting a tenant.
+  v_refused := false;
+  BEGIN
+    PERFORM app.provision_tenant('t016-dupe','T016 Dupe','Asia/Kuala_Lumpur',
+                                 '00000016-f1ed-4000-8000-000000000001'::uuid);
+  EXCEPTION WHEN unique_violation THEN v_refused := true;
+  END;
+  ASSERT v_refused,
+    'T3g FAIL: provision_tenant accepted an id that already exists. Reusing a '
+    'live tenant''s id would attach a new customer to another customer''s rows.';
+
   RAISE NOTICE
     'T3 PASS - provision_tenant returns a fully seeded tenant, refuses a blank '
-    'slug, and refuses to hand back a tenant whose seeding trigger did not fire.';
+    'slug, refuses to hand back a tenant whose seeding trigger did not fire, '
+    'honours an explicitly supplied id without bypassing provisioning, treats '
+    'NULL as "generate one", and refuses a duplicate id.';
 END;
 $t3$;
 
