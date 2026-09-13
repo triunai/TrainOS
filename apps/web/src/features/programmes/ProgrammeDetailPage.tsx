@@ -1,7 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import type { Programme, Role } from "@trainos/contract";
-import type { EngagementProjection, ProgrammeDelivery } from "@trainos/fixtures";
+import type { Engagement, Programme, ProgrammeDelivery, Role } from "@trainos/contract";
 import {
   Breadcrumb,
   ContentCard,
@@ -405,7 +404,7 @@ function TrainerPoolList({
   isPending,
 }: {
   rows: PoolRow[];
-  window: EngagementProjection | undefined;
+  window: Engagement | undefined;
   isPending: boolean;
 }) {
   if (isPending) return <LoadingState rows={2} label="Loading the trainer pool" />;

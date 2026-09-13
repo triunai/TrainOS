@@ -14,18 +14,15 @@
  * constraint is doing the work.
  */
 
-import type { Quotation, Money, Programme, Rate } from "@trainos/contract";
+import type { BindingFloorBasis, Quotation, Money, Programme, Rate } from "@trainos/contract";
 import { ContractError } from "./errors";
 import { myr, roundHalfUpSen } from "../data/_helpers";
-
-/** Which of the two floors is binding on a quotation. */
-export type BindingFloor = "ABSOLUTE" | "MARGIN";
 
 export interface FloorEvaluation {
   absoluteFloorPrice: Money;
   marginFloorPrice: Money;
   floorPrice: Money;
-  bindingFloor: BindingFloor;
+  bindingFloor: BindingFloorBasis;
   resultingMarginRate: Rate;
   breached: boolean;
 }
@@ -56,7 +53,7 @@ export const evaluateFloors = (
   const absoluteFloorPrice = programme?.floorPrice ?? quotation.floorPrice;
   const floorMarginRate = programme?.floorMarginRate ?? quotation.floorMarginRate;
   const derived = marginFloorPrice(quotation.directCost, floorMarginRate);
-  const bindingFloor: BindingFloor =
+  const bindingFloor: BindingFloorBasis =
     derived.amount > absoluteFloorPrice.amount ? "MARGIN" : "ABSOLUTE";
   const floorPrice = bindingFloor === "MARGIN" ? derived : absoluteFloorPrice;
   return {
@@ -74,21 +71,16 @@ const formatMyr = (money: Money): string =>
 
 /** §6 the `422 FLOOR_PRICE_BREACH` the quotation screen renders as its red field state. */
 /**
- * A quotation with both floors and the binding basis made explicit.
+ * Recomputes a stored quotation's two floors and the binding basis.
  *
- * The contract's `Quotation` carries `floorPrice` and `floorMarginRate` but
- * nothing that says which of the two constraints is actually binding, so every
- * screen would have to derive it for itself. Computed here and reported as a
- * contract gap rather than added to the contract.
+ * This used to return a local `QuotationWithFloors` widening, because the
+ * contract's `Quotation` said which floor price applied but not which of the
+ * two constraints produced it. Ruling R6 put `absoluteFloorPrice`,
+ * `marginFloorPrice` and `bindingFloorBasis` on the record itself, so the
+ * widening described fields the contract already had and the alias only
+ * survived to re-spell `BindingFloorBasis` as `BindingFloor` (W-64).
  */
-export type QuotationWithFloors = Quotation & {
-  absoluteFloorPrice: Money;
-  marginFloorPrice: Money;
-  bindingFloorBasis: BindingFloor;
-};
-
-/** Decorates a stored quotation with its two floors and the binding basis. */
-export const withFloors = (quotation: Quotation, programme?: Programme): QuotationWithFloors => {
+export const withFloors = (quotation: Quotation, programme?: Programme): Quotation => {
   const evaluation = evaluateFloors(quotation, quotation.sellPrice, programme);
   return {
     ...quotation,

@@ -21,9 +21,7 @@ export * from "./data";
 export { FixtureClient } from "./client/FixtureClient";
 export type {
   ComputedQuotation,
-  EngagementProjection,
   FixtureClientConfig,
-  FixtureCollectionsQueueResponse,
   ProposalDraftResult,
   RequestOptions,
   ResponseMeta,
@@ -41,12 +39,7 @@ export {
   resultingMarginRate,
   withFloors,
 } from "./client/pricing";
-export type {
-  BindingFloor,
-  FloorEvaluation,
-  InvoiceReconciliation,
-  QuotationWithFloors,
-} from "./client/pricing";
+export type { FloorEvaluation, InvoiceReconciliation } from "./client/pricing";
 export {
   DEFAULT_MINIMUM_CONFIDENCE,
   MINIMUM_CONFIDENCE,

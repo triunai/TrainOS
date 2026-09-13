@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ActionResponse, CollectionRule, MessageDraft } from "@trainos/contract";
-import type { FixtureReceivable } from "@trainos/fixtures";
+import type { ActionResponse, CollectionRule, MessageDraft, Receivable } from "@trainos/contract";
 import {
   ActionOutcome,
   AIChip,
@@ -61,7 +60,7 @@ const TABS = {
 
 type TabId = keyof typeof TABS;
 
-function tabOf(row: FixtureReceivable): Exclude<TabId, "all"> {
+function tabOf(row: Receivable): Exclude<TabId, "all"> {
   if (row.nextAction.status === "BLOCKED_ON_SYNC") return "blocked";
   if (row.nextAction.autonomy === "OBSERVE") return "escalated";
   return "approval";
@@ -121,7 +120,7 @@ export function CollectionsQueueScreen() {
   const countOf = (id: TabId) =>
     id === "all" ? rows.length : rows.filter((row) => tabOf(row) === id).length;
 
-  const columns: Column<FixtureReceivable>[] = [
+  const columns: Column<Receivable>[] = [
     {
       key: "invoiceRef",
       label: "Invoice",
@@ -333,7 +332,7 @@ function DraftPanel({
   onChannel,
   onOpenInvoice,
 }: {
-  row: FixtureReceivable;
+  row: Receivable;
   draft: MessageDraft | undefined;
   loading: boolean;
   channel: "EMAIL" | "WHATSAPP";

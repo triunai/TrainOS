@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { EngagementProjection } from "@trainos/fixtures";
+import type { Engagement } from "@trainos/contract";
 import { TrainingCalendarScreen } from "../TrainingCalendarScreen";
 import { daysWithin, openingAnchor, scheduleDays, todayKey } from "../schedule";
 import { CALENDAR_PATH } from "../paths";
@@ -25,7 +25,7 @@ const ENGAGEMENT = {
   dates: ["2026-11-12", "2026-11-13"],
   metrics: { trainer: { ref: "TRN-0007", name: "Farah Aziz" } },
   sessions: [{ date: "2026-11-12", title: "Escalation & conflict", venue: "Training Room A" }],
-} as unknown as EngagementProjection;
+} as unknown as Engagement;
 
 describe("the schedule model", () => {
   it("makes one entry per delivery DAY, keyed so two days of one course do not collide", () => {
@@ -47,7 +47,7 @@ describe("the schedule model", () => {
   });
 
   it("does not invent the days between two listed dates", () => {
-    const skipped = { ...ENGAGEMENT, dates: ["2026-11-12", "2026-11-16"] } as EngagementProjection;
+    const skipped = { ...ENGAGEMENT, dates: ["2026-11-12", "2026-11-16"] } as Engagement;
     expect(scheduleDays([skipped]).map((day) => day.day)).toEqual(["2026-11-12", "2026-11-16"]);
   });
 

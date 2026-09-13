@@ -7,10 +7,11 @@ import type {
   Invoice,
   ListResponse,
   MessageDraft,
+  CollectionsQueueResponse,
   PaymentRecordRequest,
   ReceivablesAging,
 } from "@trainos/contract";
-import { isContractError, type FixtureCollectionsQueueResponse } from "@trainos/fixtures";
+import { isContractError } from "@trainos/fixtures";
 import { ApiErrorException, domainErrorFromEnvelope, queryKeys, useApi } from "@/shared/api";
 
 /**
@@ -146,7 +147,7 @@ export function useRepushInvoice(invoiceRef: string) {
 
 export function useCollectionsQueue() {
   const api = useApi();
-  return useQuery<FixtureCollectionsQueueResponse>({
+  return useQuery<CollectionsQueueResponse>({
     queryKey: queryKeys.collections.list(),
     queryFn: () => call(() => api.getCollectionsQueue()),
   });

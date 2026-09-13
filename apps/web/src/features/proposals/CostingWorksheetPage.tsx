@@ -5,11 +5,11 @@ import type {
   ActionResponse,
   FloorPriceBreachDetails,
   Money,
+  Quotation,
   QuotationApplyPayload,
   QuotationLine,
 } from "@trainos/contract";
 import { RATE_CARD_PLACEHOLDER_VERSION } from "@trainos/contract";
-import type { QuotationWithFloors } from "@trainos/fixtures";
 import {
   BINDING_FLOOR_TONE,
   DataTable,
@@ -328,7 +328,7 @@ export function CostingWorksheetPage() {
 }
 
 function metricsFor(
-  quotation: QuotationWithFloors,
+  quotation: Quotation,
   candidate: Money,
   candidateMargin: number,
 ): MetricCellProps[] {
@@ -447,7 +447,7 @@ function quantityText(line: QuotationLine): string {
   return `${line.qty} ${line.qty === 1 ? unit : `${unit}s`}`;
 }
 
-function CostLinesTable({ quotation }: { quotation: QuotationWithFloors }) {
+function CostLinesTable({ quotation }: { quotation: Quotation }) {
   const columns: Column<QuotationLine>[] = [
     {
       key: "item",

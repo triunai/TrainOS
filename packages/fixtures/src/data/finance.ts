@@ -344,16 +344,7 @@ export const accountingDocuments: Record<string, string> = {
   [ACCOUNTING_DOCUMENT]: INVOICE_AURORA,
 };
 
-/**
- * §9 a queue row whose next action may be the ruled `ACCOUNT_TRADING_HOLD`.
- *
- * `CollectionNextAction.type` is typed `ActionType`, which is the §3 list only,
- * so the last rung of the §9 ladder cannot be expressed on the row that needs
- * it. Widened here to `AnyActionType` and reported as a contract gap.
- */
-export type FixtureReceivable = Omit<Receivable, "nextAction"> & {
-  nextAction: { type: AnyActionType; status: string; autonomy: AutonomyLevel };
-};
+
 
 /**
  * §9 `GET /v1/collections/queue`.
@@ -362,7 +353,7 @@ export type FixtureReceivable = Omit<Receivable, "nextAction"> & {
  * DECISIONS §1 says is always human, so the agent stops and the next action
  * carries OBSERVE rather than a draft.
  */
-export const receivables: FixtureReceivable[] = [
+export const receivables: Receivable[] = [
   {
     /**
      * Seventy-eight days overdue: past the day-75 rung, so the ladder proposes

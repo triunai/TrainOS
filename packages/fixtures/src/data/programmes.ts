@@ -10,7 +10,7 @@
  * `Trainer` type, so `FixtureTrainer` is defined here and reported as a gap.
  */
 
-import type { DateOnly, Programme, RateCard, Ref, Timestamp } from "@trainos/contract";
+import type { DateOnly, Programme, ProgrammeDelivery, RateCard, Ref, Timestamp } from "@trainos/contract";
 import {
   PROGRAMME_CONFLICT,
   PROGRAMME_DATA_LITERACY,
@@ -282,18 +282,12 @@ export const programmes: Programme[] = [
 /**
  * §6 `GET /v1/programmes/{id}/deliveries` — past deliveries, keyed by programme ref.
  *
- * No contract type covers this table, so the row shape follows the M06-S02
- * data-contract line (`Delivery{clientId,dates,pax,evaluation,valueRM}`).
+ * Ruling R8 lifted this row into the contract verbatim, so the local copy is
+ * gone and the name re-exports the contract's. It followed the M06-S02
+ * data-contract line (`Delivery{clientId,dates,pax,evaluation,valueRM}`) and
+ * still does — from one place now (W-64).
  */
-export interface ProgrammeDelivery {
-  engagementRef: Ref;
-  organisationRef: Ref;
-  organisationName: string;
-  dates: string;
-  pax: number;
-  evaluation: number;
-  value: { amount: number; currency: "MYR" };
-}
+export type { ProgrammeDelivery } from "@trainos/contract";
 
 export const programmeDeliveries: Record<string, ProgrammeDelivery[]> = {
   [PROGRAMME_LEADING_CHANGE]: [

@@ -1,5 +1,5 @@
-import type { DateOnly, TrainerPoolEntry } from "@trainos/contract";
-import type { EngagementProjection, FixtureTrainer } from "@trainos/fixtures";
+import type { DateOnly, Engagement, TrainerPoolEntry } from "@trainos/contract";
+import type { FixtureTrainer } from "@trainos/fixtures";
 import { formatDateRange } from "@/shared/components/kit";
 
 /**
@@ -36,10 +36,10 @@ export interface PoolRow {
  * the same in both cases.
  */
 export function nearestWindow(
-  engagements: readonly EngagementProjection[],
+  engagements: readonly Engagement[],
   today: DateOnly,
-): EngagementProjection | undefined {
-  const distance = (engagement: EngagementProjection): number => {
+): Engagement | undefined {
+  const distance = (engagement: Engagement): number => {
     if (engagement.dates.length === 0) return Number.MAX_SAFE_INTEGER;
     return Math.min(
       ...engagement.dates.map((day) => Math.abs(Date.parse(day) - Date.parse(today))),
@@ -51,7 +51,7 @@ export function nearestWindow(
 export function poolRows(
   pool: readonly TrainerPoolEntry[],
   trainers: readonly FixtureTrainer[],
-  window: EngagementProjection | undefined,
+  window: Engagement | undefined,
 ): PoolRow[] {
   const windowDays = new Set(window?.dates ?? []);
   const assignedRef = window?.metrics.trainer?.ref;

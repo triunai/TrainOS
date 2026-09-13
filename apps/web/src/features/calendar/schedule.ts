@@ -1,4 +1,4 @@
-import type { EngagementProjection } from "@trainos/fixtures";
+import type { Engagement } from "@trainos/contract";
 import { daysCovered } from "@/shared/components/kit";
 
 /**
@@ -33,7 +33,7 @@ export interface ScheduleDay {
   sessionTitle: string | null;
 }
 
-export function scheduleDays(engagements: readonly EngagementProjection[]): ScheduleDay[] {
+export function scheduleDays(engagements: readonly Engagement[]): ScheduleDay[] {
   return engagements.flatMap((engagement) => {
     const days = daysCovered(engagement.dates);
 
