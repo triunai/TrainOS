@@ -1,27 +1,193 @@
-# 015/016/017 re-review, Opus thermonuclear + security; Codex slot owed
+# 014/015/016/017 re-review, Opus thermonuclear + security; Codex slot owed
 
-**Reviewed:** one fix commit, `bdd49aa`, on `origin/cloud/migrations` (PR #6, PARALLELPARADIGMS/alex-project),
-bringing migrations 015/016/017 from the previously-reviewed `21ec975` (015 MERGE-WITH-FIXES, 016
-BLOCK, 017 BLOCK — full findings in `docs/reviews/2026-09-13-codex-retrofit-015-017.md` on `main`) to
-current tip. Migration 014 is untouched by this commit (confirmed: `git diff --stat 21ec975..bdd49aa`
-touches no `014` file) — the three items from the 014 re-review (the `run:read` seven-table gap, the
-T11a tautology, the pin's 001-014-vs-001-017 header mismatch) **have not landed and are noted as
-pending below**, per instruction.
-**Reviewers:** a genuine thermonuclear pass and an independent `oh-my-claudecode:security-reviewer`
-pass. **Codex `gpt-5.6-sol` remains hard quota-blocked** and its slot is recorded as OWED, not
-substituted. G6 was executed in full, comparing `21ec975` and `bdd49aa` against the same pins, plus
-targeted direct-SQL probes beyond what any pin currently tests.
+**Reviewed in three sub-passes**, each against its own prior baseline, all on `origin/cloud/migrations`
+(PR #6, PARALLELPARADIGMS/alex-project):
+- **015/016/017** at commit `bdd49aa` (against the previously-reviewed `21ec975` — 015
+  MERGE-WITH-FIXES, 016 BLOCK, 017 BLOCK; full findings in
+  `docs/reviews/2026-09-13-codex-retrofit-015-017.md` on `main`).
+- **014, third pass**, at commit `ff01f2b` (against `bdd49aa` — 014's second pass returned
+  MERGE-WITH-FIXES with residuals N-1/N-8/N-9 and thermonuclear F1/F3/F5, in
+  `docs/reviews/2026-09-13-codex-retrofit-014-rereview.md` on `main`).
 
-## VERDICT — one line per pack
+**Reviewers, each sub-pass:** a genuine thermonuclear pass and an independent
+`oh-my-claudecode:security-reviewer` pass. **Codex `gpt-5.6-sol` remains hard quota-blocked** across
+both sub-passes and its slot is recorded as OWED, not substituted. G6 was executed in full for both
+sub-passes, comparing old and new code against the same pins plus targeted direct-SQL probes beyond
+what any pin currently tests.
+
+**Out of scope, noted explicitly:** commit `2bac9bf` ("fix(supabase): 011-013 BLOCK — the envelope
+never queued, BYOK never rotated") has also landed on `cloud/migrations`, on top of `ff01f2b`. Per
+instruction this review is scoped to `ff01f2b` specifically; `2bac9bf`'s changes to migrations 011
+and 013 are **not reviewed here** and need their own pass.
+
+## VERDICT — one line per pack, for the whole of PR #6 as it stands after this report
 
 | Pack | Verdict | Why |
 |---|---|---|
+| **014** (third pass) | **BLOCK** | Every residual from the second pass is genuinely closed, confirmed by adversarial execution: the `run:read` gate now covers all nine of the tables the three sensitive-table permissions govern (not one), the `app.ungate_tenant_policy()` escape hatch — which had already failed twice — passed a full adversarial sweep with no third failure mode found, the T11a tautology fix was proven non-tautological by an end-to-end regression test, and `core.decide_approval` genuinely refuses an APPROVE with no diff hash. **But this pass found that the fix commit's own claim of closing HIGH-4 "on both sides" is false**: the sibling RPC `core.bulk_decide_approvals`, granted to `authenticated` and reachable from the client today, has no hash argument at all and forwards to the same underlying function with the hash hardcoded NULL — silently bypassing the exact check the rest of this fix pass added. A second, independently-triple-confirmed finding (thermonuclear, security, and G6 all found it separately): the new required `p_migration` argument validates its *position* but not its *value* — `NULL` and empty string are silently accepted, producing an ownerless policy the rollback's by-name drop cannot find. |
 | **015** | **MERGE-WITH-FIXES** | The `DROP FUNCTION` guard genuinely works and was proven by execution to close the overload hazard. But the migration's own new verify-block assertion is **dead code** — it can never fire, because an earlier check in the same block already aborts first with a misleading message, exactly like before the fix. The file's own comment also tells a future editor to do the one thing (move the DROP to match a new signature) that would silently reopen the hazard. |
 | **016** | **MERGE-WITH-FIXES** | The rollback-scope BLOCK is genuinely closed — proven by execution to destroy an operator's format on the old rollback and preserve it on the new one, with the disclosed residue (a byte-identical hand-made row still gets deleted) confirmed real and confirmed to be exactly as narrow as claimed. The 017-applied preflight refusal works. Residual: the disclosed residue's own stated criterion (`dated`) isn't actually checked, and the new `app.tenant_seed_checks` registry table has no RLS, unlike every sibling table like it in the repo. |
 | **017** | **BLOCK** | The CRITICAL SST-defaulting-to-zero-tax defect is genuinely fixed and was proven by execution: the exact zero-tax-no-policy-trace row is produced by the old code and cannot be produced by the new code. But **G6 found a new defect the fix pack introduced**: migration 017 cannot be applied to any database that already holds a quotation row — it fails with `SQLSTATE 55006` because the new SST backfill's `UPDATE` queues two pre-existing `DEFERRABLE` constraint triggers from migration 007, and the file's own new `SET NOT NULL` statement then refuses to run while those triggers are pending, inside the same one-transaction file. This is not cosmetic: it means 017 cannot be applied to the "retrofit" case its own header claims to support. |
 
-**None of these verdicts reopens the original CRIT-1/CRIT-2 style findings from an earlier pack —
-they are new or residual findings specific to this fix.**
+**None of these verdicts reopens the original CRIT-1/CRIT-2 style findings from an earlier pack on
+014, 016, or 017 — they are new or residual findings specific to each fix.** 014's BLOCK this pass is
+driven by a genuinely new, currently-live defect (the bulk-approve bypass), not by any of the items
+the second pass already closed.
+
+---
+
+# Part A — 014, third pass (`ff01f2b`)
+
+## What's genuinely fixed, confirmed by adversarial execution
+
+- **N-1, the `run:read` gate expansion.** Direct catalog query confirmed exactly nine `core`
+  relations carry a RESTRICTIVE policy with `app.has_permission(...)` in **both** `USING` and `WITH
+  CHECK`: the seven `run:read`-governed tables from migration 013 (`runs`, `run_nodes`,
+  `run_node_io`, `run_events`, `run_state_cards`, `run_checkpoints`, `run_snapshots`) plus
+  `ai_provider_keys` and `public_share_tokens`. Both counts the fix commit uses ("all seven `run:read`
+  tables" and "all nine tables the three permissions govern") are correct and not in tension with each
+  other. Behavioral probes on the newly-added tables confirmed a SALES principal is denied, an ADMIN
+  who holds the permission is admitted, and a cross-tenant ADMIN is refused — with `"ok": true` in
+  every case, meaning the gate denies cleanly rather than erroring (no broken screen).
+- **`app.ungate_tenant_policy()` — the escape hatch that had already failed twice.** This mechanism
+  earned the most adversarial attention in this pass given its history (a magic-string version was
+  fixed once already and turned out to still be dead code, fixed again by this commit with a
+  dedicated function). A full seven-case adversarial sweep found **no third failure mode**: it
+  genuinely removes a gate (verified via direct policy inspection before/after), refuses cleanly on an
+  already-ungated table, refuses cleanly on a nonexistent table, is safe under case-mismatched
+  identifiers (fails closed rather than silently retargeting), and correctly refuses on both
+  `USING`-only and `WITH CHECK`-only half-gates (a case this review constructed specifically to test
+  the "reads both halves" claim). It works by dropping the gated policy before calling back into the
+  gate function, so the function's own refusal-on-an-existing-gate logic never fires — a real fix, not
+  a relocation of the same order-dependent hazard (thermonuclear's read of this as still
+  order-dependent is addressed below).
+- **The T11a tautology.** Proven non-tautological two ways: side-by-side, the OLD pin's assertion
+  passes on a database with the CRIT-1 defect artificially reintroduced, while the NEW pin's assertion
+  (reading from a GUC captured before the pin's own first GRANT/REVOKE) correctly fails; and
+  end-to-end, planting a real `GRANT DELETE ON public.memberships TO authenticated` on an otherwise
+  fixed database causes the NEW pin to fail specifically at the new T11a with the correct diagnostic,
+  while the OLD pin's T11a and T11b0 both pass on the same regressed database (the defect only
+  surfaces two assertions later, in T11b, which is a behavioral test rather than a privilege
+  assertion).
+- **`core.decide_approval`'s hash requirement.** Confirmed by execution with real request/response
+  envelopes: an APPROVE with a stale hash is refused as stale (existing behavior), an APPROVE with the
+  current hash succeeds, an APPROVE with **no** hash (including whitespace-only) is now refused with a
+  named `diffHash`/`REQUIRED` error, and a REJECT with no hash still succeeds — the new requirement is
+  correctly scoped to APPROVE only.
+- **The rollback's overload enumeration.** Confirmed by manually planting all three historical
+  `apply_tenant_policies` signatures plus `ungate_tenant_policy` and running the rollback: zero
+  survivors, versus the prior `to_regproc`-based check which is confirmed blindable (returns "absent"
+  even with two live overloads present).
+
+## What is not actually fixed
+
+### HIGH — `core.bulk_decide_approvals` still bypasses the diff-hash requirement, live, today
+
+This is the standout finding of this pass, found only by the security review and independently
+consistent with what G6's own read of the wrapper functions would show. The fix commit's own shipped
+`COMMENT` on the wrapper claims HIGH-4 is now "closed on both sides... neither can re-disable it
+alone." That claim is false for the bulk path: `core.bulk_decide_approvals` — granted to
+`authenticated`, called by the web client per its own reachability comment, and covering every
+non-monetary bulk-approvable approval type — takes no hash argument at all and forwards to
+`app.bulk_decide`, which calls the underlying decision function with the hash **hardcoded NULL**.
+Since the hash is compared only when non-NULL, this is not a narrower version of the old bug — it is
+the exact same bypass HIGH-4 was filed against, still live, on a path the fix pack's own prose asserts
+is closed. The blast radius is bounded (monetary and money-moving approval types are excluded from
+bulk decide by an existing 011 check), but "bounded" is different from "closed," and the shipped
+comment says the latter. **This should be fixed (guard the bulk path the same way, or explicitly
+refuse bulk APPROVE) or the claim should be corrected and HIGH-4 re-opened on this path with a named
+owner** — shipping a false closure claim in a security-relevant comment is the same class of defect
+CRIT-1's false header premise was.
+
+### HIGH (found independently, three ways) — the required `p_migration` argument validates position, not value
+
+Thermonuclear, the security pass, and G6 each independently found the same gap: `app.
+apply_tenant_policies`'s new required fourth-position argument has no format check. `NULL`, an empty
+string, and any arbitrary text are all accepted and stamped verbatim into the policy `COMMENT`. Two
+concrete consequences, both confirmed by execution: (1) `NULL`/`''` produce a policy whose stamp is
+effectively empty — an ownerless policy the rollback's by-name (`migration:014 %`) drop cannot find,
+so it survives a rollback it should not; (2) the old three-argument calling convention
+(`schema, table, permission`) still resolves, silently binding the intended permission string into
+the *migration* slot instead — producing an **ungated** policy with no error, which is the same
+"looks correct, nothing raises, gate is simply absent" failure shape the run:read gate itself was
+fixed to prevent. The migration-catalog's own API reference section still documents this exact
+three-argument spelling as current. **Fix:** validate `p_migration` (a simple format check — three
+digits, given no migration ledger table exists — is sufficient and was independently proposed by both
+non-execution reviewers) and correct the stale catalog documentation.
+
+### MED — a second sibling to N-1's original argument: seven more sensitive tables, now disclosed as a gap rather than hidden as a posture
+
+The security review independently re-derived that `run:read` is only one of several 002-assigned
+permissions governing `core` tables that remain blanket-readable: `eval:read` (`core.evals`),
+`agent:read` (`core.agents`), `ai:tier:read` (`core.tier_keys`, `core.model_tiers`),
+`ai:routing:read` (`core.routing_matrix_versions`, `core.routing_entries`), and `ai:budget:read`
+(`core.ai_budgets`) — seven more tables where 002 already wrote down who should be allowed to read
+them, and this fix does not gate any of them. G6's independent read of the same area found the
+catalog now correctly reclassifies this remainder as **"a GAP, NOT A POSTURE," owned by 018** — a
+real improvement over the second pass, which had rationalized an equivalent gap as deliberate. The
+two reviewers weight this differently: the security pass treats the catalog's specific wording ("read
+authorization for the rest has not been designed") as still inaccurate for these seven tables
+specifically, since 002 *did* design permissions for them; G6 treats the overall disclosure-with-owner
+posture as adequate. Both readings agree on the underlying fact — flagged as MED rather than HIGH
+because it is now honestly owned rather than silently missed, unlike N-1's original framing.
+
+### Thermonuclear findings (maintainability lens, verdict from this lens alone: BLOCK)
+
+- **The gated nine-table set is hand-copied into four separate places** (the migration's own §2 and
+  §4b, the pin's T12k probe list, and a scratch-table fixture) with nothing keeping them in sync — the
+  exact "convention, not compiler" pattern flagged on 016's registry in the other sub-pass. One
+  declared table, joined everywhere, would remove the risk of the copies silently diverging.
+- **`app.ungate_tenant_policy()` is judged, from this lens, to still relocate rather than eliminate
+  the order-dependency** that killed its predecessor — it works today (confirmed by G6's adversarial
+  execution above) specifically because it drops the policy before calling back into the gate
+  function's own guard, which is still "safety rests on statement order," just inside a narrower
+  function boundary than before. The security and execution reviews found this order to be robust
+  under every adversarial input tried; the thermonuclear reviewer's recommendation (split into a
+  guard-free `write` primitive plus separate guarded/unguarded callers) would remove the ordering
+  question structurally rather than by discipline, and is worth considering even though nothing tried
+  broke the current version.
+- **Scope creep**: converting `core.decide_approval` to `plpgsql` and adding a new mandatory business
+  rule inside a migration whose stated purpose is grants and policies is the same "two ownership
+  stories in two files" shape the `p_migration` stamp was introduced to end — the approval-validation
+  rule now lives partly in 011 and partly in 014.
+- **File growth continues**: the migration file is now ~1725 lines (862 of them comments — a
+  1.12:1 comment-to-code ratio), the pin ~1997 lines. Both were already flagged as giant in two prior
+  passes.
+- Several smaller, execution-confirmed prose defects: stale "three sensitive tables" language
+  surviving in five places after the set grew to nine (three of them directly contradicting a nearby
+  corrected comment); a `%s` typo in the exact error message meant to hand an operator the correct
+  escape-hatch call, so following it produces a malformed statement; the pin's own header still
+  literally instructing "run against the complete 001-014 set" 61 lines away from a note saying the
+  opposite — confirmed by execution to actually fail if followed; and the gate-detection logic inside
+  §4b's own verify block still reading only `USING`, not `WITH CHECK`, unlike every other copy of the
+  same check in this same fix.
+
+## G6 execution summary (014, third pass)
+
+Fresh scratch PostgreSQL 17.11, port 5449. Phase 1 (OLD `bdd49aa` 014 against the NEW pin) reproduced
+every claimed pre-fix failure exactly: T12 failing by naming a newly-gated table as ungated on the old
+schema, T15 failing with the pre-fix hash-bypass accepted, T16 unable to run at all (missing
+4-argument signature). Phase 2 (NEW 014 against the NEW pin): all sixteen T-blocks pass, 0 errors.
+Full rollback chain (refusal while 017 applied, correct reverse-order success, all overloads dropped
+by name including three manually-planted historical signatures) and full re-apply/re-pin cycle both
+confirmed clean. `check:grants`, `check:rpc`, `lint:sql` all report clean. The bulk-approve bypass and
+the `p_migration` validation gap were found by direct SQL probing beyond what any current pin
+exercises — neither is caught by the existing 001-017 pin suite, which is why both survived to this
+review despite "17 pins pass" being true.
+
+---
+
+# Part B — 015/016/017, at `bdd49aa`
+
+*(unchanged from the original version of this report)*
+
+**Reviewed:** one fix commit, `bdd49aa`, on `origin/cloud/migrations` (PR #6, PARALLELPARADIGMS/alex-project),
+bringing migrations 015/016/017 from the previously-reviewed `21ec975` (015 MERGE-WITH-FIXES, 016
+BLOCK, 017 BLOCK — full findings in `docs/reviews/2026-09-13-codex-retrofit-015-017.md` on `main`) to
+that commit. Migration 014 was untouched by `bdd49aa` (confirmed: `git diff --stat 21ec975..bdd49aa`
+touches no `014` file) — the three items from the 014 re-review (the `run:read` seven-table gap, the
+T11a tautology, the pin's 001-014-vs-001-017 header mismatch) had not landed as of `bdd49aa`, and are
+the subject of Part A above, at the later commit `ff01f2b`.
 
 ---
 
@@ -196,13 +362,13 @@ optional.
 
 ---
 
-## Part 4 — the 014 re-review items: PENDING, not yet folded in
+## Part 4 — the 014 re-review items: since landed at `ff01f2b`, see Part A
 
-Per the last instruction, this pass checked whether the three items assigned to `fix-014`'s next push
-(the `run:read` seven-table gap, T11a's tautological assertion, and the pin header's 001-014 vs.
-001-017 mismatch) had landed by the time this review ran. **They have not** — confirmed by `git diff
---stat 21ec975..bdd49aa` touching zero files under any `014` name. These remain open and unaddressed
-as of this commit; note for whoever picks up the next 014 push.
+As of `bdd49aa` (this sub-pass's commit), the three items assigned to `fix-014`'s next push (the
+`run:read` seven-table gap, T11a's tautological assertion, and the pin header's 001-014 vs. 001-017
+mismatch) had not yet landed — confirmed at the time by `git diff --stat 21ec975..bdd49aa` touching
+zero files under any `014` name. They landed in the very next commit, `ff01f2b`, reviewed above in
+**Part A**, which is why this report now covers all four packs rather than three.
 
 ---
 
