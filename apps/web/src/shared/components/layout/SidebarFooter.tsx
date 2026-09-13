@@ -109,7 +109,8 @@ export function SidebarFooter({ collapsed = false }: { collapsed?: boolean }) {
         {label(t("shell.shortcuts"))}
       </button>
 
-      {import.meta.env.DEV ? (
+      {/* Absent in supabase mode: there the role is the session's, not a toggle. */}
+      {import.meta.env.DEV && setRole ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             className={rowClass}

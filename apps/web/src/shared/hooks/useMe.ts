@@ -5,20 +5,24 @@ import type { Me, Role } from "@trainos/contract";
  * `useMe()` is the single source of identity and role for the whole shell.
  * Nothing re-derives a role from anywhere else.
  *
- * Today it serves a fixture. When `GET /v1/me` is wired, this hook's
- * implementation changes and every consumer stays as it is — that is the whole
- * reason the shell reads a hook rather than a constant.
+ * Fixtures mode serves `FIXTURE_ME`. Supabase mode serves `core.me()` for the
+ * signed-in session (`MeProvider`), and every consumer stays as it is — that
+ * is the whole reason the shell reads a hook rather than a constant.
  *
  * The role is switchable at runtime ONLY as a development affordance (the
- * topbar role toggle). A client-side role is a rendering convenience, never an
- * authorization boundary: the API decides, and a denied call still has to be
- * handled visibly.
+ * sidebar role toggle), and only over fixtures. A client-side role is a
+ * rendering convenience, never an authorization boundary: the API decides, and
+ * a denied call still has to be handled visibly.
  */
 
 export interface MeContextValue {
   me: Me;
-  /** Development affordance only. Absent once the real session is wired. */
-  setRole: (role: Role) => void;
+  /**
+   * Development affordance, fixtures mode only. ABSENT in supabase mode, where
+   * the role is a JWT claim and a toggle would paint a role the database then
+   * refuses — so a consumer that draws the toggle has to check for it.
+   */
+  setRole?: (role: Role) => void;
 }
 
 export const MeContext = createContext<MeContextValue | null>(null);
