@@ -7,6 +7,85 @@
 > contract — a PR-body extractor keys on those literal strings. Renaming one
 > silently degrades that section to a placeholder.
 
+## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
+
+> **Last updated:** 2026-09-13 — twenty-seven screens across fourteen features are
+> mounted and reading fixtures; the kit absorbed the duplicates they were each
+> carrying; `useApi`/`useAction` is the consolidation still open.
+
+### Focus
+
+Closing the divergence the parallel screen build left behind. Fourteen feature
+lanes wrote screens at once against `@trainos/fixtures`, and each lane carried a
+private copy of whatever the kit did not have yet — an outcome banner, a tone
+map, a date-range formatter, a breadcrumb, a data hook. The kit now owns all of
+those, so this session moves the last local copies out and closes the two shared
+hooks five features still declare privately and mark TEMPORARY.
+
+### Shipped
+
+- **Twenty-seven screens across fourteen features**, each built only from the
+  kit and reading only the fixture client, with render tests over the fixtures
+  and light and dark screenshots at 1440x900.
+- **The component kit**: tokens supplement, chips, layout, data table, filter
+  bar, pill tabs, AI/approval/agent components, overlays and inputs, plus the
+  `/dev/kit` showcase that is its contract with the screen lanes — a pattern not
+  on that page is not in the kit.
+- **The route table closed.** All fourteen features declare their own array;
+  `FEATURE_ROUTES` is spread BEFORE the generated nav placeholders, and
+  `PUBLIC_ROUTES` mounts the client portal as a sibling of the shell.
+- **The breadcrumb lifted to the shell.** A screen declares a trail through
+  `useBreadcrumb` and the 56px top bar renders it. No screen draws its own.
+- **`ActionOutcome` consolidated into the kit** after five independently written
+  copies, three of which had already diverged.
+- **`@trainos/fixtures`**: the seed dataset for the whole demo story, an
+  in-memory client over the contract surface, and 116 tests.
+- **`@trainos/agent-runtime`**: BYOK provider layer, §17 routing, the
+  orchestrator, run slicing for the 400s worker, and a browser-safe default
+  entry pinned by a module-graph test.
+- **Migrations 001 to 009 authored and EXECUTED** on a local PostgreSQL 17.11
+  shim. Nothing applied to any hosted database.
+- **Five architecture documents and a two-part critic review**, plus the agent
+  JWT-minting spike that settled agent auth.
+- **The dev gallery stopped shipping.** A production build was emitting the
+  showcase as a 175 kB chunk nothing could fetch; `vite.config.ts` now aliases
+  the dev route module to an empty array in production.
+
+### Next Active Task
+
+Finish the `useApi`/`useAction` consolidation. Seven feature `api.ts` files
+declare a local `useApi()` marked `TEMPORARY SHAPE`, and `dashboard/client.ts`
+and `approvals/client.ts` each carry a private `toApiError` adaptation because
+`shared/api/errors.ts` recognises only `ApiErrorException` and therefore reads a
+thrown `ContractError` as a transport failure — which puts a retry button on a
+policy refusal, the exact R2 collapse CLAUDE.md warns about. Move one `useApi`
+and one `useAction` into `src/shared/api`, make `errors.ts` recognise a
+`ContractError` structurally rather than by `instanceof`, then delete the nine
+local copies and the two `StandInField.tsx` stand-ins once the kit ships
+`TextField`/`DateField`. The working tree already carries the finance and hrdc
+`ActionOutcome` deletions for this pass. The verifier pass runs after it.
+
+### Blockers
+
+- **The Supabase lane is PAUSED at migration 009** with critic Part 2 open — 7
+  critical and 29 high. `supabase/HANDOFF.md` carries the resume pointer and the
+  seven rulings not yet applied to migrations.
+- **CI has never executed.** There is no remote and no branch protection, so the
+  17-job pipeline has never run once against this repository. Every "green"
+  claim in this session is a local run.
+- **CI secrets are unset**: `VITE_SITE_URL` and `VITE_API_BASE_URL`.
+
+### New durable artifacts
+
+`ai/workstreams.md`, `ai/state-backlog.md`, `ai/project-log.md`,
+`ai/findings-log.md`, `docs/reviews/2026-09-12-ui-blast-lane-review.md`,
+`packages/fixtures/**`, `packages/agent-runtime/**`,
+`apps/web/src/shared/components/kit/**`, `apps/web/src/features/**`,
+`apps/web/src/routes/**`, `supabase/migrations/001`–`009`,
+`docs/architecture/01`–`06`, `docs/architecture/spikes/**`.
+
+---
+
 ## SESSION 2026-09-12 — REPO FLOOR LAID
 
 > **Last updated:** 2026-09-12 — the scaffold is in and every gate runs clean.
@@ -42,6 +121,20 @@ Wire the HTTP client behind `TrainOsClient` and let the fixtures package replace
 happens — that is what the boundary is for. The first screen to build is the one
 the approvals queue needs, since it exercises the approval envelope, the badge
 count and the fire-and-forget mutation rule all at once.
+
+**Correction (2026-09-13) — what actually happened.** The plan above is left
+standing because a reader who half-remembers it needs the correction rather than
+silence. None of it ran as written. The HTTP client behind `TrainOsClient` was
+never wired and no method of `fixture-client.ts` was replaced; instead
+`@trainos/fixtures` shipped as a separate workspace package with its own
+in-memory client over the whole contract surface, and every screen imports that
+package directly through a local `useApi()` rather than through the
+`shared/api` boundary the scaffold built. The approvals queue was not first
+either — the database, contract, architecture, kit and fixtures lanes all ran
+ahead of it, and M02-S01 landed in the middle of a twenty-seven-screen batch
+(`e811fd4`). The boundary's claim that nothing in the app moves when the client
+changes is therefore still untested: the thing it was meant to protect went
+around it. Closing that is the consolidation named in the 2026-09-13 block.
 
 ### Blockers
 
