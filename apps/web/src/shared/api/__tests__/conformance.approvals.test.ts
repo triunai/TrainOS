@@ -32,6 +32,20 @@ import {
  * than the decision it means to pin.
  */
 
+/**
+ * One element of `p_items`, in the DATABASE's spelling.
+ *
+ * `approvalId` and `expectedDiffHash`, camelCase, and no per-item `decision` —
+ * `app.bulk_decide` reads exactly these two keys off each element
+ * (011:3506-3507) under a single top-level `p_decision`. The contract's own
+ * `ApprovalBulkDecideRequest.items` uses `diffHash`, so the rename happens in
+ * `rpcClient.bulkDecide` and this type is what must come out the other side.
+ */
+type WireItem = { approvalId: string; expectedDiffHash: string };
+
+/** What `bulk_decide_approvals` was actually called with, in call order. */
+const bulkWireCalls: { items: WireItem[]; idempotencyKey: string }[] = [];
+
 const FUNCTIONS: RpcHandlers = {
   list_approvals: (args, oracle) => oracle.listApprovals(toPageRequest(args)),
   get_approval: (args, oracle) => oracle.getApproval(String(args.p_id)),
@@ -46,10 +60,17 @@ const FUNCTIONS: RpcHandlers = {
       } as ApprovalDecideRequest,
       { idempotencyKey: String(args.p_idempotency_key) },
     ),
-  bulk_decide_approvals: (args, oracle) =>
-    oracle.bulkDecideApprovals(
+  bulk_decide_approvals: (args, oracle) => {
+    /* Recorded so the suite can assert what actually went ON THE WIRE, not just
+       what came back. The p_items shape and the derived key are the contract
+       here, and a round trip through the oracle would hide both. */
+    bulkWireCalls.push({
+      items: args.p_items as WireItem[],
+      idempotencyKey: String(args.p_idempotency_key),
+    });
+    return oracle.bulkDecideApprovals(
       {
-        items: (args.p_items as { approvalId: string; expectedDiffHash: string }[]).map((item) => ({
+        items: (args.p_items as WireItem[]).map((item) => ({
           approvalId: item.approvalId,
           diffHash: item.expectedDiffHash,
         })),
@@ -57,7 +78,8 @@ const FUNCTIONS: RpcHandlers = {
         note: args.p_note,
       } as ApprovalBulkDecideRequest,
       { idempotencyKey: String(args.p_idempotency_key) },
-    ),
+    );
+  },
 };
 
 /** §2 the saved views behind M02-S01's pill tabs. */
@@ -83,6 +105,7 @@ describe("M02 · the two clients answer the approval screens the same", () => {
   let rpc: ApiClient;
 
   beforeEach(() => {
+    bulkWireCalls.length = 0;
     oracle = createFixtureClient({ latencyMs: 0, actorId: USER_KELVIN });
     fixtures = createFixtureClient({ latencyMs: 0, actorId: USER_KELVIN });
     __setTransportForTests(oracleTransport(oracle, FUNCTIONS, VIEWS));
@@ -219,6 +242,93 @@ describe("M02 · the two clients answer the approval screens the same", () => {
       idempotencyKey: "bulk-decide:fresh:rpc",
     });
     expect(freshFromRpc).toEqual(freshFromFixtures);
+  });
+
+  /**
+   * The argument the DATABASE receives, asserted directly rather than inferred
+   * from what came back.
+   *
+   * `core.bulk_decide_approvals(p_items jsonb, p_decision text, p_note text,
+   * p_idempotency_key text)` (014:1328) forwards to `app.bulk_decide`, which
+   * reads `item ->> 'approvalId'` and `item ->> 'expectedDiffHash'` off each
+   * element (011:3506-3507). Three ways to get this wrong are all silent:
+   * sending `p_ids` (the dropped 4-arg overload — 011:3405 drops it precisely so
+   * this resolves to nothing rather than to the wrong function), snake_casing
+   * the keys (`->>` finds nothing, the hash reads NULL, and 011 compares the
+   * hash only when non-NULL, so the APPROVE sails through unguarded), or
+   * hanging a per-item `decision` on the element (there is none; one top-level
+   * `p_decision` governs the batch).
+   */
+  it("sends p_items with the database's own key spelling, and no p_ids", async () => {
+    await rpc.bulkDecideApprovals(
+      {
+        items: [
+          { approvalId: "apv_0774", diffHash: "diff_0774_v1" },
+          { approvalId: "apv_0775", diffHash: "diff_0775_v1" },
+        ],
+        decision: "APPROVE",
+      },
+      { idempotencyKey: "bulk-decide:shape" },
+    );
+
+    expect(bulkWireCalls).toHaveLength(1);
+    expect(bulkWireCalls[0].items).toEqual([
+      { approvalId: "apv_0774", expectedDiffHash: "diff_0774_v1" },
+      { approvalId: "apv_0775", expectedDiffHash: "diff_0775_v1" },
+    ]);
+    /* Exactly two keys per element: a stray `diffHash` alongside would mean the
+       rename half-happened and the guard would still be reading NULL. */
+    for (const item of bulkWireCalls[0].items) {
+      expect(Object.keys(item).sort()).toEqual(["approvalId", "expectedDiffHash"]);
+    }
+  });
+
+  /**
+   * ⚠ SELECTION ORDER IS NOT INTENT, SO IT MUST NOT CHANGE THE KEY.
+   *
+   * `app.bulk_decide` takes its idempotency request hash over
+   * `array_agg(x ORDER BY x)` — sorted (011:3447) — with the comment that a
+   * client hashing "its selection in click order" made the same two approvals
+   * picked in the other order produce a different key. Sorting server-side
+   * settles the COMPARISON for one key; only the client can mint one key. Until
+   * this pinned it, `useBulkDecideApprovals` passed
+   * `derivedIdempotencyKey("approval-decide", "bulk", body)` — which also
+   * overrode the adapter's derivation entirely, because `key()` is
+   * `options?.idempotencyKey ?? fallback` — and a retry after a dropped
+   * connection ran the whole batch a second time instead of replaying it.
+   */
+  it("derives one idempotency key for one selection, whichever order it was ticked in", async () => {
+    const first = { approvalId: "apv_0774", diffHash: "diff_0774_v1" };
+    const second = { approvalId: "apv_0775", diffHash: "diff_0775_v1" };
+
+    /* No `idempotencyKey` option, deliberately: passing one is what the screen
+       used to do and it is exactly what this asserts nobody does. The refusals
+       are irrelevant here — the key is recorded before the oracle runs. */
+    await rpc
+      .bulkDecideApprovals({ items: [first, second], decision: "APPROVE" })
+      .catch(() => undefined);
+    await rpc
+      .bulkDecideApprovals({ items: [second, first], decision: "APPROVE" })
+      .catch(() => undefined);
+
+    expect(bulkWireCalls).toHaveLength(2);
+    expect(bulkWireCalls[1].idempotencyKey).toBe(bulkWireCalls[0].idempotencyKey);
+    /* Scoped to the bulk write, not borrowed from the single decide. */
+    expect(bulkWireCalls[0].idempotencyKey.startsWith("approval-bulk-decide:")).toBe(true);
+
+    /* …and the selection is still sent in the order it was ticked, because
+       011:3506 iterates `p_items` in order to build `results`. */
+    expect(bulkWireCalls[1].items.map((item) => item.approvalId)).toEqual(["apv_0775", "apv_0774"]);
+
+    /* A REPRICED approval is a different decision, not a replay: the per-item
+       hash is part of the intent, so a changed hash must change the key. */
+    await rpc
+      .bulkDecideApprovals({
+        items: [first, { ...second, diffHash: "diff_0775_v2" }],
+        decision: "APPROVE",
+      })
+      .catch(() => undefined);
+    expect(bulkWireCalls[2].idempotencyKey).not.toBe(bulkWireCalls[0].idempotencyKey);
   });
 
   /**
