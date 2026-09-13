@@ -144,6 +144,9 @@ export function EnquiryDetailPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RecordHeader
+        accent
+        collapsible
+        recordType="enquiry"
         title={detail.subject}
         recordRef={detail.ref}
         meta={[
