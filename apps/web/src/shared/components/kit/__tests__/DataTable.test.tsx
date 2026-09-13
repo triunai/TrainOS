@@ -82,6 +82,52 @@ describe("DataTable", () => {
     expect(captionCell).toHaveAttribute("colspan", "1");
   });
 
+  it("gives a suggested row the AI tint, and never a fill", () => {
+    render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowSuggested={(r) => r.id === rows[1]?.id}
+        label="Enquiries"
+      />,
+    );
+
+    const marked = document.querySelectorAll("tbody tr[data-suggested]");
+    expect(marked).toHaveLength(1);
+    /* 6% tint, per CLAUDE.md. `bg-ai-tint-2` is the SELECTED surface and a
+       suggested row must not borrow it, or a suggestion reads as a choice the
+       user made. */
+    expect(marked[0]?.className).toContain("bg-ai-tint");
+    expect(marked[0]?.className).not.toContain("bg-ai-tint-2");
+    expect(marked[0]?.className).not.toContain("bg-primary");
+  });
+
+  it("lets selection win over suggestion, and suggestion win over the zebra", () => {
+    const second = rows[1];
+    expect(second).toBeDefined();
+
+    render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowSuggested={() => true}
+        selectedKeys={new Set([second?.id ?? ""])}
+        onSelectionChange={vi.fn()}
+        label="Enquiries"
+      />,
+    );
+
+    const all = document.querySelectorAll("tbody tr");
+    /* The selected row keeps the selection surface; the rest take the tint and
+       none of them takes the stripe, because a tint under a tint is a third
+       surface nobody asked for. */
+    expect(all[1]?.className).toContain("bg-ai-tint-2");
+    expect(all[0]?.className).toContain("bg-ai-tint");
+    expect(all[0]?.className).not.toContain("bg-surface/60");
+  });
+
   it("renders the empty state instead of a tbody when there are zero rows", () => {
     render(<DataTable columns={columns} rows={[]} rowKey={(r) => r.id} label="Enquiries" />);
     expect(screen.queryByRole("table")).not.toBeInTheDocument();

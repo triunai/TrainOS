@@ -75,6 +75,22 @@ export interface DataTableProps<Row> {
   onSort?: (key: string) => void;
 
   onRowClick?: (row: Row) => void;
+  /**
+   * Marks a row as carrying an AI suggestion: the row takes the 6% AI tint.
+   *
+   * CLAUDE.md, verbatim: "AI is the primary hue at 6% tint plus the ✦ glyph and
+   * a text label, never a solid fill and never a fourth accent." The tint alone
+   * is not enough and is not meant to be — a marked row must still carry an
+   * `AIChip` in one of its cells, because colour is not a label and a reader
+   * with no colour sees nothing at all. This prop exists so that the ONE way a
+   * table says "an agent has something to say about this row" lives here rather
+   * than in a `className` each list screen invents for itself.
+   *
+   * Precedence is deliberate: selection wins over suggestion, and suggestion
+   * wins over the zebra stripe. Selection is a state the reader just set and
+   * must stay visible; the stripe is only a reading aid.
+   */
+  rowSuggested?: (row: Row) => boolean;
   density?: Density;
   /** Sticky header. On by default — a long list without one is unreadable. */
   stickyHeader?: boolean;
@@ -105,6 +121,7 @@ export function DataTable<Row>({
   sortDirection,
   onSort,
   onRowClick,
+  rowSuggested,
   density = "comfortable",
   stickyHeader = true,
   empty,
@@ -228,6 +245,7 @@ export function DataTable<Row>({
               onToggle={toggleOne}
               selectionDisabledReason={selectionDisabledReason}
               onRowClick={onRowClick}
+              rowSuggested={rowSuggested}
               density={density}
             />
           ))}
@@ -247,6 +265,7 @@ function TableBlock<Row>({
   onToggle,
   selectionDisabledReason,
   onRowClick,
+  rowSuggested,
   density,
 }: {
   block: RowGroup<Row>;
@@ -258,6 +277,7 @@ function TableBlock<Row>({
   onToggle: (key: string) => void;
   selectionDisabledReason?: (row: Row) => string | undefined;
   onRowClick?: (row: Row) => void;
+  rowSuggested?: (row: Row) => boolean;
   density: Density;
 }) {
   return (
@@ -280,6 +300,7 @@ function TableBlock<Row>({
       {block.rows.map((row, index) => {
         const key = rowKey(row);
         const selected = selectedKeys?.has(key) ?? false;
+        const suggested = rowSuggested?.(row) ?? false;
         const disabledReason = selectionDisabledReason?.(row);
 
         return (
@@ -287,11 +308,16 @@ function TableBlock<Row>({
             key={key}
             aria-selected={selectable ? selected : undefined}
             onClick={onRowClick ? () => onRowClick(row) : undefined}
+            data-suggested={suggested ? "" : undefined}
             className={cn(
               "border-b border-divider",
               /* Zebra, per §08. Only on the un-selected rows — a tint on a tint
-                 is a third surface nobody asked for. */
-              index % 2 === 1 && !selected && "bg-surface/60",
+                 is a third surface nobody asked for — and not under a suggested
+                 row either, for the same reason. */
+              index % 2 === 1 && !selected && !suggested && "bg-surface/60",
+              /* The 6% AI tint. Never a fill: the row still reads as a row, and
+                 the chip in it is what says why it is marked. */
+              suggested && !selected && "bg-ai-tint",
               selected && "bg-ai-tint-2 shadow-[inset_2px_0_0_rgb(var(--primary))]",
               onRowClick && "cursor-pointer hover:bg-surface-hover",
             )}
