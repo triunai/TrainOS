@@ -9,9 +9,19 @@
  *
  *   why you are here → what is recommended → what it stands on → what changes
  *
- * The consequence block is the ONLY bordered element in the decision column,
- * because it answers the approver's real question. Everything above it is held
- * together by spacing and type, per CLAUDE.md's hierarchy rule.
+ * The consequence block is the ONLY bordered element in that narrative, because
+ * it answers the approver's real question. Everything above it is held together
+ * by spacing and type, per CLAUDE.md's hierarchy rule.
+ *
+ * PROTOTYPE (tightening brief §15). This screen is the first and, for now, the
+ * ONLY opt-in to the upgraded RecordHeader: `collapsible` plus the `metricsCard`
+ * slot carrying a `MetricStrip variant="accentCard"`. The narrative above has
+ * not been rewritten — it has been re-parented. It now renders as the detail of
+ * the metric band, so the five facts (Value · Agent · Confidence · Margin ·
+ * Risk) are literally the summary row of the case that rests on them rather
+ * than a strip sitting above an unrelated column. Every other record screen
+ * still gets the header's default rendering; the variants are additive and
+ * nothing else changed.
  */
 
 import { useEffect, useState } from "react";
@@ -30,6 +40,7 @@ import {
   JuryChip,
   KeyboardShortcut,
   LoadingState,
+  MetricStrip,
   MoneyText,
   PrimaryButton,
   RecordHeader,
@@ -233,13 +244,128 @@ export function ApprovalDetail() {
 
   const status = decided?.status ?? detail.status;
 
+  /* The narrative, verbatim and in order — only its container has changed. It
+     now hangs off the metric band as that band's detail, which is what puts the
+     five facts and the case that rests on them in one object instead of two. */
+  const caseSections = (
+    /* Capped at a readable measure. The band spans the whole header, which is
+       right for five numbers and wrong for prose: at 1440 the card is ~1114px
+       and an unconstrained evidence row throws its source chip a thousand
+       pixels from the sentence it belongs to. The numbers keep the full width;
+       the narrative underneath does not. */
+    <div className="flex max-w-[900px] flex-col gap-5">
+      <Block title="Why this needs you">
+        <p className="text-[13px] leading-[1.6] text-ink-secondary">{detail.reason}</p>
+      </Block>
+
+      <Block
+        title="Recommendation"
+        aside={
+          <>
+            {detail.recommendation.provenance ? (
+              <AIChip
+                provenance={detail.recommendation.provenance}
+                label={detail.requestedBy.name}
+                showConfidence
+              />
+            ) : null}
+            {detail.modelAgreement ? <JuryChip jury={detail.modelAgreement} /> : null}
+          </>
+        }
+      >
+        <p className="text-[15px] font-semibold text-ink">
+          {humanise(detail.recommendation.verdict)}
+        </p>
+        <p className="text-[13px] leading-[1.6] text-ink-secondary">
+          {detail.recommendation.rationale}
+        </p>
+      </Block>
+
+      <Block title={`Evidence · ${detail.evidence.length}`}>
+        <ol className="flex flex-col gap-1.5">
+          {detail.evidence.map((item) => (
+            <li key={item.n} className="flex items-start gap-2 text-[13px] text-ink-secondary">
+              <CitationChip label={`Source ${item.n}`}>{item.n}</CitationChip>
+              <span className="min-w-0 flex-1 leading-[1.55]">{item.label}</span>
+              <RefChip refValue={item.ref} type={item.type} />
+            </li>
+          ))}
+        </ol>
+      </Block>
+
+      {detail.modelAgreement && detail.modelAgreement.dissented.length > 0 ? (
+        <Block title="Model disagreement">
+          <ul className="flex flex-col gap-1">
+            {detail.modelAgreement.dissented.map((vote) => (
+              <li key={vote.model} className="text-[13px] text-ink-secondary">
+                <span className="font-medium text-ink">{vote.model}</span> differed · {vote.note}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[12px] text-ink-muted">
+            Agreed: {detail.modelAgreement.agreed.join(", ")}
+          </p>
+        </Block>
+      ) : null}
+
+      {detail.deviations.length > 0 ? (
+        <Block title="Differs from normal">
+          <ul className="flex list-disc flex-col gap-1 pl-4">
+            {detail.deviations.map((line) => (
+              <li key={line} className="text-[13px] leading-[1.55] text-ink-secondary">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </Block>
+      ) : null}
+
+      <Block
+        title="Risk"
+        aside={
+          <StatusChip
+            tone={
+              detail.risk.level === "HIGH"
+                ? "danger"
+                : detail.risk.level === "MEDIUM"
+                  ? "warning"
+                  : "neutral"
+            }
+          >
+            {humanise(detail.risk.level)}
+          </StatusChip>
+        }
+      >
+        <p className="text-[13px] leading-[1.6] text-ink-secondary">{detail.risk.note}</p>
+      </Block>
+
+      {/* Still the one bordered element in the narrative. */}
+      <DiffBlock
+        lines={recomputed ?? detail.diff}
+        title={`If you approve, this happens · ${(recomputed ?? detail.diff).length} changes`}
+      />
+    </div>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RecordHeader
+        collapsible
+        recordType="approval"
         title={detail.subject}
         recordRef={detail.ref}
         meta={metaLine}
-        metrics={metrics}
+        metricsCard={
+          <MetricStrip
+            variant="accentCard"
+            cells={metrics}
+            expandable
+            expandLabel="the full case"
+            storageKey="approval"
+          >
+            {caseSections}
+          </MetricStrip>
+        }
         chips={
           <StatusChip tone={APPROVAL_TONE[status]}>
             {status === "PENDING" ? "Awaiting your approval" : humanise(status)}
@@ -352,101 +478,9 @@ export function ApprovalDetail() {
             <ExceptionBanner
               severity="WARN"
               title="This approval moved while you were reading it"
-              subtitle="The consequences below have been recomputed. Read them again before deciding."
+              subtitle="The consequences in the case above have been recomputed. Read them again before deciding."
             />
           ) : null}
-
-          <Block title="Why this needs you">
-            <p className="text-[13px] leading-[1.6] text-ink-secondary">{detail.reason}</p>
-          </Block>
-
-          <Block
-            title="Recommendation"
-            aside={
-              <>
-                {detail.recommendation.provenance ? (
-                  <AIChip
-                    provenance={detail.recommendation.provenance}
-                    label={detail.requestedBy.name}
-                    showConfidence
-                  />
-                ) : null}
-                {detail.modelAgreement ? <JuryChip jury={detail.modelAgreement} /> : null}
-              </>
-            }
-          >
-            <p className="text-[15px] font-semibold text-ink">
-              {humanise(detail.recommendation.verdict)}
-            </p>
-            <p className="text-[13px] leading-[1.6] text-ink-secondary">
-              {detail.recommendation.rationale}
-            </p>
-          </Block>
-
-          <Block title={`Evidence · ${detail.evidence.length}`}>
-            <ol className="flex flex-col gap-1.5">
-              {detail.evidence.map((item) => (
-                <li key={item.n} className="flex items-start gap-2 text-[13px] text-ink-secondary">
-                  <CitationChip label={`Source ${item.n}`}>{item.n}</CitationChip>
-                  <span className="min-w-0 flex-1 leading-[1.55]">{item.label}</span>
-                  <RefChip refValue={item.ref} type={item.type} />
-                </li>
-              ))}
-            </ol>
-          </Block>
-
-          {detail.modelAgreement && detail.modelAgreement.dissented.length > 0 ? (
-            <Block title="Model disagreement">
-              <ul className="flex flex-col gap-1">
-                {detail.modelAgreement.dissented.map((vote) => (
-                  <li key={vote.model} className="text-[13px] text-ink-secondary">
-                    <span className="font-medium text-ink">{vote.model}</span> differed ·{" "}
-                    {vote.note}
-                  </li>
-                ))}
-              </ul>
-              <p className="text-[12px] text-ink-muted">
-                Agreed: {detail.modelAgreement.agreed.join(", ")}
-              </p>
-            </Block>
-          ) : null}
-
-          {detail.deviations.length > 0 ? (
-            <Block title="Differs from normal">
-              <ul className="flex list-disc flex-col gap-1 pl-4">
-                {detail.deviations.map((line) => (
-                  <li key={line} className="text-[13px] leading-[1.55] text-ink-secondary">
-                    {line}
-                  </li>
-                ))}
-              </ul>
-            </Block>
-          ) : null}
-
-          <Block
-            title="Risk"
-            aside={
-              <StatusChip
-                tone={
-                  detail.risk.level === "HIGH"
-                    ? "danger"
-                    : detail.risk.level === "MEDIUM"
-                      ? "warning"
-                      : "neutral"
-                }
-              >
-                {humanise(detail.risk.level)}
-              </StatusChip>
-            }
-          >
-            <p className="text-[13px] leading-[1.6] text-ink-secondary">{detail.risk.note}</p>
-          </Block>
-
-          {/* The one bordered element in the column. */}
-          <DiffBlock
-            lines={recomputed ?? detail.diff}
-            title={`If you approve, this happens · ${(recomputed ?? detail.diff).length} changes`}
-          />
 
           {decided ? (
             <DiffBlock

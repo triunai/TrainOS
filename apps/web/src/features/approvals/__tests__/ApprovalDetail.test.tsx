@@ -144,6 +144,40 @@ describe("M02-S02 approval detail", () => {
     expect(within(aside).getByText(/Discount below floor/)).toBeInTheDocument();
   });
 
+  /* Tightening brief §15, prototyped on this screen only. */
+  it("hangs the whole case off the metric band, inside the header", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    const why = await screen.findByText("Why this needs you");
+    const header = why.closest("header");
+
+    /* The narrative is INSIDE the RecordHeader now, as the detail of the
+       gradient band — not a column sitting beside it. */
+    expect(header).not.toBeNull();
+    const band = why.closest("section[class*='surface-accent-gradient']") as HTMLElement;
+    expect(band).not.toBeNull();
+
+    /* The five facts are the band's always-visible summary row, spread evenly
+       rather than clustered left. */
+    const summary = band.querySelector(".grid") as HTMLElement;
+    expect(summary.style.gridTemplateColumns).toBe("repeat(5, minmax(0, 1fr))");
+    expect(within(summary).getByText("Value")).toBeInTheDocument();
+    expect(within(summary).getByText("Risk")).toBeInTheDocument();
+
+    /* Closing the band keeps the five facts and takes the case away. */
+    await user.click(screen.getByRole("button", { name: "Hide the full case" }));
+    expect(band.querySelector("[data-open]")?.getAttribute("data-open")).toBe("false");
+    expect(within(summary).getByText("Confidence")).toBeInTheDocument();
+
+    /* And collapsing the header leaves one row with the decision still on it. */
+    await user.click(screen.getByRole("button", { name: "Hide the record details" }));
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Send proposal · Aurora Manufacturing Sdn Bhd",
+    );
+  });
+
   it("explains a missing approval instead of rendering an empty record", async () => {
     renderDetail("APV-does-not-exist");
 

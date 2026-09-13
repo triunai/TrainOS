@@ -1,10 +1,12 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { MetricDelta, Money, ReceivablesAging, Severity } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { MiniBar, type BarState } from "./Bar";
+import { Collapse, DisclosureButton } from "./Collapse";
 import { formatPeriod } from "./format";
 import { MoneyText } from "./Money";
 import { FOCUS_RING, MONO_LABEL } from "./tokens";
+import { useRememberedFlag } from "./useRememberedFlag";
 
 /**
  * The MetricStrip. Kit.dc.html §09, items 4–10.
@@ -200,10 +202,57 @@ export interface MetricStripProps {
   cells: MetricCellProps[];
   /** Drop the top rule where the strip is not sitting under a RecordHeader. */
   bare?: boolean;
+  /**
+   * `"default"` is the hairline-separated row this component has always been:
+   * cells packed from the left, a rule above, nothing around it.
+   *
+   * `"accentCard"` is the band from the tightening brief §15 — its own card
+   * spanning the header width, on the one gradient in the system, cells spread
+   * EVENLY across that width rather than clustered left. Use it only inside a
+   * `RecordHeader`'s `metricsCard` slot; a page that scatters accent cards has
+   * spent the blue budget on decoration.
+   */
+  variant?: "default" | "accentCard";
+  /**
+   * `accentCard` only. Turns the band into a disclosure: the metric row stays
+   * the always-visible summary and `children` become the detail beneath it,
+   * inside the same card. The metrics ARE the summary row of the detail, which
+   * is why this is one component and not a card with a strip glued on top.
+   */
+  expandable?: boolean;
+  /** What the disclosure opens, as a noun phrase: "the full case". */
+  expandLabel?: string;
+  /** Record-TYPE key the open/closed choice is remembered against. */
+  storageKey?: string;
+  /** The detail. Only rendered by `accentCard` + `expandable`. */
+  children?: ReactNode;
   className?: string;
 }
 
-export function MetricStrip({ cells, bare, className }: MetricStripProps) {
+export function MetricStrip({
+  cells,
+  bare,
+  variant = "default",
+  expandable,
+  expandLabel = "the detail",
+  storageKey,
+  children,
+  className,
+}: MetricStripProps) {
+  if (variant === "accentCard") {
+    return (
+      <AccentMetricCard
+        cells={cells}
+        expandable={expandable}
+        expandLabel={expandLabel}
+        storageKey={storageKey}
+        className={className}
+      >
+        {children}
+      </AccentMetricCard>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -221,6 +270,104 @@ export function MetricStrip({ cells, bare, className }: MetricStripProps) {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * The accent band. `MetricStrip variant="accentCard"` renders this; it is not
+ * exported, because a screen that reaches for it directly is building a second
+ * metric vocabulary and the whole point of §15 is that there is one.
+ *
+ * THE COLOUR. `--surface-accent-gradient` is alpha over `bg-card`, so the card
+ * decides what the tint lands on and the band follows the theme with no second
+ * value. No border: the tint IS the boundary, and CLAUDE.md's hierarchy rule
+ * says a border that changes nothing comes out. Status colour does not enter
+ * here — a chip inside a cell still carries its own, but the band never does.
+ *
+ * THE SPREAD. `repeat(n, minmax(0, 1fr))` is an inline style because `n` is
+ * data: a class name assembled from a runtime number is a class Tailwind never
+ * saw and never generated. `minmax(0, …)` rather than bare `1fr` so a long
+ * agent name truncates inside its column instead of widening it.
+ */
+function AccentMetricCard({
+  cells,
+  expandable,
+  expandLabel,
+  storageKey,
+  children,
+  className,
+}: {
+  cells: MetricCellProps[];
+  expandable?: boolean;
+  expandLabel: string;
+  storageKey?: string;
+  children?: ReactNode;
+  className?: string;
+}) {
+  const detailId = useId();
+  /* Default open. The case is the reason the screen exists; a reader who wants
+     the summary alone closes it once and it stays closed. */
+  const [open, setOpen] = useRememberedFlag(
+    storageKey ? `metric-card:${storageKey}` : undefined,
+    true,
+  );
+
+  const disclosable = Boolean(expandable && children);
+
+  return (
+    <section
+      className={cn(
+        "overflow-hidden rounded-[var(--radius-panel)] bg-card text-ink",
+        "bg-[image:var(--surface-accent-gradient)]",
+        className,
+      )}
+    >
+      <div className="flex items-stretch">
+        <div
+          className="grid min-w-0 flex-1"
+          style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}
+        >
+          {cells.map((cell, index) => (
+            <div
+              key={cell.label}
+              className={cn(
+                /* Top-aligned, not centred. A cell whose value is a chip is
+                   taller than one whose value is text, and centring five cells
+                   of two different heights puts their captions on five
+                   different baselines — the exact raggedness the strip exists
+                   to avoid. */
+                "flex min-w-0 flex-col justify-start py-3.5 pl-4 pr-3",
+                /* A tinted hairline, not --border: a neutral rule over a blue
+                   tint reads as a seam between two surfaces. Drawn from the
+                   accent already in play, so no new colour enters. */
+                index > 0 && "border-l border-primary/15",
+              )}
+            >
+              <MetricCell {...cell} />
+            </div>
+          ))}
+        </div>
+
+        {disclosable ? (
+          <div className="flex shrink-0 items-center border-l border-primary/15 px-3">
+            <DisclosureButton
+              open={open}
+              onToggle={() => setOpen(!open)}
+              controls={detailId}
+              label={expandLabel}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {disclosable ? (
+        <Collapse open={open} id={detailId}>
+          {/* Spacing inside the clipped row; a padded wrapper would leave a
+              residual band when the card closes. */}
+          <div className="border-t border-primary/15 px-4 pb-5 pt-4">{children}</div>
+        </Collapse>
+      ) : null}
+    </section>
   );
 }
 
