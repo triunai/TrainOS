@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { INVOICE_OVERDUE } from "@trainos/contract";
 import { CollectionsQueueScreen } from "../CollectionsQueueScreen";
 import { currentPrimaries } from "@/shared/components/kit";
 import { InvoiceDetailScreen } from "../InvoiceDetailScreen";
@@ -32,6 +33,46 @@ describe("M13-S02 · invoice detail", () => {
 
     /* The per-pax figure is a caption, never a line: RM 616.67 × 30 is not RM 18,500. */
     expect(screen.getByText(/does not multiply back to the package price/)).toBeInTheDocument();
+  });
+
+  /* ---- the kit's table, not a hand-rolled one ------------------------ *
+   *
+   * This screen drew its own `<table>` with four mono-caps `<th>`, so it lost
+   * the zebra stripe built into the kit's DataTable and put a machine font on
+   * money. Both are asserted, because both are invisible to a test that only
+   * checks the numbers are present.
+   */
+
+  it("renders the lines through the kit's DataTable", async () => {
+    renderScreen(<InvoiceDetailScreen invoiceRef={DEFAULT_INVOICE_REF} />, { role: "FINANCE" });
+
+    const table = await screen.findByRole("table", {
+      name: `Line items on invoice ${DEFAULT_INVOICE_REF}`,
+    });
+
+    /* Brief §1 and the kit's own note: a column heading is a label, so it takes
+       the UI font. Tracked uppercase mono headings are what this replaced. */
+    for (const header of within(table).getAllByRole("columnheader")) {
+      expect(header.className).toContain("font-sans");
+      expect(header.className).not.toContain("font-mono");
+    }
+  });
+
+  it("recovers the zebra stripe the hand-rolled table had lost", async () => {
+    /* INV-2026-0288 is the fixture invoice with TWO lines, so there is a second
+       row for the stripe to land on at all. */
+    renderScreen(<InvoiceDetailScreen invoiceRef={INVOICE_OVERDUE} />, { role: "FINANCE" });
+
+    const table = await screen.findByRole("table", {
+      name: `Line items on invoice ${INVOICE_OVERDUE}`,
+    });
+    const bodyRows = within(table)
+      .getAllByRole("row")
+      .filter((row) => within(row).queryAllByRole("cell").length > 0);
+
+    expect(bodyRows).toHaveLength(2);
+    expect(bodyRows[0]?.className).not.toContain("bg-surface/60");
+    expect(bodyRows[1]?.className).toContain("bg-surface/60");
   });
 
   it("keeps the failed sync attempt beside the validated state", async () => {
