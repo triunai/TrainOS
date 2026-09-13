@@ -9,6 +9,8 @@
 
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 
+> **WRAP 13 Sep 13:55 +08** — UI paused by user decision; all 45 nav leaves built; API phase next. Start from `ai/resume-brief.md` (research blast E, migrations A, API-layer decision C). Previous wrap note kept below for history.
+>
 > **WRAP 13 Sep 11:52 +08** — session cleared for context. Start the next session from `ai/resume-brief.md` (agents to relaunch, blast A–E, eyeball list). In-flight at wrap: shell-fix, applier-2, proto-header — check `git log` for their last commits before relaunching.
 
 > **Last updated:** 2026-09-13 — twenty-seven screens across fourteen features are

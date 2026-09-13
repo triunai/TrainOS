@@ -1,34 +1,61 @@
-# Resume brief — 13 Sep 2026 11:50 (+08)
+# Resume brief — 13 Sep 2026 13:50 (+08) · UI paused, API phase begins
 
-Read this first in the new session, then `ai/hot-state.md`, then `docs/design/2026-09-13-design-tightening-brief.md`.
+Read this first in the new session, then `supabase/HANDOFF.md`, then `docs/reviews/2026-09-13-verification.md`, then `docs/bd/ai-explorations/README.md`. The previous brief (11:50) is superseded; its blast A–E is complete.
 
 ## State at wrap
 
-- HEAD green as of bc5efbc (typecheck/lint/415 web tests/build/arch) plus later commits from shell-fix (6348676 …), dash-fix (241123f), applier-2 (f45d99f …). Re-run root gates first; fix before launching anything.
-- Dev server: `npm run dev -- --port 5180` (8080 is taken). Demo index `/dev/demo`, kit `/dev/kit`.
-- Shared worktree rules (CLAUDE.md R9, R12–R14): pathspec commits only; never --amend/reset/rebase; `git show --stat --format="" HEAD` after every commit; check the file not the message; receiving side rejects unknown values.
-- Supabase: PAUSED at 010 (supabase/HANDOFF.md). Resume 011–016 with **Codex gpt-5.6 xhigh** via the codex plugin (installed, logged in), one batch per round, Claude reviews vs docs/architecture/06-critic-review.md.
+- **UI is paused by the user's decision.** All 45 nav leaves render real screens (26 with artboards, 30 built today without one, under CLAUDE.md and `docs/design/2026-09-13-design-tightening-brief.md` §1–§19). Every screen has Loading/Error/Empty states, render tests, and light+dark screenshots at 1440×900.
+- **Kit additions today:** blue accent RecordHeader (14 record pages), ListToolbar, SplitWorkspace, KanbanBoard, CalendarGrid/List, PartialDataBanner, RowActionMenu, ProfileModal `headerAction`, FilterSelect/FilterSearch, DataTable `variant:"code"` + `rowSuggested`, on-accent danger button variant, content-sized segments (64px floor). `SPLIT_HEADER_HEIGHT` deleted. `--primary-deep/--primary-lift` deleted. Gradient B (violet edge) default, A at `?gradient=alt`.
+- **Contract:** 16 commits; all six deferred review gaps closed, five `status: string` fields → enums, `Quotation.status`, `FloorPriceBreachDetails` floors, `AlternativeCategoryRate.ratePerMessageExact`, `RoutingEntry.staged {tier, reason}`, `UsageDailySeries`, `MeProfile` on `GET /v1/me/profile`, `PipelineStage.terminal/outcome` (required), `MessageChannel` exported, `OPPORTUNITY_STAGE_CHANGE` (R18), `certificateIssuedAt` (R17). Twelve enums + two action types pending migration, listed in `supabase/HANDOFF.md`.
+- **Fixtures:** Alex Selvarajah is `/me` for MD; 136 participants across 10 cohorts; 78 certificates; one below-floor margin (Safety Leadership, 29%); 14-day usage series; ORG-0114 has an in-flight deal (ENG-0259) with a pending Approval stage.
+- **Supabase:** packs 001–011 written with tests and rollbacks, executed on the local PostgreSQL 17 shim, **applied nowhere**. 011 (action envelope, 3,640 lines) committed at wrap with repaired pins. 012–016 per HANDOFF (events/outbox, AI ops, RLS policies + grants, realtime/cron, seed/provisioning), 017 = baseline amendment (revoke PUBLIC execute on nine core fns, jsonb CHECKs, two numeric precisions). **Every table is deny-all until 014 lands.** Codex is quota-blocked until 17:10 on 13 Sep; ruling: Claude drafts, Codex (gpt-5.6-sol xhigh) reviews. Kimi: see HANDOFF for whether a review path exists.
+- **Backend write-up for a first-time reviewer:** artifact https://claude.ai/code/artifact/4225b80f-92f8-4073-8d19-9b341fa86a33 (source in the previous session's scratchpad; regenerate from `supabase/migrations`, `packages/contract`, `packages/agent-runtime` if needed).
+- **Dev server:** `npx vite --port 5180` from `apps/web`. Demo `/dev/demo`, kit `/dev/kit`.
 
-## Agents that were running at wrap (relaunch any whose last item is not committed)
+## Rulings pending the user (do not act unprompted)
 
-1. **shell-fix** (Opus) — layout/, index.css, tokens.css. Queue in order: hide scrollbars site-wide until scrolling (§14); sidebar accordion collapse + eased leak-free animation; selected child reflects route + parent auto-open + two hierarchy mechanisms; seamless sidebar/topbar surface; only active group expanded; footer = Help & support · Shortcuts · Role drop-up (DEV) · version line (no « chevron); profile row at TOP under wordmark + light/dark toggle switch; kit **ProfileModal** from Kit.dc.html "PROFILE MODAL · 960"; topbar = breadcrumb · search ⌘K · bell with badge count · EN | BM switch + I18nProvider with shell strings in EN/BM (§12, §12a, §12b, §17).
-2. **applier-2** (Opus) — features/**, shared/api, kit additive. Queue: review findings docs/reviews/2026-09-13-web-best-practices-review.md steps 2–7 (stable idempotency keys via useAction; 14 ErrorState sites pass the error object; useSinglePrimary by instance; promote TextField/DateField/TextArea/RefusalBanner/statusTone maps/renderScreen to kit; consolidate errorCodeOf/errorMessageOf; remaining HIGH); the three screens missing the 20px page gutter + inline Breadcrumb (programmes list, costing worksheet, proposal builder); inline LifecycleStepper in every table row the artboards draw it (§11a). Append "Applied" table to the review doc.
-3. **proto-header** (Opus) — features/approvals/ApprovalDetail.tsx + kit RecordHeader/MetricStrip additive variants: collapsible header, soft-gradient metric card (`--surface-accent-gradient`), metrics spread evenly, card expands into the detail sections (§15). Prototype only on the approval detail; report blue-area % and a propagate recommendation.
+1. Theme switch moved into the ProfileModal header to stop the name truncating beside the new collapse control; user may want it back beside the name (then the collapse control moves to the footer).
+2. Participants list: eight-segment status track (806px) + two facets cannot share one row at 1440 by 148px; stacked with a DEV-only warning banner. Options: narrower track, hide zero-count segments, or accept.
+3. Cobalt removal (keep only #1F5BFF) — deferred, see memory.
+4. Participants stacking aside, the §10a segment floor is 64px; §10's 120px is withdrawn.
 
-4. **tabs-fix** (Opus) — kit PillTabGroup → bounded segmented control (§10/10a) and the enquiries split-header alignment (§16 last bullet); reports which other master/detail screens diverge.
+## Shared-worktree rules (they cost us six sweeps today; all in memory too)
 
-## Next blast (launch after the three above are committed and gates are green)
+- Commit ONLY `git add -- <files> && git commit -m "..." -- <files>`. Never a bare `git commit`. Never amend/reset/rebase.
+- A pathspec commit records the WORKING TREE of the named file, not your hunks: before committing any shared file (`kit/index.ts`, `tokens.css`, `tailwind.config.ts`, `FixtureClient.ts`, `HANDOFF.md`, the brief, any barrel) run `git diff --cached --numstat -- <file>` and confirm the line count is yours; after, `git show HEAD -- <file>`.
+- One named owner per shared file per blast. New files must be `git add`ed first.
+- A barrel line can reach HEAD before its module: run `npm run check:barrels` (added by the verifier; if absent, `git ls-files` vs barrel exports) before any cut.
+- Tests: root `npm test -- --run` or from `apps/web`; never bare `vitest` at root. Rerun once on phantom failures while other lanes write.
+- Screenshots: own browser context per lane; reject frames under 20KB; pin the viewport (another lane resized the shared one to 1496 today).
+- `lefthook.yml` runs `lint-staged --no-stash` (a stash restore lost work once).
+- **Prefer worktrees next blast** for lanes with disjoint folders and no kit additions; the shared index is the one thing they fix.
 
-A. **kit-tighten** (Opus): brief §1–§9 + §10/10a (segmented control) at kit/token level: `--font-ui/--font-code`, tabular numerals, radius scale (6/10/999), surface layers L0–L3, mono down 70–80%, flatten ContentCard → page-as-component, DataTable typography + zebra where artboards draw it, FilterBar unboxed, section caption component. Verify on /dev/kit, Programmes, Collections both themes.
-B. **screens-migrate** (2–3 Opus, split by feature groups as in the ai/briefs/screen-blast-assignments.md): move all 27 screens to page-as-component, apply §16 (enquiry rows/detail; money/date as data, provenance only on exceptions), §11 per-screen fidelity checklist from each artboard annotation, §18 Knowledge Sources and the other control-panel screens (human summary first, machinery in detail), propagate the RecordHeader upgrade if the prototype is approved.
-C. **fixtures-persona** (Sonnet): MD `/me` = Alex Selvarajah (§13); demo index narrated to him; ProfileModal fields.
-D. **verifier** (Opus): every route, light + dark, 1440×900 + 1920×1080, screenshot vs artboard twin, per-screen checklist, blue budget, one primary, a11y, no scrollbars at rest, root gates; findings file + fix list.
-E. **i18n pass** (§17) and **Supabase 011–016 via Codex** in parallel with D.
+## Next session: API phase (user's stated goal: get the API contracts up; a few core flows runnable first)
 
-## What to eyeball fast (after shell-fix lands)
+Sequence, with parallel research from the start:
 
-1. `/approvals/APV-2026-0771` — the prototype header: collapse the header, collapse/expand the gradient metric card, both themes. Decide: propagate as-is / softer / drop.
-2. Sidebar: profile at top + theme switch; accordion open/close; selected child; no scrollbar at rest; footer items; EN | BM switch flips shell strings.
-3. `/dashboard` — rebuilt against M01 (paired bars, 38px rows).
-4. `/sales/enquiries` — split header rows aligned; row typography (will change again in blast B).
-5. `/sales/organisations/ORG-0114` — engagements table now with inline lifecycle steppers (after applier-2).
+**A. Migrations continue (1 Opus lane, Codex reviewing after quota):** 012 → 013 (carry the twelve enums + two action types) → 014 RLS → 015 → 016 → 017. Then propose 018 "golden path runnable" (enquiry → org match → TNA → programme → proposal + costing with claimable date → approval via policy → send → follow-up → engagement with grant window) with a seed and a walking SQL test; do not start 018 without the user.
+
+**B. Hosted Supabase (user provisions; one gated lane applies):** Supabase Pro, Singapore, per proposal §3.3. Project ref into `supabase/config.toml`. Apply packs to hosted only in a lane that does nothing else, one pack per round, rollback verified on the shim first. Nothing applies before 014 is reviewed.
+
+**C. API layer decision (needs the user):** proposal §3 says .NET modular monolith + Dapper; the repo has no `apps/api`. Options to put to the user with costs: (1) PostgREST + RPCs + Edge Functions behind the contract's 116 endpoint specs, fastest to "core flows up"; (2) .NET API as proposed; (3) thin Node/Hono adapter over Supabase for now. Recommend (1) for the golden path, revisit at Phase 2.
+
+**D. Web off fixtures for the golden path:** swap the `@trainos/fixtures` client for the API client behind the same `useApi`/`useAction` seams, one feature at a time, starting with enquiries → proposals → approvals. 35 files import fixtures today.
+
+**E. Research blast, in parallel from minute one (Sonnet unless noted), each writing one doc under `docs/research/2026-09-<dd>-*.md` and reporting what changed vs the proposal pack:**
+
+1. HRD Corp compliance refresh: Circular 2/2026 text, ACM 2026, eTRIS claim steps, HRD-TDF rules, levy forfeiture/15% deduction, any new circulars since June; diff against `docs/bd/proposal-content-pack-v2.md` §1.5 and Appendix B; propose rule-registry rows.
+2. Supabase current docs (Opus): pgvector at scale, RLS + PostgREST performance patterns, Edge Function limits (the 300s slice), pg_cron/pg_net, Vault, branching; what changed since the architecture docs were written.
+3. Vector storage decision: pgvector (HNSW/IVFFlat, 1536 vs 3072 dims, filtering by tenant) vs Pinecone vs pgvectorscale, with a cost model at the pack's baseline (40 HRDC packets, corpus tiers A–D) and 10×; when Pinecone becomes necessary, if ever.
+4. AI storage practices: embeddings retention, PII redaction before model calls, prompt/response logging under PDPA (amended), per-tenant key isolation, Langfuse self-host; produce a data-handling matrix per tier from proposal §4.1.
+5. Model pricing re-baseline: current prices for every tier in §4.1, OpenRouter fees, DeepSeek peak hours vs MYT; recompute §4.2 monthly costs.
+6. PDPA amended + MyInvois + SST current requirements affecting schema (retention periods, e-invoice fields, DPO obligations).
+7. Read `docs/bd/ai-explorations/README.md` and pick up the eight "for the Opus pass" threads (Opus, later in the session, not first).
+
+**F. Verifier carry-over (`docs/reviews/2026-09-13-verification.md`, gates green at 091e3e0: 1095 tests, build passes, agent runtime proven absent from the production bundle, 63 routes × 4 captures clean):** applied today: strict graduation for `selectNav`, BreadcrumbProvider in the harness, automation modules folded, four trails fixed, three h1s fixed. **Left, ranked:** dark sidebar contrast tokens (close 34 of 40 failing routes); mono-uppercase reduction at kit level; §16 on the enquiry inbox row; ListToolbar on the three enquiry screens and the agent registry; Collections itself non-conformant to §10b; HRD Corp and Invoices nav leaves mount a detail so they have no list; two hand-rolled tables lose zebra; Drawer opening a primary scope; ten tone ternaries; nine missing empty states; **profile modal wiring to `getMeProfile()` was NOT done, still reads the constant.** The knowledge-sources one-primary conflict is a false positive (modal drawer). **Verifying in a worktree: `node_modules/@trainos/*` symlink into the live packages, so re-point them or you measure the live tree.**
+
+## What to eyeball first next session
+
+1. `/sales/pipeline` — the Kanban rebuild (landed at wrap in whatever state pipeline reported).
+2. Any page the verification doc flags; the dark sidebar contrast item first, it is one token change closing 34 routes.
+3. Profile modal after role switch, once the `getMeProfile()` wiring lands (not done yet).
