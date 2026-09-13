@@ -648,3 +648,49 @@ The seven standing CRITICALs are `N-01` (extensions), `C-03` (04's tables in `ap
 - Migrations `006`–`016` do not exist. `C-04`'s residue, all of 05's event and run tables, and the gate tables in 03 are still governed by migrations nobody has written, so their RLS posture is a promise, not a fact. The `app.finalise_table` mechanism makes that promise much more likely to be kept.
 - The JWT spike was confirmed to exist and to support `02`'s position; I did not audit its argument in depth.
 - `config.toml` was not read, again. It remains the thing that exposes `core`, and nothing in the repo I looked at proves it does.
+
+---
+
+# Part 3 · Applied marks (append-only)
+
+Written by the migrations author, not the critic. Parts 1 and 2 are left exactly
+as reviewed; nothing above this line is edited. Each row names the finding, the
+migration or amendment that closes it, and the evidence — because "applied" with
+no evidence is the same claim the critic was brought in to check.
+
+Migrations 001–009 are AUTHORED and EXECUTED against a scratch PostgreSQL 17.11
+cluster with a platform shim. **Nothing is applied to any hosted project.** A
+finding marked closed here is closed in the files, which is the only thing that
+can be closed before an apply exists.
+
+## Amendment pass A — 2026-09-13 (commit `93414bb`)
+
+| Finding | Severity | State | Applied in | Evidence |
+|---|---|---|---|---|
+| `N-01` / `C-06` — R-EXT not applied, no `pg_cron`/`pg_net`/`vector` | CRITICAL | **Closed** | 001 (amended) | `001` §2 installs all three with the schema Supabase documents for each: `pg_cron WITH SCHEMA pg_catalog` (its control file pins `schema = pg_catalog` and is non-relocatable, so no other spelling parses) plus the two documented `cron` grants; `pg_net` and `vector` into `extensions`. The verify block and `test_001` T2/T2b assert the **schema of each extension** and the **callable surface** — `cron.job`, `cron.job_run_details`, `net.http_post`, `extensions.vector` — rather than a row in `pg_extension`. Executed: 9/9 apply, `test_001` 13 PASS. |
+| `N-05` — the search_path gate contradicts the executable migrations | HIGH | **Closed** | 001–009 (amended) | One spelling, `SET search_path = ''`, on all forty functions, resolved in the direction the finding recommended. `test_001` T3 now asserts the exact stored string `search_path=""` as one element of `proconfig`, across `app`, `core` AND `public` (the version it replaces looked only at `app` and would have missed all sixteen `core` functions), skipping extension-owned functions. Deviation D1 in `002` is rewritten from a justification into a closure note. Safety was **verified, not assumed**: all forty bodies were read out of `pg_proc` and swept for bare references to any relation, function or type in `app`/`core`/`public`/`extensions`; two hits, both the column `trainer_id` colliding with the function `app.trainer_id()`, both false. The static sweep is load-bearing because plpgsql resolves relation names only at first execution — a clean apply proves nothing here. |
+| `N-03` — the gate's payload guard fails open on a typo | HIGH | **Closed** | 004 (amended) | `app.action_types.payload_schema` carries `CONSTRAINT action_types_payload_schema_shape CHECK (payload_schema ? 'required' AND jsonb_typeof(payload_schema -> 'required') = 'array')`, with the default moved to `'{"required": []}'` in the same change because the constraint and the default are one decision. The `jsonb_typeof` half is not redundant: `{"required": "ref"}` satisfies key presence and still makes `jsonb_array_elements_text` raise at runtime instead of at insert. The finding also asked that the `coalesce` be dropped so an unreadable schema raises — that belongs to 011's validator and is **still open**, tracked below. |
+| `C-04` residue — sequencing of `grant select … to authenticated` before the gate tables have policies | CRITICAL (residue) | **Carried to 011** | — | Flagged in 011's header as the finding asks, not re-derived. |
+| `C-03` — doc 04's money and compliance tables in `app` | CRITICAL | **Closed in the migrations** | 007, 009 | Every client-readable table doc 04 placed in `app` is created in `core` with doc 01's plural names: `core.invoice_lines`, `core.rate_cards`, `core.provenance`, `core.compliance_rules`, `core.rule_set_versions`. `app` holds only the gate, the helpers and the outbox seam. The finding is closed **in the executable pack**; doc 04's own prose still says `app` and is not mine to edit. |
+| — | — | **New, found by execution** | 002, 004, 007 | Three tables had neither RLS nor FORCE: `app.role_permissions`, `app.action_types`, `core.provenance_subjects`. The last is in `core`, which `config.toml` exposes to PostgREST, so it was reachable from a browser. All three now enabled and forced. **The naive fix would have broken the product**, and this was measured rather than reasoned: with a table and its `SECURITY DEFINER` reader owned by a role created `NOSUPERUSER NOBYPASSRLS`, `app.has_permission()` returns `false` for every permission under forced-with-no-policy and `true` with one `SELECT` policy. `role_permissions` and `action_types` therefore carry one; the grant layer remains the guard (`anon` and `authenticated` hold no `SELECT` — measured, both false — and `app` is not an exposed schema). `provenance_subjects` correctly gets none: its only SQL consumer is a foreign key, and referential integrity checks bypass row security by design. |
+| §2.8 — "`config.toml` was not read, again" | — | **Closed** | 001 (amended) | Read on 2026-09-13. It sets `schemas = ["public", "core", "graphql_public"]`, so `core` is exposed and `app` is not. `001`'s header no longer justifies the `core` schema by quoting doc 03 §1 — an early draft the committed document later contradicted, which is `C-01` — and rests on `config.toml` plus the ~250 `core.*` references three lanes wrote against it. |
+| §2.8 — "`006`–`016` do not exist, so their RLS posture is a promise" | — | **Partly closed** | 006–009 | 006–009 exist and are executed. Every table in `app`, `core` and `public` is now RLS-enabled and forced — asserted by query, not by grep, which matters: the original grep for `FORCE ROW LEVEL SECURITY` returned zero because `app.finalise_table` emits it through `format()` with two spaces. 010–016 remain unwritten and their posture remains a promise. |
+| §4.1's open question — does Supabase's `postgres` carry `BYPASSRLS`? | — | **Made irrelevant** | 002 (amended) | Not settled, and it is now stated plainly that it is not. Supabase's RLS guide says a function created by `postgres` "will have bypassrls privileges", which implies yes, but that is an inference from prose about a role attribute nobody here can read. Instead the pack is built to be correct **either way**: `app.custom_access_token_hook` and `app.principal_claims` are `SECURITY INVOKER` so they genuinely run as `supabase_auth_admin` (which makes 002's grants and policies load-bearing rather than the dead code §4.1 said one of them must be), and every table a `SECURITY DEFINER` function must read carries a policy admitting that read. Doing so exposed a real gap the DEFINER mode had hidden: `supabase_auth_admin` held no `USAGE` on schema `public`, so the hook failed with `permission denied for schema public`. `test_002` T9 had been passing vacuously and only tested what its name claimed once the mode changed. |
+| `N-02`, `N-04`, `N-06`–`N-10`, `C-07`–`C-11` | — | **Still open** | — | Owned by 010–016. `C-07` retention, `C-08` poison-pill retry and `N-02` jsonb shape belong to 012/015; `C-09` PDPA, `C-10` levy staleness and `C-11` MyInvois to 010/012; `N-04`, `N-06` and `N-07` are doc-level disagreements (01 vs 04 on rule versioning, on the rule grammar, and on the circular number, D-44) that a migration cannot settle without a ruling on which document wins. |
+
+**Standing rule §2.5 adopted.** "A test asserts the exact expected value, never
+non-nullness, never contains, never is-not-empty." Applied in this pass to
+`test_001` T3 (`'search_path=""' = ANY (proconfig)`, not `proconfig IS NOT NULL`,
+which passes all three spellings including the broken one), to `test_001` T2
+(the extension's schema, not its presence), and to `test_003` T2 (an explicit
+allowance list naming each later-migration enum and its owner, never a predicate
+like "created after 003" — noticing a type nobody declared is that pin's whole
+job).
+
+**One correction to Part 2 §2.8's "still nothing executed".** Everything in
+001–009 is now executed, and executing it is what found the defects in this
+pass. Three pins failed the first time they were run against the FULL applied
+set rather than immediately after their own migration: `test_003` T2, `test_003`
+T5 and `test_004` T1a. Two were defects in the pins and one was a genuine
+missing `FORCE`. **A pin that has only ever been run at the moment that flatters
+it has not been run.**
