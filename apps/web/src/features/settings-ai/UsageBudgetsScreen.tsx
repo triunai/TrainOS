@@ -76,7 +76,11 @@ function proposedCap(budget: Budget) {
 
 export function UsageBudgetsScreen() {
   const navigate = useNavigate();
-  useBreadcrumb([{ label: "Settings" }, { label: "Usage" }, { label: "November 2026" }]);
+  /* The trail stops at "Usage". The period is not path, it is what scopes
+     every number on the page, so it belongs on the RecordHeader's meta line
+     beside them and not in a crumb in the top bar — the same split W-06
+     enforced on the run trace. */
+  useBreadcrumb([{ label: "Settings" }, { label: "Usage" }]);
 
   const [groupBy, setGroupBy] = useState<UsageGroupBy>("TIER");
   const usage = useUsage(PERIOD, groupBy);

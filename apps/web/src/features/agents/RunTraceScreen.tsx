@@ -109,15 +109,13 @@ export function RunTraceScreen() {
 
   const run = mockRun ?? fetched.data;
 
-  /* The last crumb is the run's BUSINESS reference, not the opaque id in the
-     URL. `run_4821` is what the route carries; `#4821` is what the run is
-     called everywhere a person reads it, including this page's own title. The
-     id stands in only until the fetch resolves. */
-  useBreadcrumb([
-    { label: "Automation" },
-    { label: "Runs" },
-    { label: run?.ref ?? runRef ?? "Latest" },
-  ]);
+  /* The trail ends at the list. CLAUDE.md gives the record's identity to
+     RecordHeader and the path to the breadcrumb, and neither may repeat the
+     other — so `#4821` belongs in the title two lines below and nowhere else.
+     An earlier version of this file ended the trail on the run ref; review
+     finding W-06 removed it, and this comment exists so it does not come back
+     a third time. */
+  useBreadcrumb([{ label: "Automation" }, { label: "Runs" }]);
   const failed = useMemo(() => findFailed(runs.data?.data ?? []), [runs.data]);
 
   const agentName = useMemo(() => {
