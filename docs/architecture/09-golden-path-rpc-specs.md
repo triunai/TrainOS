@@ -650,3 +650,208 @@ shape the client can read; reverting the unwrap rule to unconditional
 pass-through fails 13 of its 21 cases. It cannot prove the SQL exists, returns
 this shape, or passes RLS — those need a database, and they are the migrations
 lane's to prove.
+
+---
+
+## 14 · Divergences found by 018
+
+Recorded by the lane that implemented this document against migrations 001–017
+on a PostgreSQL 17.11 shim. **Every item here was measured, not reasoned**, and
+each is a defect in a spec rather than in the migration that tripped over it.
+Nothing in `004` or in the contract package was changed to accommodate them;
+the pack implemented the contract and pinned the disagreement, so the day it is
+reconciled a test says so.
+
+### 14.1 · §0's own posture pin asserts a string PostgreSQL never stores
+
+§0 tells every function to `SET search_path = ''` and then offers this pin:
+
+```sql
+AND p.proconfig @> ARRAY['search_path=']
+```
+
+**PostgreSQL stores `search_path=""`, with the two quote characters.** Measured
+off `pg_proc.proconfig` for `app.require_tenant_id`, which 002 created with the
+prescribed spelling:
+
+```
+require_tenant_id => search_path=""
+```
+
+The pin as written therefore fails against every function in 001–017 as well as
+against 018, and a lane that copied it would conclude the whole pack was
+misconfigured. `supabase/CLAUDE.md` rule 1 has it right and says why the exact
+string matters: `proconfig IS NOT NULL` also passes the broken
+single-quoted-comma form `SET search_path = 'a, b'`, which names one schema
+whose name contains a comma and is not a path at all. `test_014` T1g and
+`test_018` T17b both assert `search_path=""`.
+
+**Fix:** correct the snippet in §0 to `ARRAY['search_path=""']`.
+
+### 14.2 · `DEAL_CHAIN` is a contract pipeline object the database cannot store
+
+Three sources describe the pipeline vocabulary and no two agree:
+
+| Source | Values |
+|---|---|
+| `packages/contract/src/enums.ts` `PIPELINE_OBJECTS` | `ENGAGEMENT · DEAL_CHAIN · OPPORTUNITY` |
+| `004` `pipelines_object_check` | `ENGAGEMENT · OPPORTUNITY · PACKET` |
+| `docs/architecture/01` §3.6 | two `pipelines` rows for the **same** object |
+
+So `core.get_pipeline_config('DEAL_CHAIN')` answers `NOT_FOUND` for a value the
+contract declares, `PACKET` is storable and appears in no contract, document or
+fixture, and the six-step relations-panel chain (`ENQUIRY · TNA · PROPOSAL ·
+APPROVAL · SENT · DELIVERY`) has nowhere to live. The seeds lane reports the
+same gap independently from the fixture world.
+
+`docs/architecture/01` §9 question 10 records this as **still open**, which is
+why 018 did not pick a side: choosing one is an architecture decision, and
+seeding a row or widening a CHECK would have made it silently on someone else's
+behalf. 018 seeds only `ENGAGEMENT` and `OPPORTUNITY`, and `test_018` T30j
+asserts `DEAL_CHAIN` still cannot be inserted, so the pin fails loudly the day
+004 is reconciled.
+
+**Fix:** settle question 10, then either widen 004's CHECK to admit `DEAL_CHAIN`
+or record in §7 that the relations chain is a second `ENGAGEMENT` row. `PACKET`
+should probably go at the same time.
+
+### 14.3 · `PipelineStage.outcome` has no column to come from
+
+Ruling R16 gives `PipelineStage` an optional `outcome` (`WON` / `LOST`) so a
+screen can say "in play" rather than inferring an ending from the highest
+`order`. `core.pipeline_steps` carries `terminal` and nothing else;
+`supabase/HANDOFF.md` lists `core.stage_outcome` as a pending `003`/`004` change
+that was never made. `core.get_pipeline_config` therefore emits `terminal` and
+**omits** `outcome` rather than guessing, and `test_018` T9e asserts the
+omission.
+
+**Fix:** add `core.stage_outcome` and the column in a `003`/`004` amendment,
+with `CHECK (outcome IS NULL OR terminal)`.
+
+### 14.4 · Six shapes in this document disagree with the contract package
+
+Implemented against the contract in every case, because that is what `client.ts`
+types and what `check:rpc` E3 enforces.
+
+| § | This document says | `packages/contract` says |
+|---|---|---|
+| §3 `Me` | `email`, `tenant { id, name, timezone, currency }` | `dataScope`, `locale`, `timezone`, `theme`; no `email`, no `tenant` |
+| §4 `NavigationTree` | `sections[].items[]` | `groups[].parents[].children[]` |
+| §7 `Organisation` | flat `proposalCount`, `firstProposalSentAt`, `healthScore` | a `metrics` block of five `MetricValue`s |
+| §8 `TnaRecommendationsResponse` | `recommendations`, `scoringModelVersion`, `scoringWeights` | `data`, `provenance`, `scoringModel { version, weights }` |
+| §10 `Quotation` | `pax`, `margin`, `belowFloor`, `displayPerPax` | none of those; `display.perPax`, `rateCardVersion`, `commissionPayableOn` |
+| §3 tenant currency | `tenant.currency` | `public.tenants` has no currency column |
+
+**Fix:** update this document to the contract, or raise a contract change. The
+two must not both be authoritative.
+
+### 14.5 · The §8 view bucket is larger than one pack
+
+§12 lists sixteen `core.v_*` reads. 018 ships three — `v_organisation_relations`
+because §7 specifies and pins it, and `v_budgets` / `v_model_tiers` because 014
+§4 registered them as a carried defect and named this pack as owner. The
+remaining thirteen have no owner named anywhere.
+
+Note that 014 prescribed an **RPC** for the two AI-ops reads. There is no RPC
+name for either in `RPC_NAMES` on any branch, and the client reads them through
+`VIEW_READS` as `.from("v_budgets")` and `.from("v_model_tiers")`, so an RPC
+would have been a function with zero call sites beside a still-broken screen.
+They ship as views under the names the client reads, crossing the `app` boundary
+through a `SECURITY DEFINER` function — 014's mechanism, in the shape the caller
+can use.
+
+**Fix:** name an owner for the other thirteen.
+
+### 14.6 · `app.idempotency_keys.response` cannot hold an `app.ok` envelope
+
+011's `idempotency_keys_response_shape` CHECK accepts a response object only when
+it carries `status`, or `data` **and** `count`. An `app.ok(…)` envelope carries
+`success` and `data`, so a write RPC cannot store its own response. 018's write
+RPCs store a replay record (`{status, entity, id}`) and re-project the entity
+fresh on replay — which is also better behaviour, since a retry three minutes
+later sees the current record rather than a stale copy — but it is a workaround,
+not a design.
+
+**Fix:** either widen the CHECK to admit `{success, data}`, or say in §0 that
+the replay record is the intended shape.
+
+### 14.7 · `core.provenance.origin` is immutable, so §1's flip cannot be written
+
+§1 says `editedBy` is "set when a human edited an AI value; **flips origin to
+`AI_SUGGESTED`**". 005 lists `origin` among `core.provenance`'s immutable
+columns, so the update raises:
+
+```
+IMMUTABLE_COLUMN: core.provenance.origin cannot be changed once set
+                  (was AI_GENERATED, attempted AI_SUGGESTED)
+```
+
+Both rules are right about different things. The column records where the value
+**came from**, which a later edit does not change, and rewriting it erases the
+audit trail the column exists to keep. The contract describes what the **badge**
+should say now, which is "AI, edited". 018 stores neither twice: `edited_by` is
+stamped, `origin` is left alone, and the wire value is **derived** from the pair
+in `app._provenance`, so no screen composes that rule itself.
+
+**Fix:** say in §1 that the flip is a projection rather than a write.
+
+### 14.8 · 017 leaves SST resolvable but unresolved
+
+Ruling R-C says SST comes from `core.tax_policies` via
+`app.resolve_tax_policy()`. 017 created both and added six SST columns to
+`core.quotations`. `sst_sen` and `gross_price_sen` are generated; **`sst_rate`,
+`sst_reason`, `sst_policy_id` and `sst_exempt_reason` are plain columns with
+defaults and no trigger behind them.** `sst_rate` defaults to `0` and
+`sst_reason` to `'STANDARD_RATED'`, so a quotation written by anything that does
+not resolve a policy is standard-rated at zero per cent — which 017's own
+resolver says must never happen: *"A missing policy must not silently become a
+zero rate: that is an invoice filed with no SST and no reason."*
+
+`core.put_quotation` now resolves `CORPORATE_TRAINING` and writes the four
+columns, so the quotation path is covered. **Any other writer of
+`core.quotations` has the same hole.** Note the contract's `Quotation` carries
+no tax field at all, so none of this reaches the client through this endpoint;
+it reaches it through the invoice.
+
+**Fix:** a trigger on `core.quotations`, or the same resolution in every writer.
+
+### 14.9 · The ten RPCs this document does not specify
+
+`cloud/web-swap` added ten names to `RPC_NAMES` that §§2–11 do not cover:
+`patch_enquiry_extraction`, `list_follow_ups`, `get_follow_up_draft`,
+`list_proposals`, `add_proposal_section`, `put_proposal_section`,
+`regenerate_proposal_section`, `list_quotations`, `get_rate_card`, `get_audit`.
+
+018 implements all ten with the shape **derived from the client**: `p_*`
+spellings read off `rpcClient.ts`, fields resolved from the contract type each
+method returns, and the fixtures oracle as tie-breaker where it implements the
+endpoint.
+
+⚠ **`npm run check:rpc` does not and cannot catch a missing RPC.** E1 reads
+migrations for hand-built envelopes, E2 reads the data layer for double casts,
+E3 reads `client.ts` for return types. Nothing in that gate opens `RPC_NAMES` or
+looks for a `CREATE FUNCTION`, and the script is byte-identical on `main` and
+`cloud/web-swap`. A name in `RPC_NAMES` with no SQL behind it is invisible to CI
+and surfaces as `PGRST202` in a browser.
+
+**Fix:** either specify the ten here, or add an existence check to `check:rpc`
+so the gate can see the gap it was built to watch.
+
+### 14.10 · `core.me_profile()` is specified nowhere and cannot be built
+
+`RPC_NAMES` carries it and `MeProfile` (ruled R14) requires eleven fields no
+table holds: `location`, `jobTitle`, `department`, `staffNumber`, `moduleCount`,
+`tenant.code`, and the five-field `session` block (`lastSignInAt`, `browser`,
+`place`, `activeSessions`, `twoFactorEnabled`). `public.user_profiles` holds
+`display_name`, `email`, `locale`, `timezone`, `theme` and `avatar_url` — and
+every missing field is **required** by the type.
+
+018 does not create it. A function returning a fabricated staff number and an
+invented two-factor state would be worse than one that does not exist, because
+the client already degrades an absent function to a readable "not deployed",
+which is the argument §12 makes about stubs.
+
+**Fix:** an HR/profile table carrying those eleven fields, plus a decision on
+where the session block comes from. `auth.sessions` and `auth.mfa_factors` can
+answer `activeSessions` and `twoFactorEnabled`; `browser` and `place` are
+GoTrue's and may need capturing at sign-in.

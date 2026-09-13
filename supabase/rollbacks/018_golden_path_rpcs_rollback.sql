@@ -8,6 +8,8 @@
 --    3 views     in `core`   — `v_organisation_relations`, `v_budgets`,
 --                              `v_model_tiers`
 --   11 functions in `app`    — the internal `app._*` projection helpers
+--    2 functions in `app`    — `seed_pipelines` and `seed_pipelines_on_tenant`
+--    1 trigger  on `public.tenants` — `trg_tenants_z_seed_pipelines`
 --
 -- ⚠ THE THREE GATE WRAPPERS ARE NOT IN THAT LIST AND MUST NOT BE DROPPED.
 -- `core.perform_action`, `core.decide_approval` and
@@ -206,7 +208,25 @@ DROP FUNCTION IF EXISTS core.me();
 -- rollback from a half-upgraded database does not leave the overload behind.
 DROP FUNCTION IF EXISTS core.decide_approval(uuid, text, text, text);
 
--- ═══ 3 · The nine internal helpers ═════════════════════════════════════════
+-- ═══ 3 · The pipeline seed ═════════════════════════════════════════════════
+--
+-- The TRIGGER first, then the functions it calls. Dropping the function while
+-- the trigger still points at it leaves every tenant insert raising
+-- `function app.seed_pipelines_on_tenant() does not exist` — a rollback that
+-- breaks the thing it was rolling back.
+--
+-- ⚠ THE SEEDED ROWS ARE DELIBERATELY LEFT IN PLACE. Rolling back the migration
+-- that seeded a tenant's pipeline configuration must not delete that
+-- configuration: by the time anyone rolls back, those rows are a tenant's
+-- settings and `core.engagement_step_states` has composite foreign keys onto
+-- them. The seeds lane's fixture rows share the same derived ids, so deleting
+-- them here would take the fixture world with it too. What goes is the
+-- MECHANISM; what stays is the DATA, and R4 asserts exactly that.
+DROP TRIGGER IF EXISTS trg_tenants_z_seed_pipelines ON public.tenants;
+DROP FUNCTION IF EXISTS app.seed_pipelines_on_tenant();
+DROP FUNCTION IF EXISTS app.seed_pipelines(uuid);
+
+-- ═══ 4 · The internal projection helpers ═════════════════════════════════════════
 -- LAST, because every `core` function above called at least one of them.
 DROP FUNCTION IF EXISTS app._model_tier_rows();
 DROP FUNCTION IF EXISTS app._budget_rows();
@@ -220,7 +240,7 @@ DROP FUNCTION IF EXISTS app._provenance(text, uuid, text);
 DROP FUNCTION IF EXISTS app._actor(text, text, text);
 DROP FUNCTION IF EXISTS app._money(bigint, text);
 
--- ═══ 4 · $verify$ — prove 018 is gone AND that 001–013 survived ════════════
+-- ═══ 5 · $verify$ — prove 018 is gone AND that 001–017 survived ════════════
 --
 -- A rollback that only proved its own objects were gone would pass just as
 -- happily after dropping half the database. The second half of this block is
@@ -247,6 +267,18 @@ BEGIN
   IF v_left IS NOT NULL THEN
     RAISE EXCEPTION '018 rollback R1: still present: %',
       pg_catalog.array_to_string(v_left, ', ');
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p
+               JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'app'
+                AND p.proname IN ('seed_pipelines','seed_pipelines_on_tenant')) THEN
+    RAISE EXCEPTION '018 rollback R1c: the pipeline seed functions survived';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger AS t
+               JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+              WHERE c.relname = 'tenants' AND NOT t.tgisinternal
+                AND t.tgname = 'trg_tenants_z_seed_pipelines') THEN
+    RAISE EXCEPTION '018 rollback R1d: the pipeline seed trigger survived';
   END IF;
   IF pg_catalog.to_regclass('core.v_organisation_relations') IS NOT NULL
      OR pg_catalog.to_regclass('core.v_budgets') IS NOT NULL
@@ -348,8 +380,22 @@ BEGIN
                     'the §18 money rule lives in that column and it is 007''s';
   END IF;
 
-  RAISE NOTICE '018 rollback: 30 core RPCs, 3 views and 11 app helpers dropped; '
+  -- R4 · THE SEEDED CONFIGURATION SURVIVES. The other three provisioning
+  -- triggers (011, 016, 017) are untouched, and so are the pipeline rows
+  -- themselves. A rollback that deleted a tenant's stage configuration would
+  -- cascade into core.engagement_step_states and take the fixture world with
+  -- it.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger AS t
+                   JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+                  WHERE c.relname = 'tenants' AND NOT t.tgisinternal
+                    AND t.tgname = 'trg_tenants_seed_ref_formats') THEN
+    RAISE EXCEPTION '018 rollback R4: 016''s ref-format seed trigger was destroyed';
+  END IF;
+
+  RAISE NOTICE '018 rollback: 30 core RPCs, 3 views, 11 app helpers and the pipeline '
+               'seed mechanism dropped; seeded pipeline ROWS deliberately kept; '
                '001-017 verified intact, including 014''s three gate wrappers, '
-               '011''s grants, 017''s tax registry and 007''s generated money columns.';
+               '011''s grants, 017''s tax registry, 016''s provisioning triggers '
+               'and 007''s generated money columns.';
 END
 $verify$;

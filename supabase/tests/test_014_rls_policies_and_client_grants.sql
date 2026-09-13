@@ -226,14 +226,30 @@ BEGIN
   SELECT pg_catalog.count(*) INTO v_grants
     FROM information_schema.table_privileges
    WHERE table_schema='core' AND grantee='authenticated' AND privilege_type='SELECT';
-  ASSERT v_grants = 121,
-    pg_catalog.format('T1c FAIL: expected 121 SELECT grants in core to '
+  -- 121 -> 124, CHANGED BY 018, and the exactness is the point: this assertion
+  -- is how a new grant in `core` gets noticed, so it moves by a stated number
+  -- or not at all. 018 adds exactly three SELECT grants, all views:
+  --
+  --   core.v_organisation_relations  doc 09 §7 specifies and pins it
+  --   core.v_budgets                 }  these two CLOSE the carried defect
+  --   core.v_model_tiers             }  recorded in 014 §4
+  --
+  -- The two below are the same pair this message already says "cannot work":
+  -- `budget_status` and `model_tier_status` are `security_invoker` over
+  -- `app.usage_rollup`, so no grant ON THEM can work. They stay revoked. 018's
+  -- replacements carry the names `rpcClient.ts` actually reads
+  -- (`VIEW_READS.aiBudgets` / `.aiTiers`) and cross the `app` boundary through
+  -- a SECURITY DEFINER function that re-derives the tenant, which is 014's own
+  -- prescribed mechanism in the shape the client can use.
+  ASSERT v_grants = 124,
+    pg_catalog.format('T1c FAIL: expected 124 SELECT grants in core to '
       'authenticated — 117 tables (114 from 014 + 3 from 017) plus four views: '
       'core.audit_entries, core.v_contact_consent_current, and 017''s '
-      'v_tax_policy_unverified and v_trainer_accreditation. Three views are '
-      'deliberately excluded: v_approval_requests (doc 09 §12) and budget_status '
-      '/ model_tier_status (security_invoker over app.usage_rollup, so a grant '
-      'cannot work). Found %s.', v_grants);
+      'v_tax_policy_unverified and v_trainer_accreditation; plus 018''s three: '
+      'v_organisation_relations, v_budgets and v_model_tiers. Three views are '
+      'still deliberately excluded: v_approval_requests (doc 09 §12) and '
+      'budget_status / model_tier_status (security_invoker over '
+      'app.usage_rollup, so a grant cannot work). Found %s.', v_grants);
 
   SELECT pg_catalog.count(*) INTO v_writes
     FROM information_schema.table_privileges
@@ -269,7 +285,7 @@ BEGIN
 
   RAISE NOTICE
     'T1 PASS - 113 tenant policy pairs, the one no-tenant exception granted by '
-    'name, 118 SELECT grants, zero writes to a client role, zero anon privileges, '
+    'name, 124 SELECT grants, zero writes to a client role, zero anon privileges, '
     'and three wrappers carrying the exact stored search_path="".';
 END;
 $t1$;

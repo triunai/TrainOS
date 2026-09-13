@@ -69,25 +69,15 @@ VALUES
 -- here is a duplicate-key error rather than a fixture. The tenant INSERTs above
 -- provision themselves.
 
--- Pipeline configuration. STAGE NAMES AND ORDER LIVE HERE, which is the whole
--- point of T9: the nav and the config endpoint must render these rows and not
--- a list compiled into a function.
-INSERT INTO core.pipelines (id,tenant_id,object,name,is_default,version,status,
-                            created_by_kind,created_by_id)
-VALUES ('aaaaaaa1-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111','OPPORTUNITY',
-        'Standard deal board',true,1,'ACTIVE','HUMAN','22222222-2222-4222-8222-222222222222'),
-       ('aaaaaaa1-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111','ENGAGEMENT',
-        'Delivery lifecycle',true,1,'ACTIVE','HUMAN','22222222-2222-4222-8222-222222222222');
-
-INSERT INTO core.pipeline_steps (tenant_id,pipeline_id,step_key,label,position,terminal,blocking_check_keys)
-VALUES
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','NEW','New',1,false,'{}'),
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','QUALIFYING','Qualifying',2,false,'{}'),
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','WON','Won',3,true,'{}'),
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000001','LOST','Lost',4,true,'{}'),
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000002','WON','Won',1,false,'{}'),
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000002','DELIVERED','Delivered',2,false,'{}'),
-  ('11111111-1111-4111-8111-111111111111','aaaaaaa1-0000-4000-8000-000000000002','PAID','Paid',3,true,'{}');
+-- NO HAND-MADE PIPELINE FIXTURE ANY MORE. 018 itself now seeds every tenant
+-- two default pipelines and sixteen steps from `trg_tenants_z_seed_pipelines`,
+-- so the tenant INSERTs above already provisioned them — and inserting a second
+-- `is_default` ENGAGEMENT row here would violate `pipelines_one_default_uq`.
+--
+-- Reading the SEEDED rows is the stronger pin anyway: T9 renames one of them
+-- and asserts the config endpoint and the nav both change, which exercises the
+-- real provisioned configuration rather than a fixture that happens to look
+-- like it.
 
 INSERT INTO core.organisations
   (id,tenant_id,name,industry,location,owner_id,status,hrdc_registered,hrdc_employer_code,country_code)
@@ -670,25 +660,32 @@ BEGIN
   v := core.get_pipeline_config('OPPORTUNITY');
   IF v -> 'success' <> 'true'::jsonb THEN RAISE EXCEPTION 'T9: %', v; END IF;
   d := v -> 'data';
-  IF pg_catalog.jsonb_array_length(d -> 'stages') <> 4 THEN
-    RAISE EXCEPTION 'T9a: expected 4 configured stages, got %',
+  -- Seven, from 018's own seed: NEW, QUALIFYING, TNA_SENT, PROPOSAL_SENT,
+  -- NEGOTIATION, WON, LOST — the contract's OPPORTUNITY_STAGES in order.
+  IF pg_catalog.jsonb_array_length(d -> 'stages') <> 7 THEN
+    RAISE EXCEPTION 'T9a: expected 7 configured stages, got %',
       pg_catalog.jsonb_array_length(d -> 'stages');
   END IF;
   -- The LABEL is the configured word, not a prettified key. If this ever
   -- returns 'New' for a row labelled 'Brand new', a stage list has been inlined.
-  IF d #>> '{stages,0,label}' <> 'New' OR d #>> '{stages,1,label}' <> 'Qualifying' THEN
+  IF d #>> '{stages,0,label}' <> 'New' OR d #>> '{stages,1,label}' <> 'Qualifying' THEN  -- seeded labels
     RAISE EXCEPTION 'T9b: labels did not come from core.pipeline_steps: %', d -> 'stages';
   END IF;
-  IF (d #>> '{stages,0,order}')::int <> 1 OR (d #>> '{stages,3,order}')::int <> 4 THEN
+  IF (d #>> '{stages,0,order}')::int <> 1 OR (d #>> '{stages,6,order}')::int <> 7 THEN
     RAISE EXCEPTION 'T9c: stage order did not come from position';
   END IF;
   -- Ruling R16: `terminal` is STORED, not inferred from `order`. Inferring an
   -- ending from the highest order puts LOST after WON rather than beside it.
-  IF (d #> '{stages,2,terminal}') <> 'true'::jsonb OR (d #> '{stages,0,terminal}') <> 'false'::jsonb THEN
+  -- Ruling R16: WON (position 6) and LOST (position 7) are BOTH terminal and
+  -- sit BESIDE each other. A screen inferring an ending from the highest
+  -- position would put LOST after WON; `terminal` is stored so it cannot.
+  IF (d #> '{stages,5,terminal}') <> 'true'::jsonb
+     OR (d #> '{stages,6,terminal}') <> 'true'::jsonb
+     OR (d #> '{stages,0,terminal}') <> 'false'::jsonb THEN
     RAISE EXCEPTION 'T9d: terminal was inferred rather than read: %', d -> 'stages';
   END IF;
   -- `outcome` has no source column in 001-013 and must be ABSENT, not guessed.
-  IF (d #> '{stages,2}') ? 'outcome' THEN
+  IF (d #> '{stages,5}') ? 'outcome' THEN
     RAISE EXCEPTION 'T9e: outcome is emitted but core.pipeline_steps has no outcome column';
   END IF;
 
@@ -696,7 +693,8 @@ BEGIN
   -- assertion a text-grep pin cannot make.
   UPDATE core.pipeline_steps SET label = 'Renamed By The Pin'
    WHERE tenant_id = '11111111-1111-4111-8111-111111111111'
-     AND pipeline_id = 'aaaaaaa1-0000-4000-8000-000000000001' AND step_key = 'NEW';
+     AND id = pg_catalog.md5('11111111-1111-4111-8111-111111111111'
+                             || 'pipeline:OPPORTUNITY:NEW')::uuid;
   IF core.get_pipeline_config('OPPORTUNITY') #>> '{data,stages,0,label}' <> 'Renamed By The Pin' THEN
     RAISE EXCEPTION 'T9f: renaming a pipeline_steps row did NOT change the config output — '
                     'a stage list is inlined somewhere';
@@ -707,7 +705,8 @@ BEGIN
   END IF;
   UPDATE core.pipeline_steps SET label = 'New'
    WHERE tenant_id = '11111111-1111-4111-8111-111111111111'
-     AND pipeline_id = 'aaaaaaa1-0000-4000-8000-000000000001' AND step_key = 'NEW';
+     AND id = pg_catalog.md5('11111111-1111-4111-8111-111111111111'
+                             || 'pipeline:OPPORTUNITY:NEW')::uuid;
 
   -- KNOWN DIVERGENCE, asserted so it cannot be forgotten: the contract names
   -- DEAL_CHAIN and 004's CHECK does not allow it.
@@ -1910,6 +1909,105 @@ BEGIN
                'client asks for.';
 END
 $t29$;
+
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T30 · the per-tenant pipeline seed, and its derived ids ════════'; END $banner$;
+DO $t30$
+DECLARE
+  v_tenant uuid := 'acade111-0000-4000-8000-000000000001';
+  v_n integer; v_id uuid; v_labels text[]; v_pos smallint[];
+BEGIN
+  -- A BRAND NEW TENANT RENDERS A PIPELINE. That is the defect 016 deferred
+  -- ("until then a new tenant renders no pipeline") and this is the assertion
+  -- that it is closed. The tenant is inserted plainly: the seed has to ride the
+  -- provisioning trigger, not a helper the caller has to remember.
+  INSERT INTO public.tenants (id, slug, name, status, timezone, locale)
+  VALUES (v_tenant,'akademi-perdana','Akademi Perdana','ACTIVE','Asia/Kuala_Lumpur','en-MY');
+
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM core.pipelines WHERE tenant_id = v_tenant;
+  IF v_n <> 2 THEN RAISE EXCEPTION 'T30a: expected 2 seeded pipelines, got %', v_n; END IF;
+
+  SELECT pg_catalog.count(*)::integer INTO v_n
+    FROM core.pipeline_steps WHERE tenant_id = v_tenant;
+  IF v_n <> 16 THEN RAISE EXCEPTION 'T30b: expected 16 seeded steps, got %', v_n; END IF;
+
+  -- THE IDS ARE THE AGREED DERIVED EXPRESSION, not literals. A literal agrees
+  -- with itself while disagreeing with the seeds lane; the expression is the
+  -- thing both packs compute, so the assertion is made against the expression.
+  -- `core.engagement_step_states` FKs `(tenant_id, pipeline_step_id)`, and PR
+  -- #16 writes 90 of those rows — if the two packs derived different ids, one
+  -- of the two loads would fail on that foreign key.
+  SELECT id INTO v_id FROM core.pipelines
+   WHERE tenant_id = v_tenant AND object = 'ENGAGEMENT';
+  IF v_id <> pg_catalog.md5(v_tenant::text || 'pipeline:ENGAGEMENT')::uuid THEN
+    RAISE EXCEPTION 'T30c: the ENGAGEMENT pipeline id is not the derived one';
+  END IF;
+
+  -- WON IS A STAGE OF BOTH PIPELINES, which is why the name carries the object.
+  -- Without it both rows derive the SAME id and the second insert is a primary
+  -- key violation. Asserting the two are different is asserting the fix.
+  IF (SELECT id FROM core.pipeline_steps
+       WHERE tenant_id = v_tenant AND step_key = 'WON' AND position = 1)
+     = (SELECT id FROM core.pipeline_steps
+         WHERE tenant_id = v_tenant AND step_key = 'WON' AND position = 6) THEN
+    RAISE EXCEPTION 'T30d: both WON stages derived the same id — the pipeline '
+                    'object is missing from the derivation';
+  END IF;
+  IF (SELECT id FROM core.pipeline_steps
+       WHERE tenant_id = v_tenant AND step_key = 'WON' AND position = 1)
+     <> pg_catalog.md5(v_tenant::text || 'pipeline:ENGAGEMENT:WON')::uuid THEN
+    RAISE EXCEPTION 'T30e: ENGAGEMENT:WON is not the derived id';
+  END IF;
+
+  -- Order and labels come from the rows, and the positions are 1..N dense:
+  -- core.pipeline_steps is UNIQUE on (tenant_id, pipeline_id, position) as well
+  -- as on step_key, so the seeds lane and this pack have to agree on BOTH.
+  SELECT pg_catalog.array_agg(step.step_key ORDER BY step.position),
+         pg_catalog.array_agg(step.position ORDER BY step.position)
+    INTO v_labels, v_pos
+    FROM core.pipeline_steps AS step
+    JOIN core.pipelines AS pipeline
+      ON pipeline.tenant_id = step.tenant_id AND pipeline.id = step.pipeline_id
+   WHERE step.tenant_id = v_tenant AND pipeline.object = 'ENGAGEMENT';
+  IF v_labels <> ARRAY['WON','TRAINER_CONFIRMED','SCHEDULED','REGISTERED','DELIVERED',
+                       'ATTENDANCE_LOCKED','HRDC_CLAIM','INVOICED','PAID'] THEN
+    RAISE EXCEPTION 'T30f: the ENGAGEMENT lifecycle is not the contract order: %', v_labels;
+  END IF;
+  IF v_pos <> ARRAY[1,2,3,4,5,6,7,8,9]::smallint[] THEN
+    RAISE EXCEPTION 'T30g: positions are not 1..9 dense: %', v_pos;
+  END IF;
+
+  -- Terminal is stored per ruling R16: PAID ends delivery, WON and LOST end a
+  -- deal and sit beside each other.
+  IF (SELECT pg_catalog.count(*) FROM core.pipeline_steps
+       WHERE tenant_id = v_tenant AND terminal) <> 3 THEN
+    RAISE EXCEPTION 'T30h: expected exactly three terminal stages';
+  END IF;
+
+  -- IDEMPOTENT. ON CONFLICT (id) DO NOTHING, so the fixture seed's own rows
+  -- survive whichever of the two packs loads first.
+  IF app.seed_pipelines(v_tenant) <> 0 THEN
+    RAISE EXCEPTION 'T30i: re-seeding wrote rows; the fixture seed would be overwritten';
+  END IF;
+
+  -- DEAL_CHAIN IS NOT SEEDED AND CANNOT BE. 004's CHECK admits only
+  -- ENGAGEMENT, OPPORTUNITY and PACKET. Pinned so the day 004 is reconciled
+  -- with the contract, this says so.
+  BEGIN
+    INSERT INTO core.pipelines (tenant_id, object, name, is_default, status,
+                                created_by_kind, created_by_id)
+    VALUES (v_tenant,'DEAL_CHAIN','Deal chain',false,'ACTIVE','SYSTEM','test');
+    RAISE EXCEPTION 'T30j: DEAL_CHAIN now inserts — 004 and the contract have been '
+                    'reconciled; seed the six-step chain and drop this pin';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  RAISE NOTICE 'T30 PASS: a new tenant is provisioned 2 pipelines and 16 steps with '
+               'derived ids that match the seeds lane, positions 1..N dense, three '
+               'terminal stages, idempotent re-seed, DEAL_CHAIN still unstorable.';
+END
+$t30$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
