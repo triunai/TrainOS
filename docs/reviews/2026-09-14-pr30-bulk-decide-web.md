@@ -1,9 +1,254 @@
-PR #30 MERGE-WITH-FIXES
+PR #30 MERGE
 
 # PR #30 — `fix(web): bulk decide sends per-item diff hash (p_items)`
 
 Independent review. CI is down (org billing), so this verdict plus the lane gates
 below are what stands in for it.
+
+## Re-review at c73c683 (2026-09-14)
+
+The first line is this section's verdict. Everything from "Original review at
+2b885b2" down is the earlier review, left as written.
+
+| What | Sha / ref |
+| --- | --- |
+| PR head | `c73c683` (`origin/fix/bulk-decide-items`), 7 commits since `2b885b2` |
+| `origin/main` | `afaf9cb`. It moved past the PR base `4e4dbde` by two `docs(state)` commits (`ai/resume-brief.md` only). `git merge-tree` merges clean, GitHub says MERGEABLE |
+| SQL contract | `origin/cloud/migrations` tip is `53be84d`, not `f819984`. `53be84d` touches only 001. `git diff --quiet 11508ed origin/cloud/migrations` is clean for both 011 and 014, so every line number below is valid at `11508ed` and at the tip |
+| Code read and run in | throwaway detached worktree `trainos-wt/read-pr30-c73c683`, `npm ci` from the PR's lockfile |
+
+### Verdict per finding
+
+| Finding | Commit | Verdict |
+| --- | --- | --- |
+| H1 selected refs silently dropped | `05b7239` | **Fixed** |
+| H2 fixture accepts empty items | `b2249da` | **Fixed** |
+| M1 fixture applies duplicate approvalIds | `9692d39` | **Fixed**, comment and citation corrected |
+| M2 `BULK_NOT_PERMITTED` not in `ErrorCode` | `46e81ea` | **Fixed** |
+| M3 idempotency key order-sensitive | `c2b2cbf` + `e310a15` | **Fixed**, with L4 below |
+| L1 bulk REJECT needs no note in fixture | not touched | Still open, still unreachable from the UI |
+| L2 bulk `DIFF_CHANGED` names no row | not touched | Still open, still a contract gap and not a PR #30 defect |
+| Single decide hashless APPROVE | `c73c683` | **Fixed**, an extra fix beyond the review |
+
+**H1.** Both halves are closed.
+
+- `narrowByValue` (`ApprovalInbox.tsx:284-287`) now clears the selection the way
+  the view switch already did.
+- `runBulkApprove` (`ApprovalInbox.tsx:299-313`) resolves every selected ref
+  against `rows`. If any ref is missing it sends nothing, names the missing refs
+  in a WARN banner, and trims the selection to what is still on screen.
+
+Nothing is filtered away without a word any more. The `rows.filter` at
+`ApprovalInbox.tsx:320-322` now only runs once every ref has resolved. The two
+old banner states (`bulkBlockers`, `bulkError`) became one `BulkRefusal`, drawn
+by one `ExceptionBanner` (`:458`). That is the kit component and it is the only
+banner on the page. WARN is already used the same way in `features/engagements`.
+Dismiss is a `SecondaryButton`, so the one-solid-primary rule holds.
+
+**H2 / M1.** The empty check (`FixtureClient.ts:1118`) and the duplicate check
+(`:1123`) come first and second, ahead of the missing-hash check. That matches
+011:3462-3468 and 011:3474-3483. Codes and `reason: INVALID_APPROVAL_IDS` match
+too. I checked every line range in the rewritten order comment (`:1104-1117`)
+against `11508ed`: empty 3462-3468, duplicate 3474-3483, missing hash 3497-3511,
+idempotency 3514-3548, not found 3550-3556, blocked 3558-3571, loop from 3573.
+All correct. The comment also names the one ordering the fixture cannot copy:
+`#write` runs the idempotency check before any validation.
+
+**M2.** Here is what the PR now does:
+
+- It adds `BULK_NOT_PERMITTED` to `ErrorCode` (`envelope.ts:259`) and to
+  `ERROR_STATUS` as 409 (`:280`).
+- It adds a typed `NotBulkApprovable {id, ref, reason}`.
+- The fixture now raises the SQL shape. Message, code and details match
+  011:3558-3571.
+- The inbox reads `details.notBulkApprovable[].ref`, but only when
+  `code === "BULK_NOT_PERMITTED"` (`ApprovalInbox.tsx:332`).
+
+`isErrorCode` is `hasOwnProperty(ERROR_STATUS, …)` (`rpcClient.ts:129-130`), so
+the classification half is fixed by the `ERROR_STATUS` entry. The new
+`messageForCode` case (`rpcClient.ts:162`) was needed, not cosmetic. The switch
+ends in a `default` that returns the IDEMPOTENT_REPLAY sentence, so without the
+case, an envelope-path `BULK_NOT_PERMITTED` with no message would have told the
+approver "That key was already used with a different request". On the PostgREST
+path, `classifyTransportFailure` keeps the server's own message, so the case is
+only the fallback there. The new `classifyTransportFailure` test feeds it a
+jsonb-spaced DETAIL string with the fixture out of the loop. It is the only
+assertion in the suite that does not answer from `FixtureClient`.
+
+One cosmetic difference: the fixture picks `reason` by
+`approval.value ? MONETARY_VALUE : …` (`FixtureClient.ts:1153`), while SQL uses
+`value_sen IS NOT NULL`. They differ only for a value of exactly 0.
+
+**Single decide (`c73c683`).** `FixtureClient.decideApproval` now refuses a blank
+or missing hash on APPROVE with `VALIDATION_FAILED`,
+`fields:[{field:"diffHash",reason:"REQUIRED"}]`, before the lookup
+(`FixtureClient.ts:1015-1019`). That matches 014:1287-1297 in trigger, code,
+field name and position: `core.decide_approval` raises before
+`app.decide_approval`, so a hashless APPROVE of an unknown id is also a
+VALIDATION_FAILED. The test covers both cases. The wire-shape test pins the five
+`p_*` names of 014:1274-1280.
+
+### The idempotency key (M3)
+
+`bulkDecideIdempotencyKey` (`idempotency.ts:125-135`) sorts a copy of `items` by
+`approvalId`. It then derives
+`approval-bulk-decide:<sorted ids>:<digest{decision, items with diffHash, note ?? null}>`.
+The hook no longer passes an option (`api.ts:171-183`), so the RPC adapter's
+derivation (`apiClient.ts:186`) is the only one.
+
+Here are the brief's questions, each checked against 011:3514-3548:
+
+- **Same selection, same key.** Yes. Sorted ids, per-item hashes, decision and
+  normalised note are the whole input.
+- **Changed selection, new key.** Yes. The id list is the subject.
+- **Order-independent.** Yes. The wire array keeps selection order and only
+  the derivation sorts. The comparator never returns 0, but duplicates are
+  refused first, so that cannot matter.
+- **Can a changed hash change the key?** Yes, by design. SQL's `request_hash`
+  covers `{ids, decision, note}` only (011:3521-3523), and the client key covers
+  those plus the hashes. So one client key always maps to one SQL request hash,
+  and a spurious `IDEMPOTENT_REPLAY` cannot come from the hash half. A repriced
+  retry gets a fresh key and meets `DIFF_CHANGED` or applies. It never replays
+  the stale answer.
+- **Stale replay after a partial failure?** No, on either client.
+  - SQL: the `INSERT INTO app.idempotency_keys` (011:3524-3530) and the `UPDATE`
+    to COMPLETED (011:3605-3610) share the function's transaction. A
+    `DIFF_CHANGED` or not-queued raise in the loop rolls the key row back with
+    the applied items, so a retry runs fresh.
+  - Fixture: `#write` (`FixtureClient.ts:369-392`) stores the response only
+    after `run()` returns, so a thrown refusal is never cached.
+  - Only a completed batch replays, and its rows have left the queue.
+
+Mutation checks. Each was applied alone and reverted, with the output under
+`scratchpad/rereview-pr30/mut-*.txt`:
+
+- Removing the sort fails
+  "derives one idempotency key for one selection, whichever order it was ticked in".
+- Dropping the hashes from the digest fails the same test.
+
+### New findings
+
+**L3 · Fixture mode now sends bulk decide with no key at all.** Location:
+`api.ts:183` + `useApi.ts:96`.
+
+In `apiMode() !== "supabase"` the context client is `fixtureClient` itself, not
+the RPC adapter. So "omitting the option lets `bulkDecideIdempotencyKey` derive
+it" (`api.ts:171-182`) is true only in supabase mode. In fixture mode `#write`
+sees no key and does no dedupe.
+
+I probed it. Two identical unkeyed `bulkDecideApprovals` calls on
+`APV-2026-0773` both resolved `APPROVED`, with effects applied twice. The fixture
+bulk path has no PENDING guard, which is L1's neighbour and pre-existing. At
+`2b885b2` fixture mode at least carried the (wrong-scope) key.
+
+This is not reachable from the screen, because the button is
+`disabled={bulkDecide.isPending}` (`ApprovalInbox.tsx:468`).
+
+Nothing pins the hook either. Re-adding
+`{ idempotencyKey: idempotencyKey("bulk", body) }` at `api.ts:183` kept the
+ApprovalInbox, conformance and idempotency suites green (37/37), because the
+conformance test calls the RPC `ApiClient` directly and never goes through the
+hook. So the actual bug `c2b2cbf` removed was never red.
+
+Cheap follow-up: pass `{ idempotencyKey: bulkDecideIdempotencyKey(body) }` from
+the hook. It is the same function, so it is not a second derivation. Also add
+a hook-level test.
+
+**L4 · Stale and wrong SQL line citations in the new comments.** These are
+comments only.
+
+- `011:3447` (sort) and `011:3405` (DROP) are `062e5e2`/`2edab79` numbers. At
+  `11508ed`/tip they are 3474 and 3432. Locations: `idempotency.ts:111`,
+  `apiClient.ts:172`, `api.ts:181`, `conformance.approvals.test.ts:296,331`.
+- `011:3506` / `011:3506-3507` ("iterates `p_items`", "reads `approvalId` and
+  `expectedDiffHash`") match no sha. At `062e5e2` 3506 is inside the idempotency
+  block. The loop is 3573 and the reads are 3574-3575 at `11508ed`. Locations:
+  `idempotency.ts:123`, `apiClient.ts:184`,
+  `conformance.approvals.test.ts:40,295,361`.
+
+The same comments also overstate the harm. They say an order-varied retry "ran
+the batch a SECOND time" (`idempotency.ts:106`, `apiClient.ts:179`, `api.ts:178`,
+`conformance.approvals.test.ts:339`). Against SQL it could not. The second run
+reaches 011:3036-3042 and raises `approval action is not queued` (SQLSTATE
+55000). That rolls back and surfaces as a transport `SERVER` error. The real harm
+was a confusing error in place of a replay. Double-apply was only possible on the
+fixture. The fix is still right.
+
+**L5 · The bulk hash guards list freshness, not what the approver saw.** This is
+pre-existing, and a note rather than a defect of this PR. Location:
+`ApprovalInbox.tsx:322`.
+
+`diffHash` is echoed off the latest list read, and the inbox never renders the
+diff. A focus refetch that reprices a still-selected row silently upgrades the
+hash it sends. H1's check is by ref, so it does not catch that either. Bounded
+by `bulkApprovable` excluding money rows.
+
+### Failing-first evidence
+
+The fix lane's red and green files (`scratchpad/fix-pr30/fix{1..5}-red.txt`)
+show each new test failing on the pre-fix code for H1 (2 tests), H2, M1, M2
+(4 tests across fixtures, conformance and inbox), and the single-decide hash.
+`c2b2cbf` (fix) landed 15 seconds before `e310a15` (test), so M3 has no red
+record. I ran my own mutations on the fixed code:
+
+| Mutation | Result |
+| --- | --- |
+| drop the `gone` check | ✗ "refuses a bulk approve whose selection has left the queue" |
+| drop the filter reset | ✗ "starts a fresh selection when the value filter narrows the queue" |
+| drop empty-items check | ✗ fixtures "refuses an empty batch…" · web suites stay green |
+| drop duplicate check | ✗ fixtures "refuses a batch that names one approval twice…" |
+| inbox code test → other code | ✗ "names the rows the database refused to bulk-approve" |
+| remove `BULK_NOT_PERMITTED: 409` | ✗ conformance "refuses identically" + "keeps … through classification" |
+| unsorted key / hashless key | ✗ "derives one idempotency key for one selection…" |
+| hook re-passes a key | **survives** (L3) |
+| drop hashless single check | ✗ fixtures "refuses a hashless APPROVE…" + conformance "five argument names" |
+
+The read worktree was clean (`git status --short` empty) after every revert.
+
+### Gates at c73c683
+
+Run from the read worktree root after `npm ci` (602 packages, exit 0). Every
+command exited 0.
+
+```
+npm run typecheck          exit 0  web/contract/fixtures/agent-runtime/worker, no diagnostics
+npm run typecheck:strict   exit 0
+npm run lint               exit 0  0 errors, 8 warnings (react-refresh/only-export-components, none in changed files)
+npm test -- --run          exit 0  web 117 files / 1126 tests · fixtures 13 / 194
+                                   agent-runtime 7 passed + 1 skipped / 107 + 1 skipped · worker 9 / 95
+npm run build              exit 0  (existing >500 kB chunk warning)
+npm run check:rpc          exit 0  4 pass/watch, 0 broken
+npm run check:barrels      exit 0  32 barrels resolve
+```
+
+Web went from 1119 to 1126 tests (+3 inbox, +4 conformance) and fixtures from 191
+to 194. The single skipped test is in `packages/agent-runtime`, which this PR
+does not touch. `git diff --stat origin/main...origin/fix/bulk-decide-items` has
+11 files, with no `package.json`, lockfile or `pnpm-*`.
+
+### Conformance can still not see fixture-vs-SQL divergence
+
+This is not blocking. Apart from the one `classifyTransportFailure` test, every
+conformance assertion answers from `FixtureClient` behind a fake PostgREST. The
+suite proves the two web clients agree with each other and that the wire shape
+is right. It cannot prove the fixture matches 011/014. Every fixture fix in this
+round was found by reading SQL, not by a red test.
+
+### What I could not verify, and what would settle it
+
+- **Any of this against Postgres.** PR #6 is unmerged and I used no database.
+  Settled by applying 011/014 to a branch DB and calling
+  `core.bulk_decide_approvals` with: empty, duplicate, hashless, blocked and
+  stale batches; a retry with the same key after a `DIFF_CHANGED`; and a replay
+  after success.
+- **supabase-js putting `DETAIL` into `PostgrestError.details` byte for byte.**
+  The new test hand-writes that string. One live `BULK_NOT_PERMITTED` refusal
+  settles it.
+- **The inbox's stale-selection banner in a real browser.** It was verified only
+  in jsdom via `focusManager` refetch. A Playwright pass on the fixture build
+  would settle it.
+
+## Original review at 2b885b2
 
 ## Scope reviewed
 
