@@ -231,6 +231,7 @@ DELETE FROM app.event_subscriptions
    AND tenant_id IS NULL;
 
 DROP TRIGGER IF EXISTS trg_tenants_z_seed_pipelines ON public.tenants;
+DROP FUNCTION IF EXISTS app.seed_pipelines_all();
 DROP FUNCTION IF EXISTS app.seed_pipelines_on_tenant();
 DROP FUNCTION IF EXISTS app.seed_pipelines(uuid);
 

@@ -4824,24 +4824,69 @@ REVOKE ALL ON FUNCTION app.seed_pipelines_on_tenant() FROM PUBLIC, anon, authent
 -- Backfill: every tenant that already exists gets the same defaults, in the
 -- same shape 016 and 017 used for theirs. ON CONFLICT (id) DO NOTHING means a
 -- tenant that already configured its own pipelines keeps them.
--- Raised to NOTICE here rather than at the verify block, because the backfill's
--- own count is the thing an operator needs to see while applying this file.
+--
+-- ⚠ IT USED TO SWALLOW A FOREIGN KEY VIOLATION INTO A `RAISE WARNING` AND
+-- REPORT SUCCESS. A tenant predating 016's ref-format backfill was skipped and
+-- the migration finished green. Because `core.navigation` and
+-- `core.get_pipeline_config` render stages from `core.pipeline_steps`, that
+-- tenant's navigation then came back with an EMPTY STAGE LIST — a silent,
+-- correct-looking empty rather than an error — and a WARNING in a migration
+-- log is not a channel anyone reads afterwards. The whole point of seeding
+-- from a migration is that afterwards the invariant holds.
+--
+-- It now collects the skipped tenants and RAISES ONCE with the list, so the
+-- operator fixes the ref formats and re-runs rather than discovering it from a
+-- customer. The loop still visits every tenant first: failing on the first one
+-- would hide the other nine.
+--
+-- The loop lives in a FUNCTION rather than inline in the `DO` block so that the
+-- pin can call it. An assertion about a `DO` block's behaviour cannot be
+-- written; an assertion about `app.seed_pipelines_all()` can, and T35 writes
+-- it. Raised to NOTICE here rather than at the verify block, because the
+-- backfill's own count is the thing an operator needs to see while applying.
 SET client_min_messages = notice;
 
-DO $backfill$
-DECLARE v_tenant uuid; v_total integer := 0; v_n integer;
+CREATE OR REPLACE FUNCTION app.seed_pipelines_all()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_tenant  uuid;
+  v_total   integer := 0;
+  v_skipped uuid[] := ARRAY[]::uuid[];
 BEGIN
   FOR v_tenant IN SELECT tenant.id FROM public.tenants AS tenant ORDER BY tenant.created_at
   LOOP
     BEGIN
-      v_n := app.seed_pipelines(v_tenant);
-      v_total := v_total + v_n;
+      v_total := v_total + app.seed_pipelines(v_tenant);
     EXCEPTION WHEN foreign_key_violation THEN
-      -- A tenant with no ref formats predates 016's backfill. Say which one
-      -- rather than failing the migration for everybody.
-      RAISE WARNING '018 backfill: tenant % has no PIP ref_format; pipelines not seeded.', v_tenant;
+      -- CAUGHT ONLY TO KEEP COUNTING, never to continue as if nothing happened.
+      v_skipped := v_skipped || v_tenant;
     END;
   END LOOP;
+
+  IF pg_catalog.array_length(v_skipped, 1) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'seed_pipelines_all: % tenant(s) have no PIP ref_format and were NOT seeded: %. '
+      'Their navigation would render an empty stage list. Seed core.ref_formats '
+      'for them (016) and re-run this migration.',
+      pg_catalog.array_length(v_skipped, 1),
+      pg_catalog.array_to_string(v_skipped, ', ')
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  RETURN v_total;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.seed_pipelines_all() FROM PUBLIC, anon, authenticated;
+
+DO $backfill$
+DECLARE v_total integer;
+BEGIN
+  v_total := app.seed_pipelines_all();
   RAISE NOTICE '018 backfill: % pipeline and step row(s) seeded across existing tenants.', v_total;
 END
 $backfill$;
