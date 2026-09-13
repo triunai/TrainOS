@@ -29,3 +29,16 @@ Source of truth for the target look: **the Collections page (M13-S05) compositio
 - Corporate tone, no uppercase tracking: sentence case, UI font, 13–14px, 500 weight.
 - Keyboard: roving tabindex, arrow keys, `role="tablist"`. Counts stay server-driven (saved views).
 - Replace every PillTabGroup usage (saved-view switchers on inbox/list screens, approvals urgency groups if used as tabs); density Comfortable/Compact uses the same control.
+
+## 11. Per-screen fidelity to the artboards (user: "every screen must follow its true design brief")
+- Each screen agent re-reads its artboard annotation and the 09 §4 row and lists every rendered element the artboard has that the screen lacks — then builds them. Known misses: **alternating (zebra) table rows** where the artboard draws them; **inline horizontal workflow strips inside table rows** (the small lifecycle/progress components the artboards place in list rows — e.g. engagements, approvals, collections); density and column set per artboard.
+- Verifier: per-screen checklist derived from the annotation panel, not by eye alone.
+
+## 12. Shell (in progress in shell-fix, keep as acceptance criteria)
+- Seamless sidebar/topbar: one surface, no junction border, both themes.
+- Sidebar: only the active group expanded by default; scrollbar hidden on the real scroll container; two hierarchy mechanisms; footer block = avatar + name + role, app version + "API v1 · contract x.y.z", DEV role switcher.
+- Topbar: breadcrumb · search ⌘K · bell · theme.
+
+## 13. Primary persona — Alex Selvarajah
+- Stakeholder and primary user: **Alex Selvarajah**, super-investor with multiple businesses (notably with Panasonic and Sunway), strong HRMS background. Signals: enterprise-grade polish, versioning visible, no amateur tells.
+- Fixtures: the default `/me` user for the MD role becomes Alex Selvarajah; the demo story (M22 index) is narrated to him; his organisations appear in the seed where the pack allows without breaking the Aurora story.
