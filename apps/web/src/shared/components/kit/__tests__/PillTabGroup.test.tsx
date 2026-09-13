@@ -140,7 +140,9 @@ describe("PillTabGroup", () => {
  * statuses measure 776px at 1440 with this geometry, against 973px under the
  * withdrawn 120px floor. 776 is over the 760 the ruling estimated, and the
  * honest number is the measured one — engagements is still 8px short of
- * holding one row, and participants, whose labels are longer, 38px short.
+ * holding one row, and participants 49px short: its counts run to three
+ * digits, which widens the same eight segments to 806px, and its scroller
+ * takes a 13px gutter that engagements does not pay.
  *
  * What IS checkable here is the geometry contract that produces that number,
  * and the specific regression: the floor coming back. A returning `min-w-[120px]`
