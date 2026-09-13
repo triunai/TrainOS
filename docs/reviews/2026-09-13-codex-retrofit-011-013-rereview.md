@@ -1,12 +1,17 @@
-# 011–013 re-review — fixes at cloud/migrations@0d9e00c
+# 011–013 re-review — fixes at cloud/migrations@0d9e00c, updated through eff8084
 
 **Reviewed:** the fix commits `2bac9bf` and `0d9e00c` on `cloud/migrations` ("fix(supabase): 011-013
 remaining — replay ledger, 42501 refusals, service_role"), amending `supabase/migrations/011_action_envelope_and_policy_gate.sql`,
 `012_events_outbox_and_jobs.sql`, `013_ai_ops_agents_keys_runs_and_budgets.sql`, their test pins, and
 `migration-catalog.md` in place (001–013 are applied nowhere, so the originals were edited rather than
 superseded by a new migration). Pre-fix baseline: `b9bca03` on `main` (the merged prior review).
-Reviewed in `~/Repos/personal-work/trainos-wt/fix-011-013-src` (detached at `0d9e00c`). This report is
-written from a fresh branch cut off `origin/main`.
+**Updated in place after the initial pass**: `cloud/migrations` moved to `eff8084` (frozen tip as of
+this update), which the team lead flagged as landing `test_012` T15 (the T1 replay pin) and
+`test_011` T18 (the T5 diff-hash pin). Both are now included below with full live re-execution against
+`eff8084` specifically, not just the earlier `0d9e00c` snapshot — see "§0 · eff8084 update" for what
+changed and what did not. Reviewed in `~/Repos/personal-work/trainos-wt/fix-011-013-src` (checked out
+at `0d9e00c` for the first pass, then moved to `eff8084` for this update). This report is written from
+a fresh branch cut off `origin/main`.
 
 **Reviewers:** the same substitute pair as the first pass (Codex is still hard quota-blocked past
 2026-09-14 00:29 as of this writing) — an Opus thermonuclear-methodology pass and an Opus
@@ -19,24 +24,25 @@ the same port-5439 shim, and live-reproduced four of the disputed points below.
 
 ## VERDICT, per pack, up front
 
-**Pack 011 — PARTIAL FIX. Do not treat as closed.**
-T2/O2 (dead effect pipeline) and T8 (GUC residue) are cleanly fixed. T3 (no permission check) is
-fixed correctly, including the payload-schema-leak ordering bug from an earlier draft — but it
-**introduced a live regression**: `CLIENT`-kind actors now have zero permission rows anywhere in the
-seeded catalogue, so every CLIENT-initiated action is unconditionally refused. **T5 (the diff-hash
-guard hashes an `IMMUTABLE` function, so an approver can never be shown that the underlying record
-changed) was deferred and remains open** — both reviewers independently conclude this deferral is not
-acceptable; the security pass calls it "the most serious defect in the pack." The 011 rollback was not
-updated to drop the new `required_permission` column, and `test_011`'s own header/dependency claims are
-now false in a new way (see S7-adjacent finding below).
+**Pack 011 — PARTIAL FIX, upgraded from the first pass. T5 is now genuinely closed; do not treat the
+rest as closed.** T2/O2 (dead effect pipeline), T8 (GUC residue), and **T5 as of `eff8084`** are all
+cleanly fixed and live-confirmed (`test_011` T18 passes: editing the underlying quotation moves the
+hash, live-reproduced in §0). T3 (no permission check) is fixed correctly, including the
+payload-schema-leak ordering bug from an earlier draft — but it **introduced a live regression**:
+`CLIENT`-kind actors now have zero permission rows anywhere in the seeded catalogue, so every
+CLIENT-initiated action is unconditionally refused. The 011 rollback was not updated to drop the new
+`required_permission` column, and `test_011`'s own header/dependency claims are false in more than one
+new way (it now silently requires 012's objects for T16, **and as of `eff8084` it also silently
+requires 016's tenant-provisioning trigger** for its own new quotation fixture — see §0).
 
-**Pack 012 — NOT ACTUALLY FIXED on the finding that mattered.** T1's claimed fix ("replay reopens the
-effect") only touches `app.action_effects`. **`core.action_requests` is never reopened, so a
-successfully-replayed effect leaves the parent action permanently `PARTIALLY_FAILED` forever** — this
-is live-reproduced below, not reasoned about. This was the exact incident the finding described
-("TrainOS says it failed, forever") and it still happens. No pin was added for it; the existing T13 pin
-does not read `core.action_requests` after the replay, so it passes identically before and after this
-"fix."
+**Pack 012 — STILL NOT ACTUALLY FIXED on the finding that mattered, confirmed against `eff8084`
+directly, not just `0d9e00c`.** `eff8084` adds `test_012` T15, explicitly written to pin this exact
+finding — but T15 only asserts `app.action_effects.status = 'SETTLED'` after a full claim → fail →
+replay → claim → complete round trip. **It never reads `core.action_requests` at all.** The orchestrator
+extended T15's own fixture (§0) to check the parent action request immediately after T15 itself passes:
+the effect is `SETTLED`, exactly as T15 requires, and `core.action_requests.status` is still
+`PARTIALLY_FAILED`. This is the exact incident the finding described ("TrainOS says it failed,
+forever") and it still happens, on the commit the team lead pointed at as having fixed it.
 
 **Pack 013 — PARTIAL FIX, with a live-confirmed audit bypass.** The reveal-audit trigger fix and the
 `key_fingerprint`/`key_ref` pairing fix genuinely make `set → reveal → rotate` succeed (confirmed live:
@@ -48,34 +54,72 @@ file now has 30), and the new pairing trigger sits outside every existing verifi
 
 ---
 
-## Postscript — `cloud/migrations` has already moved past `0d9e00c`, read before acting on this report
+## §0 · eff8084 update — both items checked directly, not by commit message
 
-While this review was in progress, `cloud/migrations` advanced two more commits (`eff8084`,
-`a20e6d8`, commit-message-summarized as "T5 end to end" and "T1/T5 and the residuals") — **neither is
-merged to `origin/main` yet**, and the `ai/`-spine doc commits that reference them on `main`
-("record a20e6d8 as the new frozen tip") are progress notes about work on that branch, not evidence
-the fix itself landed on `main`. Checked directly against both commits, not inferred from their
-messages:
+`cloud/migrations` moved to `eff8084` (frozen tip) — **not yet merged to `origin/main`**; the `ai/`-spine
+doc commits on `main` that reference it are progress notes about work on that branch, not evidence the
+merge happened. The team lead asked for both `test_012` T15 (T1) and `test_011` T18 (T5) to be reviewed
+and included. Both were re-verified with a full G6 re-execution at `eff8084` (not inferred from the
+diff this time) — this required also applying 015, 016 and 017, because `eff8084`'s new `test_011`
+quotation fixture (added so T18 has a real record to edit) needs a `core.ref_formats` row for prefix
+`QUO` that only 016's tenant-provisioning trigger supplies; `test_011` did not need 015–017 before this
+commit. That is itself a new instance of the S7 dependency-drift class, on top of the one already
+noted for T16 in the paragraph above.
 
-- **T5 is genuinely fixed on `cloud/migrations` as of `a20e6d8`.** The diff-hash's queue-time and
-  decide-time computations both now fold in `app.action_value(...)` (which reads the live record)
-  alongside `app.plan_effects(...)` (which does not), closing exactly the tautology this report
-  and both reviewers flagged. This supersedes the "not acceptable to defer" judgment above **for
-  whichever branch state actually ships** — but it is not yet on `main`, so the pack this report was
-  asked to verify (`0d9e00c`) still has it open, and the verdict above is accurate for that commit.
-- **T1 is NOT fixed by `eff8084`, despite the commit naming it "T1 (CRIT)."** The commit's own diff
-  touches only `supabase/tests/test_012_events_outbox_and_jobs.sql` (a new T15 pin) — it does not
-  touch `supabase/migrations/012_events_outbox_and_jobs.sql` at all, and the new pin asserts only that
-  `app.action_effects` reaches `SETTLED` after a replay, which was already true at `0d9e00c` (this
-  report confirmed that much live in §3). **It does not assert anything about
-  `core.action_requests.status`**, so it cannot and does not catch the residual this report
-  live-reproduced (the action staying `PARTIALLY_FAILED` forever). The commit message's framing of T1
-  as addressed is not supported by its own diff.
+**T5 — genuinely fixed, live-confirmed at `eff8084`.** Applied 001–017 clean, ran `test_011` in full:
+17/17 checks pass, including the new T18 —
 
-**Recommendation:** before closing T1 or T5 as resolved anywhere, re-run this report's exact §3
-live reproduction (claim-and-complete the replayed job, then read `core.action_requests.status`)
-against whatever commit is actually about to merge — a passing `test_012` T15 will not tell you
-whether it is fixed.
+```
+T18 PASS - plan_effects is IMMUTABLE and reads no row, so the hash now also covers
+app.action_value: editing the underlying record moves it, and two different effect
+plans still hash differently.
+```
+
+The queue-time and decide-time hash computations both now fold `app.action_value(...)` (which reads
+the live record) alongside `app.plan_effects(...)` (which does not) — confirmed by reading `a20e6d8`'s
+diff and by this pin genuinely exercising an edited quotation rather than skipping, closing exactly the
+tautology this report and both reviewers flagged. **This supersedes the "not acceptable to defer"
+judgment for T5** — it is no longer deferred, it is closed, on this branch. Still not on `main`.
+
+**T1 — NOT fixed, live-reproduced at `eff8084` directly, using T15's own fixture.** `eff8084`'s new
+`test_012` T15 is explicitly written to pin this exact finding, and it passes:
+
+```
+T15 PASS - a dead-lettered effect is reopened to DISPATCHED by the replay and reaches
+SETTLED when the replacement job completes, so the ledger agrees with what actually happened.
+```
+
+But T15's own assertions (`test_012_events_outbox_and_jobs.sql:1789-1813`) read only
+`app.action_effects.status` — never `core.action_requests`. The orchestrator inserted one additional
+check immediately after T15's own `DO` block, in the same transaction, using T15's own effect/job:
+
+```sql
+SELECT e.id, e.action_request_id, e.status::text
+  INTO v_effect, v_request_id, v_effect_status
+  FROM app.action_effects AS e
+ WHERE e.status = 'SETTLED'
+ ORDER BY e.id DESC LIMIT 1;
+SELECT status INTO v_req_status FROM core.action_requests WHERE id = v_request_id;
+```
+
+Result:
+
+```
+REPRO RESULT (eff8084): effect 14 status = SETTLED, parent action_request
+00000012-aaaa-aaaa-aaaa-aaaaaaaaaaa2 status = PARTIALLY_FAILED
+```
+
+**The action request is still permanently `PARTIALLY_FAILED` after a fully successful replay, on the
+exact commit reported as having fixed T1.** T15 is a real, well-constructed pin — it correctly proves
+the effect-ledger half is fixed — but it does not, and structurally cannot, catch the half of the
+finding that was actually named "TrainOS says it failed, forever." No code in `eff8084` touches
+`supabase/migrations/012_events_outbox_and_jobs.sql` or the `PARTIALLY_FAILED` reconciliation at
+`011:3547-3552`; the diff is entirely a new test file.
+
+**Recommendation, unchanged:** before closing T1 as resolved anywhere, re-run the exact repro above
+(claim-and-complete the replayed job, then read `core.action_requests.status`) against whatever commit
+is actually about to merge. A passing `test_012` T15 does not mean this is fixed — it means the half
+of it that was already fixed at `0d9e00c` is now also pinned.
 
 ---
 
@@ -86,7 +130,7 @@ whether it is fixed.
 | T2/O2 | Effects never enqueued (CRIT) | FIXED | **FIXED, clean** | `011:1987-1998`: existence check raises loud (does not silently skip) if `app.enqueue_effect_jobs` is missing; enqueue call correctly placed before the `EXECUTING` write; args match `012`'s signature. `test_011` T16 walks perform → decide → `app.claim_jobs` end to end. Both reviewers and the orchestrator's live pin run agree. |
 | S1(a) | Reveal-audit trigger blocks all rotation (CRIT) | FIXED | **FIXED, clean** | `013:2205-2209` exemption requires `last_revealed_at IS NULL` AND both `key_ref` and `key_fingerprint` distinct — narrow, cannot be used to reset the 24h ceiling. Live-confirmed: `set → reveal → rotate` now succeeds (see §3). |
 | S1(b) | `key_fingerprint` frozen, so rotation never worked at all (CRIT, found mid-fix) | FIXED | **PARTIALLY FIXED — live-confirmed bypass** | The frozen-column defect is genuinely fixed. But the new pairing trigger (`013:1463-1499`) only fires when `key_fingerprint` changes. **`key_ref` can be changed alone with no trigger firing and no audit row**, live-confirmed in §3. Both reviewers found this independently by reading; the orchestrator reproduced it. |
-| T1 | Successful replay recorded as permanent failure (CRIT) | FIXED | **NOT ACTUALLY FIXED — live-confirmed** | `012:2159-2164` reopens the *effect*. `core.action_requests` is never reopened; the reconciliation at `011:3547-3552` is still gated `AND status='EXECUTING'`, which the request has left. Live-reproduced in §3: after a full claim→complete cycle on the replayed job, the effect reaches `SETTLED` but the action request stays `PARTIALLY_FAILED`. No pin exercises this. |
+| T1 | Successful replay recorded as permanent failure (CRIT) | FIXED (0d9e00c); "T1 (CRIT)" pin added at eff8084 | **STILL NOT ACTUALLY FIXED — live-confirmed at both commits** | `012:2159-2164` reopens the *effect*. `core.action_requests` is never reopened; the reconciliation at `011:3547-3552` is still gated `AND status='EXECUTING'`, which the request has left. Live-reproduced twice: at `0d9e00c` in §3 (full claim→complete cycle on the replayed job leaves the effect `SETTLED` but the action `PARTIALLY_FAILED`), and again at `eff8084` in §0 using `test_012`'s own new T15 fixture — same result, `effect 14 = SETTLED`, `action_request = PARTIALLY_FAILED`. T15 passes because it only reads `app.action_effects`, never `core.action_requests`. |
 | T3 | No permission check on HUMAN path (HIGH) | FIXED | **FIXED, correctly ordered — but introduces a new HIGH regression** | Check at `011:2292-2310` sits between action-type lookup and payload validation, closing the payload-schema-leak bug an earlier draft had (pinned at `test_011` T17c3). Live-confirmed: `app.role_permissions` and `app.app_role` both exist; **`CLIENT` is a valid role with zero permission rows** — every CLIENT-kind `perform_action` call is now unconditionally `FORBIDDEN`. Neither the migration's verify block nor any pin exercises a CLIENT actor, so this shipped unnoticed. Also: SALES's three "scope-narrowed" permissions (`organisation:write`, `enquiry:archive`, `tna:recommendation:accept`) are checked at role level only — 002's own annotation says these need row-ownership narrowing that `app.has_permission` does not apply, so a SALES rep can act on any organisation in the tenant, not just their own (net improvement over "no check at all," but the weakest plausible mapping for a credit-control action). |
 | S5 | 013 uses 42501 instead of `TRNOS` (HIGH) | FIXED, "13 sites, 2 deliberate exceptions" | **PARTIALLY FIXED — the commit's own count is wrong, and one of the two "unreachable" exceptions is reachable** | Only **11** sites converted to `TRNOS`, not 13 (verified by counting `+TRNOS`/`-insufficient_privilege` in the diff and by grep on the resulting file: 11 `TRNOS`, 2 `insufficient_privilege`). The two survivors (`013:2231` `REVEAL_AUDIT_REQUIRED`, `013:2247` `REVEAL_AUDIT_MISMATCH`) are justified in-file as "trigger integrity guards on a direct table write that no RPC path can reach." **That justification is wrong for `REVEAL_AUDIT_MISMATCH`**: `public.ai_provider_key_reveal` (`013:2606-2691`) is a `SECURITY DEFINER` RPC that performs the very `UPDATE core.ai_provider_keys SET last_revealed_at = ...` that fires this trigger, with no exception handler around it. On a hosted platform where the migration owner lacks `BYPASSRLS` (the exact condition the file's own comment three lines above names as a real degradation), `app.record_key_access`'s internal read can silently miss under the documented FORCE-RLS-with-no-policy residue, the trigger's `NOT EXISTS` check fails, and `REVEAL_AUDIT_MISMATCH` (42501) propagates straight out to a real `authenticated` PostgREST caller — reproducing exactly the "session expired" mistranslation this fix set out to close. This is a genuine disagreement between the two independent reviewers (the security pass concluded neither raise was reachable); the orchestrator resolved it by reading `ai_provider_key_reveal`'s body directly (§3) and finds the thermonuclear pass's reading correct. |
 | S3 | `service_role` not revoked on 5 BYOK functions (HIGH) | FIXED, unconfirmable locally | **FIXED, syntax verified correct** | `013:3086`: the revoke loop resolves each function by exact `oid::regprocedure` signature (not a guessed argument list), so it cannot silently revoke nothing. Both reviewers agree. Confirmation against a real Supabase project's default-privilege bootstrap is still owed, as the fix itself discloses. |
@@ -99,7 +143,7 @@ whether it is fixed.
 | Item | Deferred because | Judgment |
 |---|---|---|
 | **T4/F4** — `bulk_decide` response shape vs. the TS contract | "Needs SQL + TS changed together" | **Acceptable to defer.** Genuinely cross-lane (web); `bulk_decide` has no per-item exception handling, so the shape mismatch cannot cause a refusal to render as an approval. Not security-relevant, correctly scoped out. |
-| **T5** — diff-hash guard hashes an `IMMUTABLE` function; `DIFF_CHANGED` can never fire | "Wants its own pass," being routed separately | **NOT acceptable to defer, per both reviewers independently.** This is a TOCTOU authorization gap on money-moving approvals: an approver consents to a specific record state, the record changes before the decision executes, and the approval is recorded as valid against a hash that is mathematically incapable of detecting the change (`app.plan_effects` is declared `IMMUTABLE` and reads only frozen columns of the request itself — verified by both reviewers independently). The security pass explicitly ranks this above several items that were treated as blockers in the original review and recommends treating it as a standing block on any live use of the approval UI, not a backlog item. The orchestrator concurs: this sits ~10 lines from code this very commit edited (`011:2982`), so "it wants its own pass" is not a reason it couldn't have been named as a still-open BLOCK condition in the commit's own language — it was framed as closed-adjacent when it is not. |
+| **T5** — diff-hash guard hashes an `IMMUTABLE` function; `DIFF_CHANGED` can never fire | "Wants its own pass," being routed separately at `0d9e00c` | **SUPERSEDED — fixed at `eff8084`/`a20e6d8`, live-confirmed.** At `0d9e00c` this was correctly judged unacceptable to defer by both reviewers, on the grounds that it is a TOCTOU authorization gap on money-moving approvals (`app.plan_effects` is `IMMUTABLE` and reads only frozen columns of the request, verified independently by both reviewers). It has since been fixed: the hash now folds in `app.action_value(...)`, which reads the live record, and `test_011` T18 (added in the same fix) passes live against a real edited quotation — see §0. Not yet on `main`. |
 | **S4/T16** — worker heartbeat lease-shortening race | "`apps/worker` scope" | **Acceptable to defer.** No SQL in 011–013 closes it, and the security pass notes the residual double-send risk is bounded by the replay path's stable provider idempotency key (`012:2185`), which most providers will dedupe on. Liveness risk, not an authorization one. |
 | **T11** — 013 has zero TypeScript consumers | "Product ruling, not a migration fix" | **Acceptable to defer**, and arguably safer now: with S3 fixed, none of the five BYOK RPCs are reachable from any granted role at all. Unreachable surface is not exposure. The standing condition: whoever wires the first real consumer must re-confirm the `service_role` revoke against a real Supabase project first, since S3 is unconfirmable on this harness. |
 
@@ -109,10 +153,14 @@ All three run against a fresh instance of the same isolated shim used in the fir
 own data directory), with 001–010 unchanged, 011–013 at `0d9e00c`, and 014 (also amended on this
 branch) applied to satisfy the pins' own stated dependency.
 
-**G6, full:** forward apply 001–014 (all 14 clean), all three pins re-run and genuinely pass —
-`test_011` 16/16 (up from 14; T16/T17 are new), `test_012` 14/14, `test_013` 14/14 (up from 13; T14 is
-new). This directly answers both reviewers' shared caveat that they "did not execute the pins" — they
-do pass as claimed. That is not the same as the underlying defects being closed; see below.
+**G6, full, at `0d9e00c`:** forward apply 001–014 (all 14 clean), all three pins re-run and genuinely
+pass — `test_011` 16/16 (up from 14; T16/T17 are new), `test_012` 14/14, `test_013` 14/14 (up from 13;
+T14 is new). This directly answers both reviewers' shared caveat that they "did not execute the pins" —
+they do pass as claimed. That is not the same as the underlying defects being closed; see below.
+
+**G6, extended to `eff8084` (§0):** same shim, wiped and rebuilt, forward apply 001–017 (015–017
+required this time — see §0 for why). `test_011` 17/17 (T18 is new and genuinely exercises the fix),
+`test_012` 15/15 (T15 is new), `test_013` 14/14 unchanged (`eff8084` does not touch 013).
 
 **T1 residual — reproduced.** Reused `test_012`'s own T13 fixture (dead-letters a job, replays it),
 then extended it: claimed and completed the replacement job exactly as the worker would.
