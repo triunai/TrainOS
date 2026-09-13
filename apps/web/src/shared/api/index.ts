@@ -67,6 +67,9 @@ export type {
 export { SupabaseRpcClient, createRpcClient, unwrapEnvelope } from "./rpcClient";
 export { apiMode, isSupabaseConfigured } from "./supabase";
 
+/** The auth port. Identity comes from here and from `getMe()`; nothing else. */
+export { getAuth, type AuthOutcome, type AuthPort, type AuthUser } from "./auth";
+
 export {
   ApiErrorException,
   domainErrorFromEnvelope,
