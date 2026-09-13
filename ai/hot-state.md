@@ -116,8 +116,28 @@
 > MUST NOT be applied to a hosted project before 014" if it ever detects
 > this. Full detail in `ai/workstreams.md` SUPABASE SCHEMA.
 
-> **Last updated:** 2026-09-13 20:3x — 014–017 landed on PR #6, 018 is PR
-> #11; the hosted-apply ordering rule is now confirmed machine-enforced.
+> **BLAST 13 Sep 20:4x +08** — **Correction to this session's own 20:3x
+> entry: "014–017 landed" was premature.** PR #12 (D-012 review of PR #6)
+> merged with **VERDICT BLOCK**: at review time PR #6 contained ONLY
+> migration 014 — 015/016/017 did not exist in the repo at all, confirmed
+> by the review's own `git log --all` search. They exist in PR #6's diff
+> now but have never been reviewed by anyone. 014 itself has two CRITICAL
+> findings, both confirmed directly in the SQL: a DELETE grant on
+> `public.memberships` reopens a role-escalation path 002 closed, and 014's
+> rollback strips 002's original `public.*` grants instead of restoring
+> them. G6 execution passed but the review states this explicitly does not
+> clear the BLOCK. Separately: PR #5 confirmed MERGED (found while
+> verifying, not separately reported) — enquiries/proposals/approvals and
+> all the CI fixes are on main. PR #10 confirmed MERGED after a rebase
+> (1061 tests); all three UI carry-over PRs are on main now. New findings:
+> a real DANGER/ALERT tone bug fixed in the claim packet, Collections'
+> invented thresholds replaced with the configured ladder, and a new
+> follow-up (g) — `StatusChip.tsx:118` ignores `tone` on an accent card, so
+> the claim-window severity chip has never been visible on screen, even
+> after today's fix. Full detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 20:4x — 014 is BLOCKED (2 CRITICAL findings,
+> confirmed), 015-017 unreviewed; PR #5 and PR #10 both merged.
 
 ### Focus
 
@@ -134,13 +154,14 @@ into the kit per CLAUDE.md's consolidation rule once merged.
 
 ### Blockers
 
-Four items still need the user: exposing `core` in the dashboard (R-F,
-**confirmed still not exposed** by a direct `PGRST106` probe at 19:5x — this
-is the one thing actually blocking the first hosted apply once 014 passes
-review), n8n in the proposal, and the four UI rulings tracked in
-`ai/resume-brief.md`. Branch protection on `main` cannot be set at all on the
-current GitHub plan/visibility (403, confirmed 19:40) — needs a user decision
-to upgrade or make the repo public.
+**014 is BLOCKED by the D-012 review** (two CRITICAL security findings,
+confirmed) and 015–017 are unreviewed — this now gates everything else in
+the migration line, ahead of R-F. Four items still need the user: exposing
+`core` in the dashboard (R-F, **confirmed still not exposed** by a direct
+`PGRST106` probe at 19:5x), n8n in the proposal, and the four UI rulings
+tracked in `ai/resume-brief.md`. Branch protection on `main` cannot be set
+at all on the current GitHub plan/visibility (403, confirmed 19:40) — needs
+a user decision to upgrade or make the repo public.
 
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 

@@ -276,6 +276,20 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 20:4x — 014 BLOCKED by D-012 review (2 CRITICAL); PR #5 and #10 both merged
+
+- Correction to this log's own 20:3x entry: 014-017 were NOT all landed and
+  reviewed. PR #12 (D-012 review) merged with VERDICT BLOCK on 014 (a
+  DELETE-grant escalation path and a rollback that strips 002's original
+  grants, both confirmed in the SQL); 015-017 didn't even exist at review
+  time and remain unreviewed by anyone. PR #5 and PR #10 both confirmed
+  merged (found while verifying, not separately reported). New PR #10
+  rebase findings: a real DANGER/ALERT tone bug fixed, Collections
+  thresholds now read the configured ladder, and new follow-up (g) --
+  StatusChip.tsx:118 ignores tone on an accent card, so the claim-window
+  severity fix has no visible effect yet. Full detail in
+  `ai/project-log.md` and `ai/workstreams.md`.
+
 ## 2026-09-13 20:3x — 014-017 land on PR #6, 018 becomes PR #11, hosted-apply hard rule confirmed
 
 - PR #6 confirmed 4/4 packs (014-017) with real defects fixed (ungranted

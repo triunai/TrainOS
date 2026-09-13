@@ -17,22 +17,38 @@
 
 ---
 
-## 🟢 SUPABASE SCHEMA — 001–013 committed; 014–017 on PR #6 (4/4 packs); 018 on PR #11 (2026-09-13)
+## ⛔ SUPABASE SCHEMA — 014 BLOCKED by D-012 review; 015–017 unreviewed; 018 on PR #11 (2026-09-13)
 
-**Resume:** Read `supabase/HANDOFF.md` in full, then check what has actually
-landed before writing anything: `git log` on `supabase/migrations/`, then the
-status of `cloud/migrations` (014–017, no PR as of 19:25 13 Sep) and
-`lane/rpc-018` (worktree `~/Repos/personal-work/trainos-wt/rpc-018`, branch
-`lane/rpc-018`, the 018 RPC pack, user go-ahead given 19:23, opens a PR to
-main). A network outage at ~16:00 on 13 Sep already killed one
-migrations lane mid-014 with nothing lost; check for a live lane before
-re-authoring 014–017 or 018 to avoid a second collision. Hosted apply (L3) is
-authorised by the user for after 014 passes `migration-retrofit-qa` — apply
-via the Supabase MCP's `apply_migration` against project `balzmmsmrawzmefkavte`
-(ap-southeast-1, ACTIVE_HEALTHY, zero migrations applied), not psql; region
-Singapore is confirmed by the user and by the project itself. **Do not apply
-anything to the hosted project before that QA gate passes.** PR #6 does not
-merge before `codex-review-014-017` reports its verdict either — see below.
+⚠ **Correction to this thread's own prior entry: "014–017 all landed" was
+premature.** That entry recorded PR #6 as complete and validated based on
+its 4 commits and self-reported pin pass rate. It did not record that the
+D-012 review had not yet run, and did not catch that at the time PR #6 was
+reviewed, **015/016/017 did not exist in the repository at all** — only 014
+did. `PR #12` (`docs(reviews): D-012 dual adversarial review — PR #6,
+migration 014 (BLOCK)`) merged at `02240e6`, confirmed, and its own body
+states this directly: "`git log --all` over the whole repo finds no `015_`,
+`016_`, or `017_` file ever committed, on any branch" at review time. 015–017
+now DO exist in PR #6's current diff (confirmed via `gh pr diff 6`) — they
+were pushed after or during the review, and **have not been reviewed at
+all**, by anyone.
+
+**Resume:** Read `docs/reviews/2026-09-13-codex-retrofit-014-017.md` in full
+before touching PR #6 — it is the authoritative current state, more current
+than anything else in this thread. **014 is BLOCKED**, not merge-ready, on
+two CRITICAL findings (below). **015–017 exist in the PR's diff now but have
+never been reviewed by anyone** — do not treat their presence as validated
+just because 014's pins passed; the pins don't even cover 014's own CRITICAL
+findings, let alone anything in 015–017. Fix the two CRITICAL findings in
+014, get 015–017 through the same D-012 gate, and only then does PR #6
+become mergeable. `lane/rpc-018` (worktree
+`~/Repos/personal-work/trainos-wt/rpc-018`, branch `lane/rpc-018`, PR #11)
+continues in parallel but must not reach a hosted project before 014 lands
+— see 018's own hard rule below. Hosted apply (L3) is authorised by the user
+for after 014 passes `migration-retrofit-qa` — apply via the Supabase MCP's
+`apply_migration` against project `balzmmsmrawzmefkavte` (ap-southeast-1,
+ACTIVE_HEALTHY, zero migrations applied), not psql; region Singapore is
+confirmed by the user and by the project itself. **Do not apply anything to
+the hosted project before 014 passes review AND 015–017 are reviewed.**
 
 **Confirmed directly 19:5x: `core` is still not exposed on the hosted
 project.** Probed the live REST endpoint myself (`curl .../rest/v1/<table>`
@@ -46,19 +62,61 @@ nothing else currently blocks the hosted apply once 014 passes review.
 pins, the catalog, and the architecture documents they implement.
 
 **State:** 001–013 authored, EXECUTED against a local PostgreSQL 17.11 shim,
-and committed to main (013 in `bc15b17`). **014–017 all landed on PR #6**,
-confirmed 4 commits (`gh pr view 6`): 014 RLS policies/client grants/core
-envelope wrappers, 015 cron schedules, 016 tenant provisioning, 017 baseline
-amendment. Assertions per pack as reported: 014×51, 015×13, 016×15, 017×39;
-17/17 pins pass from a clean shim including a full reverse rollback to zero
-relations — not independently re-run here (needs the shim). **018 is now PR
-#11** (`feat(supabase): 018 golden-path RPC pack`, branch `lane/rpc-018`,
-confirmed open, 3 commits, 3 files — migration + rollback + test, matching
-this repo's per-pack convention — 4955 additions total). Nothing has been
-applied to any hosted database.
+and committed to main (013 in `bc15b17`). PR #6 now has 4 commits and touches
+014–017's files (confirmed via `gh pr diff 6`), but **only 014 has been
+reviewed, and it is BLOCKED.** Assertions per pack as reported: 014×51,
+015×13, 016×15, 017×39; 17/17 pins pass from a clean shim including a full
+reverse rollback to zero relations — this proves the SQL is internally
+consistent with its own test plan, **not** that the test plan covers the
+authorization defects the review found (the review's own words). **018 is
+now PR #11** (`feat(supabase): 018 golden-path RPC pack`, branch
+`lane/rpc-018`, confirmed open, 3 commits, 3 files — migration + rollback +
+test, matching this repo's per-pack convention — 4955 additions total).
+Nothing has been applied to any hosted database.
 
-**014–017 execution findings, negative results for the log (reported,
-partially spot-checked):**
+⛔ **D-012 review of migration 014 (PR #12, merged `02240e6`): VERDICT
+BLOCK.** Read in full at `docs/reviews/2026-09-13-codex-retrofit-014-017.md`.
+Two CRITICAL findings, both confirmed directly in the migration files by
+this session, not just quoted from the report:
+
+1. **`014:625` grants DELETE on `public.memberships`**, which 002 never
+   granted and which reopens a role-escalation path: an aal2 ADMIN can
+   `DELETE` their own membership row and `INSERT` a new one with a higher
+   role, because the UPDATE-only self-edit guard (`002:763`) never sees a
+   DELETE+INSERT pair. Also destroys 002's required soft-delete audit trail.
+2. **The 014 rollback (`014_..._rollback.sql:75`) runs `REVOKE ALL ON ALL
+TABLES IN SCHEMA public FROM authenticated, anon, PUBLIC`**, which strips
+   migration 002's ORIGINAL grants rather than restoring pre-014 state — and
+   the rollback's own post-condition asserts zero client privilege as
+   correct, so it cannot fail loudly. Running this rollback breaks
+   login/profile/team reads against a database the header claims is
+   "restored to the state 013 left."
+
+Five more HIGH/MED findings (blanket tenant-scoped SELECT on all 114 `core`
+tables with no role/permission check beyond tenant membership — exposing
+`ai_provider_keys`, `public_share_tokens`, and `run_node_io` to any
+authenticated principal; a client omission that makes the approval
+optimistic-concurrency hash check a silent no-op; wrong policy/relation
+counts in the header and catalog vs. the actual DDL) are in the full doc.
+G6 (full execute-before-apply) passed — 14/14 migrations, 14/14 pins,
+rollback, re-apply, re-pin all clean — **and the review states explicitly
+that this does not clear the BLOCK**, because none of the existing pins
+exercise the DELETE-then-INSERT escalation, the rollback's `public.*`
+damage, or the missing role checks. The earlier Grant Hygiene failure this
+thread already recorded (`test_014...sql:513` defining a `SECURITY DEFINER`
+function) is addressed in the review as a likely false positive: the
+function lives in `pg_temp`, session-local, dropped on transaction
+rollback, so it cannot escalate anything outside the test — flagged for a
+`check:grants` allowlist exception rather than dismissed outright. The
+review also notes the mandated "thermonuclear" reviewer skill
+(`.claude/skills/thermo-nuclear-code-quality-review/SKILL.md`) does not
+exist anywhere in this environment; a substitute adversarial pass was run
+in its place and independently converged on both CRITICAL findings.
+
+**014–017 author-reported execution findings** (separate from the D-012
+security review above — these are the authoring lane's own notes, negative
+results for the log, partially spot-checked; 015–017 remain unreviewed by
+anyone as noted above):
 
 - `app.require_tenant_id` was ungranted, so RLS policies errored instead of
   denying — confirmed directly in the PR #6 diff: "no policy in 001-013 used
@@ -141,20 +199,9 @@ Fallback order if Codex is unavailable: Kimi (not installed locally, so
 effectively skipped), then a second Opus reviewer. Codex quota was reported
 back as of a 19:29 probe (not independently verified here).
 
-**Second review gates PR #6:** `codex-review-014-017` (Codex gpt-5.6-sol
-xhigh, its own shim on port 5435, worktree
-`~/Repos/personal-work/trainos-wt/codex-014-017`, detached HEAD at `826bb52`)
-runs the retrofit gate on PR #6 and reports MERGE / MERGE-WITH-FIXES / BLOCK
-to `docs/reviews/2026-09-13-codex-retrofit-014-017.md`. **Confirmed 2026-09-13
-~20:00: the detached HEAD is expected, not a stray worktree** — it is the
-reviewer's own checkout of PR #6's tip (`826bb52`, "feat(supabase): 014 RLS
-policies, client grants and the core envelope wrappers") for review purposes,
-not a lane that owes a commit. PR #6 does not merge before its verdict lands.
-PR #6 also fails Grant Hygiene as of 19:5x — confirmed the exact finding:
-`supabase/tests/test_014_rls_policies_and_client_grants.sql:513` defines a
-`SECURITY DEFINER` function, which the guard flags because a test must not be
-able to create the privilege escalation it exists to check for. The review
-must explain or fix this before MERGE.
+**`codex-review-014-017`'s review landed as PR #12, merged `02240e6` — see
+the BLOCK verdict above.** The detached-HEAD worktree noted here two
+updates ago was indeed that reviewer's own checkout, confirmed correct.
 
 ⚠ **Carried from the paused state, not re-verified this session.** Critic Part
 2 (7 CRITICAL, 29 HIGH against 001–009 as of 2026-09-12) — whether 010–013
@@ -164,12 +211,21 @@ closed any of it is unconfirmed; recheck before 014 lands. `N-01`
 a loud NOTICE on skip) were both still open as of the same date.
 
 **Refs:** `supabase/HANDOFF.md`, `supabase/migrations/migration-catalog.md`,
-`docs/architecture/01`–`06`, `apps/web/src/shared/api/rpcClient.ts`, `D-102`,
-`D-111`, `D-112`, `D-113`.
+`docs/architecture/01`–`06`, `apps/web/src/shared/api/rpcClient.ts`,
+`docs/reviews/2026-09-13-codex-retrofit-014-017.md`, `D-102`, `D-111`,
+`D-112`, `D-113`.
 
 ---
 
-## 🟢 API-PHASE — hosted apply gated on retrofit QA, web-swap in cloud (2026-09-13)
+## 🟢 API-PHASE — PR #5 MERGED; hosted apply still gated on 014's D-012 review (2026-09-13)
+
+**PR #5 (`cloud/web-swap`) confirmed MERGED** at `3faa627` (`gh pr view 5`:
+mergedAt 2026-09-13T12:10:20Z), found while verifying an unrelated report —
+not announced separately by any lane. Enquiries → proposals → approvals are
+now on main through the `TrainOsClient` seam, along with all the CI fixes
+this thread tracked earlier (Prettier, timezone pin, artifact-quota
+`continue-on-error`) and the ten new `RPC_NAMES` entries `lane/rpc-018` is
+implementing.
 
 **Resume:** Read `ai/resume-brief.md` BLAST 19:25 entry, then
 `ai/briefs/2026-09-13-api-phase-plan.md` (rulings R-A..R-G). Two cloud lanes,
@@ -357,10 +413,13 @@ Verified word-for-word against `docs/reviews/2026-09-13-verification.md` at
   anywhere in the app (confirmed via `git grep`) — a dead second button
   vocabulary beside kit `Button`, the exact divergence CLAUDE.md names.
 
-**PR #10 (`ui/lists`) confirmed open**, 5 commits, 17 files (both exact).
-1009 passing / 110 test files confirmed verbatim in the PR body's own
-Validation section; not independently re-run. Under review by `review-pr10`.
-All deviations confirmed against the actual diff:
+**PR #10 (`ui/lists`) confirmed MERGED** at `47298f4` (`gh pr view 10`:
+mergedAt 2026-09-13T12:09:39Z), head `92679c4` after a rebase onto main —
+1061 web tests at merge time (up from the pre-rebase 1009, consistent with
+picking up main's own test growth in between). `ui-lists` worktree confirmed
+shut down. **All three UI carry-over PRs (#8, #9, #10) are now on main.**
+Original deviations (5 commits, 17 files pre-rebase) confirmed against the
+actual diff:
 
 - Invoice totals moved to a `<dl>` under the table rather than table rows,
   because kit `DataTable` has no footer and a summary is not a line item —
@@ -383,6 +442,51 @@ All deviations confirmed against the actual diff:
   it — confirmed via the file's own updated comment, which says so directly
   and marks it "NOT this pass's."
 
+**Three more findings surfaced at rebase time (post pre-merge rebase onto
+main), each confirmed directly:**
+
+1. The claim-packet severity ternary hid a real defect, not just a style
+   issue: it read `deadlineSeverity === "INFO" ? "neutral" : "warning"`, a
+   two-branch ternary over a FOUR-member `Severity`, so `DANGER` and `ALERT`
+   both rendered as "warning" — confirmed via the file's own comment. Fixed
+   to read the kit's `SEVERITY_TONE`.
+2. Collections' 60/30-day overdue thresholds were invented in the screen
+   (`daysOverdue >= 60 ? danger : >= 30 ? warning : neutral`) for a cadence
+   the business actually configures in Settings, which this screen already
+   reads via `GET /v1/collections/rules` — confirmed in the diff: a rung
+   change (e.g. chase at 20/45 days) would have left the chips silently
+   answering for the old 30/60. Replaced with `overdueTone()`, which grades
+   off the two signals a rung actually carries (`requiresApprovalFromRole` →
+   danger, `autonomy === "OBSERVE"` → warning), confirmed directly in the
+   current source.
+3. `apps/web/src/features/hrdc/tone.ts` was deleted after the rebase —
+   confirmed absent from the tree — in favour of the kit's `SEVERITY_TONE`
+   that PR #8 had just landed; concept duplication avoided at merge time
+   rather than shipped and cleaned up later.
+
+⚠ **New follow-up (g), confirmed directly, and it explains why the fix
+above has no visible effect yet:** `StatusChip` on an accent `RecordHeader`
+card renders `ACCENT_TONE` and ignores the `tone` prop entirely — confirmed
+at `apps/web/src/shared/components/kit/StatusChip.tsx:118`:
+`onAccent ? ACCENT_TONE : TONE[tone]`. The claim-packet header is `accent`
+and never passes `plainWhenCollapsed`, so `RecordHeader`'s card stays
+permanently shown, and the claim-window severity chip — the one the fix
+above just made correct in the data layer — has never actually been visible
+on screen; an urgent and a routine claim window render identical pixels
+today. `ui-lists` deliberately wrote no DOM test for this rather than write
+one that would pass for the wrong reason — confirmed directly in
+`apps/web/src/features/hrdc/__tests__/hrdc.test.tsx`'s own comment: "A DOM
+assertion here would therefore pass against the ternary, against the map,
+and against a tone of 'success' — which is a test that proves nothing,"
+raised as a ruling request instead (either give the severity somewhere it
+can be seen, or stop the chip carrying a tone at all).
+
+⚠ **Also note: PR #10's own screenshots predate PR #9's token changes** (PR
+#10 opened 11:52, PR #9 merged 11:54) — its light/dark captures do not
+reflect the `--primary-solid` split or the `SELECTED_TINT` rebind PR #9
+landed. Not re-verified visually here; flagged so nobody treats those
+screenshots as showing current tokens.
+
 ⚠ **Correction to this thread's own prior entry: follow-up (a) is not fully
 resolved, only its kit half is.** The earlier record here said "drop (a)
 rather than redo it" — too broad. What's true, confirmed by reading the
@@ -404,9 +508,12 @@ closing via PR #10 and one still open per above; (b) `DataTable`
 `stickyFirstColumn` prop; (c) a master/detail variant of `ListToolbar`; (d)
 `HRDC_RULE_CHANGES_PATH`'s leaf-opens-a-record defect, untested, unassigned;
 (e) the kit-level `Drawer` primary scope PR #8 deferred; (f) the destructive
-alias at 2.22:1 dark and the dead `ui/button.tsx`, both from PR #9.
-Unverified by the `ui/lists` lane itself, per its own report: artboard
-fidelity for its four screens, an axe pass, and the blue-budget rule.
+alias at 2.22:1 dark and the dead `ui/button.tsx`, both from PR #9; **(g)
+`StatusChip` on an accent `RecordHeader` card ignores `tone` and always
+renders `ACCENT_TONE` (`StatusChip.tsx:118`), confirmed above — the
+claim-window severity chip has never been visible.** Unverified by the
+`ui/lists` lane itself, per its own report: artboard fidelity for its four
+screens, an axe pass, and the blue-budget rule.
 
 **Refs:** `ai/resume-brief.md` (verifier carry-over section),
 `docs/reviews/2026-09-13-verification.md`,

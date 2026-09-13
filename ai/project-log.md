@@ -15,6 +15,147 @@
 
 ---
 
+## 2026-09-13 20:4x — 014 BLOCKED by D-012 review, 015–017 never reviewed; PR #5 and PR #10 both merged
+
+**Correction to this log's own 20:3x entry above: "014–017 land on PR #6"
+was premature, and the error is significant enough to name plainly.** That
+entry recorded PR #6 as complete on the strength of 4 commits and a
+self-reported pin pass rate, and did not catch that the D-012 security
+review had not yet run — or that at review time, PR #6 contained ONLY
+migration 014. PR #12 (`docs(reviews): D-012 dual adversarial review — PR
+#6, migration 014 (BLOCK)`) merged at `02240e6`, confirmed, with **VERDICT
+BLOCK**, and its own body states directly: "`git log --all` over the whole
+repo finds no `015_`, `016_`, or `017_` file ever committed, on any branch"
+at the time of review. Those three packs exist in PR #6's diff now
+(confirmed via `gh pr diff 6`) but were pushed after or during the review
+and **have never been reviewed by anyone.**
+
+**Migration 014's two CRITICAL findings, confirmed directly against the SQL,
+not just quoted from the review:**
+
+1. `014:625` grants **DELETE** on `public.memberships`. Migration 002
+   granted only SELECT/INSERT/UPDATE. 002's self-escalation guard
+   (`memberships_no_self_edit`, `002:763`) is UPDATE-only, so an aal2 ADMIN
+   can `DELETE` their own membership row and `INSERT` a replacement with a
+   higher role — the guard never sees a DELETE+INSERT pair. This also
+   destroys 002's required soft-delete audit trail for any membership an
+   ADMIN deletes this way.
+2. The 014 rollback runs `REVOKE ALL ON ALL TABLES IN SCHEMA public FROM
+authenticated, anon, PUBLIC`, which strips migration 002's ORIGINAL
+   grants (which 014 never touched) rather than restoring pre-014 state.
+   The rollback's own post-condition then asserts zero client privilege on
+   `public` as the CORRECT restored state, so a broken rollback cannot fail
+   loudly — it silently leaves login/profile/team reads broken against a
+   database the header claims is "restored to the state 013 left."
+
+Five more HIGH/MED findings in the full doc
+(`docs/reviews/2026-09-13-codex-retrofit-014-017.md`): all 114 `core`
+tables get blanket tenant-scoped SELECT with no role/permission check
+beyond tenant membership, exposing `core.ai_provider_keys` (ADMIN-only per
+002), `core.public_share_tokens`, and `core.run_node_io` (full agent
+prompt/completion text) to any authenticated principal in-tenant; the web
+client never sends `p_expected_diff_hash` to `core.decide_approval`, making
+the approval optimistic-concurrency check a silent no-op on every call
+today; and the migration header/catalog both state the wrong policy and
+relation counts versus the actual DDL.
+
+**G6 (full execute-before-apply) passed and this does NOT clear the
+BLOCK — the review is explicit about why.** All 14 migrations applied
+cleanly, all 14 pins passed, the 014 rollback succeeded, re-apply and
+re-pin were clean. None of that touches the actual findings: no pin
+exercises the DELETE-then-INSERT escalation, none check that the rollback
+restores `public.*` grants, none probe whether a low-privilege role can
+read a sensitive table. The pin suite proves the SQL matches its own
+(incomplete) test plan, not that the test plan covers what the product
+actually needs authorized.
+
+**Two housekeeping notes from the review, both worth carrying forward.**
+The mandated "thermonuclear" reviewer skill
+(`.claude/skills/thermo-nuclear-code-quality-review/SKILL.md`) does not
+exist anywhere in this environment or in `~/.claude/skills`; a substitute
+adversarial pass (`security-reviewer`, opus) was run in its place and
+independently converged on both CRITICALs, so the gate's "both must land"
+bar was met in substance if not by the letter. Separately, the Grant
+Hygiene failure this spine already recorded against
+`test_014_..._sql:513` (a test defining its own `SECURITY DEFINER`
+function) is very likely a false positive: the function lives in
+`pg_temp`, session-local, dropped when the pin's transaction rolls back,
+so it cannot escalate anything outside the test — flagged in the review for
+a one-line `check:grants` allowlist exception rather than dismissed.
+
+**Separately, found while verifying — not announced by any lane report —
+two more PRs merged:**
+
+- **PR #5 (`cloud/web-swap`) confirmed MERGED** at `3faa627`. Enquiries →
+  proposals → approvals through the `TrainOsClient` seam, plus every CI fix
+  this spine tracked earlier (Prettier, the timezone pin, the
+  artifact-quota `continue-on-error`), plus the ten new `RPC_NAMES` entries
+  `lane/rpc-018` is implementing, are all on main now.
+- **PR #10 (`ui/lists`) confirmed MERGED** at `47298f4`, head `92679c4`
+  after a pre-merge rebase onto main — 1061 web tests at merge time (up
+  from the pre-rebase 1009). `ui-lists` worktree confirmed shut down. **All
+  three UI carry-over PRs (#8, #9, #10) are on main.**
+
+**Three findings that surfaced during PR #10's rebase, each confirmed
+directly against the current source:**
+
+1. The claim-packet's severity ternary hid a real defect: `deadlineSeverity
+=== "INFO" ? "neutral" : "warning"` is a two-branch ternary over a
+   FOUR-member `Severity`, so `DANGER` and `ALERT` both rendered as
+   "warning" — confirmed via the file's own comment. Now reads the kit's
+   `SEVERITY_TONE`.
+2. Collections' 60/30-day overdue thresholds were invented in the screen
+   for a cadence the business actually configures in Settings, which the
+   screen already reads via `GET /v1/collections/rules` — a rung change
+   (e.g. 20/45 days) would have left the chips silently answering for the
+   old numbers. Replaced with an `overdueTone()` helper that grades off the
+   rungs' own `requiresApprovalFromRole` and `autonomy` fields, confirmed
+   directly in the current source.
+3. `apps/web/src/features/hrdc/tone.ts` was deleted after the rebase —
+   confirmed absent from the tree — in favour of the kit's `SEVERITY_TONE`
+   PR #8 had just landed. Concept duplication avoided at merge time.
+
+**New follow-up (g), confirmed directly, and it explains why finding #1
+above has no visible effect yet.** `StatusChip` on an accent `RecordHeader`
+card renders `ACCENT_TONE` and ignores the `tone` prop entirely — confirmed
+at `apps/web/src/shared/components/kit/StatusChip.tsx:118`:
+`onAccent ? ACCENT_TONE : TONE[tone]`. The claim-packet header is `accent`
+and never passes `plainWhenCollapsed`, so the card stays permanently shown
+and the claim-window severity chip has never actually been visible on
+screen — an urgent and a routine claim window render identical pixels
+today, even after the ternary fix above corrected the underlying logic.
+`ui-lists` deliberately wrote no DOM test for this, and said why directly
+in `hrdc.test.tsx`'s own comment: "A DOM assertion here would therefore
+pass against the ternary, against the map, and against a tone of 'success'
+— which is a test that proves nothing," raised as a ruling request instead
+of a fix. Also noted: PR #10's screenshots (opened 11:52) predate PR #9's
+token merge (11:54) and do not reflect the `--primary-solid` split or the
+`SELECTED_TINT` rebind.
+
+**Three things worth telling future-me:**
+
+1. **"N commits with the right headlines" is not the same evidence as "N
+   packs actually exist and were reviewed."** The 20:3x entry trusted `gh
+pr view 6 --json commits` — four commit headlines naming 014 through
+   017 — without a single `gh pr diff 6 | grep "^diff --git"` to confirm
+   the files were actually there, and without checking whether any review
+   had run at all. A commit message is a claim the author makes about their
+   own commit; it is not verification of the commit's contents, and it is
+   nowhere close to verification that a security reviewer looked at it.
+2. **"017 was written" and "017 was reviewed" are different facts, and a
+   spine that conflates them will tell a hosted-apply lane the wrong thing
+   at exactly the moment it matters most.** 015–017 existing in a diff is
+   necessary but nowhere near sufficient for the hosted-apply gate this
+   thread itself defined.
+3. **A lane's own execution proof (pins passing, G6 clean) is not the same
+   claim as a security reviewer's approval, even when both are called
+   "verification."** This session already knew this in the abstract
+   (CLAUDE.md's execution-protocol rule about separate review passes) but
+   still let a pin-pass-rate stand in for a review verdict for one full
+   spine update before the review actually landed and said otherwise.
+
+---
+
 ## 2026-09-13 20:3x — 014–017 land on PR #6 (4/4 packs), 018 becomes PR #11, hosted-apply hard rule confirmed machine-enforced
 
 **PR #6 confirmed complete: 4 commits, 014 through 017.** `gh pr view 6`
