@@ -15,6 +15,121 @@
 
 ---
 
+## 2026-09-13 23:6x — frozen tip moves to a20e6d8 (benign correction); T5 closed end to end with no client change, and the READ-to-DECIDE distinction made precise
+
+**Frozen-tip correction, confirmed benign rather than an error in this
+journal's own prior recording.** `origin/cloud/migrations` now sits at
+`a20e6d8`, one commit past the `eff8084` this journal recorded as frozen
+last entry — reported as one crossed push, not a mistake in what was
+recorded then; `eff8084` genuinely was the tip at the time it was
+checked, and `a20e6d8` is a legitimate, later push built directly on it.
+
+**`a20e6d8` closes T5 end to end.** The mechanism half (the hash
+covering `{effects, value}` because `app.plan_effects` is IMMUTABLE and
+reads no row) landed in `eff8084` already, confirmed in this journal's
+own prior entry. This commit names the canonical form where all three
+parties can find it and pins the specific gap the mechanism exists to
+catch — the part explicitly asked for.
+
+**The client-change question resolved with NO client change needed,
+confirmed by reading the actual source rather than trusting the claim.**
+`apps/web/src/features/approvals/ApprovalDetail.tsx:170` confirmed
+directly: it passes `detail.diffHash` verbatim into the decide call — it
+echoes the hash the server already computed and attached to the
+approval; it never computes a hash itself. The only `hashDiff()`
+function anywhere in the entire repository is confirmed at
+`packages/fixtures/src/client/FixtureClient.ts:3089`, the mock client
+used for fixtures, not the real decision path. The server-side canonical
+form was therefore already the one in force before this commit; the
+commit states that fact explicitly rather than leaving it implied, and
+no client-side hash-agreement mechanism (the commit specifically names
+FNV-1a as the alternative that would have been needed) is required at
+all.
+
+**Canonical form, confirmed written into both migration 011 and the
+pin, not left as tribal knowledge**: SHA-256 over
+`{"effects": app.plan_effects(...), "value": app.action_value(...)}`,
+rendered as jsonb text, computed once at queue time, stored on the
+approval row, exposed on `core.v_approval_requests`, echoed back by the
+client. Confirmed as the deliberate alternative to a client-computed
+hash, which would have needed two implementations of one serialization,
+in two different languages, agreeing forever — exactly the class of
+drift this repo's own standing rules exist to prevent.
+
+**What the echo actually detects, confirmed precisely and worth stating
+exactly rather than loosely as "tamper detection" — a genuine
+precision-of-language correction worth preserving.** Since a value the
+client only returns to the server cannot itself detect a change the
+client made, the guard detects the gap between READ and DECIDE
+specifically: the approver loaded a diff, something else moved the
+underlying record in the meantime, and the hash they echo back no longer
+matches what the row now carries. **New pin `test_011` T19 confirmed to
+pin exactly this, both directions**, via its own sub-assertions: `T19a`
+confirms an APPROVE echoing the hash it just read is admitted when
+nothing moved; `T19b`/`T19b2` confirm a reprice of the quotation in
+between makes the same echo refused, specifically as `DIFF_CHANGED` and
+not some other error. Confirmed as a genuinely new capability: before
+the hash covered `app.action_value`, the repriced case was undetectable
+by construction, because `app.plan_effects` cannot see a quotation at
+all — it only reads the request, not the record being decided on.
+
+**Staging choice explained and confirmed, not merely asserted.** The
+test approval is staged directly rather than routed through
+`app.perform_action`, because `QUOTATION_APPLY` is confirmed the only
+action type in the whole system whose `value_source` is `QUOTATION` —
+the only one whose value actually reads the record being edited — and
+in this fixture set it dispatches straight to `EXECUTING` because the
+tenant carries no matching policy row. Routing through `perform_action`
+would have turned this pin into a test of policy seeding (already
+covered elsewhere by T16/T17) and would never have reached the guard
+this pin exists to test.
+
+**Fixture requirement confirmed and worth flagging for future pin
+authors, exactly as reported and confirmed directly in the diff**: real
+`auth.sessions` rows at `aal2` are required for BOTH the requester and
+the approver, because `app.aal2_verified()` reads the session table
+directly rather than trusting a claim in a token. Any future pin
+touching a money-moving action and its decision needs both sides'
+sessions seeded, not just one — a concrete, reusable fact for whoever
+writes the next money-path pin in this repo.
+
+**Inherent limit for the log, confirmed directly in migration 011's own
+comment at line 76, not this fix's shortcoming**: `PROPOSAL_SEND` is
+seeded with `value_source = NONE`, so this entire hash mechanism cannot
+detect a record change for that specific action type — a property of
+which action types have a value worth hashing in the first place, not a
+gap this fix left open.
+
+**Validation counts confirmed unchanged from `eff8084`**: 18/18 apply,
+17/17 pins pass plus 2 apply-context pins that correctly refuse,
+`lint:sql` 53/53, `check:grants` 0, `check:rpc` 4 pass/0 broken —
+consistent with this commit touching exactly one file, the test file
+itself, confirmed via the diff stat.
+
+**Things worth telling future-me:**
+
+1. "The frozen tip moved" is not automatically a correction to anything
+   this journal got wrong — a frozen designation is a snapshot of "what
+   is true right now," and a later legitimate push simply supersedes it.
+   Worth distinguishing, in the log itself, between "I was wrong" and
+   "the world moved after I checked," since conflating the two would
+   wrongly cast doubt on a correct prior entry.
+2. "The client doesn't need to change" is a stronger, more useful claim
+   than "the client already agrees with the server," and the difference
+   was only visible by reading the actual call site rather than reasoning
+   about what a diff-hash mechanism generally requires. Grepping for the
+   one function name that would prove or disprove a hidden client-side
+   implementation (`hashDiff`) is a cheap, high-value check whenever a
+   fix claims "no client change needed."
+3. Precisely naming what a security mechanism catches (a READ-to-DECIDE
+   race, not tampering) rather than reaching for the nearest generic
+   label ("integrity check," "tamper detection") is worth the extra
+   sentence — a future reader deciding whether this mechanism covers
+   their new scenario needs the precise claim, not the closest-sounding
+   one.
+
+---
+
 ## 2026-09-13 23:5x — fix-014 pushes eff8084, reported FROZEN as the merge candidate; 017's own SST-fix regression closed; final whole-branch re-review dispatched
 
 **`fix-014` pushed `eff8084` to `origin/cloud/migrations`**, confirmed

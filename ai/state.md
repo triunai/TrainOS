@@ -287,6 +287,24 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:6x — frozen tip moves to a20e6d8 (benign correction); T5 closed end to end with no client change
+
+- Frozen tip corrected from `eff8084` to `a20e6d8` — confirmed benign,
+  one crossed push, not an error in this log's own prior entry. `a20e6d8`
+  closes T5 end to end: no client change needed (confirmed by reading
+  `ApprovalDetail.tsx:170` — it only echoes `detail.diffHash`, never
+  computes one; the only `hashDiff()` anywhere is in the mock fixture
+  client). Canonical form: SHA-256 over `{effects, value}` at queue time,
+  stored, exposed on the view, echoed back. Precisely: the guard detects
+  the READ-to-DECIDE gap, not client tampering — new pin T19 confirmed
+  to admit an unchanged echo and refuse DIFF_CHANGED after a reprice,
+  both ways pinned. Fixture note for future pin authors: money-path pins
+  need real aal2 auth.sessions rows for both parties. Inherent limit
+  confirmed at 011's own line 76: PROPOSAL_SEND's value_source is NONE,
+  so this mechanism can't detect a record change for it. Counts
+  unchanged from eff8084 (single test-file diff). See
+  `ai/project-log.md` 23:6x block for full detail.
+
 ## 2026-09-13 23:5x — fix-014 pushes eff8084, reported FROZEN as the merge candidate; 017's own SST-fix regression closed; final whole-branch re-review dispatched
 
 - `fix-014` confirmed pushed `eff8084` to `cloud/migrations`, reported

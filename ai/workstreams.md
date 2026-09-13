@@ -1134,6 +1134,76 @@ IMMEDIATE` now drains the queue first. Confirmed as a deliberate
   base; `eff8084` being reported frozen is what that rebase has been
   waiting on.
 
+✅ **Frozen-tip correction, confirmed benign: `origin/cloud/migrations`
+now sits at `a20e6d8`, one commit past the `eff8084` this thread just
+recorded as frozen — reported as one crossed push, not an error in this
+thread's own prior recording.** `a20e6d8` confirmed present at the tip,
+built directly on `eff8084`. `fix-014` pushed it to close T5 end to end
+— the mechanism (the hash now covering `{effects, value}`) landed in
+`eff8084` already; this commit names the canonical form and pins the
+gap it exists to catch:
+
+- **The client-change question resolved with NO client change needed,
+  confirmed by reading the actual source rather than trusting the
+  claim.** `apps/web/src/features/approvals/ApprovalDetail.tsx:170`
+  confirmed to pass `detail.diffHash` verbatim into the decide call — it
+  echoes the hash the server already put on the approval; it never
+  computes one. The only `hashDiff()` anywhere in the repo is confirmed
+  at `packages/fixtures/src/client/FixtureClient.ts:3089`, the mock
+  client, not this path. The server-side canonical form was therefore
+  already the one in force; this commit states it rather than leaving
+  it implied, and no client-side FNV-1a agreement is needed at all.
+- **Canonical form confirmed written into both 011 and the pin**:
+  SHA-256 over `{"effects": app.plan_effects(...), "value":
+app.action_value(...)}` rendered as jsonb text, computed once at queue
+  time, stored on the approval, exposed on `core.v_approval_requests`,
+  echoed by the client. Confirmed as the deliberate alternative to a
+  client-computed hash, which would have needed two implementations of
+  one serialization in two languages agreeing forever — the exact class
+  of drift this repo's own rules exist to prevent.
+- **What the echo actually detects, confirmed precisely and worth
+  stating exactly rather than loosely as "tamper detection"**: since a
+  value the client merely returns cannot detect a change the client
+  itself made, the guard detects the gap between READ and DECIDE — the
+  approver loaded a diff, something else moved the underlying record in
+  between, and the echoed hash no longer matches what the row carries
+  now. **New pin `test_011` T19 confirmed to pin exactly that, both
+  ways**: an APPROVE echoing the hash it just read is admitted when
+  nothing moved; a reprice of the quotation in between makes the same
+  echo refused as `DIFF_CHANGED`. Confirmed via the pin's own
+  sub-assertions (`T19a` the unchanged-echo admit case, `T19b` the
+  repriced-and-refused case, `T19b2` confirming the refusal is
+  specifically `DIFF_CHANGED` and not some other error). Before the hash
+  covered `app.action_value`, the second case was undetectable —
+  `app.plan_effects` cannot see a quotation at all.
+- **Staging choice explained and confirmed, not just asserted**: the
+  approval is staged directly rather than routed through
+  `perform_action`, because `QUOTATION_APPLY` is confirmed the only
+  action type whose `value_source` is `QUOTATION` — the only one whose
+  value reads the record being edited — and in this fixture set it
+  dispatches straight to `EXECUTING` since the tenant carries no
+  matching policy row. Routing through `perform_action` would have
+  turned this into a test of policy seeding (already covered by T16/T17)
+  and would never have reached the guard being tested.
+- **Fixture requirement confirmed and worth flagging for future pin
+  authors, exactly as reported**: real `auth.sessions` rows at `aal2`
+  for both the requester and the approver are required, because
+  `app.aal2_verified()` reads the session table directly rather than
+  trusting a claim — confirmed in the diff. Any future pin touching a
+  money-moving action and its decision needs both sides' sessions
+  seeded, not just one.
+- **Inherent limit for the log, confirmed directly in migration 011's
+  own comment (line 76)**: `PROPOSAL_SEND` is seeded with
+  `value_source = NONE`, so this hash mechanism cannot detect a record
+  change for that action type at all — not a defect in this fix, a
+  property of which action types have a value to hash in the first
+  place.
+- **Validation counts confirmed unchanged**: 18/18 apply, 17/17 pins
+  pass plus 2 apply-context pins that correctly refuse, `lint:sql`
+  53/53, `check:grants` 0, `check:rpc` 4 pass/0 broken — the same counts
+  this thread already recorded for `eff8084`, consistent with a
+  test-only diff (this commit touches exactly one file, the test file).
+
 ✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
 `origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
 a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header

@@ -552,9 +552,31 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > then its single final rebase against this frozen base. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:5x — cloud/migrations FROZEN at
-> eff8084; 017's own SST-fix regression closed; final PR #6 re-review
-> dispatched.
+> **BLAST 13 Sep 23:6x +08** — **Frozen-tip correction, benign**:
+> `cloud/migrations` now sits at `a20e6d8`, one commit past `eff8084`,
+> reported as one crossed push rather than an error in this thread's
+> prior recording. `a20e6d8` closes T5 end to end (the mechanism landed
+> in `eff8084` already). **No client change needed**: confirmed by
+> reading the source, `ApprovalDetail.tsx:170` only echoes
+> `detail.diffHash`, never computes one — the only `hashDiff()` anywhere
+> is in the mock `FixtureClient.ts`. Canonical form confirmed written
+> into 011 and the pin: SHA-256 over `{effects, value}` at queue time,
+> stored, exposed on the view, echoed by the client — avoiding two
+> implementations of one serialization agreeing forever. What it detects
+> is precisely the READ-to-DECIDE gap, not client tampering — new pin
+> T19 confirmed to admit an unchanged echo and refuse `DIFF_CHANGED`
+> after a reprice, both ways. Staging choice explained: `QUOTATION_APPLY`
+> is confirmed the only action type whose value reads the record being
+> edited. Fixture note worth keeping for future pin authors: money-path
+> pins need real `aal2` `auth.sessions` rows for both parties, confirmed
+> in the diff. **Inherent limit for the log, confirmed at 011's own
+> line 76**: `PROPOSAL_SEND`'s `value_source = NONE`, so this mechanism
+> cannot detect a record change for that action type at all. Counts
+> confirmed unchanged from `eff8084` (single test-file diff). Full
+> detail in `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:6x — cloud/migrations frozen tip moves
+> to a20e6d8; T5 closed end to end with no client change required.
 
 ### Focus
 
