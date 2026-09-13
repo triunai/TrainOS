@@ -161,19 +161,18 @@ describe("Sidebar", () => {
     expect(screen.getByText(/^TrainOS .+ · API v1 · contract /)).toBeInTheDocument();
   });
 
-  it("puts identity at the TOP, under the wordmark, with the theme switch beside it", () => {
+  it("puts identity at the TOP of the rail, with the theme switch beside it", () => {
     const { container } = renderAt("/dashboard");
     const rail = screen.getByRole("navigation", { name: "Main" });
 
-    const wordmark = screen.getByText("TRAINOS");
     const profile = screen.getByRole("button", { name: /Amirah Yusof/ });
     const nav = container.querySelector(".overflow-y-auto") as HTMLElement;
 
     /* Order in the document IS the order on screen here — the rail is a plain
-       column. Wordmark, then who you are, then where you can go. */
-    expect(
-      wordmark.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+       column. Who you are first, then where you can go. There is no wordmark:
+       the product name lives in the footer build stamp and nowhere else. */
+    expect(screen.queryByText("TRAINOS")).toBeNull();
+    expect(rail.firstElementChild).toContainElement(profile);
     expect(profile.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     expect(screen.getByRole("switch", { name: "Dark mode" })).toBeInTheDocument();

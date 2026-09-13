@@ -66,10 +66,6 @@ export function Sidebar({ role }: { role: Role }) {
 
   return (
     <nav aria-label="Main" className="flex h-full w-sidebar shrink-0 flex-col bg-sidebar px-3 py-4">
-      <div className="px-2 font-mono text-[13px] font-medium tracking-[0.08em] text-ink">
-        TRAINOS
-      </div>
-
       <SidebarProfile />
 
       {/* The scroll container. `-mx-1 px-1` keeps a focus ring from being
