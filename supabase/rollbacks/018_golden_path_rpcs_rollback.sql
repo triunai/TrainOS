@@ -32,9 +32,14 @@
 --     re-revoked, and re-revoking something 018 did not grant would break a
 --     migration this pack never touched.
 --   * `core.ref_formats`, `core.state_transitions` and every row of business
---     data. 018 wrote no durable row of its own.
+--     data. ⚠ WITH ONE STATED EXCEPTION, and this line used to deny it while
+--     §"Seeded rows" below correctly described it: 018 DOES write durable rows
+--     — `core.pipelines` and `core.pipeline_steps` across every tenant, from
+--     §10e's backfill. They are deliberately KEPT, because a tenant that has
+--     since renamed a stage would lose that edit to a rollback of an RPC pack.
+--     The seed MECHANISM is dropped; the rows stay.
 --
--- PRIOR STATE RESTORED. Before 018, none of these 33 objects existed: the
+-- PRIOR STATE RESTORED. Before 018, none of these 51 objects existed: the
 -- migration is purely additive, so the prior state IS their absence. There is
 -- no earlier definition of any of them to reproduce — the four-artifact rule's
 -- "reproduce the prior definition IN FULL" has nothing to reproduce here, and
@@ -58,7 +63,17 @@
 -- with 001-013 applied, verify green each time.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-SET client_min_messages = notice;
+-- ── WHY THIS FILE IS WRAPPED IN ONE TRANSACTION ────────────────────────────
+--
+-- 014's, 015's, 016's and 017's rollbacks all wrap; 018's did not, and here it
+-- disarmed this file's OWN GUARD. The `$verify$` block at the end raises "this
+-- rollback DESTROYED objects it does not own" — but with no transaction, the
+-- 47 drops it is complaining about have already committed one at a time. A
+-- guard whose failure cannot undo what it detects is a report, not a gate.
+-- Inside a transaction, that RAISE takes every drop back with it.
+BEGIN;
+
+SET LOCAL client_min_messages = notice;
 
 -- ═══ G1 · Pre-flight: refuse if anything here is not ours to drop ══════════
 --
@@ -153,7 +168,7 @@ DROP VIEW IF EXISTS core.v_organisation_relations;
 DROP VIEW IF EXISTS core.v_budgets;
 DROP VIEW IF EXISTS core.v_model_tiers;
 
--- ═══ 2 · The 23 core RPCs ══════════════════════════════════════════════════
+-- ═══ 2 · The 30 core RPCs ══════════════════════════════════════════════════
 -- Signatures written out in full. `DROP FUNCTION` matches on the ARGUMENT
 -- LIST, and a bare name would be ambiguous the moment anyone added an
 -- overload — which is the same PGRST203 trap the forward file's V1 pin guards.
@@ -411,3 +426,7 @@ BEGIN
                'and 007''s generated money columns.';
 END
 $verify$;
+
+NOTIFY pgrst, 'reload schema';
+
+COMMIT;

@@ -1552,7 +1552,7 @@ BEGIN
      AND pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
      AND NOT p.proconfig @> ARRAY['statement_timeout=10s'];
   IF v_keys IS NOT NULL THEN
-    RAISE EXCEPTION 'T20e: a client-callable SECURITY DEFINER in core has no '
+    RAISE EXCEPTION 'T20e: a client-callable definer in core has no '
                     'statement_timeout: %',
       pg_catalog.array_to_string(v_keys, ', ');
   END IF;
@@ -1640,14 +1640,31 @@ BEGIN
           'DRAFT','HUMAN','22222222-2222-4222-8222-222222222222')
   RETURNING id INTO v_quote;
 
-  -- 017 added six SST columns to core.quotations. `sst_rate` DEFAULTS TO 0 and
-  -- `sst_reason` to 'STANDARD_RATED', and NOTHING in 001-017 populates them —
-  -- there is no trigger. A quotation written without resolving a policy is
-  -- therefore standard-rated at zero per cent: a quotation that looks taxed and
-  -- carries no tax. Ruling R-C says the RPC closes that, and this asserts it.
+  -- 017 added six SST columns to core.quotations, and WHICH LAYER FILLS THEM
+  -- DEPENDS ON WHICH 017 IS APPLIED. On `lane/rpc-018`'s base, `sst_rate`
+  -- defaults to 0, `sst_reason` to 'STANDARD_RATED', and nothing populates
+  -- them — a quotation written without resolving a policy is standard-rated at
+  -- ZERO PER CENT, a quotation that looks taxed and carries no tax, and
+  -- ruling R-C makes closing that the RPC's job. On `cloud/migrations`, 017
+  -- now carries `trg_quotations_resolve_sst`, which fills all three columns on
+  -- INSERT, and 018 stands down rather than writing second.
+  --
+  -- THE ASSERTION IS ON THE OUTCOME, NOT ON THE LAYER. Both arrangements must
+  -- end with a quotation whose rate is traceable to a registry row; asserting
+  -- "the fixture started at zero" pinned the absence of the trigger, which is
+  -- not a property this pack owns and which became false the moment the 017
+  -- lane built the better half of doc 09 §14.8.
   SELECT quotation.* INTO v_q FROM core.quotations AS quotation WHERE quotation.id = v_quote;
-  IF v_q.sst_rate <> 0 THEN
-    RAISE EXCEPTION 'T23a: the fixture did not start from 017''s zero default';
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger AS trg
+              WHERE trg.tgrelid = 'core.quotations'::regclass
+                AND trg.tgname = 'trg_quotations_resolve_sst' AND NOT trg.tgisinternal) THEN
+    IF v_q.sst_policy_id IS NULL THEN
+      RAISE EXCEPTION 'T23a: 017 carries trg_quotations_resolve_sst and the INSERT '
+                      'still left the quotation with no tax policy';
+    END IF;
+  ELSIF v_q.sst_rate <> 0 THEN
+    RAISE EXCEPTION 'T23a2: no SST trigger, and the fixture did not start from '
+                    '017''s zero default: %', v_q.sst_rate;
   END IF;
 
   v := core.put_quotation(v_quote::text,
@@ -1688,8 +1705,9 @@ BEGIN
     RAISE EXCEPTION 'T23g: gross % does not follow from the registry rate on policy %',
       v_q.gross_price_sen, v_q.sst_policy_id;
   END IF;
-  RAISE NOTICE 'T23 PASS: put_quotation resolved SST through app.resolve_tax_policy — '
-               'policy recorded, rate 0.08 from the registry, sst_sen and gross generated.';
+  RAISE NOTICE 'T23 PASS: SST is resolved through app.resolve_tax_policy by whichever '
+               'layer owns it — policy recorded, rate 0.08 from the registry, sst_sen '
+               'and gross generated, and never two writers at once.';
 END
 $t23$;
 
@@ -2928,6 +2946,120 @@ BEGIN
                'the list rows they produce; a badge actually counts.';
 END
 $t36$;
+
+DO $banner$ BEGIN RAISE NOTICE '════════ T37 · A NO-OP PUT IS NOT A TAX REWRITE ════════'; END $banner$;
+DO $t37$
+DECLARE
+  v_tenant uuid := '11111111-1111-4111-8111-111111111111';
+  v_quote  uuid;
+  v_before core.quotations%ROWTYPE;
+  v_after  core.quotations%ROWTYPE;
+  v_exempt uuid;
+BEGIN
+  SELECT id INTO v_quote FROM core.quotations
+   WHERE tenant_id = v_tenant AND sst_policy_id IS NOT NULL ORDER BY created_at LIMIT 1;
+  IF v_quote IS NULL THEN
+    RAISE EXCEPTION 'T37-setup: no quotation carrying a resolved tax policy';
+  END IF;
+
+  -- ── SET THE QUOTATION TO THE EXEMPT POLICY ───────────────────────────────
+  -- 017 seeds two national policies and says the exempt one is genuinely
+  -- selectable. `put_quotation` can only ever resolve CORPORATE_TRAINING,
+  -- because no column in 001–017 records that the BUYER is an Education Act
+  -- institution — so the exempt policy is reached by another path today, and
+  -- a save through this RPC must not undo it.
+  SELECT id INTO v_exempt FROM core.tax_policies
+   WHERE exempt AND (tenant_id = v_tenant OR tenant_id IS NULL) ORDER BY policy_code LIMIT 1;
+  IF v_exempt IS NULL THEN
+    RAISE EXCEPTION 'T37-setup: 017 seeds an exempt policy and none is here';
+  END IF;
+
+  UPDATE core.quotations
+     SET sst_policy_id = v_exempt, sst_rate = 0, sst_reason = 'TRAINING_EXEMPT',
+         sst_exempt_reason = 'Buyer is an Education Act institution'
+   WHERE tenant_id = v_tenant AND id = v_quote;
+
+  SELECT * INTO v_before FROM core.quotations
+   WHERE tenant_id = v_tenant AND id = v_quote;
+
+  -- ── AN EMPTY BODY ────────────────────────────────────────────────────────
+  -- `p_body` is coalesced to `'{}'`, and before this fix the tax block sat
+  -- OUTSIDE both the `lines` guard and the `sellPrice` guard — so this call
+  -- resolved CORPORATE_TRAINING, wrote 8% over the exemption, and changed the
+  -- customer-facing gross, on a request that asked for nothing.
+  PERFORM core.put_quotation(v_quote::text, '{}'::jsonb, 'noop-key-1');
+
+  SELECT * INTO v_after FROM core.quotations
+   WHERE tenant_id = v_tenant AND id = v_quote;
+
+  IF v_after.sst_policy_id <> v_before.sst_policy_id THEN
+    RAISE EXCEPTION 'T37a: an EMPTY body rewrote the tax policy from % to %',
+      v_before.sst_policy_id, v_after.sst_policy_id;
+  END IF;
+  IF v_after.sst_reason <> 'TRAINING_EXEMPT' THEN
+    RAISE EXCEPTION 'T37b: an empty body reset the exemption to %', v_after.sst_reason;
+  END IF;
+  IF v_after.sst_rate <> v_before.sst_rate THEN
+    RAISE EXCEPTION 'T37c: an empty body moved the rate from % to % — the '
+                    'customer-facing gross changed on a request that asked for nothing',
+      v_before.sst_rate, v_after.sst_rate;
+  END IF;
+  IF v_after.gross_price_sen <> v_before.gross_price_sen THEN
+    RAISE EXCEPTION 'T37d: the gross moved from % to % on an empty body',
+      v_before.gross_price_sen, v_after.gross_price_sen;
+  END IF;
+
+  -- ── AND THE RESOLUTION STILL HAPPENS WHEN IT SHOULD ──────────────────────
+  -- A quotation with no tax treatment at all gets one. WHICH LAYER gives it
+  -- one depends on which 017 is applied, and the assertion is on the outcome:
+  -- exactly one of them must, and neither may leave a quotation standard-rated
+  -- at zero per cent.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger AS trg
+              WHERE trg.tgrelid = 'core.quotations'::regclass
+                AND trg.tgname = 'trg_quotations_resolve_sst' AND NOT trg.tgisinternal) THEN
+    -- 017's trigger re-resolves when the caller supplies NEITHER column. Both
+    -- are cleared here, which is the shape it is written for.
+    UPDATE core.quotations
+       SET sst_policy_id = NULL, sst_rate = NULL, sst_reason = NULL,
+           sst_exempt_reason = NULL
+     WHERE tenant_id = v_tenant AND id = v_quote;
+  ELSE
+    UPDATE core.quotations
+       SET sst_policy_id = NULL, sst_rate = 0, sst_reason = 'STANDARD_RATED',
+           sst_exempt_reason = NULL
+     WHERE tenant_id = v_tenant AND id = v_quote;
+    PERFORM core.put_quotation(v_quote::text, '{}'::jsonb, 'noop-key-2');
+  END IF;
+
+  SELECT * INTO v_after FROM core.quotations
+   WHERE tenant_id = v_tenant AND id = v_quote;
+  IF v_after.sst_policy_id IS NULL THEN
+    RAISE EXCEPTION 'T37e: a quotation with no tax treatment did not get one — a '
+                    'quotation that looks taxed and carries no tax is what R-C forbids';
+  END IF;
+  IF v_after.sst_rate <= 0 THEN
+    RAISE EXCEPTION 'T37f: the resolved rate is %, not the registry''s', v_after.sst_rate;
+  END IF;
+
+  -- AND NEVER TWO WRITERS. Where the trigger exists, put_quotation's own SST
+  -- block must not run: it can only ever resolve CORPORATE_TRAINING, so a
+  -- second write would be the one that loses the exemption.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger AS trg
+              WHERE trg.tgrelid = 'core.quotations'::regclass
+                AND trg.tgname = 'trg_quotations_resolve_sst' AND NOT trg.tgisinternal) THEN
+    IF pg_catalog.strpos(
+         app._body_sql('core.put_quotation(text,jsonb,text)'::regprocedure),
+         'trg_quotations_resolve_sst') = 0 THEN
+      RAISE EXCEPTION 'T37g: 017 owns SST through a trigger and put_quotation does not '
+                      'check for it — two writers for one rule, and the exemption is '
+                      'what loses';
+    END IF;
+  END IF;
+
+  RAISE NOTICE 'T37 PASS: an empty PUT leaves the tax treatment and the gross alone, and '
+               'a quotation with no treatment still resolves one from the registry.';
+END
+$t37$;
 
 DO $banner$ BEGIN RAISE NOTICE '════════ ALL ASSERTIONS EXECUTED — rolling back, nothing durable ════════'; END $banner$;
 ROLLBACK;
