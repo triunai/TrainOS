@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@trainos/contract": ["../../packages/contract/src/index.ts"],
+      "@trainos/agent-runtime": ["../../packages/agent-runtime/src/index.ts"],
+      "@trainos/agent-runtime/node": ["../../packages/agent-runtime/src/node.ts"],
+      "@trainos/fixtures": ["../../packages/fixtures/src/index.ts"],
+    },
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+}
