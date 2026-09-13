@@ -87,3 +87,9 @@ Rows the artboards draw with the dot-progress stepper (done ●, current ◯ blu
 
 ## 17. Localisation (11:47)
 The pack's topbar has an EN | BM switch; the app has no i18n. Now (shell-fix): the switch, an I18nProvider (locale from /me, persisted, `<html lang>`), and shell strings in EN + BM. Next pass: a real catalogue (react-i18next or a typed dictionary), every screen's UI strings keyed, BM translations reviewed by a native speaker, date/number formatting via Intl for `ms-MY`, and the portal page localised (client-facing). Contract already carries `locale` on /me.
+
+### 15a. RecordHeader upgrade — CORRECTED after eyeballing (11:55)
+- The title row (title · status chip · actions) is **not** collapsible and gets no chevron; it renders exactly as before. Approve keeps the original solid primary.
+- The **metric group is the only card**. Its background is the kit ProfileModal tenant-banner gradient (vivid primary → lighter blue, left→right), tokenised as `--surface-accent-gradient`, same in both themes; white text (labels ~70% white). The earlier "6–12% tint" caution is withdrawn — the user wants the vivid banner.
+- No per-cell slabs or heavy dividers: transparent cells on the gradient, evenly spread, at most a 1px 20%-white hairline.
+- One chevron at the card's right edge expands the card into the detail sections (eased, leak-free).
