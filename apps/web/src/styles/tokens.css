@@ -70,7 +70,8 @@
 
   /* The accent BAND — the record header's blue card (tightening brief §15a).
      Two candidates, both live, so the user can pick on screen; the card reads
-     `--surface-accent-gradient` and the dev toggle swaps in the `-alt`.
+     `--surface-accent-gradient` is the chosen one; `?gradient=alt` swaps in the
+     `-alt` so the two can still be compared on the real screen.
 
      RULES THIS OBEYS, from the 11:56 correction: blue family only, THREE colour
      stops maximum, electric #1F5BFF as the anchor, one deeper stop for depth
@@ -94,23 +95,26 @@
      `--primary*` (which theme-swap, and whose dark values put white at 3.53:1
      and 2.44:1), and `[data-theme="dark"]` redefines neither. */
 
-  /* A · "indigo rise" — a near-pure blue lifting through electric to a brighter
-     blue at the far corner. The artboard's shape with real depth at the origin.
+  /* CHOSEN · "violet edge". Electric #1F5BFF anchors the middle; the origin is
+     a near-pure blue and the far corner leans violet rather than simply
+     lighter, so the card gains depth without gaining brightness. Three stops,
+     one hue family, and the interest is in the angle and the stop positions.
 
-     The stops are pushed as SATURATED as the contrast floor allows rather than
-     muted toward it, which is the user's instruction and costs nothing here:
-     #0413D6 is 0.98 HSV saturation and still 10.15:1 for white, and pulling the
-     far corner from #3A68FF to #3568F5 raises the ramp's mean chroma from 0.775
-     to 0.835 while IMPROVING its worst point from 4.56:1 to 4.72:1. Vivid and
-     legible were not in tension; only the artboard's #4E82FF end was. */
-  --surface-accent-gradient: linear-gradient(115deg, #0413d6 0%, #1f5bff 55%, #3568f5 100%);
+     Both stops are pushed as SATURATED as the contrast floor allows rather than
+     muted toward it: mean chroma 0.793, and white clears 5.25:1 at every point
+     along the ramp because the violet end is bounded by HUE rather than by
+     lightness. That headroom is why this one won — the alternate spends its
+     margin getting bright, this one spends it getting deep. */
+  --surface-accent-gradient: linear-gradient(128deg, #0f1fdb 0%, #1f5bff 48%, #5a3df0 100%);
 
-  /* B · "violet edge" — the cooler one. Same anchor, steeper angle, and the far
-     corner leans violet rather than lighter, so the card gains depth without
-     gaining brightness. Saturated on the same principle as A: mean chroma 0.793
-     against 0.758 before. Worst white 5.25:1, so it keeps the headroom A does
-     not, and its violet end is bounded by hue rather than by contrast. */
-  --surface-accent-gradient-alt: linear-gradient(128deg, #0f1fdb 0%, #1f5bff 48%, #5a3df0 100%);
+  /* ALTERNATE · "indigo rise", kept live at `?gradient=alt` for comparison. The
+     artboard's shape with real depth at the origin: #0413D6 is 0.98 HSV
+     saturation and still 10.15:1 for white. Mean chroma 0.835, higher than the
+     chosen ramp, but its worst point is 4.72:1 rather than 5.25:1 because it
+     ends bright — and the artboard's own #4E82FF end, which this replaces,
+     measured 3.52:1 and would have failed every white label on the card.
+     Delete this and the `isAltGradient` reader once the comparison is over. */
+  --surface-accent-gradient-alt: linear-gradient(115deg, #0413d6 0%, #1f5bff 55%, #3568f5 100%);
 
   /* Ink ON the band. Full white for both levels, and the hierarchy is size,
      weight and tracking rather than opacity — 70% white over #1F5BFF reads

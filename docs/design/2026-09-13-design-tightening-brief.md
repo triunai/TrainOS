@@ -128,13 +128,22 @@ is what keeps the remaining record screens one prop from adopting it.
   the card. Shape and fill length carry those states; the chips and banners
   below the card are where they are diagnosed.
 
-**Gradient.** Two candidates, both three stops, blue family, #1F5BFF anchored,
-identical in both themes, no sheen layer (a white overlay eats the contrast
-headroom the white labels need). `--surface-accent-gradient` is A "indigo rise",
-`115deg #0F2FA8 → #1F5BFF 58% → #3A68FF`, worst white 4.56:1.
-`--surface-accent-gradient-alt` is B "violet edge", `128deg #1A34C4 → #1F5BFF
-50% → #4A4FE6`, worst white 5.25:1, at `?gradient=alt`. Delete the loser and the
-URL toggle once picked.
+**Gradient — CHOSEN.** `--surface-accent-gradient` is "violet edge",
+`128deg #0F1FDB → #1F5BFF 48% → #5A3DF0`, mean chroma 0.793, white 5.25:1 at
+every point along the ramp. It won on headroom: its far corner is bounded by hue
+rather than by lightness, so it spends its contrast margin getting deep instead
+of getting bright. `--surface-accent-gradient-alt` is "indigo rise",
+`115deg #0413D6 → #1F5BFF 55% → #3568F5`, mean chroma 0.835 but worst point
+4.72:1, kept live at `?gradient=alt` for comparison; delete it and the
+`isAltGradient` reader once the comparison is over. Both are three stops in one
+hue family with electric #1F5BFF as the anchor, identical in both themes, and
+both are saturated to the contrast floor rather than muted toward it. No sheen
+layer: a white overlay lightens the ramp and spends the margin the white labels
+need. For the record, the artboard's own ramp ends at #4E82FF, where white
+measures 3.52:1 and every label on this card would have failed.
+
+**Metric spread — SETTLED.** Equal-width grid across the full card,
+`repeat(n, minmax(0, 1fr))`. The artboards' left packing is withdrawn.
 
 **Blue chroma**, mean over the 1440×900 frame, against the committed
 before-screenshot of the approval detail: light 0.49% → 12.87% expanded / 7.29%
