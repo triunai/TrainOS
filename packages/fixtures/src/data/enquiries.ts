@@ -701,7 +701,12 @@ export const followUpDrafts: Record<string, MessageDraft> = {
     ratePerMessage: myr(6),
     ratePerMessageExact: "0.0564",
     estimatedCost: myr(6),
-    alternativeCategoryRate: { category: "MARKETING", ratePerMessage: myr(35) },
+    alternativeCategoryRate: {
+      category: "MARKETING",
+      ratePerMessage: myr(35),
+      /** §4: the exact marketing rate, so the comparison line does not round to RM 0.35. */
+      ratePerMessageExact: "0.3467",
+    },
     consent: { channel: "WHATSAPP", granted: true, recordedAt: "2024-03-04T10:12:00+08:00" },
     provenance: {
       origin: "AI_SUGGESTED",
@@ -758,7 +763,12 @@ export const followUpDrafts: Record<string, MessageDraft> = {
     ratePerMessage: myr(6),
     ratePerMessageExact: "0.0564",
     estimatedCost: myr(6),
-    alternativeCategoryRate: { category: "MARKETING", ratePerMessage: myr(35) },
+    alternativeCategoryRate: {
+      category: "MARKETING",
+      ratePerMessage: myr(35),
+      /** §4: the exact marketing rate, so the comparison line does not round to RM 0.35. */
+      ratePerMessageExact: "0.3467",
+    },
     /** The PDPA block the queue must render before anything can be sent. */
     consent: { channel: "WHATSAPP", granted: false, recordedAt: null },
     provenance: {

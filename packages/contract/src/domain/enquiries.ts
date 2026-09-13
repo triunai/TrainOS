@@ -172,10 +172,23 @@ export interface ChannelConsent {
   recordedAt: Timestamp | null;
 }
 
-/** §4 the marketing-rate comparison shown beside a utility-category draft. */
+/**
+ * §4 the marketing-rate comparison shown beside a utility-category draft.
+ *
+ * `ratePerMessage` is `Money`, which §1 defines as integer sen, so the §4
+ * marketing rate of RM 0.3467 arrives as 35 and the comparison line printed
+ * RM 0.35 while the primary rate beside it printed RM 0.0564. The sibling
+ * `MessageDraft` already carried the unrounded string for exactly this
+ * reason; the comparison needs it too, or the strip rounds on one line and
+ * not the other and the six-fold difference the strip exists to show is read
+ * off two different precisions.
+ */
 export interface AlternativeCategoryRate {
   category: MessageCategory;
+  /** Rounded to the sen at estimate time. For arithmetic, not for display. */
   ratePerMessage: Money;
+  /** Unrounded rate as a decimal string, e.g. `"0.3467"`. Preferred for display. */
+  ratePerMessageExact?: string;
 }
 
 /**

@@ -85,6 +85,50 @@ describe("WhatsAppCostStrip", () => {
     expect(screen.queryByText(/would save/)).not.toBeInTheDocument();
   });
 
+  /* The defect this pins: the primary rate printed RM 0.0564 and the
+     comparison beside it printed RM 0.35, so the six-fold difference the strip
+     exists to show was read off two different precisions. */
+  it("prints both sides of the comparison at the same precision", () => {
+    render(
+      <WhatsAppCostStrip
+        category="UTILITY"
+        templateLabel="followup_v3"
+        recipients={30}
+        ratePerMessage={money(6)}
+        ratePerMessageExact={UTILITY_EXACT}
+        estimatedCost={money(169)}
+        alternative={{
+          category: "MARKETING",
+          ratePerMessage: money(35),
+          ratePerMessageExact: MARKETING_EXACT,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("RM 0.0564")).toBeInTheDocument();
+    expect(screen.getByText("RM 0.3467")).toBeInTheDocument();
+    expect(screen.queryByText("RM 0.35")).not.toBeInTheDocument();
+  });
+
+  /* Without an exact string the rounded Money is still the fallback, and it is
+     printed at two decimals — four on a value that has two is a lie about
+     precision, not extra care. */
+  it("falls back to the rounded alternative rate when no exact string is sent", () => {
+    render(
+      <WhatsAppCostStrip
+        category="UTILITY"
+        templateLabel="followup_v3"
+        recipients={30}
+        ratePerMessage={money(6)}
+        ratePerMessageExact={UTILITY_EXACT}
+        estimatedCost={money(169)}
+        alternative={{ category: "MARKETING", ratePerMessage: money(35) }}
+      />,
+    );
+
+    expect(screen.getByText("RM 0.35")).toBeInTheDocument();
+  });
+
   it("states the saving when the alternative is cheaper", () => {
     render(
       <WhatsAppCostStrip

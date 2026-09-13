@@ -21,6 +21,12 @@ import { MONO_LABEL } from "./tokens";
  * and it is preferred whenever present. The rounded `Money` is the fallback,
  * and it is then rendered at two decimals rather than four, because four
  * decimals on a value that only has two is a lie about precision.
+ *
+ * The comparison line reads the alternative's own exact string for the same
+ * reason. It used to print the rounded `Money` while the primary rate beside
+ * it printed the exact one, so the two halves of a six-fold comparison were
+ * shown at different precisions — RM 0.0564 against RM 0.35, when the
+ * marketing rate is RM 0.3467.
  */
 
 export interface WhatsAppCostStripProps {
@@ -113,8 +119,10 @@ export function WhatsAppCostStrip({
       {dearer ? (
         <p className="border-t border-divider pt-2 text-[12px] text-ink-secondary">
           {CATEGORY_LABEL[dearer.category]} category would cost{" "}
-          <span className="font-medium text-ink">{rateText(dearer.ratePerMessage)}</span> per
-          message — not permitted for this template.
+          <span className="font-medium text-ink">
+            {rateText(dearer.ratePerMessage, dearer.ratePerMessageExact)}
+          </span>{" "}
+          per message — not permitted for this template.
         </p>
       ) : null}
 
