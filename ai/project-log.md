@@ -15,6 +15,159 @@
 
 ---
 
+## 2026-09-13 23:5x — fix-014 pushes eff8084, reported FROZEN as the merge candidate; 017's own SST-fix regression closed; final whole-branch re-review dispatched
+
+**`fix-014` pushed `eff8084` to `origin/cloud/migrations`**, confirmed
+as the current tip — **reported FROZEN as the merge candidate**, and
+confirmed nothing has landed on this branch since this check. Fixes
+017's own retrofit BLOCK from PR #25's re-review, T1 and T5 from the
+011-013 review, and two residuals in 015 and 016.
+
+**017's retrofit BLOCK fixed, confirmed exactly — and the commit states
+plainly, in its own words, that this fix pack caused it, not that it
+was inherited or pre-existing.** Reproduced twice by building 001–016,
+inserting one ordinary quotation, and applying 017. **Two walls, in the
+order they actually block, both confirmed directly against the diff:**
+
+1. The `margin_rate` precision guard tested `scale(margin_rate) > 4`.
+   `margin_rate` is `GENERATED` by a numeric division, and PostgreSQL
+   numeric division always produces scale 20 regardless of the actual
+   value — confirmed via the commit's own concrete example: a margin of
+   exactly 0.41 is stored as `0.41000000000000000000`. The guard was
+   therefore unconditionally true and refused an apply that would have
+   lost nothing. It now asks the question its own prose always claimed
+   to ask — whether rounding would actually CHANGE the value — so
+   0.28571 still refuses (rounding it would lose precision) and 0.41
+   does not (rounding it changes nothing).
+2. With that wall cleared, the backfill `UPDATE` queued migration 007's
+   `DEFERRABLE` constraint triggers on `core.quotations`. They fire at
+   COMMIT; this file is one transaction; and the `SET NOT NULL` that
+   follows hit `55006 cannot ALTER TABLE "quotations" because it has
+pending trigger events`. `SET CONSTRAINTS ALL IMMEDIATE` now drains
+   the queue first. **Confirmed as a deliberate design choice, stated
+   directly in the commit**: the NOT NULLs are kept rather than
+   downgraded to `NOT VALID` CHECKs, because these two columns are the
+   tax position on a customer document, and a `NOT VALID` CHECK is
+   enforced by nothing until somebody validates it.
+
+**New pin confirmed present**, `test_017_applies_over_existing_
+quotations.sql`, run over a 001-016 database already holding a
+quotation. It refuses rather than passing vacuously if that state was
+not set up — because, confirmed quoted directly from the commit, "every
+defect above is invisible on an empty table, which is exactly why a
+green suite did not catch either."
+
+**T1 fixed, confirmed exactly**: `test_012`'s new T15 fails a job to
+death through the real lease path, replays the dead letter, completes
+the replacement, and requires the effect to reach `SETTLED`. Confirmed
+genuinely discriminating, not merely present: against the pre-fix SQL,
+the effect is still `DEAD_LETTERED` after the replay, and the completion
+reports into `report_effect_result`'s silent early return — the exact
+mechanism T1 (from the 011-013 review, already recorded in this journal)
+describes.
+
+**T5 fixed, confirmed exactly, with a genuine negative result about the
+pin design itself worth keeping precise rather than folding into "fixed
+and pinned."** `app.plan_effects` is confirmed `IMMUTABLE`
+(`provolatile 'i'`, measured directly against the function) and reads
+no row: it derives only from the action type, target ref, and payload —
+all columns of the request itself, none of which can change after it is
+written. The fresh hash therefore equalled the stored one **by
+construction**, and `DIFF_CHANGED` was structurally unreachable, not
+merely untested by any existing pin. The hash now covers
+`{effects, value}`; `app.action_value` supplies the value half; both
+call sites are confirmed to build it identically, stated in the commit
+as necessary "or every approve breaks." **`test_011`'s new T18 is
+confirmed to both measure the volatility AND edit a quotation, requiring
+the hash to actually move** — the commit states directly that a
+structural assertion alone would have passed against the broken
+version, because the expression itself was never the defect; a
+quotation fixture was added specifically so this half of the pin
+executes rather than skips, since a skipped assertion inside a pin about
+an unreachable guard is confirmed to be the same vacuous-pass failure
+mode twice over. **Cross-checked against HIGH-4's earlier fix, exactly
+as this thread's own prior round asked**: `test_014`'s fixture computed
+the stored hash the old way and had to move with it — confirmed it
+does, directly in the diff.
+
+**015's dead assertion moved, confirmed exactly.** The overload
+assertion `bdd49aa` added earlier was genuinely dead code: the
+command-resolution loop above it always aborts first, because
+`to_regproc` returns NULL for an ambiguous bare name, so the check that
+actually names the real cause never ran. Moved above that loop,
+confirmed verified by creating a second overload and watching the new
+assertion fire with the correct message this time. The backwards
+"keep the DROP in step with the signature" comment is confirmed
+removed, since following it would reopen the exact hazard the DROP
+exists to prevent.
+
+**016's two residuals closed, confirmed exactly.** The rollback's
+disclosed residue criterion named `dated` while the actual predicate
+never tested it; the text now matches the predicate and states why
+`dated` is deliberately excluded — it is the one derived attribute an
+operator legitimately corrects, and including it in the residue check
+would strand a corrected row. `app.tenant_seed_checks` now has RLS
+**enabled and FORCED with no policy**, matching every comparable `app`
+config table in the repo — confirmed via new pin `test_016` T8, which
+pins both the posture and that `provision_tenant` can still read the
+table despite the force.
+
+**Validation counts, confirmed exactly against the commit's own
+numbers**: 18/18 apply, 17/17 pins pass **plus 2 apply-context pins
+that correctly refuse** — confirmed as a distinct, deliberate pin
+category from the 17 (pins designed to refuse outside their required
+database state, not failed assertions), rollback 017→014 clean, R1-R4
+pass, re-apply clean, `lint:sql` 53/53 (up from 52, the new pin now
+counted), `check:grants` 0, `check:rpc` 4 pass/0 broken.
+
+**Open HIGHs named rather than silently carried forward, confirmed as
+genuinely distinct dispositions.** T4/F4 (`bulk_decide`'s response-shape
+mismatch, needs a coordinated web+SQL change) stays on the backlog as
+this journal already recorded. **S4 (the worker heartbeat lease bug) is
+now a named, active lane, confirmed via `git worktree list`**:
+`trainos-wt/fix-worker-heartbeat` exists on branch
+`fix/worker-heartbeat`, scoped to `apps/worker` only, not yet pushed to
+origin.
+
+**Final whole-branch re-review reported dispatched, confirmed not yet
+landed.** Targeting `docs/reviews/2026-09-13-pr6-final.md` with a
+stated "PR #6 MAY MERGE / BLOCKED" first line — confirmed via a direct
+search that this file does not yet exist anywhere in the repo,
+consistent with "dispatched" rather than a claim that a verdict already
+exists.
+
+**`fix-018` reported doing the 019 split next, then its single final
+rebase against this now-frozen base** — consistent with this journal's
+own prior record that the split is pending and the rebase has been
+deliberately held for exactly this reason: `eff8084` being frozen is
+what that held rebase has been waiting on.
+
+**Things worth telling future-me:**
+
+1. This is the second migration-line defect this session caused by a
+   fix pack's own fix (017's SST-fix-introduces-a-blocker, and CRIT-2's
+   frozen-column discovery two rounds ago) — both were found only by
+   actually running the fix against a realistic database state, and
+   both are stated in their own commit messages as "I caused this,"
+   not softened into passive voice. Worth treating "the fix's own commit
+   admits it introduced a new problem" as a trustworthy signal in
+   itself, not a red flag about the author.
+2. Two walls blocking the same scenario, discovered one behind the
+   other, means fixing the first without checking whether the fixture
+   now reaches a second is dangerous — the same commit correctly held
+   off on declaring victory after wall 1 and kept pushing until it hit
+   wall 2, which is the right instinct whenever a "the guard has always
+   been true/false" bug is found; those rarely travel alone.
+3. A pin whose new half doesn't execute (skips instead of running) is
+   functionally identical to not having written that half at all — T18
+   needing an actual quotation fixture to exercise its edit-and-recheck
+   half, rather than relying on the existing fixture set, is the same
+   lesson as PR #24's list-RPC pins needing fixtures that actually page
+   past a boundary. A pin's line count is not evidence it exercises
+   anything; whether its fixture reaches the code path is.
+
+---
+
 ## 2026-09-13 23:4x — fix-018 closes B4 and B6 at 1f300e9; M4's honest non-fix and the pending 019 split confirmed still owed
 
 **`fix-018` pushed three more commits to `origin/lane/rpc-018`, tip

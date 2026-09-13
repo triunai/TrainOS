@@ -287,6 +287,27 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:5x — fix-014 pushes eff8084, reported FROZEN as the merge candidate; 017's own SST-fix regression closed; final whole-branch re-review dispatched
+
+- `fix-014` confirmed pushed `eff8084` to `cloud/migrations`, reported
+  and confirmed FROZEN as the current tip. Fixes 017's own retrofit
+  BLOCK (two walls: a margin_rate scale guard unconditionally true due
+  to GENERATED numeric division always having scale 20, now checks
+  whether rounding actually changes the value; then SQLSTATE 55006,
+  fixed with SET CONSTRAINTS ALL IMMEDIATE, NOT NULL kept over NOT
+  VALID). New pin refuses unless run over a pre-existing quotation. T1
+  fixed (replay pin requiring SETTLED). T5 fixed: app.plan_effects
+  measured IMMUTABLE, hash could never fire by construction, now covers
+  {effects, value} with a quotation-edit pin requiring it to move. 015's
+  dead assertion relocated; 016's two residuals closed, tenant_seed_checks
+  now RLS FORCED. Counts: 18/18 apply, 17 pins + 2 apply-context pins
+  that correctly refuse, lint:sql 53/53, check:grants 0. Worker
+  heartbeat bug is now an active lane (fix-worker-heartbeat, confirmed
+  via worktree). Final whole-branch re-review dispatched to
+  docs/reviews/2026-09-13-pr6-final.md (confirmed not yet landed).
+  fix-018 doing the 019 split next, then its single final rebase. See
+  `ai/project-log.md` 23:5x block for full detail.
+
 ## 2026-09-13 23:4x — fix-018 closes B4 and B6 at 1f300e9; M4's honest non-fix and the pending 019 split confirmed still owed
 
 - `fix-018` confirmed pushed three more commits to `lane/rpc-018`, tip

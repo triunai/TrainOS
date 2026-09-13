@@ -527,8 +527,34 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > deliberately held until the base is frozen. Full detail in
 > `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:4x — fix-018 closes B4 and B6 at
-> 1f300e9; M4 (the pipeline seed's scope) and the 019 split remain open.
+> **BLAST 13 Sep 23:5x +08** — `fix-014` pushed `eff8084`, **reported
+> FROZEN as the merge candidate**, confirmed current tip of
+> `cloud/migrations`. Fixes 017's own retrofit BLOCK: two walls in
+> series — a `margin_rate` scale guard that was unconditionally true
+> (GENERATED numeric division always has scale 20), now checks whether
+> rounding actually changes the value; then SQLSTATE 55006, fixed with
+> `SET CONSTRAINTS ALL IMMEDIATE` after the SST backfill, NOT NULL kept
+> rather than downgraded to NOT VALID. New pin refuses unless run over a
+> 001-016 DB already holding a quotation. T1 fixed (a replay pin proving
+> `SETTLED`, not silent no-op). T5 fixed: `app.plan_effects` measured
+> IMMUTABLE, so the diff-hash guard could never fire by construction —
+> now covers `{effects, value}`, with a quotation-edit pin requiring the
+> hash to move (a purely structural assertion would have passed against
+> the broken version). 015's dead assertion moved above the aborting
+> loop. 016's two residuals closed, `app.tenant_seed_checks` now RLS
+> FORCED. Counts: 18/18 apply, 17 pins + 2 apply-context pins that
+> correctly refuse, `lint:sql` 53/53, `check:grants` 0. Open HIGHs
+> named: bulk_decide shape stays on backlog; the worker heartbeat bug is
+> now an active lane (`fix-worker-heartbeat`, confirmed via worktree,
+> branch `fix/worker-heartbeat`, not yet pushed). Final whole-branch
+> re-review dispatched to `docs/reviews/2026-09-13-pr6-final.md`
+> (confirmed doesn't exist yet). `fix-018` doing the 019 split next,
+> then its single final rebase against this frozen base. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:5x — cloud/migrations FROZEN at
+> eff8084; 017's own SST-fix regression closed; final PR #6 re-review
+> dispatched.
 
 ### Focus
 

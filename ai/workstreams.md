@@ -1036,6 +1036,104 @@ confirmed to fail against the pre-fix SQL:
 - **Re-review reported dispatched** — not yet independently confirmed by
   this thread.
 
+✅ **`fix-014` pushed `eff8084` to `origin/cloud/migrations`**, confirmed
+as the current tip — **reported FROZEN as the merge candidate**, and
+confirmed nothing has landed on this branch since. Fixes the 017
+retrofit BLOCK from PR #25, T1 and T5 from the 011-013 review, and two
+016/015 residuals, all reproduced by execution first:
+
+- **017's retrofit BLOCK fixed, confirmed exactly — and the commit
+  states plainly this fix pack caused it, not softened into passive
+  voice.** Reproduced twice by building 001–016, inserting one ordinary
+  quotation, and applying 017. **Two walls, confirmed in the order they
+  actually block**: (1) the `margin_rate` scale guard tested
+  `scale(margin_rate) > 4`, but `margin_rate` is `GENERATED` by a
+  numeric division whose scale is always 20 regardless of value — the
+  guard was unconditionally true, confirmed by the commit's own example
+  (0.41 stored as `0.41000000000000000000`), refusing an apply that
+  would have lost nothing. It now asks whether rounding would actually
+  CHANGE the value, so 0.28571 still refuses and 0.41 does not. (2) With
+  that cleared, the SST backfill's `UPDATE` queued 007's `DEFERRABLE`
+  triggers, which fire at COMMIT inside the file's one transaction, and
+  the subsequent `SET NOT NULL` hit `55006`. `SET CONSTRAINTS ALL
+IMMEDIATE` now drains the queue first. Confirmed as a deliberate
+  choice, not an oversight: the NOT NULLs are kept rather than
+  downgraded to a `NOT VALID` CHECK, because these two columns are a
+  customer document's tax position and a `NOT VALID` CHECK is enforced
+  by nothing until someone validates it. **New pin confirmed present**,
+  `test_017_applies_over_existing_quotations.sql`, which refuses rather
+  than passing vacuously if it isn't run over a 001–016 database already
+  holding a quotation — a direct, structural response to "every defect
+  above is invisible on an empty table, which is exactly why a green
+  suite didn't catch either," quoted from the commit.
+- **T1 fixed, confirmed exactly**: a new pin (`test_012` T15) fails a
+  job to death through the real lease path, replays the dead letter,
+  completes the replacement, and requires the effect to reach `SETTLED`
+  — confirmed this genuinely discriminates, since against the pre-fix
+  SQL the effect stays `DEAD_LETTERED` after replay and the completion
+  silently falls into `report_effect_result`'s early return.
+- **T5 fixed, confirmed exactly, with a real negative result about the
+  pin itself worth keeping precise.** `app.plan_effects` is confirmed
+  `IMMUTABLE` (`provolatile 'i'`, measured directly) and reads no row —
+  it derives only from the action type, target ref, and payload, none of
+  which can change after the request is written, so the fresh hash
+  equalled the stored one **by construction** and `DIFF_CHANGED` was
+  structurally unreachable, not merely untested. The hash now covers
+  `{effects, value}`, with `app.action_value` supplying the value half;
+  both call sites build it identically, confirmed as necessary "or every
+  approve breaks." **`test_011` T18 confirmed to measure the volatility
+  AND edit a quotation, requiring the hash to move** — the commit states
+  directly that a structural assertion alone would have passed against
+  the broken version, because the expression itself was never the
+  problem; a quotation fixture was added so this half of the pin
+  actually runs instead of skipping, since a skipped assertion in a pin
+  about an unreachable guard is confirmed to be the same vacuous pass
+  twice over. **Cross-checked against HIGH-4's earlier change, as
+  specifically asked**: `test_014`'s fixture computed the stored hash
+  the old way and had to move with it — confirmed it does, in the diff.
+- **015's dead assertion moved, confirmed exactly**: the overload
+  assertion `bdd49aa` added was dead code (the command-resolution loop
+  above it always aborts first, via `to_regproc` returning NULL for an
+  ambiguous name) — moved above that loop, confirmed verified by
+  creating a second overload and watching the new assertion fire with
+  the correct message. The backwards "keep the DROP in step with the
+  signature" comment is confirmed removed, since doing that reopens the
+  hazard.
+- **016's two residuals closed, confirmed exactly**: the rollback's
+  disclosed residue criterion named `dated` while the predicate never
+  tested it — the text now matches the predicate and states why `dated`
+  is deliberately excluded (the one derived attribute an operator
+  legitimately corrects; including it would strand a corrected row).
+  `app.tenant_seed_checks` now has RLS **enabled and FORCED with no
+  policy**, matching every comparable `app` config table — confirmed via
+  new pin `test_016` T8, which pins both the posture and that
+  `provision_tenant` can still read it.
+- **Validation counts, confirmed exactly**: 18/18 apply, 17/17 pins pass
+  **plus 2 apply-context pins that correctly refuse** (confirmed as a
+  distinct, deliberate category from the 17 — pins designed to refuse
+  outside their required database state, not failures), rollback
+  017→014 clean, R1–R4 pass, re-apply clean, `lint:sql` 53/53 (up from
+  52, the new pin counted), `check:grants` 0, `check:rpc` 4 pass/0
+  broken.
+- **Open HIGHs named rather than silently carried, confirmed as
+  distinct dispositions**: T4/F4 (`bulk_decide`'s response shape, needs
+  a coordinated web+SQL change) stays on the backlog as previously
+  recorded; **S4 (the worker heartbeat lease bug) is now a named,
+  active lane** — confirmed via `git worktree list`,
+  `trainos-wt/fix-worker-heartbeat` exists on branch
+  `fix/worker-heartbeat`, scoped to `apps/worker` only, not yet pushed
+  to origin.
+- **Final whole-branch re-review reported dispatched, targeting
+  `docs/reviews/2026-09-13-pr6-final.md` with a stated "PR #6 MAY MERGE
+  / BLOCKED" first line** — confirmed this file does not yet exist
+  anywhere in the repo, consistent with "dispatched, not landed" rather
+  than a claim that a verdict already exists.
+- **`fix-018` reported doing the 019 split next, then its single final
+  rebase** — consistent with this thread's own record that the split is
+  still pending and the rebase is being deliberately held for a frozen
+  base; `eff8084` being reported frozen is what that rebase has been
+  waiting on.
+
 ✅ **`fix-014` pushed a fold-in of PR #23's re-review items to
 `origin/cloud/migrations`, tip `ff01f2b`** — confirmed present, not yet
 a PR. Closes N-1, N-8, N-9, F1, F3, F5, T11a's tautology, the pin header
