@@ -43,7 +43,16 @@
   --canvas: 243 245 247; /* #F3F5F7  the shell ground, behind and around the card */
   --sidebar: var(--canvas); /* the rail is the same ground, by the pack */
   --card: 255 255 255; /* #FFFFFF  every content card and popover */
-  --surface: 250 251 252; /* #FAFBFC  table headers, recessed rails, zebra rows */
+  /* L1 — the recess INSIDE a card. At the pack's #FAFBFC this sat 1.43 L*
+     below the white card, which is under the threshold at which a flat tint
+     reads as a separate plane at all: the pipeline lane, which is nothing but
+     this surface on a white card, came back reported as invisible. 3.19 L* is
+     the step that makes a borderless lane read as a lane — enough to separate
+     the plane, short of reading as a second card, and it is what lets
+     CLAUDE.md's "surface before borders" rule actually carry the hierarchy.
+     It cannot go darker: `--ink-muted` is the floor for readable text and it
+     measures 4.56:1 here, so a further step would put muted text under AA. */
+  --surface: 244 246 249; /* #F4F6F9  table headers, recessed rails, zebra rows, kanban lanes */
   --surface-hover: 241 244 248; /* #F1F4F8  row and nav hover */
 
   /* ---- Lines ---------------------------------------------------------- */
@@ -222,7 +231,11 @@
   --canvas: 19 24 32; /* #131820  the shell ground, behind and around the card */
   --sidebar: var(--canvas);
   --card: 23 28 37; /* #171C25 */
-  --surface: 27 33 43; /* #1B212B */
+  /* L1 in dark, held at the same 3.3 L* step above `--card` that light holds
+     below it, so a lane reads as a lane in both themes and the theme stays a
+     straight token swap. The pack's #1B212B was 2.42 L* and drifts under the
+     step for the same reason the light value did. */
+  --surface: 28 35 45; /* #1C232D */
   --surface-hover: 30 37 48; /* #1E2530 */
 
   --border: 42 50 62; /* #2A323E */
