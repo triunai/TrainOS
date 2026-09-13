@@ -138,16 +138,23 @@ describe("the certificate register", () => {
     expect(within(drawer).getAllByText("No certificate").length).toBeGreaterThan(0);
   });
 
+  /* Named rather than "the first Issued row". Every delivered cohort has a
+     roll now, so the empty state belongs to the deliveries that never ran —
+     the cancelled ones. Picking a row by position made this test depend on
+     which cohorts happened to lack seed data, which is how it started passing
+     for the wrong reason. */
   it("says so when a delivery has no participants at all", async () => {
     const user = userEvent.setup();
     render();
 
-    await screen.findByRole("tab", { name: /^Issued/ });
-    await user.click(screen.getByRole("tab", { name: /^Issued/ }));
+    await screen.findByRole("tab", { name: /^All/ });
+    await user.click(screen.getByRole("tab", { name: /^All/ }));
 
     const table = await screen.findByRole("table", { name: "Certificates" });
-    const [firstRow] = within(table).getAllByRole("row").slice(1);
-    await user.click(firstRow as HTMLElement);
+    const row = within(table)
+      .getByText(/Conflict to Collaboration — Sutera/)
+      .closest("tr");
+    await user.click(row as HTMLElement);
 
     const drawer = await screen.findByRole("dialog");
     expect(await within(drawer).findByText("No participants registered")).toBeInTheDocument();

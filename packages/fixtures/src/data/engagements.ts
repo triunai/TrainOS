@@ -91,8 +91,8 @@ const participantRoster: ReadonlyArray<readonly [name: string, department: strin
 
 const participantRef = (index: number): string => `PAR-${1182 + index}`;
 
-/** §8 `GET /v1/engagements/{id}/participants` — thirty registered for ENG-0231. */
-export const participants: Participant[] = participantRoster.map(([name, department], index) => ({
+/** ENG-0231's own thirty. The other cohorts are appended below. */
+const auroraParticipants: Participant[] = participantRoster.map(([name, department], index) => ({
   ...entity(
     participantRef(index),
     "2026-10-20T09:00:00+08:00",
@@ -138,6 +138,271 @@ const attendanceRows = (day: 1 | 2): AttendanceRow[] => {
   });
 };
 
+/* ------------------------------------------------------------------ *
+ * The other delivered cohorts
+ *
+ * `/training/participants` fans out over every engagement, so a tree where
+ * only ENG-0231 had a roster read "30 participants · 9 cohorts" — true, and
+ * wrong about the product: eight cohorts that had run appeared to have trained
+ * nobody. These four are the ones whose days have actually run.
+ *
+ * Two rules the rosters follow rather than invent:
+ *
+ * 1. A roster's LENGTH is the engagement's own `metrics.participants`. The
+ *    number was already published and other screens read it, so a roster that
+ *    disagreed would make one record say two things.
+ * 2. Everyone present. Not flatness for its own sake — all four already carry
+ *    `attendanceRate: 1` in metrics committed before this. ENG-0231 is the
+ *    exception at 28 of 30 and it is the exception on purpose, because the
+ *    medical leave and the work conflict are what the attendance screen exists
+ *    to show. Inventing absences here would have contradicted the metric.
+ *
+ * The scheduled 2027 cohorts and the two cancelled ones get no roster: nobody
+ * has attended a course that has not happened, and a registration list for a
+ * cancelled engagement would be a claim about people who were stood down.
+ * ------------------------------------------------------------------ */
+
+/** A cohort's people, as `[name, department]` — the same shape as ENG-0231's. */
+type CohortRoster = ReadonlyArray<readonly [name: string, department: string]>;
+
+const BLOCKED_ROSTER: CohortRoster = [
+  ["Amirul Shafiq", "Production"],
+  ["Ng Chee Keong", "Production"],
+  ["Siti Rahmah", "Quality"],
+  ["Balan Subramaniam", "Maintenance"],
+  ["Yap Hui Ling", "Safety"],
+  ["Mohd Faizal", "Production"],
+  ["Devi Anandan", "Quality"],
+  ["Cheah Ming Hui", "Logistics"],
+  ["Nor Azlina", "Safety"],
+  ["Ramesh Chandran", "Maintenance"],
+  ["Ooi Swee Lan", "Planning"],
+  ["Hafizuddin Salleh", "Production"],
+  ["Jayanthi Murugan", "Quality"],
+  ["Loh Kah Seng", "Logistics"],
+  ["Zulaikha Hamid", "Safety"],
+  ["Anbarasu Rajoo", "Maintenance"],
+  ["Tey Wan Ying", "Planning"],
+  ["Mohd Syafiq", "Production"],
+  ["Selvi Ramakrishnan", "Quality"],
+  ["Goh Beng Huat", "Logistics"],
+  ["Nadiah Zulkifli", "Safety"],
+  ["Prakash Menon", "Maintenance"],
+  ["Sim Li Fang", "Planning"],
+  ["Azman Rahim", "Production"],
+  ["Kalaivani Segaran", "Quality"],
+  ["Tham Yoke Lin", "Logistics"],
+  ["Shamsul Bahri", "Safety"],
+  ["Dinesh Kumar", "Maintenance"],
+];
+
+const WINDOW_CLOSING_ROSTER: CohortRoster = [
+  ["Lim Chee Wai", "Store Operations"],
+  ["Nurhidayah Jamil", "Store Operations"],
+  ["Suresh Balakrishnan", "Regional"],
+  ["Chew Mei Ling", "Merchandising"],
+  ["Mohd Ridzuan", "Store Operations"],
+  ["Anitha Gopal", "Customer Service"],
+  ["Tan Seng Kiat", "Store Operations"],
+  ["Fatimah Zahra", "Merchandising"],
+  ["Ravi Chandra", "Regional"],
+  ["Wong Li Ping", "Customer Service"],
+  ["Ahmad Zaki", "Store Operations"],
+  ["Puvanes Wari", "Merchandising"],
+  ["Khoo Ee Lin", "Store Operations"],
+  ["Syafiqah Rosman", "Customer Service"],
+  ["Manoj Sivam", "Regional"],
+  ["Lau Chun Meng", "Store Operations"],
+  ["Rosnah Ibrahim", "Merchandising"],
+  ["Thavamani Raju", "Customer Service"],
+  ["Yeo Kim Huat", "Store Operations"],
+  ["Nurul Farhana", "Regional"],
+  ["Segaran Marimuthu", "Store Operations"],
+  ["Foo Wai Kit", "Merchandising"],
+  ["Adibah Hassan", "Customer Service"],
+  ["Vijaya Letchumi", "Store Operations"],
+  ["Lee Ann Nee", "Merchandising"],
+  ["Mohd Hafizi", "Regional"],
+  ["Punitha Devan", "Customer Service"],
+  ["Chin Yoke Ping", "Store Operations"],
+  ["Zarina Mansor", "Merchandising"],
+  ["Kesavan Pillai", "Regional"],
+];
+
+const AURORA_AT_RISK_ROSTER: CohortRoster = [
+  ["Rosli Hamzah", "Production"],
+  ["Tan Mei Fong", "Quality"],
+  ["Suriya Kumar", "Maintenance"],
+  ["Noorain Sulaiman", "Planning"],
+  ["Chua Kok Leong", "Production"],
+  ["Bhavani Nair", "Quality"],
+  ["Mohd Asyraf", "Logistics"],
+  ["Heng Sin Yee", "Production"],
+  ["Letchumi Arumugam", "Quality"],
+  ["Faridah Zainal", "Planning"],
+  ["Koh Teck Wah", "Maintenance"],
+  ["Iskandar Rahman", "Production"],
+  ["Saraswathy Nadason", "Logistics"],
+  ["Phang Yoke Chun", "Quality"],
+  ["Hidayah Rosli", "Planning"],
+  ["Murugan Velayutham", "Maintenance"],
+  ["Low Chee Hong", "Production"],
+  ["Aznida Baharin", "Quality"],
+  ["Ganeson Krishnan", "Logistics"],
+  ["Toh Yin Mei", "Planning"],
+  ["Shahrul Nizam", "Production"],
+  ["Indira Sekaran", "Quality"],
+  ["Beh Choon Guan", "Maintenance"],
+  ["Marlina Idris", "Logistics"],
+  ["Sivanesan Raman", "Production"],
+  ["Yong Pek Har", "Planning"],
+];
+
+const MERIDIAN_ROSTER: CohortRoster = [
+  ["Hassan Mokhtar", "Fleet"],
+  ["Leong Sze Wei", "Warehouse"],
+  ["Kamala Devi", "Freight"],
+  ["Norazlan Yusof", "Fleet"],
+  ["Chong Wei Ming", "Warehouse"],
+  ["Shanti Raveendran", "Finance"],
+  ["Aida Suhaila", "Planning"],
+  ["Tee Boon Leong", "Freight"],
+  ["Rajan Muthusamy", "Fleet"],
+  ["Wan Norhayati", "Warehouse"],
+  ["Ong Kim Seng", "Finance"],
+  ["Preetha Ganesan", "Planning"],
+  ["Mohd Shahrin", "Freight"],
+  ["Liew Mun Yee", "Warehouse"],
+  ["Santhi Perumal", "Fleet"],
+  ["Hamidah Yaakob", "Finance"],
+  ["Soon Chee Hoe", "Planning"],
+  ["Baskaran Naidu", "Freight"],
+  ["Rohaya Mahmud", "Warehouse"],
+  ["Pang Sook Fun", "Fleet"],
+  ["Vellasamy Ramu", "Finance"],
+  ["Nik Adlin", "Planning"],
+];
+
+/**
+ * Departments follow the client, not the catalogue: a retail group's managers
+ * sit in store operations and merchandising, a logistics operator's in fleet
+ * and warehouse. A shared department list across four different businesses
+ * would have been the tell that this data was generated rather than seeded.
+ */
+const COHORTS: ReadonlyArray<{
+  engagementRef: string;
+  roster: CohortRoster;
+  /** The client's mail domain — same one their contacts use in organisations.ts. */
+  domain: string;
+  registeredAt: string;
+  days: readonly [string, string];
+  trainer: { ref: string; name: string };
+  lockedAt: string;
+}> = [
+  {
+    engagementRef: ENGAGEMENT_BLOCKED,
+    roster: BLOCKED_ROSTER,
+    domain: "auroramfg.com.my",
+    registeredAt: "2026-07-28T09:00:00+08:00",
+    days: ["2026-08-20", "2026-08-21"],
+    trainer: { ref: TRAINER_NOORA_REF, name: "Noora Idris" },
+    lockedAt: "2026-08-22T10:15:00+08:00",
+  },
+  {
+    engagementRef: ENGAGEMENT_WINDOW_CLOSING,
+    roster: WINDOW_CLOSING_ROSTER,
+    domain: "kenangaretail.com.my",
+    registeredAt: "2026-04-27T09:00:00+08:00",
+    days: ["2026-05-20", "2026-05-21"],
+    trainer: { ref: TRAINER_LEE_REF, name: "Lee Chin Hoe" },
+    lockedAt: "2026-05-22T09:40:00+08:00",
+  },
+  {
+    engagementRef: ENGAGEMENT_AURORA_AT_RISK,
+    roster: AURORA_AT_RISK_ROSTER,
+    domain: "auroramfg.com.my",
+    registeredAt: "2026-04-24T09:00:00+08:00",
+    days: ["2026-05-16", "2026-05-17"],
+    trainer: { ref: TRAINER_FARAH_REF, name: "Farah Aziz" },
+    lockedAt: "2026-05-18T11:05:00+08:00",
+  },
+  {
+    engagementRef: ENGAGEMENT_MERIDIAN,
+    roster: MERIDIAN_ROSTER,
+    domain: "meridianlog.com.my",
+    registeredAt: "2026-09-15T09:00:00+08:00",
+    days: ["2026-10-08", "2026-10-09"],
+    trainer: { ref: TRAINER_LEE_REF, name: "Lee Chin Hoe" },
+    lockedAt: "2026-10-10T09:20:00+08:00",
+  },
+];
+
+/** PAR-1182 through PAR-1211 are ENG-0231's; these continue the run. */
+let nextParticipantIndex = participantRoster.length;
+
+const emailFor = (name: string, domain: string): string =>
+  `${name.toLowerCase().replace(/[^a-z]+/g, ".")}@${domain}`;
+
+const cohortParticipants: Participant[] = COHORTS.flatMap((cohort) =>
+  cohort.roster.map(([name, department]): Participant => {
+    const ref = participantRef(nextParticipantIndex);
+    nextParticipantIndex += 1;
+    return {
+      ...entity(ref, cohort.registeredAt, `${cohort.days[1]}T17:30:00+08:00`, actorFor(USER_SITI)),
+      engagementRef: cohort.engagementRef,
+      name,
+      department,
+      email: emailFor(name, cohort.domain),
+      phone: null,
+      certificateId: null,
+    };
+  }),
+);
+
+/**
+ * Both days of each cohort, locked.
+ *
+ * All four delivered months ago and their metrics already say every day ran,
+ * so `immutable: true` and every capture mode false — the screen disables from
+ * the response rather than from its own arithmetic about dates. Signatures
+ * reconcile exactly because everybody attended; ENG-0231 is the only sheet in
+ * the tree where they do not, which is the point of that one.
+ */
+const cohortAttendanceSheets: Record<string, AttendanceSheet> = Object.fromEntries(
+  COHORTS.flatMap((cohort) => {
+    const roster = cohortParticipants.filter((row) => row.engagementRef === cohort.engagementRef);
+    return cohort.days.map((date, dayIndex) => {
+      const day = (dayIndex + 1) as 1 | 2;
+      const sheet: AttendanceSheet = {
+        engagementRef: cohort.engagementRef,
+        day,
+        date,
+        status: "LOCKED",
+        immutable: true,
+        approvedBy: { id: cohort.trainer.ref, name: cohort.trainer.name, kind: "HUMAN" },
+        approvedAt: cohort.lockedAt,
+        summary: {
+          registered: roster.length,
+          presentAm: roster.length,
+          presentPm: roster.length,
+          signatures: roster.length * 2,
+          signaturesExpected: roster.length * 2,
+        },
+        rows: roster.map((participant): AttendanceRow => ({
+          participantRef: participant.ref,
+          name: participant.name,
+          department: participant.department,
+          am: { present: true, at: `${date}T09:00:00+08:00`, method: "QR" },
+          pm: { present: true, at: `${date}T14:00:00+08:00`, method: "QR" },
+          signatureRef: `sig_${participant.ref.toLowerCase()}_d${day}`,
+        })),
+        captureModes: { qr: false, signature: false, manual: false },
+      };
+      return [`${cohort.engagementRef}::${day}`, sheet] as const;
+    });
+  }),
+);
+
 /**
  * §8 `GET /v1/engagements/{id}/attendance?day=`, keyed `engagementRef::day`.
  *
@@ -145,7 +410,7 @@ const attendanceRows = (day: 1 | 2): AttendanceRow[] => {
  * disables from the response rather than from its own logic. Day 2 is still
  * open for approval, which is what APV-2026-0774 decides.
  */
-export const attendanceSheets: Record<string, AttendanceSheet> = {
+const auroraAttendanceSheets: Record<string, AttendanceSheet> = {
   [`${ENGAGEMENT_AURORA}::1`]: {
     engagementRef: ENGAGEMENT_AURORA,
     day: 1,
@@ -170,6 +435,20 @@ export const attendanceSheets: Record<string, AttendanceSheet> = {
     rows: attendanceRows(2),
     captureModes: { qr: true, signature: true, manual: true },
   },
+};
+
+/**
+ * §8 `GET /v1/engagements/{id}/participants`, every cohort.
+ *
+ * ENG-0231's thirty first, so its refs stay PAR-1182 through PAR-1211 and
+ * every fixture, test and screenshot that names one still means that person.
+ */
+export const participants: Participant[] = [...auroraParticipants, ...cohortParticipants];
+
+/** §8 `GET /v1/engagements/{id}/attendance?day=`, every cohort. */
+export const attendanceSheets: Record<string, AttendanceSheet> = {
+  ...auroraAttendanceSheets,
+  ...cohortAttendanceSheets,
 };
 
 /** §8 `GET /v1/engagements` and `GET /v1/engagements/{id}`. */
