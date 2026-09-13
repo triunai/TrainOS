@@ -15,6 +15,164 @@
 
 ---
 
+## 2026-09-13 23:4x — fix-018 closes B4 and B6 at 1f300e9; M4's honest non-fix and the pending 019 split confirmed still owed
+
+**`fix-018` pushed three more commits to `origin/lane/rpc-018`, tip
+`1f300e9`** (via `c21c70f`, `558e0d2`) — confirmed present, closing B4
+and B6, and confirmed honestly documenting M4's status rather than
+resolving it.
+
+**B4 closed, confirmed exactly against the diff.** `test_014`'s exact
+SELECT-grant count stays at 121 — not moved to 124 as the earlier push
+had it — with 018's three views excluded from the count **by name**
+rather than the count being widened or softened to accommodate them.
+018's own delta is now asserted separately in `test_018`'s new **T38**,
+confirmed via the pin's own sub-assertions: `T38a` checks `anon` cannot
+SELECT the three views, `T38b` checks `authenticated` holds no WRITE
+privilege on them, `T38c` checks `authenticated` CAN select them, `T38d`
+checks the delta is exactly 3 — "SELECT only, none for `anon`," confirmed
+precisely rather than paraphrased. Measured on the shim, not asserted:
+001–017 with 018 absent passes `test_014` at 121; 001–018 applied passes
+with live counts 121/124.
+
+**Framing confirmed directly from the commit's own words, worth
+keeping**: this is not a defect 018 invented. The same file's `T1a`
+already read "116 tables, 113 from 014 + 3 from 017" before 018 touched
+anything, so `test_014` has not been standalone-runnable since 017's own
+amendment pass three migrations ago — 018 stops extending a
+three-migration-old pattern rather than starting one. A follow-up is
+marked in the file itself: once `fix-014`'s COMMENT manifest lands, the
+three-name exclusion should become a filter on that manifest instead of
+three names someone has to remember to keep current by hand.
+
+**B6 closed, confirmed by execution, not merely by reading the
+mechanism.** A new table, `app.seeded_pipelines` — the header's "creates
+no table" claim is corrected in the same commit — records every row the
+seed actually inserted. The seed is `ON CONFLICT (id) DO NOTHING`, so a
+row that already existed under the same derived id (the seeds lane's own
+fixtures) is never inserted and is never recorded, closing the exact
+case the old "keep everything" rollback design was protecting by
+construction rather than by hoping nobody hits the edge. `app.
+unseed_pipelines()` deletes exactly those ledger rows, steps before
+pipelines, and **refuses with the count and the blocking constraint
+names** when live data references any of them — deleting nothing when it
+refuses, because a half-reversed seed is confirmed, in the commit's own
+words, to be worse than an unreversed one.
+
+**Proved by running it, confirmed via the commit's own quoted
+transcript, not by reading the mechanism and trusting it works:**
+
+```
+tenant inserted        pipelines/steps 2/16, ledger 18
+rollback               "18 seeded pipeline/step row(s) removed"
+after                  pipelines/steps 0/0, ledger table gone
+and                    INSERT of a default ENGAGEMENT pipeline: INSERT 0 1
+```
+
+That last line is confirmed to be B6's actual original complaint, now
+closed: a default `ENGAGEMENT` pipeline insert, previously permanently
+blocked by `pipelines_one_default_uq` after any rollback, now succeeds.
+
+**R4 rewritten, confirmed exactly.** It previously queried `pg_trigger`
+for 016's ref-format trigger — unrelated to the pipeline seed entirely —
+while its own comments and closing `RAISE NOTICE` both announced a
+pipeline-row check that had never actually been written. R4 now
+**re-derives 018's own ids independently and counts the surviving rows
+in both tables**, rather than trusting the ledger's own bookkeeping to
+grade itself — confirmed as the stronger design, since it asks the
+question from outside the mechanism that is supposed to answer it. New
+pin **T39** confirmed to cover ledger accuracy, the refusal path
+(naming `engagements_pipeline_fk` when an engagement references a seeded
+pipeline, deleting nothing), and the clear path (removing the seed
+exactly, leaving a hand-made pipeline standing).
+
+**Seed-check registration confirmed, correctly guarded**: both seeded
+relations are registered in `app.tenant_seed_checks` (016's completeness
+guard) wherever that registry exists — this is the fourth provisioning
+trigger on `public.tenants`, and an unregistered one is exactly the
+silent failure that registry exists to catch. Since the registry is not
+on this branch's own base, the registration is guarded on the table's
+existence, with T39 asserting it where present and the obligation
+recorded in the catalog where it is not.
+
+**B5 confirmed still in effect from the earlier `5612e65` push, not a
+new fix this round**: the transaction wrapper making the backfill
+all-or-nothing is unchanged by these three commits.
+
+**Every fix confirmed to ship the fixture that would have caught it,
+per the PR body's own table — a direct, concrete response to the
+independent review's own sharpest point, quoted exactly: "238/238
+passing did not vouch for B1, B3, H2, H3 or H4."** T31 (a fourth
+enquiry and two more follow-ups reaching an exact page-size multiple,
+catching H2/H3), T32 (a saved view plus a foreign-tenant view, catching
+B3), T33 (a disabled routing row, catching H1), T34 (a cross-tenant
+provenance row, catching M1), T35 (a tenant missing its `PIP` ref
+format, catching M5), T37 (an empty-body PUT on a `TRAINING_EXEMPT`
+quotation, catching H4), T39 (an engagement pointing at a seeded
+pipeline plus a hand-made one, catching B6's refusal path and
+over-deletion) — every one confirmed present in the diff, not merely
+claimed in the table.
+
+**M4 confirmed still NOT fixed, per the standing ruling — and the
+catalog now states this honestly rather than papering over it, which is
+itself worth recording as a good practice.** The trigger stays in 018
+for tonight; the catalog states plainly, confirmed word-for-word, that
+it "does not belong here and why it landed here" —
+`core.navigation` and `core.get_pipeline_config` are 018's and render
+stages from `core.pipeline_steps`, with nothing in 001–017 seeding a
+row, so the two endpoints this pack exists to deliver would return an
+empty stage list for every tenant without it. Confirmed stated plainly:
+"a reason, not a justification; the split is owed."
+
+**The 019-split ruling this thread already recorded is confirmed still
+pending, being applied now, not yet landed** — no `019_*` migration file
+exists anywhere in the repo as of this check, consistent with the
+catalog's own "the split is owed" language rather than a claim that it
+has happened.
+
+**Counts, confirmed exactly against the PR body's own quoted output.**
+Against this branch's own 001–017: 18/18 through a full
+rollback→re-apply→pins-again→rollback-again cycle, confirmed idempotent
+on the second rollback. Against `origin/cloud/migrations`'s current base
+(`0d9e00c`): 16/2 with 018 absent (the pre-existing `test_014`/
+`test_014_rollback` red state this thread already recorded as an open
+discrepancy with `fix-014`), 13/6 with 018 applied, identical 13/6 after
+a rollback/reapply cycle — the cycle itself is clean even though the
+base it's measured against isn't yet green.
+
+**The rebase is confirmed deliberately not done, stated as a deliberate
+choice rather than a delay.** `cloud/migrations` has moved three times
+during this work (`21ec975`→`bdd49aa`→`0d9e00c`) and the lane owner is
+holding the final rebase until the base is frozen, with two specific
+follow-ups already identified and recorded for that rebase: `test_014`
+will conflict and needs the three-view exclusion re-applied against
+`fix-014`'s own already-rewritten file; and confirming `put_quotation`
+still stands down against `cloud/migrations`'s own newer 017 trigger.
+
+**Things worth telling future-me:**
+
+1. A catalog entry that states plainly "this doesn't belong here, and
+   here is why it landed here anyway" is more useful to the next reader
+   than either fixing the scope problem prematurely under time pressure
+   or hiding it behind a clean-looking header — confirmed as the second
+   time this session a lane chose honest non-resolution over a rushed
+   fix (the first was B4's own earlier deferral before this round closed
+   it).
+2. A rollback ledger that records exactly what a seed inserted (rather
+   than trusting a global count or an unrelated trigger check) turns "did
+   the rollback undo the right thing" from a code-reading question into
+   a data-reading question — R4's rewrite here is a reusable pattern
+   worth remembering for any future reversible-seed design in this repo.
+3. Holding a rebase deliberately, with the two specific conflicts it
+   will produce already named in writing, is a cheaper way to track a
+   moving merge target than repeatedly rebasing against every intermediate
+   commit of a branch still being fixed — worth noting as the pattern
+   that avoided wasted rebase cycles this session, contrasted with how
+   much churn tracking `cloud/migrations`'s moving tip has otherwise cost
+   the spine this session.
+
+---
+
 ## 2026-09-13 23:3x — fix-014 closes PR #24's 011-013 findings at 0d9e00c; BYOK rotation had never worked at all, worse than reviewed; a third CRIT found and closed
 
 **`fix-014` pushed two commits to `origin/cloud/migrations`, tip

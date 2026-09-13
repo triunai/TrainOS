@@ -503,8 +503,32 @@ show` on branch `review/codex-014-017` (commit `5a5655c`) — NOT yet on
 > pins, 52/52, check:grants 0. Re-review reported dispatched. Full
 > detail in `ai/workstreams.md`.
 
-> **Last updated:** 2026-09-13 23:3x — fix-014 closes 011-013's CRITs at
-> 0d9e00c; BYOK rotation had never worked at all, worse than reviewed.
+> **BLAST 13 Sep 23:4x +08** — `fix-018` pushed three more commits to
+> `lane/rpc-018`, tip `1f300e9`, closing B4 and B6. **B4**: `test_014`
+> stays exactly 121 (not moved to 124), 018's three views excluded by
+> name, its own delta asserted in `test_018` T38 (SELECT-only, none for
+> `anon`). Confirmed not 018's invention — `test_014` hasn't been
+> standalone-runnable since 017's own amendment pass. **B6**: a new
+> `app.seeded_pipelines` ledger records exactly what the seed inserted;
+> `app.unseed_pipelines()` deletes exactly those rows and refuses with
+> counts and constraint names when referenced, deleting nothing on
+> refusal — proved by running it (18 ledger rows removed, a default
+> ENGAGEMENT pipeline insert then succeeds). R4 rewritten to re-derive
+> ids and count survivors instead of checking the wrong trigger. B5's
+> transaction wrapper confirmed still in effect from the earlier push,
+> not new this round. Every fix ships the fixture that would have caught
+> it (full table in PR body). **M4 still NOT fixed, catalog now says so
+> honestly**: the trigger stays in 018 for tonight, stated as "a reason,
+> not a justification." **The 019 split ruling is confirmed still
+> pending, being applied now — no `019_*` file exists yet.** Counts:
+> branch base 18/18 through a full rollback/reapply/rollback-again
+> cycle; against `cloud/migrations`'s current `0d9e00c`, 16/2 without
+> 018 (pre-existing red), 13/6 with 018, identical after reapply. Rebase
+> deliberately held until the base is frozen. Full detail in
+> `ai/workstreams.md`.
+
+> **Last updated:** 2026-09-13 23:4x — fix-018 closes B4 and B6 at
+> 1f300e9; M4 (the pipeline seed's scope) and the 019 split remain open.
 
 ### Focus
 

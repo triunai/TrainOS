@@ -287,6 +287,28 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 23:4x — fix-018 closes B4 and B6 at 1f300e9; M4's honest non-fix and the pending 019 split confirmed still owed
+
+- `fix-018` confirmed pushed three more commits to `lane/rpc-018`, tip
+  `1f300e9`: B4 closed (test_014 stays exactly 121, 018's three views
+  excluded by name, its own delta asserted in test_018 T38 — SELECT
+  only, none for anon). B6 closed by execution: a new app.seeded_pipelines
+  ledger records exactly what the seed inserted; app.unseed_pipelines()
+  deletes exactly those rows and refuses with counts/constraint names
+  when referenced, deleting nothing on refusal — proved by running it
+  (18 ledger rows removed, a default ENGAGEMENT insert then succeeds).
+  R4 rewritten to re-derive ids and count survivors instead of checking
+  the wrong trigger. B5's wrapper confirmed unchanged from the earlier
+  push. Every fix ships the fixture that would have caught it. **M4
+  still NOT fixed, catalog now states honestly why the trigger stays in
+  018 for tonight** ("a reason, not a justification"). The 019 split
+  ruling confirmed still pending, being applied now — no 019_* file
+  exists yet. Counts: branch base 18/18 through full rollback/reapply
+  cycle; against cloud/migrations' 0d9e00c, 16/2 without 018 (pre-existing
+  red), 13/6 with 018, identical after reapply. Rebase deliberately held
+  until the base is frozen, two follow-ups already named. See
+  `ai/project-log.md` 23:4x block for full detail.
+
 ## 2026-09-13 23:3x — fix-014 closes PR #24's 011-013 findings at 0d9e00c; BYOK rotation had never worked at all, worse than reviewed; a third CRIT found and closed
 
 - `fix-014` confirmed pushed two commits to `cloud/migrations`, tip
