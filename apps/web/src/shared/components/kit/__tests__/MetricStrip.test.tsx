@@ -102,7 +102,7 @@ describe("MetricStrip accent", () => {
        the header around it. */
     expect(container.querySelector("section")).toBeNull();
     expect(container.innerHTML).not.toContain("surface-accent-gradient");
-    expect(container.innerHTML).not.toContain("radius-panel");
+    expect(container.innerHTML).not.toContain("rounded-panel");
     /* No chevron — §15a allows exactly one and RecordHeader owns it. */
     expect(screen.queryByRole("button")).toBeNull();
 

@@ -94,16 +94,23 @@
      `--primary*` (which theme-swap, and whose dark values put white at 3.53:1
      and 2.44:1), and `[data-theme="dark"]` redefines neither. */
 
-  /* A · "indigo rise" — deep indigo lifting through electric to a brighter
-     blue at the far corner. The artboard's shape with real depth at the
-     origin. Worst white along the ramp 4.56:1. */
-  --surface-accent-gradient: linear-gradient(115deg, #0f2fa8 0%, #1f5bff 58%, #3a68ff 100%);
+  /* A · "indigo rise" — a near-pure blue lifting through electric to a brighter
+     blue at the far corner. The artboard's shape with real depth at the origin.
+
+     The stops are pushed as SATURATED as the contrast floor allows rather than
+     muted toward it, which is the user's instruction and costs nothing here:
+     #0413D6 is 0.98 HSV saturation and still 10.15:1 for white, and pulling the
+     far corner from #3A68FF to #3568F5 raises the ramp's mean chroma from 0.775
+     to 0.835 while IMPROVING its worst point from 4.56:1 to 4.72:1. Vivid and
+     legible were not in tension; only the artboard's #4E82FF end was. */
+  --surface-accent-gradient: linear-gradient(115deg, #0413d6 0%, #1f5bff 55%, #3568f5 100%);
 
   /* B · "violet edge" — the cooler one. Same anchor, steeper angle, and the far
      corner leans violet rather than lighter, so the card gains depth without
-     gaining brightness. Worst white along the ramp 5.25:1, so it has the
-     headroom A does not. */
-  --surface-accent-gradient-alt: linear-gradient(128deg, #1a34c4 0%, #1f5bff 50%, #4a4fe6 100%);
+     gaining brightness. Saturated on the same principle as A: mean chroma 0.793
+     against 0.758 before. Worst white 5.25:1, so it keeps the headroom A does
+     not, and its violet end is bounded by hue rather than by contrast. */
+  --surface-accent-gradient-alt: linear-gradient(128deg, #0f1fdb 0%, #1f5bff 48%, #5a3df0 100%);
 
   /* Ink ON the band. Full white for both levels, and the hierarchy is size,
      weight and tracking rather than opacity — 70% white over #1F5BFF reads

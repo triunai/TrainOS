@@ -34,7 +34,7 @@ import type { Density } from "./FilterBar";
 export interface Column<Row> {
   /** Stable key. Also the sort key handed back to `onSort`. */
   key: string;
-  /** Mono uppercase header label. */
+  /** The column heading, in sentence case. UI font — see the `<th>` below. */
   label: string;
   accessor: (row: Row) => ReactNode;
   align?: "left" | "right";
@@ -204,7 +204,13 @@ export function DataTable<Row>({
                     sorted ? (sortDirection === "desc" ? "descending" : "ascending") : undefined
                   }
                   className={cn(
-                    "whitespace-nowrap px-3 py-2 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-ink-muted",
+                    /* UI font, sentence case (tightening brief §1). Mono is
+                       for machine-ish values — a ref, a version, a hash — and a
+                       column heading is a label. Tracked uppercase mono is also
+                       half of the combination §9 names as the thing that reads
+                       as generated. Every screen already passes a sentence-case
+                       label, so this is the whole migration. */
+                    "whitespace-nowrap px-3 py-2 text-[12px] font-medium text-ink-muted",
                     column.align === "right" && "text-right",
                   )}
                 >
@@ -213,7 +219,7 @@ export function DataTable<Row>({
                       type="button"
                       onClick={() => onSort(column.key)}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-[4px] uppercase tracking-[0.06em] hover:text-ink",
+                        "inline-flex items-center gap-1 rounded-[4px] hover:text-ink",
                         sorted && "text-ink",
                         FOCUS_RING,
                       )}

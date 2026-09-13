@@ -160,7 +160,7 @@ describe("M02-S02 approval detail", () => {
 
     const header = document.querySelector("header") as HTMLElement;
     expect(header.className).toContain("bg-[image:var(--surface-accent-gradient)]");
-    expect(header.className).toContain("rounded-[var(--radius-panel)]");
+    expect(header.className).toContain("rounded-panel");
 
     /* Title, chip, meta line and the metric strip are all ON the card. */
     expect(header.contains(screen.getByRole("heading", { level: 1 }))).toBe(true);

@@ -116,7 +116,7 @@ describe("RecordHeader accent", () => {
 
     const header = container.querySelector("header") as HTMLElement;
     expect(header.className).toContain("bg-[image:var(--surface-accent-gradient)]");
-    expect(header.className).toContain("rounded-[var(--radius-panel)]");
+    expect(header.className).toContain("rounded-panel");
 
     /* Title, meta and strip all in white. */
     expect(screen.getByRole("heading", { level: 1 }).className).toContain(

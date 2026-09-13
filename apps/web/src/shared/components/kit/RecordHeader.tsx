@@ -213,7 +213,7 @@ export function RecordHeader({
       className={cn(
         "flex flex-col gap-3.5",
         showCard
-          ? "rounded-[var(--radius-panel)] bg-[image:var(--surface-accent-gradient)] px-6 pb-5 pt-5"
+          ? "rounded-panel bg-[image:var(--surface-accent-gradient)] px-6 pb-5 pt-5"
           : "px-5 pb-4 pt-5",
         /* Candidate B, for the on-screen comparison §15a asks for. `?gradient=alt`
            swaps the token at the element; nothing else in the card changes, so
