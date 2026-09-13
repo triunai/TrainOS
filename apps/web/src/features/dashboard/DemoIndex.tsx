@@ -13,6 +13,12 @@
  * It is a DEVELOPMENT route (`/dev/demo`) and never reaches a production
  * bundle. That is deliberate: it is a rehearsal aid and a coverage map for the
  * people building the screens, not a product surface.
+ *
+ * Narrated to the primary stakeholder, per design-tightening brief §13
+ * (`docs/design/2026-09-13-design-tightening-brief.md`): Alex Selvarajah, the
+ * MD `/me` now returns (`packages/fixtures/src/data/tenant.ts`). Each step
+ * carries `checking`, one plain sentence naming what he is actually looking
+ * for on that screen — not what the presenter says, and not a pitch.
  */
 
 import { Link } from "react-router-dom";
@@ -32,6 +38,8 @@ interface DemoStep {
   say: string;
   /** What the presenter points at. */
   pointAt: string;
+  /** What Alex is checking on this screen. One sentence, no marketing tone. */
+  checking: string;
   to: string;
 }
 
@@ -49,6 +57,8 @@ const STEPS: DemoStep[] = [
     title: "Executive dashboard",
     say: "This is November. RM 214k in play, six trainings, three claims pending, and the agents saved 41 admin hours.",
     pointAt: "The admin-hours-saved metric — it is the reason the system exists.",
+    checking:
+      "Whether the headline figures are ones he can repeat to his board without checking them first.",
     to: navPath("Home", "Dashboard"),
   },
   {
@@ -57,6 +67,7 @@ const STEPS: DemoStep[] = [
     title: "Enquiry inbox",
     say: "Everything inbound lands in one queue — email, WhatsApp, web form, phone.",
     pointAt: "The WhatsApp row at 41% confidence flagged for human classification.",
+    checking: "Whether an enquiry can be missed between the channels it comes in on.",
     to: navPath("Sales", "Enquiries"),
   },
   {
@@ -65,6 +76,8 @@ const STEPS: DemoStep[] = [
     title: "Enquiry detail",
     say: "Nurul emails at 08:52. A minute later the agent has the topic, the audience, the timing and the account.",
     pointAt: "The four numbered source citations under the extraction.",
+    checking:
+      "Whether the agent's extraction is accurate enough that no one is quietly redoing it by hand.",
     to: navPath("Sales", "Enquiries"),
   },
   {
@@ -73,6 +86,7 @@ const STEPS: DemoStep[] = [
     title: "TNA detail",
     say: "The questionnaire comes back and the gaps are evidence-linked, not guessed.",
     pointAt: "Fit scores: 91%, 78%, 22% — the ranking is honest about the bad match.",
+    checking: "Whether the fit scoring stays honest about a weak match instead of dressing it up.",
     to: navPath("Sales", "TNA"),
   },
   {
@@ -81,6 +95,8 @@ const STEPS: DemoStep[] = [
     title: "Programme detail",
     say: "This is the programme it lands on, and the trainer pool behind it.",
     pointAt: "Daniel Wong is booked 10–14 Nov — that single fact drives the risk rating later.",
+    checking:
+      "Whether a trainer double-booking would actually be caught before it becomes a delivery problem.",
     to: navPath("Training", "Programmes"),
   },
   {
@@ -89,6 +105,8 @@ const STEPS: DemoStep[] = [
     title: "Proposal builder",
     say: "The agent drafts each section from the template; every section says who wrote it.",
     pointAt: "Section 5 at 41% confidence, flagged before anyone sends it.",
+    checking:
+      "Whether every section is attributable, so no one can later ask who actually wrote it.",
     to: navPath("Sales", "Proposals"),
   },
   {
@@ -97,6 +115,8 @@ const STEPS: DemoStep[] = [
     title: "Costing worksheet",
     say: "Behind the number: trainer, materials, travel, commission, 41% margin.",
     pointAt: "Type a discount below the floor and the field goes red with the reason.",
+    checking:
+      "Whether the margin floor is actually enforced by the system, not just written in a policy doc.",
     to: navPath("Finance", "Quotations"),
   },
   {
@@ -105,6 +125,8 @@ const STEPS: DemoStep[] = [
     title: "Approval inbox",
     say: "Every human decision in one queue, ordered by urgency, not by module.",
     pointAt: "Bulk approve is unavailable while a money action is selected.",
+    checking:
+      "Whether the queue orders by real urgency instead of by which module raised the item.",
     to: APPROVALS_PATH,
   },
   {
@@ -113,6 +135,8 @@ const STEPS: DemoStep[] = [
     title: "Approval detail",
     say: "Kelvin gets why he is here, the recommendation, the evidence, the risk, and exactly what changes if he clicks.",
     pointAt: '"If you approve, this happens" — five changes, listed before the click.',
+    checking:
+      "Whether Kelvin has enough evidence here to decide without having to escalate it up to him.",
     to: approvalPath(APPROVAL_AURORA),
   },
   {
@@ -121,6 +145,7 @@ const STEPS: DemoStep[] = [
     title: "Client proposal page",
     say: "Nurul reads it, asks two questions, accepts on 15 September.",
     pointAt: "The reply that explains who files the HRDC claim — the client never sees margin.",
+    checking: "Whether anything client-facing leaks margin or internal detail it should not.",
     to: "/p/tok_aurora_pro_0184",
   },
   {
@@ -129,6 +154,8 @@ const STEPS: DemoStep[] = [
     title: "Organisation 360",
     say: "One page for the whole relationship: pipeline, delivery, compliance, money.",
     pointAt: "The engagements table micro-steppers — one blocked, one lost.",
+    checking:
+      "Whether one page actually tells him the state of the whole relationship, without digging further.",
     to: navPath("Sales", "Organisations"),
   },
   {
@@ -137,6 +164,8 @@ const STEPS: DemoStep[] = [
     title: "Engagement detail",
     say: "Won becomes delivery: trainer, sessions, 30 participants, logistics.",
     pointAt: "The lifecycle stepper: attendance locked, HRDC claim blocked.",
+    checking:
+      "Whether a blocked delivery step surfaces here before it turns into a client complaint.",
     to: navPath("Training", "Engagements"),
   },
   {
@@ -145,6 +174,8 @@ const STEPS: DemoStep[] = [
     title: "Attendance capture",
     say: "Attendance is captured per session, approved, and then frozen.",
     pointAt: "Capture buttons are disabled — HRD Corp requires immutability after approval.",
+    checking:
+      "Whether attendance is genuinely locked down the way HRD Corp requires, not just labelled as final.",
     to: navPath("Training", "Participants"),
   },
   {
@@ -153,6 +184,8 @@ const STEPS: DemoStep[] = [
     title: "HRDC claim packet",
     say: "The packet assembles itself to 62%, and tells Jason exactly what is missing and how long he has.",
     pointAt: "No submit button. A human files on eTRIS and records the reference here.",
+    checking:
+      "Whether Jason knows exactly what is missing and how much runway is left before the deadline.",
     to: navPath("Compliance", "HRD Corp"),
   },
   {
@@ -161,6 +194,8 @@ const STEPS: DemoStep[] = [
     title: "Invoice detail",
     say: "The invoice is pushed to the client's accounting package, which handles MyInvois.",
     pointAt: "The collapsed failed sync attempt and how it was fixed.",
+    checking:
+      "Whether a failed sync to the accounting package gets fixed and recorded, not quietly dropped.",
     to: navPath("Finance", "Invoices"),
   },
   {
@@ -169,6 +204,8 @@ const STEPS: DemoStep[] = [
     title: "Collections queue",
     say: "The overdue invoice from July is being chased on a fixed ladder.",
     pointAt: "Where autonomy stops: at 60 days a human picks up the phone.",
+    checking:
+      "Whether collections follow the agreed ladder instead of drifting into a phone call too early or too late.",
     to: navPath("Finance", "Collections"),
   },
   {
@@ -177,6 +214,8 @@ const STEPS: DemoStep[] = [
     title: "Agent registry",
     say: "Eight agents, each with autonomy per action type and a kill switch.",
     pointAt: "The paused agent, with the eval score that paused it.",
+    checking:
+      "Whether every agent's autonomy level and kill switch are still set the way he last approved.",
     to: navPath("Automation", "Agents"),
   },
   {
@@ -185,6 +224,8 @@ const STEPS: DemoStep[] = [
     title: "Run trace #4821",
     say: "Here is the run that wrote the Aurora proposal: six tool calls, one retry, RM 0.38.",
     pointAt: "Step 6 halted by policy — the agent never sent anything.",
+    checking:
+      "Whether an agent that halted did so for the right reason, at the right step, for the right cost.",
     to: navPath("Automation", "Runs"),
   },
   {
@@ -193,6 +234,8 @@ const STEPS: DemoStep[] = [
     title: "Back to the dashboard",
     say: "That whole path took eight minutes of human attention instead of a morning.",
     pointAt: "41 hours saved, and every one of those decisions is in the audit log.",
+    checking:
+      "Whether the hours-saved figure is backed by an audit trail he could stand behind if challenged.",
     to: navPath("Home", "Dashboard"),
   },
 ];
@@ -273,6 +316,10 @@ export function DemoIndex() {
                 <p className="text-[13px] leading-[1.6] text-ink-secondary">“{step.say}”</p>
                 <p className="text-[12px] leading-[1.55] text-ink-muted">
                   <span className="font-semibold text-ink-secondary">Point at:</span> {step.pointAt}
+                </p>
+                <p className="text-[12px] leading-[1.55] text-ink-muted">
+                  <span className="font-semibold text-ink-secondary">Alex is checking:</span>{" "}
+                  {step.checking}
                 </p>
               </div>
             </div>

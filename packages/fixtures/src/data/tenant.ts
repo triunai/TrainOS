@@ -21,7 +21,32 @@ import {
 } from "@trainos/contract";
 import { TENANT_ID } from "./_helpers";
 
-/** The MD. Named "Dato' Lim" across the pack; no canonical id in §0, so this one. */
+/**
+ * The MD. Named "Dato' Lim" in the original design pack; no canonical id in
+ * §0, so this one — kept as-is (renaming it would touch every fixture file
+ * that could one day reference it by id, for no behavioural gain) even though
+ * the person behind it changed.
+ *
+ * Design-tightening brief §13 (13 Sep 2026, `docs/design/2026-09-13-design-tightening-brief.md`)
+ * retargets the MD persona to **Alex Selvarajah** — a super-investor with
+ * multiple businesses (notably with Panasonic and Sunway) and a strong HRMS
+ * background — as the primary stakeholder the demo is narrated to. `Me` (§2,
+ * `packages/contract/src/domain/shell.ts`) carries only id/name/role/
+ * permissions/dataScope/locale/timezone/theme, so name and role are the only
+ * fields this fixture can change; "org" for `/me` stays the tenant
+ * (Akademi Perdana Sdn Bhd) below, since Alex is that company's MD, not a
+ * separate tenant. His outside businesses are backstory, not additional
+ * `organisations` rows: the pack does not model an MD's personal portfolio
+ * distinct from the tenant's own client list, and inventing "Panasonic" /
+ * "Sunway" as fictitious Akademi Perdana clients would misrepresent them as
+ * clients of the training provider rather than businesses he holds, so they
+ * are not seeded here — see the fixtures-persona report for the flagged seam.
+ * Initials ("AS") are computed from `name` wherever the UI derives them
+ * (`Avatar`), so nothing to seed there either. Email has the same gap: `Me`
+ * has no email field, so if `/v1/me` grows one, its shape should follow the
+ * tenant's own pattern, e.g. `alex.selvarajah@akademiperdana.my` (see the
+ * `farah.aziz@akademiperdana.my` style trainer emails in `programmes.ts`).
+ */
 export const USER_LIM = "u_lim";
 
 /** The tenant record. Not a contract type — §1 keeps tenancy out of the API surface. */
@@ -113,7 +138,7 @@ export const users: Me[] = [
   },
   {
     id: USER_LIM,
-    name: "Dato' Lim Chee Keong",
+    name: "Alex Selvarajah",
     role: "MD",
     permissions: [
       "dashboard:read",
