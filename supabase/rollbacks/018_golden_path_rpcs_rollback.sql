@@ -4,10 +4,17 @@
 --
 -- WHAT 018 CREATED, and therefore the complete list of what this drops:
 --
---   23 functions in `core`  — the RPCs `rpcClient.ts` names
---    1 view     in `core`   — `v_organisation_relations`
---    9 functions in `app`   — the internal `app._*` projection helpers
---    2 COMMENTs             — dropped with their objects
+--   30 functions in `core`  — the RPCs `rpcClient.ts` names
+--    3 views     in `core`   — `v_organisation_relations`, `v_budgets`,
+--                              `v_model_tiers`
+--   11 functions in `app`    — the internal `app._*` projection helpers
+--
+-- ⚠ THE THREE GATE WRAPPERS ARE NOT IN THAT LIST AND MUST NOT BE DROPPED.
+-- `core.perform_action`, `core.decide_approval` and
+-- `core.bulk_decide_approvals` belong to 014 §5. An earlier revision of 018
+-- created them and this rollback dropped them; that was wrong the moment 014
+-- landed, because rolling 018 back would have taken the entire write path of
+-- the product with it. R2f asserts all three survive.
 --
 -- WHAT 018 DID **NOT** CREATE, and what this therefore MUST NOT TOUCH:
 --
@@ -69,11 +76,13 @@ BEGIN
     JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
    WHERE n.nspname = 'core'
      AND p.proname IN (
-       'perform_action','decide_approval','bulk_decide_approvals',
        'me','navigation','badge_counts','list_enquiries','get_enquiry',
+       'patch_enquiry_extraction','list_follow_ups','get_follow_up_draft',
        'get_organisation','get_opportunity','get_contact','get_tna',
-       'get_tna_recommendations','create_proposal','get_proposal',
-       'get_quotation','put_quotation','list_approvals','get_approval',
+       'get_tna_recommendations','create_proposal','list_proposals','get_proposal',
+       'add_proposal_section','put_proposal_section','regenerate_proposal_section',
+       'list_quotations','get_quotation','put_quotation','get_rate_card',
+       'list_approvals','get_approval','get_audit',
        'get_policy','get_pipeline_config','get_programme','get_compliance_rule')
      AND NOT (p.prosecdef AND p.proconfig @> ARRAY['search_path=""']);
   IF v_foreign IS NOT NULL THEN
@@ -97,11 +106,11 @@ BEGIN
     JOIN pg_catalog.pg_class   AS source ON source.oid = d.refobjid
     JOIN pg_catalog.pg_namespace AS sn ON sn.oid = source.relnamespace
    WHERE sn.nspname = 'core'
-     AND source.relname = 'v_organisation_relations'
-     AND dependent.relname <> 'v_organisation_relations';
+     AND source.relname IN ('v_organisation_relations','v_budgets','v_model_tiers')
+     AND dependent.relname NOT IN ('v_organisation_relations','v_budgets','v_model_tiers');
   IF v_deps IS NOT NULL THEN
     RAISE EXCEPTION
-      '018 rollback G1b: % still depend(s) on core.v_organisation_relations.',
+      '018 rollback G1b: % still depend(s) on a view 018 created.',
       pg_catalog.array_to_string(v_deps, ', ');
   END IF;
 
@@ -113,7 +122,8 @@ BEGIN
     JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
    WHERE n.nspname = 'app'
      AND p.proname IN ('_money','_actor','_provenance','_provenanced','_cursor_encode',
-                       '_cursor_decode','_page_size','_predicate','_body_sql')
+                       '_cursor_decode','_page_size','_predicate','_body_sql',
+                       '_budget_rows','_model_tier_rows')
      AND p.proowner <> (SELECT c.relowner FROM pg_catalog.pg_class AS c
                          JOIN pg_catalog.pg_namespace AS cn ON cn.oid = c.relnamespace
                         WHERE cn.nspname = 'core' AND c.relname = 'enquiries');
@@ -133,12 +143,30 @@ $guard$;
 -- FIRST, because its body calls `app._money`. Dropping the helper before the
 -- view would leave a view that parses and cannot be read.
 DROP VIEW IF EXISTS core.v_organisation_relations;
+-- The two AI-budget views go with them. Dropping these RESTORES 014's state:
+-- `core.budget_status` and `core.model_tier_status` stay revoked and the two
+-- AI screens go back to reading names that do not exist, which is exactly the
+-- carried defect 014 registered. That is the correct pre-018 state, not a new
+-- fault.
+DROP VIEW IF EXISTS core.v_budgets;
+DROP VIEW IF EXISTS core.v_model_tiers;
 
 -- ═══ 2 · The 23 core RPCs ══════════════════════════════════════════════════
 -- Signatures written out in full. `DROP FUNCTION` matches on the ARGUMENT
 -- LIST, and a bare name would be ambiguous the moment anyone added an
 -- overload — which is the same PGRST203 trap the forward file's V1 pin guards.
 -- No CASCADE anywhere: an object built on one of these should STOP this file.
+
+DROP FUNCTION IF EXISTS core.get_audit(text, text);
+DROP FUNCTION IF EXISTS core.get_rate_card();
+DROP FUNCTION IF EXISTS core.list_quotations(jsonb, text, jsonb, text);
+DROP FUNCTION IF EXISTS core.regenerate_proposal_section(text, integer);
+DROP FUNCTION IF EXISTS core.put_proposal_section(text, integer, jsonb, text);
+DROP FUNCTION IF EXISTS core.add_proposal_section(text, jsonb, text);
+DROP FUNCTION IF EXISTS core.list_proposals(jsonb, text, jsonb, text);
+DROP FUNCTION IF EXISTS core.get_follow_up_draft(text, text);
+DROP FUNCTION IF EXISTS core.list_follow_ups(jsonb, text, jsonb, text);
+DROP FUNCTION IF EXISTS core.patch_enquiry_extraction(text, jsonb);
 
 DROP FUNCTION IF EXISTS core.get_compliance_rule(text);
 DROP FUNCTION IF EXISTS core.get_programme(text);
@@ -168,16 +196,20 @@ DROP FUNCTION IF EXISTS core.badge_counts();
 DROP FUNCTION IF EXISTS core.navigation();
 DROP FUNCTION IF EXISTS core.me();
 
--- The three gate wrappers last of the `core` set. Dropping these REMOVES the
--- only door to `app.perform_action`, `app.decide_approval` and
--- `app.bulk_decide` from a browser — which is the correct pre-018 state, since
--- 011 grants all three to `service_role` only and that grant is untouched.
-DROP FUNCTION IF EXISTS core.bulk_decide_approvals(uuid[], text, text, text);
+-- NO DROP FOR THE THREE GATE WRAPPERS. They are 014's. Dropping them here
+-- would remove the only door from a browser to `app.perform_action` — every
+-- primary button in the product — while rolling back a pack that no longer
+-- creates them.
+--
+-- The ONE wrapper-shaped object 018 may drop is its own former four-argument
+-- `decide_approval`, and the forward file already drops it. Repeated here so a
+-- rollback from a half-upgraded database does not leave the overload behind.
 DROP FUNCTION IF EXISTS core.decide_approval(uuid, text, text, text);
-DROP FUNCTION IF EXISTS core.perform_action(text, text, jsonb, jsonb, numeric, text, jsonb, text);
 
 -- ═══ 3 · The nine internal helpers ═════════════════════════════════════════
 -- LAST, because every `core` function above called at least one of them.
+DROP FUNCTION IF EXISTS app._model_tier_rows();
+DROP FUNCTION IF EXISTS app._budget_rows();
 DROP FUNCTION IF EXISTS app._body_sql(regprocedure);
 DROP FUNCTION IF EXISTS app._predicate(text, text, text, jsonb);
 DROP FUNCTION IF EXISTS app._page_size(jsonb);
@@ -201,20 +233,25 @@ BEGIN
     FROM pg_catalog.pg_proc AS p
     JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
    WHERE (n.nspname = 'core' AND p.proname IN (
-            'perform_action','decide_approval','bulk_decide_approvals','me','navigation',
-            'badge_counts','list_enquiries','get_enquiry','get_organisation','get_opportunity',
-            'get_contact','get_tna','get_tna_recommendations','create_proposal','get_proposal',
-            'get_quotation','put_quotation','list_approvals','get_approval','get_policy',
+            'me','navigation','badge_counts','list_enquiries','get_enquiry',
+            'patch_enquiry_extraction','list_follow_ups','get_follow_up_draft',
+            'get_organisation','get_opportunity','get_contact','get_tna',
+            'get_tna_recommendations','create_proposal','list_proposals','get_proposal',
+            'add_proposal_section','put_proposal_section','regenerate_proposal_section',
+            'list_quotations','get_quotation','put_quotation','get_rate_card',
+            'list_approvals','get_approval','get_audit','get_policy',
             'get_pipeline_config','get_programme','get_compliance_rule'))
       OR (n.nspname = 'app' AND p.proname IN (
             '_money','_actor','_provenance','_provenanced','_cursor_encode','_cursor_decode',
-            '_page_size','_predicate','_body_sql'));
+            '_page_size','_predicate','_body_sql','_budget_rows','_model_tier_rows'));
   IF v_left IS NOT NULL THEN
     RAISE EXCEPTION '018 rollback R1: still present: %',
       pg_catalog.array_to_string(v_left, ', ');
   END IF;
-  IF pg_catalog.to_regclass('core.v_organisation_relations') IS NOT NULL THEN
-    RAISE EXCEPTION '018 rollback R1b: core.v_organisation_relations survived';
+  IF pg_catalog.to_regclass('core.v_organisation_relations') IS NOT NULL
+     OR pg_catalog.to_regclass('core.v_budgets') IS NOT NULL
+     OR pg_catalog.to_regclass('core.v_model_tiers') IS NOT NULL THEN
+    RAISE EXCEPTION '018 rollback R1b: a view 018 created survived the rollback';
   END IF;
 
   -- R2 · EVERYTHING 001–013 OWNS IS STILL THERE. This is the half that catches
@@ -260,6 +297,31 @@ BEGIN
     RAISE EXCEPTION '018 rollback R2e: authenticated gained EXECUTE on app.perform_action';
   END IF;
 
+  -- R2f · 014'S THREE WRAPPERS SURVIVE. This is the assertion that would have
+  -- caught the earlier revision taking the product's entire write path with it.
+  SELECT pg_catalog.array_agg(expected.name ORDER BY expected.name) INTO v_lost
+    FROM (VALUES ('core.perform_action'),('core.decide_approval'),
+                 ('core.bulk_decide_approvals')) AS expected(name)
+   WHERE NOT EXISTS (
+     SELECT 1 FROM pg_catalog.pg_proc AS p
+       JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+      WHERE n.nspname || '.' || p.proname = expected.name);
+  IF v_lost IS NOT NULL THEN
+    RAISE EXCEPTION '018 rollback R2f: this rollback destroyed 014''s gate wrapper(s): % — '
+                    'that is every primary button in the product',
+      pg_catalog.array_to_string(v_lost, ', ');
+  END IF;
+  IF NOT pg_catalog.has_function_privilege('authenticated',
+       'core.decide_approval(uuid,text,text,text,text)'::regprocedure,'EXECUTE') THEN
+    RAISE EXCEPTION '018 rollback R2g: 014''s decide_approval lost its grant';
+  END IF;
+
+  -- R2h · 017's tax registry is untouched. 018 READ it; it never owned it.
+  IF pg_catalog.to_regclass('core.tax_policies') IS NULL
+     OR pg_catalog.to_regproc('app.resolve_tax_policy') IS NULL THEN
+    RAISE EXCEPTION '018 rollback R2h: 017''s tax registry was destroyed';
+  END IF;
+
   -- R3 · No TABLE was harmed. 018 created none, so the count of relations in
   -- `core` and `public` must be what 001–013 left, and the money tables in
   -- particular must still be there with their generated columns.
@@ -286,8 +348,8 @@ BEGIN
                     'the §18 money rule lives in that column and it is 007''s';
   END IF;
 
-  RAISE NOTICE '018 rollback: 23 core RPCs, 1 view and 9 app helpers dropped; '
-               '001-013 verified intact, including 011''s grants and 007''s '
-               'generated money columns.';
+  RAISE NOTICE '018 rollback: 30 core RPCs, 3 views and 11 app helpers dropped; '
+               '001-017 verified intact, including 014''s three gate wrappers, '
+               '011''s grants, 017''s tax registry and 007''s generated money columns.';
 END
 $verify$;
