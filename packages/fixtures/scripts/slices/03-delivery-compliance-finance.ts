@@ -28,7 +28,14 @@
  */
 
 import * as fx from "../../src/data/index.ts";
-import { TENANT_UUID, childKey, uuidFor } from "../lib/ids.ts";
+import {
+  TENANT_UUID,
+  childKey,
+  pipelineName,
+  pipelineStepName,
+  pipelineUuid,
+  uuidFor,
+} from "../lib/ids.ts";
 import { refUuid } from "../lib/refs.ts";
 import type { Slice } from "../lib/slice.ts";
 import { arr, banner, block, j, raw, upsert } from "../lib/sql.ts";
@@ -64,10 +71,17 @@ const engagementByRef = new Map(fx.engagements.map((engagement) => [engagement.r
 
 const engagementUuid = (ref: string): string => refUuid(ref);
 
-/** The one ENGAGEMENT pipeline slice 1 wrote; its steps are keyed by stage. */
-const ENGAGEMENT_PIPELINE = "pipeline:ENGAGEMENT";
+/**
+ * The ENGAGEMENT pipeline and its steps.
+ *
+ * Derived, not remembered: `pipelineUuid` is the cross-lane expression the 018
+ * stage seed computes in SQL, so this slice's 90 `core.engagement_step_states`
+ * rows resolve to the same steps whichever pack wrote them. Hardcoding the
+ * literals here is how the two lanes drift apart on a rename.
+ */
+const engagementPipelineUuid = (): string => pipelineUuid(pipelineName("ENGAGEMENT"));
 const stepUuid = (stageKey: string): string =>
-  uuidFor(childKey(ENGAGEMENT_PIPELINE, "step", stageKey));
+  pipelineUuid(pipelineStepName("ENGAGEMENT", stageKey));
 
 /**
  * `core.engagements.venue_mode`, read off the venue string.
@@ -125,7 +139,7 @@ const engagementsSql = (): string =>
         proposal_id: null,
         programme_id: refUuid(engagement.programmeRef),
         owner_id: uuidFor(engagement.owner.id),
-        pipeline_id: uuidFor(ENGAGEMENT_PIPELINE),
+        pipeline_id: engagementPipelineUuid(),
         title: engagement.title,
         status: engagement.status,
         venue: engagement.venue ?? null,

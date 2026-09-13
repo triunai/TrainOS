@@ -249,12 +249,15 @@ WHERE target.tenant_id IS DISTINCT FROM EXCLUDED.tenant_id;
 
 -- Pipeline configuration ──────────────────────────────────────────────────
 
--- Stage names and order are configuration, never hardcoded — this is the row the UI renders from.
+-- Stage names and order are configuration, never hardcoded: this is the row the
+-- UI renders from. Ids are md5(tenant_id::text || 'pipeline:' || object)::uuid,
+-- the derivation the 018 lane's stage seed computes in SQL, so either pack may
+-- write these rows and both produce the same id. See lib/ids.ts.
 INSERT INTO core.pipelines AS target
   (id, tenant_id, ref, object, name, is_default, version, status, created_at, created_by_kind, created_by_id, created_by_name)
 VALUES
-  ('ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'acade111-0000-4000-8000-000000000001', 'PIP-0001', 'ENGAGEMENT', 'Engagement lifecycle', TRUE, 1, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
-  ('55a3ab68-eeaa-5e12-86a2-6273598484f5', 'acade111-0000-4000-8000-000000000001', 'PIP-0002', 'OPPORTUNITY', 'Opportunity lifecycle', TRUE, 1, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar')
+  ('3e97773b-effa-398c-2509-d5a19388c3c3', 'acade111-0000-4000-8000-000000000001', 'PIP-0001', 'ENGAGEMENT', 'Engagement lifecycle', TRUE, 1, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar'),
+  ('095ef670-c9a6-9036-477e-4c4668fbced0', 'acade111-0000-4000-8000-000000000001', 'PIP-0002', 'OPPORTUNITY', 'Opportunity lifecycle', TRUE, 1, 'ACTIVE', '2022-01-04T09:00:00+08:00', 'HUMAN', 'u_khairul', 'Khairul Anwar')
 ON CONFLICT (id) DO UPDATE SET
   tenant_id = EXCLUDED.tenant_id,
   object = EXCLUDED.object,
@@ -268,26 +271,33 @@ ON CONFLICT (id) DO UPDATE SET
 WHERE (target.tenant_id, target.object, target.name, target.is_default, target.version, target.status, target.created_by_kind, target.created_by_id, target.created_by_name)
    IS DISTINCT FROM (EXCLUDED.tenant_id, EXCLUDED.object, EXCLUDED.name, EXCLUDED.is_default, EXCLUDED.version, EXCLUDED.status, EXCLUDED.created_by_kind, EXCLUDED.created_by_id, EXCLUDED.created_by_name);
 
--- `outcome` (WON/LOST on the two terminal opportunity stages) has no column yet — see the PR's schema-gap list.
+-- Ids are md5(tenant_id::text || 'pipeline:' || object || ':' || step_key)::uuid.
+-- The object is in the name because WON is a stage of BOTH pipelines, and
+-- core.pipeline_steps is unique on (tenant_id, pipeline_id, step_key) rather
+-- than on step_key alone, so the two rows are legitimate and a shared id would
+-- be a primary key violation. See lib/ids.ts.
+--
+-- `outcome` (WON/LOST on the two terminal opportunity stages) has no column
+-- yet -- see the PR's schema-gap list.
 INSERT INTO core.pipeline_steps AS target
   (id, tenant_id, pipeline_id, step_key, label, position, terminal, blocking_check_keys, created_at)
 VALUES
-  ('bc2d2d33-9eea-5621-972b-b98a92c6abea', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'WON', 'Won', 1, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('948ee723-c936-552c-bbd1-398778d2bf10', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'TRAINER_CONFIRMED', 'Trainer confirmed', 2, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('0af97f12-ffb2-520f-aa8c-5d947ea2570f', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'SCHEDULED', 'Scheduled', 3, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('7200296c-89e2-54e4-a7ef-b2410299dce5', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'REGISTERED', 'Registered', 4, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('3df31c0a-13ef-5e62-a6b2-d83d885d059b', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'DELIVERED', 'Delivered', 5, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('23c16468-cb9a-5324-a656-54b562888e1e', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'ATTENDANCE_LOCKED', 'Attendance locked', 6, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('678a2823-db04-5ba0-9e10-ec01683c7f28', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'HRDC_CLAIM', 'HRDC claim', 7, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('8139b809-07cb-5c19-8e4c-b9b4e0886818', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'INVOICED', 'Invoiced', 8, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('092ede85-1142-5c7f-8b6c-f80588915e1c', 'acade111-0000-4000-8000-000000000001', 'ef2f591f-dd50-5c63-82e8-c6ce9dacd303', 'PAID', 'Paid', 9, TRUE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('d2742bde-3580-5222-89a6-a3a7b1535108', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'NEW', 'New', 1, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('2f0849de-510e-5307-a5db-15cd6cef41fe', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'QUALIFYING', 'Qualifying', 2, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('a128032a-2541-5531-976b-24a2b2acaf3f', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'TNA_SENT', 'TNA sent', 3, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('67a82b32-952b-5002-a473-cc3189c91897', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'PROPOSAL_SENT', 'Proposal sent', 4, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('362f2f40-efcc-590a-8047-8c5a9ad4f253', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'NEGOTIATION', 'Negotiation', 5, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('e984498c-1d57-536c-85bc-194271aff801', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'WON', 'Won', 6, TRUE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
-  ('1e623a95-bc36-5c39-930f-60ed1b6ad0ef', 'acade111-0000-4000-8000-000000000001', '55a3ab68-eeaa-5e12-86a2-6273598484f5', 'LOST', 'Lost', 7, TRUE, '{}'::text[], '2022-01-04T09:00:00+08:00')
+  ('373f74b3-51ff-99d9-d30d-83c76ec3a56a', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'WON', 'Won', 1, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('75e8b03e-3507-886d-73af-3404bacb9ddd', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'TRAINER_CONFIRMED', 'Trainer confirmed', 2, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('b527c150-ba17-a790-12fb-acc8afd6665a', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'SCHEDULED', 'Scheduled', 3, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('c4eae41d-f4d8-ed21-b47d-38787f8c74ae', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'REGISTERED', 'Registered', 4, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('f9bbc905-53fa-da47-0903-f4e9b6b7340a', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'DELIVERED', 'Delivered', 5, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('52459c66-b37b-7af8-2706-5c2033c97c0c', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'ATTENDANCE_LOCKED', 'Attendance locked', 6, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('37310240-c006-f409-c3d8-554b1c6bdde3', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'HRDC_CLAIM', 'HRDC claim', 7, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('0ec4d10c-6f91-bb36-357e-85b4840c417f', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'INVOICED', 'Invoiced', 8, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('2eb8e328-57d0-e1a9-2965-02ffa5401866', 'acade111-0000-4000-8000-000000000001', '3e97773b-effa-398c-2509-d5a19388c3c3', 'PAID', 'Paid', 9, TRUE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('f6020e09-abd2-bedb-0582-9e95ec3a79de', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'NEW', 'New', 1, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('b2253c79-438d-c8ca-95f8-3fa762b999dc', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'QUALIFYING', 'Qualifying', 2, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('69e9ac2a-7ced-3a52-aeec-74659d1b113d', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'TNA_SENT', 'TNA sent', 3, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('faa55a15-0102-7d5a-28e9-e829acb8d04c', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'PROPOSAL_SENT', 'Proposal sent', 4, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('dd26c806-16ce-adf5-0c67-68eb27db103d', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'NEGOTIATION', 'Negotiation', 5, FALSE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('361edf63-dc3f-59bd-2a07-27e5bc04489d', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'WON', 'Won', 6, TRUE, '{}'::text[], '2022-01-04T09:00:00+08:00'),
+  ('7e4ce44a-418e-6d95-5882-e7eb8d412d05', 'acade111-0000-4000-8000-000000000001', '095ef670-c9a6-9036-477e-4c4668fbced0', 'LOST', 'Lost', 7, TRUE, '{}'::text[], '2022-01-04T09:00:00+08:00')
 ON CONFLICT (tenant_id, pipeline_id, step_key) DO UPDATE SET
   id = EXCLUDED.id,
   label = EXCLUDED.label,

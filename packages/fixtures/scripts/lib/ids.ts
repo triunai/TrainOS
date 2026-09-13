@@ -103,6 +103,42 @@ export const uuidFor = (key: string): string => {
   return value;
 };
 
+/**
+ * The agreed cross-lane derivation for pipeline configuration ids.
+ *
+ * `md5(tenant_id::text || name)::uuid`, which is what the 018 lane's stage seed
+ * computes in SQL, so both packs produce the same id for the same row and either
+ * may write it. Ruled by the lead 2026-09-13.
+ *
+ * The ruling as first written was `uuid_generate_v5(tenant_id, 'pipeline:' ||
+ * stage_key)` with md5 as a fallback where `uuid-ossp` is absent. Two things
+ * about that had to change, and both were measured rather than reasoned:
+ *
+ * 1. **The two forms are different ids.** A rule that picks one per database
+ *    produces one set of ids on the shim and a different set on the hosted
+ *    project, which is the exact failure the determinism is for. `uuid-ossp` is
+ *    not installed by 001-017 — 001 installs pgcrypto, citext, btree_gist,
+ *    pg_trgm, pg_cron, pg_net and vector — so md5 is the form that actually runs
+ *    everywhere, and it is now the form, not the fallback.
+ * 2. **`'pipeline:' || stage_key` collides.** `WON` is a stage of BOTH the
+ *    ENGAGEMENT pipeline (position 1) and the OPPORTUNITY pipeline (position 6).
+ *    `core.pipeline_steps` allows that — its uniqueness is
+ *    `(tenant_id, pipeline_id, step_key)` — so the two rows are legitimate and
+ *    the shared id is a primary key violation on the second insert. The name
+ *    therefore carries the pipeline object as well.
+ *
+ * Note that this is a bare md5, not a UUIDv5: no version or variant nibble is
+ * set, because `md5(...)::uuid` in Postgres sets none either and the two sides
+ * must agree byte for byte.
+ */
+export const pipelineUuid = (name: string): string =>
+  formatUuid(createHash("md5").update(`${TENANT_UUID}${name}`, "utf8").digest());
+
+/** The name half of `pipelineUuid` for a pipeline row and for one of its steps. */
+export const pipelineName = (object: string): string => `pipeline:${object}`;
+export const pipelineStepName = (object: string, stepKey: string): string =>
+  `pipeline:${object}:${stepKey}`;
+
 /** A stable key for a row the fixture world identifies only by position. */
 export const childKey = (parent: string, kind: string, discriminator: string | number): string =>
   `${parent}::${kind}::${discriminator}`;

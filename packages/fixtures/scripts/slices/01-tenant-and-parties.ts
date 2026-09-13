@@ -7,7 +7,14 @@
  */
 
 import * as fx from "../../src/data/index.ts";
-import { TENANT_UUID, childKey, uuidFor } from "../lib/ids.ts";
+import {
+  TENANT_UUID,
+  childKey,
+  pipelineName,
+  pipelineStepName,
+  pipelineUuid,
+  uuidFor,
+} from "../lib/ids.ts";
 import { refUuid } from "../lib/refs.ts";
 import type { Slice } from "../lib/slice.ts";
 import { arr, banner, block, j, lit, upsert } from "../lib/sql.ts";
@@ -299,9 +306,14 @@ const pipelinesSql = (): string =>
     table: "core.pipelines",
     conflict: ["id"],
     frozen: ["ref", "created_at"],
-    note: "Stage names and order are configuration, never hardcoded — this is the row the UI renders from.",
+    note: [
+      "Stage names and order are configuration, never hardcoded: this is the row the",
+      "-- UI renders from. Ids are md5(tenant_id::text || 'pipeline:' || object)::uuid,",
+      "-- the derivation the 018 lane's stage seed computes in SQL, so either pack may",
+      "-- write these rows and both produce the same id. See lib/ids.ts.",
+    ].join("\n"),
     rows: storablePipelines().map((pipeline, index) => ({
-      id: uuidFor(`pipeline:${pipeline.object}`),
+      id: pipelineUuid(pipelineName(pipeline.object)),
       tenant_id: TENANT_UUID,
       ref: `PIP-${String(index + 1).padStart(4, "0")}`,
       object: pipeline.object,
@@ -319,12 +331,21 @@ const pipelineStepsSql = (): string =>
     table: "core.pipeline_steps",
     conflict: ["tenant_id", "pipeline_id", "step_key"],
     frozen: ["created_at"],
-    note: "`outcome` (WON/LOST on the two terminal opportunity stages) has no column yet — see the PR's schema-gap list.",
+    note: [
+      "Ids are md5(tenant_id::text || 'pipeline:' || object || ':' || step_key)::uuid.",
+      "-- The object is in the name because WON is a stage of BOTH pipelines, and",
+      "-- core.pipeline_steps is unique on (tenant_id, pipeline_id, step_key) rather",
+      "-- than on step_key alone, so the two rows are legitimate and a shared id would",
+      "-- be a primary key violation. See lib/ids.ts.",
+      "--",
+      "-- `outcome` (WON/LOST on the two terminal opportunity stages) has no column",
+      "-- yet -- see the PR's schema-gap list.",
+    ].join("\n"),
     rows: storablePipelines().flatMap((pipeline) =>
       pipeline.stages.map((stage) => ({
-        id: uuidFor(childKey(`pipeline:${pipeline.object}`, "step", stage.key)),
+        id: pipelineUuid(pipelineStepName(pipeline.object, stage.key)),
         tenant_id: TENANT_UUID,
-        pipeline_id: uuidFor(`pipeline:${pipeline.object}`),
+        pipeline_id: pipelineUuid(pipelineName(pipeline.object)),
         step_key: stage.key,
         label: stage.label,
         position: stage.order,

@@ -175,6 +175,36 @@ BEGIN
     RAISE EXCEPTION 'T2e FAIL: the ENGAGEMENT pipeline has % steps, expected 9 (WON..PAID)', v_count;
   END IF;
 
+  -- Pipeline configuration ids are a CONTRACT WITH ANOTHER PACK, not an internal
+  -- detail. 018's stage seed computes the same md5 expression in SQL so that
+  -- either pack may write these rows; if the two derivations ever diverge, the
+  -- ENGAGEMENT steps get two sets of ids and this seed's 90
+  -- core.engagement_step_states rows fail their composite foreign key. Asserted
+  -- against the SQL form rather than against literals, because a literal would
+  -- agree with itself while disagreeing with 018.
+  SELECT count(*) INTO v_count
+    FROM core.pipelines
+   WHERE tenant_id = v_tenant
+     AND id IS DISTINCT FROM md5(tenant_id::text || 'pipeline:' || object)::uuid;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION
+      'T2k FAIL: % pipeline(s) do not carry the agreed derived id', v_count;
+  END IF;
+
+  SELECT count(*) INTO v_count
+    FROM core.pipeline_steps AS step
+    JOIN core.pipelines AS pipeline
+      ON pipeline.tenant_id = step.tenant_id AND pipeline.id = step.pipeline_id
+   WHERE step.tenant_id = v_tenant
+     AND step.id IS DISTINCT FROM
+         md5(step.tenant_id::text || 'pipeline:' || pipeline.object || ':' || step.step_key)::uuid;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION
+      'T2l FAIL: % pipeline step(s) do not carry the agreed derived id. 018 computes '
+      'md5(tenant_id::text || ''pipeline:'' || object || '':'' || step_key)::uuid for '
+      'the same rows, and engagement_step_states points at whichever set exists.', v_count;
+  END IF;
+
   -- Every prefix core.assign_ref can be handed. A missing one raises
   -- foreign_key_violation on the first insert that does not name its own ref.
   -- These rows are 016's, not the seed's: app.seed_ref_formats() derives one per
@@ -225,7 +255,7 @@ BEGIN
       'states real TDF dates, drop the convention and this assertion with it.', v_count;
   END IF;
 
-  RAISE NOTICE 'T2 PASS - 6 organisations, 6 contacts, 5 programmes, 4 trainers, 9 pipeline steps, 0 refs burned, 3 unlapsed TDF accreditations.';
+  RAISE NOTICE 'T2 PASS - 6 organisations, 6 contacts, 5 programmes, 4 trainers, 9 pipeline steps, 0 refs burned, 3 unlapsed TDF accreditations, 18 derived pipeline ids.';
 END;
 $t2$;
 
