@@ -3,7 +3,7 @@ import type { RunStep, RunStepStatus } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { formatDuration } from "./format";
 import { MoneyText } from "./Money";
-import { FOCUS_RING, MONO_LABEL } from "./tokens";
+import { FOCUS_RING, SECTION_LABEL } from "./tokens";
 
 /**
  * One tool call in a run's log. Kit.dc.html §05 (inside the agent-run card) and
@@ -60,7 +60,7 @@ export function RunStepRow({ step, expandable, className }: RunStepRowProps) {
         ) : null}
       </span>
 
-      <span className="shrink-0 whitespace-nowrap text-right font-mono text-[11px] text-ink-muted">
+      <span className="shrink-0 whitespace-nowrap text-right tabular-nums text-[11px] text-ink-muted">
         {formatDuration(step.durationMs)}
         {step.cost ? (
           <>
@@ -120,7 +120,7 @@ export function RunStepRow({ step, expandable, className }: RunStepRowProps) {
 function Payload({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className={MONO_LABEL}>{label}</span>
+      <span className={SECTION_LABEL}>{label}</span>
       <pre className="overflow-x-auto rounded-control border border-border bg-card p-2 font-mono text-[11px] leading-relaxed text-ink-secondary">
         {JSON.stringify(value, null, 2)}
       </pre>

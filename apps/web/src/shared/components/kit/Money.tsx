@@ -29,7 +29,7 @@ export interface MoneyTextProps {
 export function MoneyText({ value, compact, dashWhenZero, className }: MoneyTextProps) {
   if (dashWhenZero && value.amount === 0) {
     return (
-      <span className={cn("font-mono tabular-nums text-ink-muted", className)} aria-label="none">
+      <span className={cn("tabular-nums text-ink-muted", className)} aria-label="none">
         —
       </span>
     );
@@ -40,7 +40,7 @@ export function MoneyText({ value, compact, dashWhenZero, className }: MoneyText
       /* The exact amount is always available even when the display is compact,
          so a rounded metric never hides the sen from a reader who needs them. */
       title={compact ? formatMoney(value) : undefined}
-      className={cn("font-mono tabular-nums", className)}
+      className={cn("tabular-nums", className)}
     >
       {formatMoney(value, compact)}
     </span>

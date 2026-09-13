@@ -48,7 +48,7 @@ export interface CommandPaletteProps {
 }
 
 const HEADING =
-  "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-ink-muted";
+  "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[12px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-muted";
 
 export function CommandPalette({
   open,
@@ -165,7 +165,7 @@ export function CommandPalette({
                     {AI_GLYPH}
                   </span>
                   <span className="min-w-0 flex-1 truncate">Ask TrainOS about “{query}”</span>
-                  <span className="shrink-0 rounded-pill border border-primary-border bg-ai-tint px-1.5 py-px font-mono text-[10px] text-primary-hover">
+                  <span className="shrink-0 rounded-pill border border-primary-border bg-ai-tint px-1.5 py-px text-[10px] font-medium text-primary-hover">
                     AI
                   </span>
                 </CommandItem>

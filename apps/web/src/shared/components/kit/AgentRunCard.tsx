@@ -7,7 +7,7 @@ import { StatusChip } from "./StatusChip";
 import { RUN_TONE } from "./statusTone";
 import { TierChip } from "./TierChip";
 import { RunStepRow } from "./RunStepRow";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The agent-run card. Kit.dc.html §05 "Agent-run card (AutomationRun)".
@@ -109,7 +109,7 @@ export function AgentRunCard({
 function Metric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <dt className={MONO_LABEL}>{label}</dt>
+      <dt className={SECTION_LABEL}>{label}</dt>
       <dd className="truncate text-[13px] text-ink">{value}</dd>
     </div>
   );

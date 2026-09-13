@@ -1,7 +1,7 @@
 import type { AutonomyLevel } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { AutonomyChip } from "./AutonomyChip";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The escalation ladder. §3.9's REPORT.md addition: "vertical dot list showing
@@ -78,11 +78,11 @@ export function EscalationLadder({
               )}
             >
               {handover ? (
-                <span className={cn(MONO_LABEL, "text-ink-secondary")}>A human takes over</span>
+                <span className={cn(SECTION_LABEL, "text-ink-secondary")}>A human takes over</span>
               ) : null}
 
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-[11px] text-ink-muted">{rung.when}</span>
+                <span className="tabular-nums text-[11px] text-ink-muted">{rung.when}</span>
                 <span
                   className={cn(
                     "text-[13px]",

@@ -4,7 +4,7 @@ import { cn } from "@/shared/lib/utils";
 import { MiniBar, type BarState } from "./Bar";
 import { formatPeriod } from "./format";
 import { MoneyText } from "./Money";
-import { FOCUS_RING, MONO_LABEL } from "./tokens";
+import { FOCUS_RING, SECTION_LABEL } from "./tokens";
 
 /**
  * The MetricStrip. Kit.dc.html §09, items 4–10.
@@ -122,12 +122,13 @@ export function MetricCell({
     <>
       <span
         className={cn(
-          MONO_LABEL,
+          SECTION_LABEL,
           "whitespace-nowrap",
           /* On the accent band the muted step cannot be a lighter ink or a
-             lower opacity — both fail AA at 11px over #1F5BFF. Full white, and
-             the caption/value hierarchy is carried by the size, weight and
-             tracking MONO_LABEL already sets. */
+             lower opacity — both fail AA at this size over #1F5BFF. Full
+             white, and the caption/value hierarchy is carried by the size and
+             weight difference SECTION_LABEL leaves against the value below:
+             12px medium muted under 16px semibold ink. */
           onAccent && "text-[rgb(var(--on-accent))]",
         )}
       >
@@ -140,7 +141,11 @@ export function MetricCell({
         ) : null}
         <span
           className={cn(
-            "whitespace-nowrap font-mono text-[16px] font-semibold tracking-[-0.01em] text-ink",
+            /* Brief §1: a number aligns with `tabular-nums`, not with a
+               monospace face. The value was `font-mono` purely so a column of
+               metric cells lined up; tabular figures in the UI font line up
+               the same way and keep the app in one voice. */
+            "whitespace-nowrap text-[16px] font-semibold tabular-nums tracking-[-0.01em] text-ink",
             onAccent && "text-[rgb(var(--on-accent))]",
           )}
         >

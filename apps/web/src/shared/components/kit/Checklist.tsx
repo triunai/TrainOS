@@ -77,7 +77,7 @@ export function CompletenessBar({
     <div className={cn("flex flex-col gap-1.5", className)}>
       <div className="flex items-baseline justify-between gap-2 text-[12px]">
         <span className="text-ink-secondary">{label}</span>
-        <span className="font-mono text-ink-muted">{pct}%</span>
+        <span className="tabular-nums text-ink-muted">{pct}%</span>
       </div>
       <MiniBar value={value} label={label} valueText={`${pct}%`} />
     </div>
@@ -123,7 +123,7 @@ export function DocumentChecklistRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] text-ink">{document.label ?? humanise(document.type)}</p>
         {document.meta ? (
-          <p className="truncate font-mono text-[11px] text-ink-muted">{document.meta}</p>
+          <p className="truncate text-[11px] text-ink-muted">{document.meta}</p>
         ) : null}
       </div>
 

@@ -1,7 +1,7 @@
 import type { Provenance } from "@trainos/contract";
 import { cn } from "@/shared/lib/utils";
 import { DateText } from "./DateText";
-import { MONO_LABEL } from "./tokens";
+import { SECTION_LABEL } from "./tokens";
 
 /**
  * The canonical provenance block. Kit.dc.html §05, verbatim: two lines, six
@@ -137,7 +137,7 @@ export function ProvenancePanel(props: ProvenanceBlockProps & { title?: string }
   const { title = "Provenance", ...rest } = props;
   return (
     <section className="flex flex-col gap-2 rounded-control border border-border bg-ai-tint p-3">
-      <h3 className={MONO_LABEL}>{title}</h3>
+      <h3 className={SECTION_LABEL}>{title}</h3>
       <ProvenanceBlock {...rest} />
     </section>
   );

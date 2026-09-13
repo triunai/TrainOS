@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 import { EmptyState } from "@/shared/components/states";
-import { FOCUS_RING } from "./tokens";
+import { FOCUS_RING, SELECTED_TINT } from "./tokens";
 import {
   WEEKDAY_LABELS,
   calendarDays,
@@ -202,7 +202,7 @@ function EntryButton({
   const shape = cn(
     "w-full rounded-control px-2 py-1.5 text-left transition-colors",
     selected
-      ? "bg-ai-tint-2 shadow-[inset_2px_0_0_rgb(var(--primary))]"
+      ? cn(SELECTED_TINT, "shadow-[inset_2px_0_0_rgb(var(--primary))]")
       : "bg-surface hover:bg-surface-hover",
   );
 
@@ -292,7 +292,7 @@ export function CalendarList({
                   className={cn(
                     "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
                     entry.id === selectedId
-                      ? "bg-ai-tint-2 shadow-[inset_2px_0_0_rgb(var(--primary))]"
+                      ? cn(SELECTED_TINT, "shadow-[inset_2px_0_0_rgb(var(--primary))]")
                       : "hover:bg-surface-hover",
                     FOCUS_RING,
                   )}
