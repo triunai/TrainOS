@@ -67,6 +67,15 @@ export type {
 export { SupabaseRpcClient, createRpcClient, unwrapEnvelope } from "./rpcClient";
 export { apiMode, isSupabaseConfigured } from "./supabase";
 
+/** The hosted demo's per-browser memory. Switched on from `main.tsx` in fixtures mode only. */
+export {
+  enableDemoPersistence,
+  isDemoPersistenceEnabled,
+  readDemoRole,
+  resetDemoData,
+  writeDemoRole,
+} from "./demoPersistence";
+
 export {
   ApiErrorException,
   domainErrorFromEnvelope,

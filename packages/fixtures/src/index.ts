@@ -51,6 +51,8 @@ export {
 } from "./client/policy";
 export { byIdOrRef, createStore } from "./client/store";
 export type { FixtureStore, IdempotencyRecord } from "./client/store";
+export { DEMO_STORAGE_KEY, currentSeedFingerprint, persistFixtureClient } from "./client/persistence";
+export type { FixturePersistence, PersistFixtureClientOptions, StorageLike } from "./client/persistence";
 
 import { FixtureClient, type FixtureClientConfig } from "./client/FixtureClient";
 
