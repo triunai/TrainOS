@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import type { AuthPort } from "@/shared/api";
 import {
@@ -257,9 +257,74 @@ describe("return paths", () => {
     expect(safeReturnPath(null)).toBeNull();
   });
 
+  /* A browser's URL parser strips tab, newline and carriage return before it
+     resolves, so `/\t/evil.example` is `//evil.example` to it: another origin,
+     and a SecurityError from `history.replaceState`. */
+  it.each([
+    "/\t/evil.example",
+    "/\n/evil.example",
+    "/\r/evil.example",
+    "/\t\\evil.example",
+    "/approvals\n",
+    " /approvals",
+    "  //evil.example",
+    "javascript:alert(1)",
+    "/%2F/../\t/evil.example",
+  ])("refuses a control character, leading space or scheme: %j", (raw) => {
+    expect(safeReturnPath(raw)).toBeNull();
+  });
+
+  it("keeps an encoded control character, which stays a same-origin path", () => {
+    expect(safeReturnPath("/%09/evil.example")).toBe("/%09/evil.example");
+  });
+
+  it("refuses a path that normalises onto the auth routes", () => {
+    expect(safeReturnPath("/approvals/../sign-in")).toBeNull();
+  });
+
   it("drops a pointless next from the guard's redirect", () => {
     expect(signInHref("/")).toBe(SIGN_IN_PATH);
     expect(signInHref("//evil.example")).toBe(SIGN_IN_PATH);
+  });
+});
+
+describe("a crafted next in a real browser history", () => {
+  beforeEach(() => vi.stubEnv("VITE_API_MODE", "supabase"));
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  /* MemoryRouter never calls `history`, so only BrowserRouter shows what a
+     cross-origin `next` does to the page. */
+  function renderInBrowser(url: string) {
+    window.history.replaceState(null, "", url);
+    return render(
+      <QueryClientProvider client={new QueryClient()}>
+        <BrowserRouter>
+          <AuthProvider port={fakeAuth(ALEX)}>
+            <Routes>
+              <Route path={SIGN_IN_PATH} element={<SignInPage />} />
+              <Route path={AUTH_CALLBACK_PATH} element={<AuthCallbackPage />} />
+              <Route path="/dashboard" element={<p>Dashboard</p>} />
+              <Route path="*" element={<p>Somewhere else</p>} />
+            </Routes>
+          </AuthProvider>
+        </BrowserRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("sends a signed-in reader to the dashboard instead of a blank page", async () => {
+    const origin = window.location.origin;
+    renderInBrowser(`${SIGN_IN_PATH}?next=${encodeURIComponent("/\t/evil.example")}`);
+    expect(await screen.findByText("Dashboard")).toBeVisible();
+    expect(window.location.origin).toBe(origin);
+    expect(window.location.pathname).toBe("/dashboard");
+  });
+
+  it("finishes a callback whose remembered path was crafted, on the dashboard", async () => {
+    window.sessionStorage.setItem("trainos.auth.returnTo", "/\t/evil.example");
+    renderInBrowser(AUTH_CALLBACK_PATH);
+    expect(await screen.findByText("Dashboard")).toBeVisible();
+    expect(window.location.pathname).toBe("/dashboard");
   });
 });
 

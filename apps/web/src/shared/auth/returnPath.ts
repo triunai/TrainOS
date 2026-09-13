@@ -20,15 +20,29 @@ const STORAGE_KEY = "trainos.auth.returnTo";
  *
  * `next` is attacker-controlled — anyone can mail a sign-in link — so only a
  * same-origin absolute PATH is accepted. `//evil.example` and `/\evil.example`
- * are protocol-relative to a browser and would leave the app; the two auth
+ * are protocol-relative to a browser and would leave the app; so is
+ * `/\t/evil.example`, because the URL parser strips tab, newline and carriage
+ * return before resolving. Rather than enumerate those tricks, any control or
+ * whitespace character is refused and the rest is resolved exactly as the
+ * browser will resolve it, against this origin: anything that lands on another
+ * origin is refused, and what comes back is the normalised path. The two auth
  * paths themselves would loop.
  */
 export function safeReturnPath(raw: string | null | undefined): string | null {
   if (typeof raw !== "string" || !raw.startsWith("/")) return null;
   if (raw.startsWith("//") || raw.startsWith("/\\")) return null;
-  const pathname = raw.split(/[?#]/, 1)[0];
-  if (pathname === SIGN_IN_PATH || pathname === AUTH_CALLBACK_PATH) return null;
-  return raw;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0020\u007F-\u009F]/.test(raw)) return null;
+
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, window.location.origin);
+  } catch {
+    return null;
+  }
+  if (resolved.origin !== window.location.origin) return null;
+  if (resolved.pathname === SIGN_IN_PATH || resolved.pathname === AUTH_CALLBACK_PATH) return null;
+  return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }
 
 /** The guard's redirect: the sign-in page, carrying where the reader was. */
