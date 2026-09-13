@@ -30,7 +30,7 @@ import {
   PartialDataBanner,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { readableMessage, toApiError } from "@/shared/api";
+import { isNotDeployed, notDeployedState, readableMessage, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
   type ActionPayload,
@@ -93,6 +93,12 @@ export function ProposalBuilderPage() {
   const approvalQuery = useApproval(queuedRef);
 
   if (proposalQuery.isPending) return <LoadingState label="Loading the proposal" />;
+
+  /* Ahead of the error branch: a missing RPC is a fact about the environment,
+     and "Try again" over one is a button that can never work. */
+  if (isNotDeployed(proposalQuery.error)) {
+    return <EmptyState {...notDeployedState("This proposal")} />;
+  }
 
   if (proposalQuery.isError || !proposal) {
     return (

@@ -25,7 +25,13 @@ import {
   type FilterChipModel,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { toApiError, useOpportunityIndex, useOrganisationDirectory } from "@/shared/api";
+import {
+  isNotDeployed,
+  notDeployedState,
+  toApiError,
+  useOpportunityIndex,
+  useOrganisationDirectory,
+} from "@/shared/api";
 import { useProposals } from "./api";
 import { PROPOSAL_BUILDER_PATH } from "./paths";
 
@@ -247,7 +253,9 @@ export function ProposalsListPage() {
 
         {proposals.isPending ? <LoadingState rows={6} label="Loading the proposals" /> : null}
 
-        {proposals.isError ? (
+        {isNotDeployed(proposals.error) ? (
+          <EmptyState {...notDeployedState("The proposal list")} />
+        ) : proposals.isError ? (
           <ErrorState
             title="The proposals could not be loaded"
             error={toApiError(proposals.error)}

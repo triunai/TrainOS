@@ -37,7 +37,9 @@ import type {
   Programme,
   ProgrammeDelivery,
   Proposal,
+  ProposalSectionRegenerateResponse,
   Quotation,
+  RateCard,
   RuleChangeSet,
   SavedView,
   Template,
@@ -54,6 +56,8 @@ import type {
   DecideInput,
   ProposalInput,
   QuotationInput,
+  SectionInput,
+  SectionWriteInput,
   TrainOsClient,
 } from "./client";
 import { fail, ok, transportError, type ApiError, type DomainError, type Result } from "./errors";
@@ -354,9 +358,15 @@ export const RPC_NAMES = {
     "get_tna",
     "get_tna_recommendations",
     "create_proposal",
+    "list_proposals",
     "get_proposal",
+    "add_proposal_section",
+    "put_proposal_section",
+    "regenerate_proposal_section",
+    "list_quotations",
     "get_quotation",
     "put_quotation",
+    "get_rate_card",
     "list_approvals",
     "get_approval",
     "get_policy",
@@ -524,12 +534,66 @@ export class SupabaseRpcClient implements TrainOsClient {
     });
   }
 
+  listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>> {
+    return this.call<ListResponse<Proposal>>("list_proposals", pageArgs(query));
+  }
+
   getProposal(id: string): Promise<Result<Proposal>> {
     return this.call<Proposal>("get_proposal", { p_id: id });
   }
 
+  addSection(id: string, input: SectionInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("add_proposal_section", {
+      p_id: id,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  putSection(id: string, n: number, input: SectionWriteInput): Promise<Result<Proposal>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<Proposal>("put_proposal_section", {
+      p_id: id,
+      p_n: n,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  /**
+   * A fresh generation, and the run that produced it.
+   *
+   * Not idempotent by key on purpose: a second "Regenerate" is a second
+   * request for a new draft, and replaying the first response would hand the
+   * reader the text they just rejected.
+   */
+  regenerateSection(id: string, n: number): Promise<Result<ProposalSectionRegenerateResponse>> {
+    return this.call<ProposalSectionRegenerateResponse>("regenerate_proposal_section", {
+      p_id: id,
+      p_n: n,
+    });
+  }
+
+  /**
+   * §6 every quotation, priced.
+   *
+   * An RPC rather than a §8 view read, and not because of the page envelope
+   * alone: `quotation:read` is withheld from OPS, and the refusal has to be
+   * the server's. A view with RLS on it answers an unauthorised reader with an
+   * EMPTY LIST, which the screen would draw as "no quotations" — a refusal
+   * rendered as a fact about the data.
+   */
+  listQuotations(query: PageRequest): Promise<Result<ListResponse<Quotation>>> {
+    return this.call<ListResponse<Quotation>>("list_quotations", pageArgs(query));
+  }
+
   getQuotation(id: string): Promise<Result<Quotation>> {
     return this.call<Quotation>("get_quotation", { p_id: id });
+  }
+
+  rateCard(): Promise<Result<RateCard>> {
+    return this.call<RateCard>("get_rate_card");
   }
 
   putQuotation(id: string, input: QuotationInput): Promise<Result<Quotation>> {

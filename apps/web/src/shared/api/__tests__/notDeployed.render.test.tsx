@@ -7,6 +7,7 @@ import type { Me } from "@trainos/contract";
 import { BreadcrumbProvider } from "@/shared/components/layout";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { EnquiryInboxPage } from "@/features/enquiries";
+import { ProposalsListPage } from "@/features/proposals";
 
 import { createRpcApiClient } from "../apiClient";
 import { ApiProvider } from "../useApi";
@@ -76,6 +77,13 @@ describe("an undeployed `core` schema reads as a state, not as a failure", () =>
     /* No alert, and nothing to click: a retry cannot change a schema that is
        not exposed, and offering one trains people to click through facts. */
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("M07-S02 · the proposal list says the list is not available yet", async () => {
+    renderWithRpcClient(<ProposalsListPage />, "/sales/proposals");
+
+    expect(await screen.findByText(/The proposal list is not available here yet/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

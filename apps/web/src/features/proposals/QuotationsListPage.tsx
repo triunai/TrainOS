@@ -24,7 +24,7 @@ import {
   type FilterChipModel,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { toApiError } from "@/shared/api";
+import { isNotDeployed, notDeployedState, toApiError } from "@/shared/api";
 import { useQuotations } from "./api";
 import { COSTING_WORKSHEET_PATH } from "./paths";
 
@@ -252,7 +252,9 @@ export function QuotationsListPage() {
             and `ErrorState` shows the server's own sentence for a domain error
             — retry is offered only where retrying could help, which R2 says a
             refusal never is. */}
-        {quotations.isError ? (
+        {isNotDeployed(quotations.error) ? (
+          <EmptyState {...notDeployedState("The quotation list")} />
+        ) : quotations.isError ? (
           <ErrorState
             title="The quotations could not be loaded"
             error={toApiError(quotations.error)}

@@ -44,9 +44,15 @@ export { createRpcApiClient } from "./apiClient";
  * `resetStore` is part of the same surface: the fixture store is a mutable
  * singleton, so a test that decides an approval leaves it decided for the next
  * one.
+ *
+ * `ContractError` and `isContractError` come through here for a sharper reason
+ * than tidiness. They are the CONTRACT's refusal, not the fixture client's, and
+ * a module that imports them from the fixture package is a module that believes
+ * a refusal is something the oracle does. It is not: `core.put_quotation`
+ * raises the same refusal as SQLSTATE `TRNOS`, and `toApiError` narrows both.
  */
 export type { FixtureClient } from "@trainos/fixtures";
-export { fixtureClient, resetStore } from "@trainos/fixtures";
+export { ContractError, fixtureClient, isContractError, resetStore } from "@trainos/fixtures";
 
 /** The typed RPC surface and its Supabase implementation. */
 export type {
