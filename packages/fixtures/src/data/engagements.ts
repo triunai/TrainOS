@@ -19,6 +19,7 @@ import {
   ENGAGEMENT_AFFECTED_1,
   ENGAGEMENT_AFFECTED_2,
   ENGAGEMENT_AURORA,
+  ENGAGEMENT_AURORA_IN_FLIGHT,
   ENGAGEMENT_BLOCKED,
   INVOICE_AURORA,
   OPPORTUNITY_AURORA,
@@ -32,6 +33,7 @@ import {
   SIGNATURE_ATTENDANCE,
   TRAINER_FARAH,
   TRAINER_FARAH_REF,
+  USER_AMIRAH,
   USER_SITI,
 } from "@trainos/contract";
 import { ORG_KENANGA, ORG_MERIDIAN, ORG_SUTERA, OPPORTUNITY_MERIDIAN } from "./organisations";
@@ -505,7 +507,59 @@ export const attendanceSheets: Record<string, AttendanceSheet> = {
 
 /** §8 `GET /v1/engagements` and `GET /v1/engagements/{id}`. */
 export const engagements: Engagement[] = [
+
+  /**
+   * The one Aurora deal that has NOT finished, and it exists so the deal-chain
+   * stepper has something to draw.
+   *
+   * Organisation 360 walks the organisation's most recent engagement, and every
+   * Aurora engagement had delivered or been cancelled — so the header stepper
+   * rendered six identical DONE ticks with no dates and no sublines, while
+   * M04-S02 draws dates on the done stages and a stage waiting on a named
+   * person. A stepper where every state is the same state is a component
+   * proving only that it renders.
+   *
+   * NOT pointed at APV-2026-0771. That approval is a proposal send for Aurora
+   * and looks like the obvious reference, but its target is PRO-2026-0184,
+   * whose opportunity OPP-0512 is WON and whose engagement ENG-0231 has
+   * already delivered. Citing it here would have made one pending approval
+   * appear to gate two deals, which is the pack's September-approval versus
+   * November-delivery contradiction (fixtures README, "What I could not
+   * verify") quietly spread rather than left where a reader can see it. The
+   * APPROVAL step names the approver the queue names and claims nothing more.
+   */
   {
+    ...entity(ENGAGEMENT_AURORA_IN_FLIGHT, "2026-09-08T10:20:00+08:00", "2026-09-12T16:05:00+08:00", actorFor(USER_AMIRAH)),
+    title: "Conflict to Collaboration — Aurora line leaders",
+    organisationRef: ORG_AURORA,
+    programmeRef: PROGRAMME_CONFLICT,
+    status: "PROPOSED",
+    venue: "Aurora HQ Shah Alam",
+    dates: ["2026-12-10", "2026-12-11"],
+    owner: actorFor(USER_AMIRAH),
+    value: myr(1480000),
+    metrics: {
+      participants: 0,
+      attended: 0,
+      attendanceRate: 0,
+      trainer: { ref: TRAINER_FARAH_REF, name: "Farah Aziz" },
+      claimCompleteness: 0,
+    },
+    lifecycle: [
+      { key: "WON", state: "PENDING" },
+      { key: "TRAINER_CONFIRMED", state: "PENDING" },
+      { key: "SCHEDULED", state: "PENDING" },
+      { key: "REGISTERED", state: "PENDING" },
+      { key: "DELIVERED", state: "PENDING" },
+      { key: "ATTENDANCE_LOCKED", state: "PENDING" },
+      { key: "HRDC_CLAIM", state: "PENDING" },
+      { key: "INVOICED", state: "PENDING" },
+      { key: "PAID", state: "PENDING" },
+    ],
+    checklist: [],
+    sessions: [],
+    ruleSetVersion: RULE_SET_2026_06_15,
+  },  {
     ...entity(ENGAGEMENT_AURORA, "2026-09-15T10:24:00+08:00", "2026-11-14T10:32:00+08:00", actorFor(USER_SITI)),
     title: "Leading Through Change",
     organisationRef: ORG_AURORA,

@@ -19,6 +19,7 @@ import {
   CONTACT_NURUL,
   CONTACT_RAVI,
   ENGAGEMENT_AURORA,
+  ENGAGEMENT_AURORA_IN_FLIGHT,
   ENGAGEMENT_BLOCKED,
   ENQUIRY_AURORA,
   HRDC_EMPLOYER_CODE,
@@ -258,6 +259,40 @@ export const contacts: Contact[] = [
 export const organisationRelations: Record<string, OrganisationRelations> = {
   [ORG_AURORA]: {
     engagements: [
+      /*
+       * FIRST, because Organisation 360's header stepper walks the most recent
+       * engagement and this is the only Aurora deal still moving. Everything
+       * below it has delivered or been cancelled, so the header used to draw
+       * six identical DONE ticks: no dates, no subline, nothing waiting on
+       * anybody. M04-S02 draws dates on the done stages and a stage held by a
+       * named person, and a stepper that only ever renders one state proves
+       * only that it renders.
+       *
+       * The chain is the §5 DEAL_CHAIN vocabulary, and it carries all three
+       * states the component distinguishes — done with the day it happened,
+       * one current stage waiting on a person, and the stages that cannot
+       * start until it clears.
+       *
+       * The APPROVAL note names Kelvin Tan because he is the approver the
+       * queue shows on Aurora's pending proposal send. It carries NO `ref`:
+       * APV-2026-0771 is that approval, but its target is PRO-2026-0184, whose
+       * opportunity is WON and whose engagement has already delivered. Citing
+       * it would make one pending approval appear to gate two deals.
+       */
+      {
+        ref: ENGAGEMENT_AURORA_IN_FLIGHT,
+        title: "Conflict to Collaboration — Aurora line leaders",
+        dates: "2026-12-10/2026-12-11",
+        value: myr(1480000),
+        lifecycle: [
+          { key: "ENQUIRY", state: "DONE", at: "2026-09-08" },
+          { key: "TNA", state: "DONE", at: "2026-09-10" },
+          { key: "PROPOSAL", state: "DONE", at: "2026-09-12" },
+          { key: "APPROVAL", state: "CURRENT", note: "Pending Kelvin Tan" },
+          { key: "SENT", state: "PENDING" },
+          { key: "DELIVERY", state: "PENDING" },
+        ],
+      },
       {
         ref: ENGAGEMENT_AURORA,
         title: "Leading Through Change",

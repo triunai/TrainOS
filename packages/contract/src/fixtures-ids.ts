@@ -103,6 +103,15 @@ export const APPROVAL_AURORA = 'APV-2026-0771';
 export const ENGAGEMENT_AURORA = 'ENG-0231';
 /** §5 the earlier engagement whose packet is blocked. */
 export const ENGAGEMENT_BLOCKED = 'ENG-0198';
+/**
+ * §5 the one Aurora deal still in flight.
+ *
+ * Named here rather than in the fixture package because the organisation
+ * relations seed seeds the deal chain and the engagement seed seeds the
+ * record, and those two files already point one way — `engagements.ts` imports
+ * from `organisations.ts`, so the id cannot live in either without a cycle.
+ */
+export const ENGAGEMENT_AURORA_IN_FLIGHT = 'ENG-0259';
 /** §17 engagements affected by the 2027 lead-time change. */
 export const ENGAGEMENT_AFFECTED_1 = 'ENG-0244';
 export const ENGAGEMENT_AFFECTED_2 = 'ENG-0251';
@@ -230,6 +239,7 @@ export const FIXTURE_IDS = {
   QUOTATION_AURORA,
   APPROVAL_AURORA,
   ENGAGEMENT_AURORA,
+  ENGAGEMENT_AURORA_IN_FLIGHT,
   ENGAGEMENT_BLOCKED,
   ENGAGEMENT_AFFECTED_1,
   ENGAGEMENT_AFFECTED_2,

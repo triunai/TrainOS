@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import { createFixtureClient } from "../index";
 import { engagements } from "../data/engagements";
 import { programmes } from "../data/programmes";
+import { organisationRelations } from "../data/organisations";
 
 const api = createFixtureClient({ latencyMs: 0 });
 
@@ -212,5 +213,67 @@ describe("realised margin against the floor", () => {
       (engagement) => engagement.finance!.realisedMarginRate < floorFor(engagement.programmeRef),
     );
     expect(below.length).toBeLessThan(priced.length / 2);
+  });
+});
+
+/**
+ * The deal-chain stepper has something to draw.
+ *
+ * Organisation 360 walks an organisation's most recent engagement, and Aurora's
+ * were all delivered or cancelled — so the header stepper rendered six
+ * identical DONE ticks with no dates and no sublines. M04-S02 draws dates on
+ * the done stages and a stage held by a named person. A component that only
+ * ever renders one state is proving that it renders, not that it works.
+ */
+describe("served lifecycles", () => {
+  const served = Object.entries(organisationRelations).flatMap(([ref, relations]) =>
+    (relations.engagements ?? []).map((engagement) => ({ ref, engagement })),
+  );
+
+  it("has at least one chain that is not finished", () => {
+    const unfinished = served.filter(({ engagement }) =>
+      engagement.lifecycle.some((step) => step.state !== "DONE"),
+    );
+    expect(unfinished.length).toBeGreaterThan(0);
+  });
+
+  /* The header reads `engagements[0]`, so it is not enough that SOME chain in
+     the dataset has variety — the FIRST one for the organisation the artboard
+     draws has to. */
+  it("leads Aurora's relations with the deal that is still moving", () => {
+    const aurora = organisationRelations["ORG-0114"]?.engagements ?? [];
+    const [current] = aurora;
+    expect(current).toBeDefined();
+
+    const states = current!.lifecycle.map((step) => step.state);
+    expect(states).toContain("DONE");
+    expect(states).toContain("CURRENT");
+    expect(states).toContain("PENDING");
+  });
+
+  it("dates the stages that are done, and names who the current one waits on", () => {
+    const [current] = organisationRelations["ORG-0114"]?.engagements ?? [];
+    for (const step of current!.lifecycle) {
+      if (step.state === "DONE") {
+        expect(step.at, `${step.key} is done with no date`).toBeTruthy();
+      }
+      if (step.state === "CURRENT") {
+        expect(step.note, `${step.key} is current and waits on nobody`).toBeTruthy();
+      }
+    }
+  });
+
+  /* Nothing after a current stage can already be done, or the chain is not a
+     chain. */
+  it("puts no finished stage after an unfinished one", () => {
+    for (const { ref, engagement } of served) {
+      const firstOpen = engagement.lifecycle.findIndex(
+        (step) => step.state === "CURRENT" || step.state === "PENDING",
+      );
+      if (firstOpen === -1) continue;
+      for (const step of engagement.lifecycle.slice(firstOpen + 1)) {
+        expect(step.state, `${ref}/${engagement.ref}/${step.key}`).not.toBe("DONE");
+      }
+    }
   });
 });
