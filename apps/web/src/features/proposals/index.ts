@@ -6,6 +6,9 @@
 
 export { ProposalBuilderPage } from "./ProposalBuilderPage";
 export { CostingWorksheetPage } from "./CostingWorksheetPage";
+export { ProposalsListPage } from "./ProposalsListPage";
+export { QuotationsListPage } from "./QuotationsListPage";
+export { useProposals, useQuotations } from "./api";
 export {
   COSTING_WORKSHEET_PATH,
   COSTING_WORKSHEET_PATTERN,

@@ -88,6 +88,21 @@ export function floorBreachOf(error: unknown): FloorPriceBreachDetails | null {
 
 /* ---- Proposals (M07-S02) -------------------------------------------- */
 
+/**
+ * Every proposal, for the list half of M07-S02.
+ *
+ * `listProposals` is one of the three collections §13 never published and the
+ * client now carries. Nothing here filters: the facets the list needs — status,
+ * whether an agent drafted it — are not server filter fields.
+ */
+export function useProposals() {
+  const client = useApi();
+  return useQuery({
+    queryKey: queryKeys.proposals.lists(),
+    queryFn: () => client.listProposals(),
+  });
+}
+
 export function useProposal(id: string | undefined) {
   const client = useApi();
   return useQuery({
@@ -198,6 +213,24 @@ export function useApproval(ref: string | undefined) {
 }
 
 /* ---- Quotations (M07-S03) ------------------------------------------- */
+
+/**
+ * Every quotation, priced, for the list half of M07-S03.
+ *
+ * Gated as the record is: `quotation:read` is withheld from OPS, so this
+ * REFUSES for that role rather than returning an empty page. R2 — a refusal is
+ * the server answering, and the screen renders it as an answer.
+ */
+export function useQuotations() {
+  const client = useApi();
+  return useQuery({
+    queryKey: queryKeys.quotations.lists(),
+    queryFn: () => client.listQuotations(),
+    /* A `FORBIDDEN` is a fact about the request, not a transport hiccup.
+       Retrying it would spend three round trips arriving at the same sentence. */
+    retry: false,
+  });
+}
 
 export function useQuotation(id: string | undefined) {
   const client = useApi();
