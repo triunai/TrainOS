@@ -120,12 +120,9 @@ export function CostingWorksheetPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Ends at the list — the header's title already says which quotation. */}
       <Breadcrumb
-        items={[
-          { label: "Finance" },
-          { label: "Quotations", href: QUOTATIONS_LIST_PATH },
-          { label: quotation.ref },
-        ]}
+        items={[{ label: "Finance" }, { label: "Quotations", href: QUOTATIONS_LIST_PATH }]}
       />
 
       <ContentCard flush>

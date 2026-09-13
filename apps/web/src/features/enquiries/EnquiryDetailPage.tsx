@@ -62,11 +62,9 @@ export function EnquiryDetailPage() {
   const { enquiryId } = useParams<{ enquiryId: string }>();
   const navigate = useNavigate();
 
-  useBreadcrumb([
-    { label: "Sales" },
-    { label: "Enquiries", href: "/sales/enquiries" },
-    { label: enquiryId ?? "Enquiry" },
-  ]);
+  /* Ends at the list. RecordHeader carries `recordRef`, so a third crumb was
+     the record naming itself twice on one page. */
+  useBreadcrumb([{ label: "Sales" }, { label: "Enquiries", href: "/sales/enquiries" }]);
 
   const enquiry = useEnquiry(enquiryId);
   const organisation = useOrganisation(enquiry.data?.matchedOrganisation?.ref);

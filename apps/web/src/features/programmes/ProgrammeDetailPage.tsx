@@ -22,6 +22,7 @@ import {
   type Column,
   type MetricCellProps,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { isDomainError, readableMessage, toApiError } from "@/shared/api";
 import { useMe } from "@/shared/hooks/useMe";
 import {
@@ -79,6 +80,11 @@ function KeyValueRow({ label, value }: { label: ReactNode; value: ReactNode }) {
 /* ---- The screen ------------------------------------------------------ */
 
 export function ProgrammeDetailPage() {
+  /* BreadcrumbProvider exists so the TOP BAR owns the path: "a screen
+     rendering its own trail inside the content card puts the path in the wrong
+     place." This screen rendered a <Breadcrumb/> in its content. Ends at the
+     list, because RecordHeader below already renders the programme's name. */
+  useBreadcrumb([{ label: "Training" }, { label: "Programmes", href: PROGRAMMES_LIST_PATH }]);
   const { programmeRef } = useParams<{ programmeRef: string }>();
   const { me } = useMe();
 
@@ -115,14 +121,6 @@ export function ProgrammeDetailPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Breadcrumb
-        items={[
-          { label: "Training" },
-          { label: "Programmes", href: PROGRAMMES_LIST_PATH },
-          { label: programme.name },
-        ]}
-      />
-
       <ContentCard flush>
         <RecordHeader
           title={programme.name}

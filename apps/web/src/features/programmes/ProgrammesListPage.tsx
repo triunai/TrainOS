@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Programme } from "@trainos/contract";
 import {
-  Breadcrumb,
   ContentCard,
   DataTable,
   DensityToggle,
@@ -17,6 +16,7 @@ import {
   type Density,
   type FilterChipModel,
 } from "@/shared/components/kit";
+import { useBreadcrumb } from "@/shared/components/layout";
 import { toApiError } from "@/shared/api";
 import { useProgrammes } from "./api";
 import { hrdcSchemeLabel } from "./labels";
@@ -102,6 +102,9 @@ function FacetSelect({
 }
 
 export function ProgrammesListPage() {
+  /* Declared, not rendered. The crumbs here carried no href at all, so the
+     path was not even navigable — the top bar's trail is. */
+  useBreadcrumb([{ label: "Training" }, { label: "Programmes" }]);
   const navigate = useNavigate();
   const [facets, setFacets] = useState<Facets>(EMPTY_FACETS);
   const [density, setDensity] = useState<Density>("comfortable");
@@ -181,8 +184,6 @@ export function ProgrammesListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Breadcrumb items={[{ label: "Training" }, { label: "Programmes" }]} />
-
       <ContentCard
         title="Programmes"
         eyebrow="Catalogue"

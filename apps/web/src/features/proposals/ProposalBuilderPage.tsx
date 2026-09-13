@@ -135,13 +135,9 @@ export function ProposalBuilderPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Breadcrumb
-        items={[
-          { label: "Sales" },
-          { label: "Proposals", href: PROPOSALS_LIST_PATH },
-          { label: proposal.ref },
-        ]}
-      />
+      {/* Ends at the list. RecordHeader below renders the ref; the trail owns
+          the path and never the identity. */}
+      <Breadcrumb items={[{ label: "Sales" }, { label: "Proposals", href: PROPOSALS_LIST_PATH }]} />
 
       <ContentCard flush>
         <RecordHeader

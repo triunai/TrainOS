@@ -197,7 +197,7 @@ export function RunTraceScreen() {
     <div className="flex flex-col gap-4 pb-10">
       <div className="px-5 pt-4">
         <Breadcrumb
-          items={[{ label: "Automation" }, { label: "Runs", href: RUNS_PATH }, { label: run.ref }]}
+          items={[{ label: "Automation" }, { label: "Runs", href: RUNS_PATH }]}
           linkAs={({ href, children, className }) => (
             <Link to={href} className={className}>
               {children}

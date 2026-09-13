@@ -86,7 +86,6 @@ export function EngagementDetailPage() {
     { label: "Home", href: "/" },
     { label: "Training", href: "/training/engagements" },
     { label: "Engagements", href: "/training/engagements" },
-    { label: engagement.data?.ref ?? id },
   ]);
 
   if (engagement.isPending) return <LoadingState rows={8} label="Loading the engagement" />;

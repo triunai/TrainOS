@@ -32,10 +32,15 @@ describe("EngagementDetailPage · M09-S02", () => {
     expect(screen.getAllByText(new RegExp(ENGAGEMENT_AURORA)).length).toBeGreaterThan(0);
 
     /* The path is DECLARED here and rendered by the top bar; a trail inside
-       the content card would duplicate what the breadcrumb owns. */
+       the content card would duplicate what the breadcrumb owns.
+       It ends at the LIST. This used to assert "… › ENG-0231", which pinned the
+       duplication the test's own name forbids: RecordHeader carries recordRef,
+       so the ref in the trail was the record identifying itself a second time.
+       CLAUDE.md: RecordHeader owns the identity, the breadcrumb owns the path. */
     expect(await screen.findByTestId("breadcrumb-trail")).toHaveTextContent(
-      "Home › Training › Engagements › ENG-0231",
+      "Home › Training › Engagements",
     );
+    expect(screen.getByTestId("breadcrumb-trail")).not.toHaveTextContent(ENGAGEMENT_AURORA);
     expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).not.toBeInTheDocument();
 
     /* BLOCKED comes from the server's LifecycleStep[], never from a count. */

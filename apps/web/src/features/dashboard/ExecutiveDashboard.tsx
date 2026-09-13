@@ -109,7 +109,9 @@ function Section({
 export function ExecutiveDashboard() {
   const navigate = useNavigate();
 
-  useBreadcrumb([{ label: "Home", href: "/" }, { label: "Dashboard" }, { label: PERIOD_LABEL }]);
+  /* The period is the page's own <h1>. A third crumb repeating it is the same
+     duplication CLAUDE.md forbids between a breadcrumb and a RecordHeader. */
+  useBreadcrumb([{ label: "Home", href: "/" }, { label: "Dashboard" }]);
 
   const dashboard = useExecutiveDashboard(PERIOD);
   const chart = useProposalsVsWon(CHART_MONTHS);

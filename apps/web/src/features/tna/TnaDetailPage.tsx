@@ -157,7 +157,9 @@ export function TnaDetailPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="px-5 pt-4">
-        <Breadcrumb items={[{ label: "Sales" }, { label: "TNA" }, { label: record.ref }]} />
+        {/* Ends at the list. RecordHeader owns the identity and the breadcrumb owns
+            the path — the ref was rendered twice, six pixels apart. */}
+        <Breadcrumb items={[{ label: "Sales" }, { label: "TNA" }]} />
       </div>
 
       <RecordHeader
