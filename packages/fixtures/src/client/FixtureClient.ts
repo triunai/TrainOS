@@ -1096,6 +1096,11 @@ export class FixtureClient {
          not-found before bulk-approvable, bulk-approvable before
          DIFF_CHANGED — so a batch mixing failure modes refuses on the same
          one, on both clients, every time. */
+      if (body.items.length === 0) {
+        throw validationFailed("items must be a non-empty array", {
+          reason: "INVALID_APPROVAL_IDS",
+        });
+      }
       if (body.decision === "APPROVE") {
         const missingFor = body.items
           .filter((item) => !item.diffHash || item.diffHash.trim() === "")

@@ -191,6 +191,22 @@ describe("bulk decisions", () => {
   });
 
   /**
+   * 011:3462-3468 (11508ed): `app.bulk_decide` refuses an empty `p_items` as
+   * its FIRST check. The fixture resolved `{results: []}`, so a bulk approve of
+   * nothing reported success here and would be refused by the database.
+   */
+  it("refuses an empty batch the way the database does, before any other check", async () => {
+    await expect(
+      api.bulkDecideApprovals({ items: [], decision: "APPROVE" }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      http: 422,
+      message: "items must be a non-empty array",
+      details: { reason: "INVALID_APPROVAL_IDS" },
+    });
+  });
+
+  /**
    * 011:3407-3479 (062e5e2): `core.bulk_decide_approvals` refuses an APPROVE
    * item with no hash BEFORE any item in the batch is applied — the fixture
    * oracle enforces the same order, or the guard is dead as soon as a caller
