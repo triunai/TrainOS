@@ -4603,7 +4603,7 @@ BEGIN
       pg_catalog.array_to_string(v_missing, ', ');
   END IF;
 
-  RAISE NOTICE '018 verify: 30 core RPCs + 3 views + 9 app helpers — all posture, '
+  RAISE NOTICE '018 verify: 30 core RPCs + 3 views + 11 app helpers — all posture, '
                'grant, envelope, money, pipeline and spine pins PASS.';
 END
 $verify$;
