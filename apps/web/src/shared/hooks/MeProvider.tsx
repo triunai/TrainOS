@@ -82,6 +82,10 @@ function FixtureMeProvider({ children }: { children: ReactNode }) {
  *   (`app.principal_claims`, 002), so this is the no-membership case. It is
  *   also what an expired token looks like (PGRST301), which "Check again" —
  *   a token refresh — resolves either way.
+ *   ASSUMPTION: every 42501 here means "not linked". It does not have to —
+ *   a missing `EXECUTE` grant on `core.me` raises 42501 too — so a misconfigured
+ *   grant reads as "ask your administrator". Accepted because the not-linked
+ *   screen is recoverable and the deploy doc's troubleshooting names it.
  * - `FORBIDDEN` with `reason` `NO_MEMBERSHIP` or `NO_APP_ROLE` — the token
  *   still names a tenant the membership row no longer backs (018 `core.me`).
  *
