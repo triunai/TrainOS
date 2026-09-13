@@ -33,6 +33,12 @@ import { APP_VERSION, VERSION_LINE } from "./version";
  *
  * The role menu opens UPWARD. A menu that opens down from the bottom of the
  * viewport has nowhere to go.
+ *
+ * Collapsed, every row is its glyph alone, centred, with the label in a
+ * tooltip, and the build stamp keeps only its status dot — the version string
+ * is still one click away in the help drawer and the profile modal. There is
+ * no collapse chevron down here: the control that closes the rail is at the top
+ * of it, beside the name (63888e5 put it here, and nobody found it).
  */
 
 const ROW =
@@ -56,7 +62,7 @@ const SHORTCUTS: { keys: string[]; action: MessageKey }[] = [
   { keys: ["esc"], action: "shortcuts.close" },
 ];
 
-export function SidebarFooter() {
+export function SidebarFooter({ collapsed = false }: { collapsed?: boolean }) {
   const { me, setRole } = useMe();
   const t = useT();
   const { pathname } = useLocation();
@@ -73,37 +79,52 @@ export function SidebarFooter() {
       `\n\n---\nVersion: ${APP_VERSION}\nRoute: ${pathname}\nWhat happened:\n`,
     )}`;
 
+  /* One row shape, two widths: centred glyph in the rail, glyph plus label
+     otherwise. The label still reaches a screen reader either way — an icon
+     with only a `title` is a control with no accessible name in half the
+     browsers that matter. */
+  const rowClass = cn(ROW, "h-7", collapsed && "justify-center px-0", FOCUS_RING);
+  const label = (text: string) =>
+    collapsed ? <span className="sr-only">{text}</span> : <span>{text}</span>;
+
   return (
     <div className="mt-auto flex flex-col gap-0.5 border-t border-divider pt-2">
       <button
         type="button"
         onClick={() => setHelpOpen(true)}
-        className={cn(ROW, "h-7", FOCUS_RING)}
+        title={collapsed ? t("shell.help") : undefined}
+        className={rowClass}
       >
         <Glyph>?</Glyph>
-        <span>{t("shell.help")}</span>
+        {label(t("shell.help"))}
       </button>
 
       <button
         type="button"
         onClick={() => setShortcutsOpen(true)}
-        className={cn(ROW, "h-7", FOCUS_RING)}
+        title={collapsed ? t("shell.shortcuts") : undefined}
+        className={rowClass}
       >
         <Glyph>⌘</Glyph>
-        <span>{t("shell.shortcuts")}</span>
+        {label(t("shell.shortcuts"))}
       </button>
 
       {import.meta.env.DEV ? (
         <DropdownMenu>
           <DropdownMenuTrigger
-            className={cn(ROW, "h-7", FOCUS_RING)}
+            className={rowClass}
+            title={collapsed ? ROLE_LABEL[me.role] : undefined}
             aria-label={`${t("shell.role")} (development only)`}
           >
             <Glyph>◑</Glyph>
-            <span className="truncate">{ROLE_LABEL[me.role]}</span>
-            <span aria-hidden="true" className="ml-auto text-ink-muted">
-              ⌃
-            </span>
+            {collapsed ? null : (
+              <>
+                <span className="truncate">{ROLE_LABEL[me.role]}</span>
+                <span aria-hidden="true" className="ml-auto text-ink-muted">
+                  ⌃
+                </span>
+              </>
+            )}
           </DropdownMenuTrigger>
           <DropdownMenuContent
             side="top"
@@ -130,13 +151,22 @@ export function SidebarFooter() {
       {/* 10px, not the 11px floor the type scale gives readable text: this is a
           build stamp a reader quotes into a bug report, not prose, and at 11px
           the full line does not fit 240px minus its gutters. */}
-      <p className="flex items-center gap-1.5 px-2 pb-0.5 pt-1 text-[10px] leading-4 text-ink-muted">
+      <p
+        className={cn(
+          "flex items-center gap-1.5 pb-0.5 pt-1 text-[10px] leading-4 text-ink-muted",
+          collapsed ? "justify-center" : "px-2",
+        )}
+      >
         <span
           aria-hidden="true"
           className="h-1.5 w-1.5 shrink-0 rounded-pill bg-success"
-          title="All systems normal"
+          title={collapsed ? VERSION_LINE : "All systems normal"}
         />
-        <span className="truncate">{VERSION_LINE}</span>
+        {collapsed ? (
+          <span className="sr-only">{VERSION_LINE}</span>
+        ) : (
+          <span className="truncate">{VERSION_LINE}</span>
+        )}
       </p>
 
       <Drawer open={helpOpen} onClose={() => setHelpOpen(false)} title={t("shell.help")}>

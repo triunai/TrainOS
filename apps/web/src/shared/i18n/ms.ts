@@ -27,6 +27,8 @@ export const ms: Messages = {
   "shell.roleDevOnly": "Peranan · pembangunan sahaja",
   "shell.darkMode": "Mod gelap",
   "shell.language": "Bahasa",
+  "shell.collapseSidebar": "Kecilkan bar sisi",
+  "shell.expandSidebar": "Besarkan bar sisi",
 
   "help.documentation": "Dokumentasi",
   "help.gettingStarted": "Panduan permulaan",

@@ -22,6 +22,8 @@ export const en = {
   "shell.roleDevOnly": "Role · development only",
   "shell.darkMode": "Dark mode",
   "shell.language": "Language",
+  "shell.collapseSidebar": "Collapse the sidebar",
+  "shell.expandSidebar": "Expand the sidebar",
 
   "help.documentation": "Documentation",
   "help.gettingStarted": "Getting started",
