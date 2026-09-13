@@ -173,6 +173,16 @@ Reported rather than patched — no change was made to `packages/contract`.
     `addProposalSection` fills the gap here.
 13. **No permission vocabulary.** `QUOTATION_PERMISSIONS` is the only published
     set; every other grant in the `/me` fixtures is invented and marked as such.
+14. **`Me` carries none of the profile modal's record.** §2's `Me` is id, name,
+    role, permissions, dataScope, locale, timezone and theme. Kit.dc.html §07
+    "Profile modal · 960" draws eleven more fields: the tenant's name and code,
+    the holder's location, the last sign-in, the current session's browser and
+    place, job title, department, email, mobile, staff number, and the module /
+    2FA / active-session counts. None are invented into the contract. They live
+    in the web app at `apps/web/src/shared/config/profileDetails.ts`, in one
+    file, each marked, so that every value that screen shows which did not come
+    from the API is visible in a single place — and so that file is what gets
+    deleted when `/v1/me` grows them.
 
 ## What I could not verify
 

@@ -184,6 +184,8 @@ export {
   type DisclosureButtonProps,
 } from "./Collapse";
 
+export { ProfileModal, type ProfileModalProps, type ProfileField } from "./ProfileModal";
+
 export { CommandPalette, type CommandPaletteProps } from "./CommandPalette";
 export { Drawer, type DrawerProps } from "./Drawer";
 export { ConfirmDialog, type ConfirmDialogProps } from "./ConfirmDialog";

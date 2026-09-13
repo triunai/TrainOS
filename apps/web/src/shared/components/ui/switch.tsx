@@ -17,7 +17,10 @@ const Switch = React.forwardRef<
   >
     <SwitchPrimitives.Thumb
       className={cn(
-        "pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0",
+        /* Sized from the track so a smaller track (the sidebar's theme switch)
+         does not need a second thumb rule: the thumb is the track's height
+         less its 2px border on each side, and it travels the difference. */
+        "pointer-events-none block h-[calc(100%-0px)] aspect-square rounded-full bg-card shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-[calc(100%)] data-[state=unchecked]:translate-x-0 motion-reduce:transition-none",
       )}
     />
   </SwitchPrimitives.Root>

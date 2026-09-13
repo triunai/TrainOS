@@ -18,14 +18,28 @@ import { Sidebar } from "../Sidebar";
 
 vi.mock("@/shared/hooks/useMe", () => ({
   useMe: () => ({
-    me: { id: "USR-0001", name: "Amirah Yusof", role: "SALES" },
+    me: {
+      id: "USR-0001",
+      name: "Amirah Yusof",
+      role: "SALES",
+      permissions: [],
+      dataScope: { clients: "MY_ACCOUNTS", teams: "MY_TEAM" },
+      locale: "en-MY",
+      timezone: "Asia/Kuala_Lumpur",
+      theme: "SYSTEM",
+    },
     setRole: vi.fn(),
   }),
 }));
 
+const setThemeSpy = vi.fn();
+
 vi.mock("@/shared/theme", async () => {
   const actual = await vi.importActual<typeof import("@/shared/theme")>("@/shared/theme");
-  return { ...actual, useTheme: () => ({ theme: "light", setTheme: vi.fn() }) };
+  return {
+    ...actual,
+    useTheme: () => ({ theme: "light", resolvedTheme: "light", setTheme: setThemeSpy }),
+  };
 });
 
 const renderAt = (path: string) =>
@@ -37,6 +51,7 @@ const renderAt = (path: string) =>
 
 beforeEach(() => {
   window.localStorage.clear();
+  setThemeSpy.mockClear();
 });
 
 describe("Sidebar", () => {
@@ -134,23 +149,47 @@ describe("Sidebar", () => {
     expect(training.className).not.toMatch(/bg-card|bg-ai-tint/);
   });
 
-  it("collapses to the icon rail and remembers it", async () => {
-    const user = userEvent.setup();
-    renderAt("/dashboard");
-
-    await user.click(screen.getByRole("button", { name: "Collapse the sidebar" }));
-
-    expect(screen.getByRole("navigation", { name: "Main" })).toHaveClass("w-rail");
-    expect(window.localStorage.getItem("trainos.sidebar.collapsed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Expand the sidebar" })).toBeInTheDocument();
-  });
-
-  it("puts identity, help, shortcuts and the build stamp in the footer", () => {
+  it("puts help, shortcuts, the role switch and the build stamp in the footer", () => {
     renderAt("/dashboard");
 
     expect(screen.getByRole("button", { name: "Help & support" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shortcuts" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Role (development only)" })).toBeInTheDocument();
     expect(screen.getByText(/^TrainOS .+ · API v1 · contract /)).toBeInTheDocument();
+  });
+
+  it("puts identity at the TOP, under the wordmark, with the theme switch beside it", () => {
+    const { container } = renderAt("/dashboard");
+    const rail = screen.getByRole("navigation", { name: "Main" });
+
+    const wordmark = screen.getByText("TRAINOS");
+    const profile = screen.getByRole("button", { name: /Amirah Yusof/ });
+    const nav = container.querySelector(".overflow-y-auto") as HTMLElement;
+
+    /* Order in the document IS the order on screen here — the rail is a plain
+       column. Wordmark, then who you are, then where you can go. */
+    expect(
+      wordmark.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(profile.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    expect(screen.getByRole("switch", { name: "Dark mode" })).toBeInTheDocument();
+    expect(rail.className).not.toMatch(/w-rail/);
+  });
+
+  it("has no rail-collapse control at all", () => {
+    renderAt("/dashboard");
+
+    expect(screen.queryByRole("button", { name: /Collapse the sidebar/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Expand the sidebar/ })).toBeNull();
+    expect(window.localStorage.getItem("trainos.sidebar.collapsed")).toBeNull();
+  });
+
+  it("keeps the theme out of any menu — it is one click, beside the name", async () => {
+    const user = userEvent.setup();
+    renderAt("/dashboard");
+
+    await user.click(screen.getByRole("switch", { name: "Dark mode" }));
+    expect(setThemeSpy).toHaveBeenCalledWith("dark");
   });
 });

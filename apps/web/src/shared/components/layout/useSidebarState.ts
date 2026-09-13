@@ -3,13 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 /**
  * What the reader has decided about the rail, kept across reloads.
  *
- * Two pieces of state and one rule that ties them to the router:
+ * One piece of state and one rule that ties it to the router.
  *
- *  - `openKeys` — which parents are expanded. The DEFAULT is all closed. With
- *    every group open the rail is taller than the viewport, which is what put
- *    a scrollbar down its edge; closed-by-default plus "open the one you are
- *    in" keeps it short without hiding where the reader is.
- *  - `collapsed` — the 64px icon rail.
+ Which parents are expanded, and nothing else. The DEFAULT is all closed: with
+ * every group open the rail is taller than the viewport, and closed-by-default
+ * plus "open the one you are in" keeps it short without hiding where the
+ * reader is.
  *
  * The rule: navigating into a parent opens it, and the reader can still close
  * it afterwards. That is why `openParent` runs from an effect keyed on the
@@ -23,7 +22,6 @@ import { useCallback, useEffect, useState } from "react";
  */
 
 const OPEN_KEY = "trainos.sidebar.open";
-const COLLAPSED_KEY = "trainos.sidebar.collapsed";
 
 type OpenMap = Readonly<Record<string, boolean>>;
 
@@ -47,13 +45,10 @@ function write(key: string, value: unknown): void {
 export interface SidebarState {
   isOpen: (key: string) => boolean;
   toggle: (key: string) => void;
-  collapsed: boolean;
-  setCollapsed: (collapsed: boolean) => void;
 }
 
 export function useSidebarState(activeParentKey: string | null): SidebarState {
   const [openKeys, setOpenKeys] = useState<OpenMap>(() => read<OpenMap>(OPEN_KEY, {}));
-  const [collapsed, setCollapsedState] = useState<boolean>(() => read(COLLAPSED_KEY, false));
 
   /* Opens the parent the reader just navigated into. Keyed on the parent, not
      on `openKeys`, so it cannot fight a deliberate collapse. */
@@ -77,10 +72,5 @@ export function useSidebarState(activeParentKey: string | null): SidebarState {
 
   const isOpen = useCallback((key: string) => openKeys[key] === true, [openKeys]);
 
-  const setCollapsed = useCallback((value: boolean) => {
-    setCollapsedState(value);
-    write(COLLAPSED_KEY, value);
-  }, []);
-
-  return { isOpen, toggle, collapsed, setCollapsed };
+  return { isOpen, toggle };
 }
