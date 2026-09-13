@@ -24,6 +24,12 @@ export const en = {
   "shell.language": "Language",
   "shell.collapseSidebar": "Collapse the sidebar",
   "shell.expandSidebar": "Expand the sidebar",
+  "shell.resetDemo": "Reset demo data",
+
+  "demo.resetTitle": "Reset the demo data?",
+  "demo.resetBody":
+    "Every change made in this browser — decisions, edits, new records — is discarded and the demo dataset is restored. Nobody else's demo is affected.",
+  "demo.resetConfirm": "Reset demo data",
 
   "help.documentation": "Documentation",
   "help.gettingStarted": "Getting started",
