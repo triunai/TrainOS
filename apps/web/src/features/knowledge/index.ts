@@ -5,4 +5,12 @@
  */
 
 export { KnowledgeSourcesScreen } from "./KnowledgeSourcesScreen";
-export { KNOWLEDGE_SOURCES_PATH } from "./paths";
+export { LibraryScreen } from "./LibraryScreen";
+export { TemplatesScreen } from "./TemplatesScreen";
+export { KnowledgeBaseScreen } from "./KnowledgeBaseScreen";
+export {
+  KNOWLEDGE_BASE_PATH,
+  KNOWLEDGE_LIBRARY_PATH,
+  KNOWLEDGE_SOURCES_PATH,
+  KNOWLEDGE_TEMPLATES_PATH,
+} from "./paths";
