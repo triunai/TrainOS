@@ -43,13 +43,32 @@ const RuleChangeReviewPage = lazy(() =>
   import("@/features/hrdc").then((module) => ({ default: module.RuleChangeReviewPage })),
 );
 
+/**
+ * The LIST half of the HRD Corp leaf.
+ *
+ * It comes from `features/compliance` rather than from this feature because it
+ * spans engagements, which is exactly what that folder is for —
+ * `compliance/paths.ts` writes the split down. The PATH is still this feature's,
+ * so the mount stays here, immediately above the record pattern it heads.
+ */
+const ClaimPacketsScreen = lazy(() =>
+  import("@/features/compliance").then((module) => ({ default: module.ClaimPacketsScreen })),
+);
+
 export const hrdcRoutes: FeatureRoute[] = [
   {
+    /**
+     * The leaf is the LIST, not a record.
+     *
+     * It used to mount `ClaimPacketPage`, so the rail's own "HRD Corp" entry
+     * opened ENG-0231 and the breadcrumb on a list route ended at a reference.
+     * A leaf that opens one record has no path to own and no list to return to.
+     */
     path: HRDC_PACKET_PATH,
-    label: "Claim packet",
+    label: "HRD Corp claims",
     element: (
-      <Suspense fallback={<LoadingState label="Loading the claim packet" />}>
-        <ClaimPacketPage />
+      <Suspense fallback={<LoadingState label="Loading the claim packets" />}>
+        <ClaimPacketsScreen />
       </Suspense>
     ),
   },
