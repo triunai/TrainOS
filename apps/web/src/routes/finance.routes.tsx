@@ -18,7 +18,7 @@ import {
  *
  * Order matters inside the array: `/finance/invoices` is declared before
  * `/finance/invoices/:invoiceRef` so the leaf cannot be read as an invoice
- * whose reference is missing.
+ * whose reference is missing. The leaf is the LIST; the pattern is the record.
  */
 
 export interface FeatureRoute {
@@ -28,6 +28,10 @@ export interface FeatureRoute {
   /** For a dev index and for error copy. A few words. */
   label: string;
 }
+
+const InvoicesListScreen = lazy(() =>
+  import("@/features/finance").then((module) => ({ default: module.InvoicesListScreen })),
+);
 
 const InvoiceDetailPage = lazy(() =>
   import("@/features/finance").then((module) => ({ default: module.InvoiceDetailPage })),
@@ -47,11 +51,18 @@ const ProfitabilityScreen = lazy(() =>
 
 export const financeRoutes: FeatureRoute[] = [
   {
+    /**
+     * The leaf is the LIST, not a record.
+     *
+     * It used to mount `InvoiceDetailPage`, so Finance › Invoices opened
+     * INV-2026-0311 and the breadcrumb on a list route ended at a reference.
+     * A leaf that opens one invoice has no path to own and no list to go back to.
+     */
     path: INVOICES_PATH,
-    label: "Invoice detail",
+    label: "Invoices",
     element: (
-      <Suspense fallback={<LoadingState label="Loading the invoice" />}>
-        <InvoiceDetailPage />
+      <Suspense fallback={<LoadingState label="Loading the invoices" />}>
+        <InvoicesListScreen />
       </Suspense>
     ),
   },

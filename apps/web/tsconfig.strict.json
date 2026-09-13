@@ -41,5 +41,6 @@
     "src/shared/components/layout/useNavSelection.ts",
     "src/features/compliance/registers.ts",
     "src/features/compliance/ClaimPacketsScreen.tsx",
+    "src/features/finance/InvoicesListScreen.tsx",
   ],
 }
