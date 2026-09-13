@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 11 · **Applied:** 0 · **Authored, not applied:** 11
+**Migrations:** 12 · **Applied:** 0 · **Authored, not applied:** 12
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 1 (2026-09-13, rulings R-EXT / search_path / FORCE RLS — see the entry below)
 
@@ -13,6 +13,32 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-13 — **012: the events, the outbox, and seven more defects that only execution could find.**
+012 lands domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhook routing and the retention reapers doc 05 §5.5 had promised and never written. Ten tables, one security-invoker view, thirty function names (thirty-one `pg_proc` rows — `app.emit_event` is overloaded), one policy, and the eighteen-row job-type map. **Applied nowhere.**
+
+**The seam with 011 is one enum and one raising function, not a shared vocabulary.** `app.effect_status` is 011's and is reused by oid rather than redeclared. The outbox's own `state` is deliberately a DIFFERENT vocabulary — a job is QUEUED/CLAIMED/SUCCEEDED/FAILED/DEAD/CANCELLED, an effect is PLANNED/APPLIED/DISPATCHED/SUCCEEDED/FAILED/SETTLED/DEAD_LETTERED — and `app.effect_status_for_job_state` is the single translation between them. It RAISES on anything but `SUCCEEDED` and `DEAD`: root `CLAUDE.md` R14, whose worked example is a wrong constant recording every delivered email as dead-lettered. Verified by calling it with a junk value and reading the refusal.
+
+**Seven defects found by EXECUTION.** Three are new classes worth naming:
+
+1. **`pg_catalog.extract(epoch FROM x)` is a SYNTAX error, not a missing function.** `EXTRACT` is a grammar production tied to the unqualified keyword, exactly like `POSITION(x IN y)` — so the list of things that cannot be schema-qualified under `search_path = ''` is longer than 011's pass established. Use `pg_catalog.date_part('epoch', x)`. This killed the migration on its first apply.
+2. **A ROW trigger does not fire for TRUNCATE.** `core.events` was append-only by a row-level trigger and by revoke, and one `TRUNCATE` erased the business record without touching either. Found while testing the rollback's own guard, whose first draft told an operator to clear the table — the only spelling that worked was the one that broke the guarantee. A statement-level `BEFORE TRUNCATE` trigger now closes it, and the refusal was executed rather than reasoned.
+3. **`%L` is not a `RAISE` placeholder.** PL/pgSQL `RAISE` understands `%` only; `%L` renders the value followed by a literal `L`, visible in an error as `worker t012-wL`. Seven sites. 011 carries the same latent issue in its own messages and was left alone rather than edited from inside this pack.
+
+The others: a `jobs-health` idempotency key with no tenant in it, so two tenants stalling in the same window would collide and only one alarm would ever be written; `app.is_service_role()` does not exist, despite the brief asserting it did, and nothing was built on it; a fixture that reused a job in `FAILED` with future backoff, where the control was right and the fixture was wrong; and three PASS notices containing the word "FAILED", which the pin runner greps for — a pass line that looks like a failure is how a real failure gets scrolled past.
+
+**Where doc 05 contradicts the schema, the schema wins.** Ten places, of which four matter to another lane:
+
+- **`core.runs` does not exist** (013 owns it), and the doc types `run_id` as `uuid` while 011's `core.action_requests.agent_run_id` is `text` and the demo run id is `run_4821`, which is not a uuid. `run_id` is therefore `text` on `core.events` and `app.outbox`. ⚠ **This now diverges inside the schema itself**: `core.proposals.run_id`, `core.provenance.run_id` and `core.rule_change_sets.run_id` are all `uuid` from 007 and 009. Two representations of one concept. **013 must reconcile, not retype** — every event already written would lose its trace.
+- **`app.enqueue_effect_jobs` is described as live and "landed in 85cb624".** It does not exist; 011's `apply_effects` calls nothing. 012 creates it rather than editing 011, because the wiring belongs to the migration that owns the gate and a fix made silently in the wrong file is a fix nobody can find.
+- **The job-type map's entity values do not match their only producer.** The doc uses `EMAIL`/`WHATSAPP`/`PDF`/`JURY`; 011's `plan_effects` emits `Email`, `Notification`, `EvaluationLink`, `AccountingPackage`, `Message`, `ComplianceRecheck`. A map keyed on the doc's spellings matches nothing and fails closed on every real effect — while looking exactly like a correct guard.
+- **`app.event_subscriptions`' plain `UNIQUE (event_type, job_type, tenant_id)` does not constrain the global rows at all.** NULLs never conflict, so two identical every-tenant subscriptions both insert and every matching event is enqueued twice. Written `UNIQUE NULLS NOT DISTINCT`.
+
+**One risk is CARRIED, not closed, and it is stated in the migration header.** The nine tenant-scoped tables here are RLS-enabled and forced with no policy, matching every migration since 004. On a platform whose migration owner lacks `BYPASSRLS`, a `SECURITY DEFINER` function reading its own forced table returns zero rows silently — `supabase/CLAUDE.md` §2 records that this was measured, not reasoned. 014 must admit those reads. Adding a `USING (true)` policy here instead would be a cross-tenant read grant landing before the grant layer exists.
+
+**Executed:** 12/12 migrations apply, 12/12 pins pass (137 assertions), full round trip forward → rollback → forward green, convention sweep clean — 012 adds no new violation to any of the thirteen checks. Nothing applied to any hosted database.
+
+---
 
 **Last updated:** 2026-09-13 — **011: the write spine, and the six pins it correctly invalidated.**
 011 lands the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry. Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions, the 22 action types, the 22-per-tenant policy catalogue materialised by a trigger on tenant creation, and the transition registry. Authored by Codex `gpt-5.6-sol` at xhigh, reviewed and executed here. **Applied nowhere.**
@@ -84,6 +110,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 012 | `012_events_outbox_and_jobs.sql` | **Domain events, the audit index, the outbox and its job lifecycle, dead letters, inbound webhooks and the retention reapers doc 05 promised and never wrote (2026-09-13).** Ten tables, one security-invoker view, thirty functions. `core.events` is the business record and is append-only by revoke, by a row trigger AND by a statement-level `BEFORE TRUNCATE` trigger — a row trigger does not fire for `TRUNCATE`, so before that the guarantee was defeated by one statement. `C-09` is answered by exactly one narrow exemption: `app.redact_event_actor` writes its own audit row and the append-only trigger re-derives from the row that the change was a redaction and nothing else, so PDPA erasure has a path and only that path. `C-08`, the poison pill, is closed on both lanes — `claim_jobs` will not hand out a job at `max_attempts` and `reap_jobs` dead-letters it instead of returning the lease — which is what stops a handler that OOMs the isolate re-pushing the same invoice to the accounting package forever. `H-12` and `M-14`: `fail_job` and `heartbeat_job` now check tenant, state AND owner, so worker A cannot dead-letter or extend a job worker B is running; the race is pinned end to end, not asserted. `H-16` gives the claim per-tenant fairness by `row_number() OVER (PARTITION BY tenant_id)`, proved by flooding fifty jobs from one tenant and watching the other's single interactive job still come back. `M-20`: a provider idempotency key is `<subject>#<attempt>` from a stored counter, never the job id, so replaying a dead-lettered push cannot submit the same invoice twice. **The seam with 011 is one enum and one raising function**: `app.effect_status` is reused by oid, the outbox's own state vocabulary is deliberately different, and `app.effect_status_for_job_state` raises on anything but SUCCEEDED and DEAD (R14). Spine untouched — 012 wires the envelope's external effects to a queue without changing the envelope. |
 | 011 | `011_action_envelope_and_policy_gate.sql` | **The write spine: the action envelope, the policy gate, approvals, idempotency, the effect ledger, the jury seam and the GOV-07 transition registry (2026-09-13).** Eleven tables, one security-invoker view, one shared `app.effect_status` enum, twenty-seven functions. Every primary button and every agent proposal in the product passes through `app.perform_action`, which is evaluated once, logged once, and dispatched to exactly one of EXECUTED, QUEUED_FOR_APPROVAL or SUGGESTED; the policy input is derived from stored rows and never trusted from the payload. New capability ships as a new action *type* plus a handler registered in data, never as a branch inside the envelope. **Second spine, and the one this migration makes real: `core.state_transitions`.** A status is no longer something a caller types into a column — 124 registry rows say which edges exist and which action authorises each, and `app.enforce_state_transition` is attached to every gated column that exists. That is what invalidated six committed pins, and repairing them is what found a defect in 008 and three missing edges in doc 01 §5.3. Seven critic findings are closed with an assertion each: `H-02` the agent cannot grant itself autonomy (the one RLS policy deliberately landing before 014, `AS RESTRICTIVE FOR ALL` in both clauses so INSERT and DELETE are covered); `H-03` self-approval, including the NULL requester, because `NULL IS DISTINCT FROM <uuid>` is TRUE and that is the fraud; `H-04` a NULL role raises before the authorisation disjunction instead of falling through it; `H-05` money-moving actions check `app.aal2_verified()`, grounded in an `auth.sessions` row GoTrue wrote rather than a claim the caller presents; `H-07` all three holes; `M-12` a NULL ceiling raises instead of permitting; `M-21` an idempotent replay returns the original body with 200. Nothing is granted to `anon` or `authenticated` — the `C-04` grant-sequencing residue is carried to 014, where policies and grants land together. Spine: this IS the spine, and it is pinned hardest. |
 | 010 | `010_finance_invoices_payments_collections.sql` | **Invoices, payments, credit notes, the e-invoice mirror, receivables aging and the collections ladder (2026-09-13).** Ten tables. Total-from-lines reuses 007's pattern rather than inventing a second one — the line amount is GENERATED, an AFTER trigger recomputes the header, a DEFERRABLE constraint trigger asserts at COMMIT — and extends it: `sst_sen` and `total_sen` are GENERATED too, so a wrong total is unrepresentable rather than merely rejected. **SST is computed on the summed net**, and the pin proves that is not pedantry: three lines at RM 333.33 at 8% give 8,001 sen per-line and 8,000 sen on the summed net. **Payments are append-only**, enforced by a trigger that refuses UPDATE and DELETE; a correction is a reversal row with a reason, because a signed amount column would let a correction be entered as an ordinary payment and vanish into the total. **Critic C-11 is answered**: the e-invoice mirror separates the document UUID from the submission UID, carries the QR long id, a status vocabulary that can express SUBMITTED_PENDING_VALIDATION and CANCELLED, structured per-field validation errors with a key-presence CHECK, per-line classification and UoM codes, self-billed and consolidated flags, a supplier tax profile and buyer identifiers — and enforces the **statutory 72-hour cancellation window**, proved at 71 and 73 hours. Credit notes are the legal exit from a mistake on a filed invoice and cannot exceed it. Aging buckets and the 7/30/45/60/75 ladder are DATA with a GiST exclusion and two CHECK constraints that make "reminder 3 is always human" and "a trading hold needs MD" unrepresentable. Spine untouched. |
 | 009 | `009_compliance_rules_checks_hrdc.sql` | **The bitemporal HRD Corp rule registry, rule-change review, checks with version drift, claim packets, knowledge corpus (2026-09-12).** Twelve tables. Rules carry two time ranges — in force, and known — so re-running a check on an old engagement resolves what the registry said THEN rather than silently re-deciding it against today. A GiST exclusion constraint over both axes makes "which rule applied on this date as known on that date" have exactly one answer. Rules are national by default (`tenant_id NULL`) with optional tenant overrides that win locally and nowhere else; there is deliberately no platform-admin role, so writing a national rule is a provisioning act. A rule cannot go ACTIVE without a named verifier, per DECISIONS §3. A packet cannot be marked SUBMITTED while incomplete — contract §9's 422 expressed where an application cannot route around it — and a required document marked PRESENT must have something behind it. A changed knowledge source is quarantined by constraint. Spine untouched. |
@@ -272,6 +299,103 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 012 (`012_events_outbox_and_jobs.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-13, NOT APPLIED to any hosted database.** Sources:
+`docs/architecture/05` §1 (events and the audit index), §2 (outbox, job types, the claim /
+heartbeat / complete / fail / reap lifecycle, dead letters), §4 (inbound webhooks), §5.2 and
+§5.5 (the drawer and retention); `docs/architecture/06` findings `C-07` to `C-09`, `H-08`,
+`H-12`, `H-15` to `H-18`, `H-26`, `N-02`, `N-09`, `M-07`, `M-09`, `M-14` to `M-17`, `M-20`,
+`M-24`, `M-26`; root `CLAUDE.md` R14; `packages/contract/src/events.ts` and `endpoints.ts`.
+
+### What it does
+
+- **`core.events`** is the business record: append-only by REVOKE, by a row trigger, and by a
+  statement-level `BEFORE TRUNCATE` trigger. `core.event_subjects` is the audit drawer's index,
+  with `occurred_at` denormalised onto it and indexed
+  `(tenant_id, subject_type, subject_id, occurred_at DESC, event_id DESC)` so the keyset
+  pagination the drawer was designed around actually has an index to walk (`H-26`).
+  `app.emit_event` is the only write path, in two overloads, both revoked from PUBLIC by full
+  signature (`M-09` — the doc's argument-less revoke errors, and PUBLIC holds EXECUTE on new
+  functions by default, which 001 measured).
+- **One narrow, audited exemption for PDPA erasure** (`C-09`). `app.redact_event_actor` writes
+  an `app.event_redactions` row in the same transaction, and the append-only trigger admits the
+  UPDATE only after re-deriving FROM THE TWO ROW VERSIONS that nothing but the actor's
+  identifying fields changed. The exemption is therefore not "a flag was set" but "the change
+  is provably a redaction". A narrow audited exemption is defensible; no path at all is not.
+- **The outbox and its lifecycle.** `app.outbox`, `app.job_type_map` (18 rows over 16 action
+  types; the other 6 of 004's 22 are absent by design and the arithmetic is asserted),
+  `app.claim_jobs` / `heartbeat_job` / `complete_job` / `fail_job` / `reap_jobs`,
+  `app.dead_letters`, `app.cancel_jobs`.
+- **Inbound webhooks** — `app.webhook_deliveries`, `app.webhook_routes`, paths taken from the
+  CONTRACT rather than from doc 05 (`M-26`), with the disagreement recorded and the contract
+  not edited.
+- **The retention reapers doc 05 §5.5 tabulated and never wrote** (`C-07`): webhook bodies at
+  30 days, webhook rows at 1 year, SUCCEEDED outbox rows at 90 days, dead letters, and
+  `cron.job_run_details` at 7 days — which the doc itself flags as growing without bound
+  because Postgres does not clean it up. Each is batched with `SKIP LOCKED` and a `LIMIT`, and
+  each RETURNS the number of rows it deleted so 015 can alarm on a reaper that stops reaping.
+- **Spine untouched.** 012 wires the envelope's external effects to a queue. It does not change
+  `app.perform_action`, the policy gate, or the effect ledger's shape.
+
+### The 7-point RPC contract check, worked
+
+1. **Envelope** — no client-callable RPC added. Every function here is reached by the migration
+   role, by `service_role` on the worker path, or by another function.
+2. **Unwrap** — nothing in 012 crosses the PostgREST boundary, so there is no envelope to
+   break. The one shape that DOES cross a seam is `app.report_effect_result`'s, and 012 is its
+   caller rather than its author.
+3. **RpcMap** — no entries. `packages/contract/src/events.ts` describes the event catalogue the
+   client reads; 012 adds no callable surface to describe. **One proposed addition is flagged
+   for the contract lane**: `JobStalled` (`H-17`) is not in `DOMAIN_EVENT_TYPES`.
+4. **Call sites** — `app.enqueue_effect_jobs` is called by nothing yet, because 011's
+   `apply_effects` does not call it. That is a wiring gap in 011, recorded rather than fixed
+   from inside this pack.
+5. **Casts** — none.
+6. **Reload/restore** — no client-visible behaviour.
+7. **Public routes** — none. Nothing in 012 is granted to `anon` or `authenticated`.
+
+### Pin — `tests/test_012_events_outbox_and_jobs.sql`
+
+Fourteen checks, all executed, all PASS, against the FULL applied set 001–012. The ones that
+earn their place: the full `fail_job` race (A's lease expires, the reaper requeues, B claims,
+A is REFUSED), the poison pill on both lanes (a job at `max_attempts` is neither claimable nor
+returned to the queue), per-tenant fairness measured by flooding fifty jobs from one tenant and
+confirming the other's single interactive job still comes back, the TRUNCATE refusal executed
+rather than reasoned, both `emit_event` overloads proved not PUBLIC-executable, and every jsonb
+CHECK rejecting a plausible WRONG SHAPE rather than merely a non-object — doc 04 §735's worked
+trap, where a legacy boolean jury `{"enabled":true,...}` was accepted by a constraint that
+looked careful.
+
+### Rollback — `rollbacks/012_events_outbox_and_jobs_rollback.sql`
+
+Pre-flight guards with no override, refusing on a later migration's objects, on in-flight work
+in the outbox, and on a non-empty `core.events` — it is the business record, and a rollback
+that quietly erases it is not a rollback. Reverse of the forward order, stated in a comment.
+Round-tripped: applied → rolled back → re-applied, `relations in app+core: before=0 after=0`.
+
+### ⚠ Carried risk, stated rather than closed
+
+The nine tenant-scoped tables here are RLS-enabled and FORCED with no policy, which is the
+posture every migration since 004 has taken. `supabase/CLAUDE.md` §2 records the measured
+consequence: FORCE removes the owner's exemption, so on a platform whose migration owner lacks
+`BYPASSRLS` a `SECURITY DEFINER` function reading its own forced table returns **zero rows,
+silently**. Every definer function in 012 that reads an 012 table is exposed to this until 014
+admits the read. The alternative — a `USING (true)` policy landing here — would be a
+cross-tenant read grant arriving before the grant layer that is supposed to contain it. **014
+owns this and it is the first thing that migration must enumerate.**
+
+### What 013 needs to know
+
+`run_id` is **`text`** on `core.events` and `app.outbox`, because 011's
+`core.action_requests.agent_run_id` is `text` and the demo run id `run_4821` is not a uuid.
+It is **`uuid`** on `core.proposals`, `core.provenance` and `core.rule_change_sets` (007, 009).
+Two representations of one concept now exist in the schema. 013 creates `core.runs` and must
+**reconcile** the two rather than picking one and retyping — every event already written
+against the text form would lose its trace.
 
 ---
 

@@ -12,6 +12,41 @@ Where the catalog (`supabase/migrations/migration-catalog.md`) is the engineerin
 record of a migration, an entry here is the human-facing summary of the same event.
 
 
+## 2026-09-13 — the work queue, and an audit trail that can outlive a privacy request
+
+Authored and executed against a scratch database. Applied nowhere. Engineering detail is in
+`supabase/migrations/migration-catalog.md`.
+
+### Added
+
+- **Every notable thing that happens is now recorded once, in one place, and cannot be edited
+  afterwards.** The audit drawer reads that record. Reasoning: `docs/architecture/05`.
+- **A work queue for everything the product does outside itself** — sending an email, pushing an
+  invoice to the accounting package, re-running a compliance check. Work that fails is retried,
+  and work that keeps failing stops and is set aside for somebody to look at rather than being
+  retried forever.
+- **A privacy erasure request can now reach the audit trail.** A person's name can be removed
+  from a historical record through exactly one audited path, and the record itself still shows
+  that the thing happened and when. Previously there was no path at all, which is not a position
+  anyone could defend.
+- **Retention actually deletes things.** Raw third-party webhook bodies at 30 days, delivery
+  records at a year, completed queue entries at 90 days. All of this was written down as policy
+  and none of it was implemented.
+
+### Fixed
+
+- **A failing job can no longer be retried forever.** A handler that ran out of memory never got
+  to report its failure, so the job was picked up again, indefinitely — including the job that
+  pushes an invoice to the accounting package. The same invoice would have been pushed over and
+  over, with a fresh idempotency key each time, so the accounting package could not have
+  deduplicated it either.
+- **One worker can no longer mark another worker's job as failed**, or keep another worker's job
+  alive past the point where anybody would notice it had stalled.
+- **One busy customer can no longer starve everyone else's queue.** Work is taken fairly across
+  customers rather than strictly in priority order.
+- **The audit record survives a `TRUNCATE`.** It was protected against edits and deletes and not
+  against the one statement that removes everything at once.
+
 ## 2026-09-13 — every button in the product now goes through one door
 
 Authored and executed against a scratch database. Applied nowhere. Engineering detail is in
