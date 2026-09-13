@@ -316,10 +316,5 @@ export type {
 } from "@/shared/components/states";
 
 /* ---- Board (added 13 Sep 2026, brief §19; no artboard draws one) ----- */
-export {
-  KanbanBoard,
-  lanesFrom,
-  KANBAN_DRAG_TYPE,
-  type KanbanBoardProps,
-  type KanbanLane,
-} from "./KanbanBoard";
+export { KanbanBoard, type KanbanBoardProps, type KanbanLane } from "./KanbanBoard";
+export { lanesFrom } from "./board";

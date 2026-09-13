@@ -308,24 +308,3 @@ export function KanbanBoard<T>({
     </div>
   );
 }
-
-/**
- * The lanes a board should draw, given a pipeline's stages and its items.
- *
- * Exported because the fold is the same wherever a board is built from
- * configuration — group by a key, keep the stage holding nothing, and never
- * order by anything but the `order` the server sent.
- */
-export function lanesFrom<S extends { key: string; label: string; order: number }, T>(
-  stages: S[],
-  items: T[],
-  stageOf: (item: T) => string,
-): { stage: S; items: T[] }[] {
-  const ordered = [...stages].sort((left, right) => left.order - right.order);
-  const byStage = new Map<string, T[]>(ordered.map((stage) => [stage.key, []]));
-  for (const item of items) byStage.get(stageOf(item))?.push(item);
-  return ordered.map((stage) => ({ stage, items: byStage.get(stage.key) ?? [] }));
-}
-
-/** Unused by the component; exported so a test can drive the drag it declares. */
-export const KANBAN_DRAG_TYPE = DRAG_TYPE;
