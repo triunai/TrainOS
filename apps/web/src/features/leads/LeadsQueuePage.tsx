@@ -117,7 +117,7 @@ export function LeadsQueuePage() {
   /* One currency per tenant in the pack, so the fold takes the first row's.
      A mixed-currency book would need a per-currency total rather than a sum,
      and summing across currencies silently is the failure worth avoiding. */
-  const openValue = useMemo<Money | null>(
+  const bookValue = useMemo<Money | null>(
     () =>
       rows.reduce<Money | null>(
         (total, row) =>
@@ -147,8 +147,11 @@ export function LeadsQueuePage() {
           withoutCondensed
           title="Leads"
           meta={[
-            leads.data ? `${plural(leads.data.page.total, "open lead")}` : null,
-            openValue ? `${formatMoney(openValue, true)} in play` : null,
+            leads.data ? plural(leads.data.page.total, "lead") : null,
+            /* "across the book", not "in play": pipeline configuration marks no
+               stage as terminal, so this total includes the won and the lost
+               and the screen must not claim otherwise. */
+            bookValue ? `${formatMoney(bookValue, true)} across the book` : null,
           ]}
           actions={
             <SecondaryButton onClick={() => navigate("/sales/pipeline")}>

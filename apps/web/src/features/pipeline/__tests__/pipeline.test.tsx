@@ -50,12 +50,14 @@ describe("Sales › Pipeline", () => {
     expect(within(qualifying as HTMLElement).getByText("OPP-0498"));
   });
 
-  it("says how much is in play, at the board and at each column", async () => {
+  it("says how much is on the board, and how much at each column", async () => {
     renderScreen(<PipelineBoardPage />, { path: "/sales/pipeline", route: "/sales/pipeline" });
 
     /* RM 164,800 across the five seeded deals, and RM 67,200 of it at
-       Qualifying. Both are folds over the same money, so they cannot disagree. */
-    expect(await screen.findByText(/RM 164,800 in play/)).toBeInTheDocument();
+       Qualifying. Both are folds over the same money, so they cannot disagree.
+       "across the board" rather than "in play": configuration marks no stage
+       terminal, so the total includes the won and the lost. */
+    expect(await screen.findByText(/RM 164,800 across the board/)).toBeInTheDocument();
 
     /* Two of them at Qualifying, and that is correct: the column total and the
        single card in it are the same money read twice, so they agree by

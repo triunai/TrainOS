@@ -90,8 +90,10 @@ export function PipelineBoardPage() {
           withoutCondensed
           title="Pipeline"
           meta={[
-            opportunities.data ? `${plural(opportunities.data.page.total, "open deal")}` : null,
-            boardTotal ? `${formatMoney(boardTotal, true)} in play` : null,
+            opportunities.data ? plural(opportunities.data.page.total, "deal") : null,
+            /* Not "in play": configuration marks no stage as terminal, so this
+               is every deal on the board including the won and the lost. */
+            boardTotal ? `${formatMoney(boardTotal, true)} across the board` : null,
             stages.data ? `${plural(stages.data.stages.length, "configured stage")}` : null,
           ]}
           actions={
