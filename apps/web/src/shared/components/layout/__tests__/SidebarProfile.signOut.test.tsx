@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import type { AuthPort } from "@/shared/api";
 import { AuthProvider } from "@/shared/auth";
+import { toast } from "@/shared/components/kit";
 import { I18nProvider } from "@/shared/i18n";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { ALEX, fakeAuth } from "@/shared/auth/__tests__/fakeAuth";
@@ -57,6 +58,26 @@ describe("SidebarProfile sign-out", () => {
 
     await waitFor(() => expect(port.signOut).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("says so when the session could not be ended, and offers to try again", async () => {
+    vi.stubEnv("VITE_API_MODE", "supabase");
+    const failing = vi.fn(async () => ({ error: "network down" }));
+    const port = fakeAuth(ALEX, { signOut: failing });
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "toast");
+    const user = userEvent.setup();
+    renderProfile(port);
+
+    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Sign out/ }));
+
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(1));
+    const [message, options] = error.mock.calls[0];
+    expect(message).toBe("You're still signed in");
+    expect(options?.description).not.toMatch(/network down/);
+    options?.action?.onClick();
+    await waitFor(() => expect(failing).toHaveBeenCalledTimes(2));
+    error.mockRestore();
   });
 
   it("leaves sign-out inert over fixtures", async () => {
