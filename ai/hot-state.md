@@ -7,6 +7,41 @@
 > contract — a PR-body extractor keys on those literal strings. Renaming one
 > silently degrades that section to a placeholder.
 
+## SESSION 2026-09-13 — HEADLESS BLAST, API PHASE + UI CARRY-OVER
+
+> **BLAST 13 Sep 19:25 +08** — orchestrator launched four lanes on top of the
+> 19:05 recovery: `lane/rpc-018` (018 RPC pack, user go-ahead), `ui/tokens`
+> (kit contrast tokens + mono-uppercase reduction), `ui/lists` (HRD Corp +
+> Invoices list leaves, Collections §10b, zebra on two hand-rolled tables),
+> `ui/states` (nine empty states, ten tone ternaries, Drawer primary scope,
+> ListToolbar on agent registry). `cloud/migrations` (014–017) and
+> `cloud/web-swap` continue from the 19:05 entry, no PRs yet. Start from
+> `ai/resume-brief.md` BLAST 19:25 entry.
+
+> **Last updated:** 2026-09-13 19:25 — four new lanes running (one gated RPC
+> pack, three UI carry-over) alongside the two cloud lanes already in flight;
+> nothing from this block has landed yet.
+
+### Focus
+
+Getting the API phase moving (018 RPC pack, hosted apply once 014 passes
+retrofit QA) while three UI carry-over lanes close out contrast, list-leaf and
+empty-state debt from the verifier pass, without losing the SUPABASE SCHEMA
+thread's state (013 committed; 014–017 in cloud) or any in-flight cloud PR.
+
+### Next Active Task
+
+Record each lane's result in the doc spine as it lands (one commit per
+update, by `spine-keeper`), then fold ui/tokens, ui/lists and ui/states back
+into the kit per CLAUDE.md's consolidation rule once merged.
+
+### Blockers
+
+Four items still need the user: exposing `core` in the dashboard (R-F),
+n8n in the proposal, and the four UI rulings tracked in
+`ai/resume-brief.md`. Hosted apply (L3) is gated on 014 passing retrofit QA
+first.
+
 ## SESSION 2026-09-13 — UI BLAST LANDED, CONSOLIDATION
 
 > **WRAP 13 Sep 19:05 +08** — outage recovered; routing and worker PRs merged; migrations 014–017, web-swap and pack-v3 relaunched in the cloud on `cloud/*` branches. Start from `ai/resume-brief.md` 19:05 entry; check GitHub PRs first.

@@ -17,104 +17,91 @@
 
 ---
 
-## ⏸ SUPABASE SCHEMA — paused at migration 009 of 016 (2026-09-12)
+## 🟢 SUPABASE SCHEMA — 001–013 committed; 014–017 in cloud, 018 in a lane (2026-09-13)
 
-**Resume:** Read `supabase/HANDOFF.md` in full, then
-`docs/research/04-supabase-conventions.md`, then
-`docs/architecture/06-critic-review.md` Part 2. Apply the seven open rulings the
-handoff lists — starting with `N-01`, which is the only CRITICAL that blocks the
-rest: migration 001 never gained `pg_cron`, `pg_net` or `vector`, so nine
-scheduled jobs have no scheduler and nothing in the outbox is ever claimed. Then
-write 010 finance, 011 action envelope, 012 events/outbox, 013 ai-ops, 014 RLS,
-015 realtime+cron, 016 seed. **Do not apply to any remote project.**
+**Resume:** Read `supabase/HANDOFF.md` in full, then check what has actually
+landed before writing anything: `git log` on `supabase/migrations/`, then the
+status of `cloud/migrations` (014–017, no PR as of 19:25 13 Sep) and
+`lane/rpc-018` (worktree, branch `lane/rpc-018`, the 018 RPC pack, user
+go-ahead given 19:23). A network outage at ~16:00 on 13 Sep already killed one
+migrations lane mid-014 with nothing lost; check for a live lane before
+re-authoring 014–017 or 018 to avoid a second collision. Hosted apply (L3) is
+authorised by the user for after 014 passes `migration-retrofit-qa` — apply
+via the Supabase MCP's `apply_migration` against project `balzmmsmrawzmefkavte`
+(ap-southeast-1, ACTIVE_HEALTHY, zero migrations applied), not psql; region
+Singapore is confirmed by the user and by the project itself. **Do not apply
+anything to the hosted project before that QA gate passes.**
 
 **Scope:** Everything under `supabase/`. Migrations, rollbacks, the executable
 pins, the catalog, and the architecture documents they implement.
 
-**State:** 001 to 009 authored and EXECUTED against a local PostgreSQL 17.11
-shim with a Supabase platform shim. No Supabase CLI and no Docker were
-available, so nothing ran against a real Supabase stack and nothing was applied
-to any hosted database. Every migration carries its own pin; all pins green.
+**State:** 001–013 authored, EXECUTED against a local PostgreSQL 17.11 shim,
+and committed to main (013 in `bc15b17`). 014–017 (RLS, realtime+cron, and the
+remainder) are being written by cloud lane `cloud/migrations`, no PR yet as of
+19:25. 018 (the RPC pack) has the user's go-ahead as of 19:23 and is running in
+worktree lane `lane/rpc-018`. Nothing has been applied to any hosted database.
 
-⚠ **Critic Part 2 is open: 7 CRITICAL and 29 HIGH.** The four that matter most
-are `N-01` (extensions never enabled), `N-05` (roughly 25 migration functions
-use the four-part `search_path` list and fail doc 02 §8.7's exact-string sweep,
-so the gate both lanes depend on contradicts the migrations it gates), `N-02`
-(doc 05 has no constraint of any kind on any of its fourteen structured jsonb
-columns) and `N-04` (doc 01 still carries the snapshot rule-versioning model
-that doc 04 tested and rejected).
-
-⚠ **`knowledge_chunks.embedding` was never created.** pgvector is unavailable in
-the authoring environment. It is created conditionally with a loud NOTICE on
-skip, and it is the one object in the whole set not executed in its intended
-form.
+⚠ **Carried from the paused state, not re-verified this session.** Critic Part
+2 (7 CRITICAL, 29 HIGH against 001–009 as of 2026-09-12) — whether 010–013
+closed any of it is unconfirmed; recheck before 014 lands. `N-01`
+(`pg_cron`/`pg_net`/`vector` extension enablement) and `knowledge_chunks.embedding`
+(pgvector unavailable in the authoring environment, created conditionally with
+a loud NOTICE on skip) were both still open as of the same date.
 
 **Refs:** `supabase/HANDOFF.md`, `supabase/migrations/migration-catalog.md`,
 `docs/architecture/01`–`06`, `D-102`, `D-111`, `D-112`, `D-113`.
 
 ---
 
-## ✅ UI SCREENS — twenty-seven screens across fourteen features (2026-09-12)
+## 🟢 API-PHASE — hosted apply gated on retrofit QA, web-swap in cloud (2026-09-13)
 
-**Resume:** Nothing. This thread is closed; what is left of it lives in
-CONSOLIDATION below.
+**Resume:** Read `ai/resume-brief.md` BLAST 19:25 entry, then
+`ai/briefs/2026-09-13-api-phase-plan.md` (rulings R-A..R-G). Two cloud lanes,
+neither with a PR yet as of 19:25: `cloud/web-swap` (enquiries → proposals →
+approvals swapped from `@trainos/fixtures` onto the `TrainOsClient` seam) and
+`cloud/migrations` (014–017, tracked under SUPABASE SCHEMA above — do not
+duplicate that thread here). The first hosted apply (L3) runs only after 014
+passes `migration-retrofit-qa`, via the Supabase MCP's `apply_migration`
+against `balzmmsmrawzmefkavte` (ap-southeast-1). Two known negatives to check
+before assuming either lane's environment is ready: the `.env.local` the
+api-phase plan references does not exist at repo root, and `pg_isready` on
+`/tmp:5432` reports no shim running, so a migrations lane must start one per
+`supabase/HANDOFF.md`.
 
-**Scope:** Every screen the design-pack inventory §4 names, built from the kit
-and reading only `@trainos/fixtures`, with render tests and light and dark
-screenshots at 1440x900.
+**Scope:** The API contract layer and the web app's swap from fixtures to a
+real client: `packages/contract`, the `TrainOsClient` seam in `apps/web`, and
+the hosted Supabase apply path.
 
-**State:** All fourteen features declare their own route array and appear once
-in `FEATURE_ROUTES`. The three feature folders that were sitting untracked were
-committed with their route files rather than separately, because a route file
-that lazy-imports a feature absent from the same commit is a commit that does
-not build.
+**State:** `cloud/web-swap` in flight, no PR yet. Hosted project
+`balzmmsmrawzmefkavte` is ACTIVE_HEALTHY with zero migrations applied. Still
+open for the user: `core` exposed in the dashboard (R-F), n8n in the proposal.
 
-⚠ **These screens have only ever been seen against fixtures.** Every number,
-refusal and empty state on them comes from the in-memory client. Nothing has
-been rendered against a real API response, and the data boundary the scaffold
-built is not in the path — see CONSOLIDATION.
-
-**Refs:** `apps/web/src/features/**`, `apps/web/src/routes/routes.tsx`,
-`docs/research/09-design-pack-inventory.md`, `docs/design/REPORT.md`,
-`docs/design/DECISIONS.md`, `D-114`, `D-116`.
+**Refs:** `ai/briefs/2026-09-13-api-phase-plan.md`, `ai/resume-brief.md`,
+`docs/architecture/07-api-layer-decision.md`.
 
 ---
 
-## ✅ CONSOLIDATION — one data seam, closed by `d4ae83d` (2026-09-13)
+## 🟢 UI-CARRYOVER — three worktree lanes closing verifier-pass debt (2026-09-13)
 
-**Resume:** Nothing on the data layer. What remains of the consolidation idea
-lives in KIT DUPLICATE SWEEP below, which is down to two files.
+**Resume:** Read `ai/resume-brief.md` §"Verifier carry-over" for the full
+ranked list, then each lane's own commits on its branch. `ui/tokens`
+(worktree): kit contrast tokens plus the mono-uppercase reduction, closing the
+dark-sidebar contrast item that gates 34 of 40 failing routes. `ui/lists`
+(worktree): HRD Corp and Invoices list leaves (both nav leaves currently mount
+a detail and have no list), Collections brought into §10b conformance, zebra
+striping on the two hand-rolled tables. `ui/states` (worktree): the nine
+missing empty states, the ten tone ternaries, the Drawer opening a primary
+scope, and `ListToolbar` on the agent registry. None had a PR as of 19:25.
 
-**Closed 2026-09-13 10:40.** Thirteen modules had grown their own copy of the
-client hook in four incompatible shapes — seven with a private role table, three
-ignoring the role toggle, one with a different return type, three importing the
-singleton and skipping the hook. `shared/api/useApi.ts` is the only one now and
-`ApiProvider` is mounted at the root. The scaffold's `TrainOsClient` interface
-and its all-`NOT_IMPLEMENTED` stub are deleted: they described a boundary the
-app had outgrown, and a second client surface beside the real one is the
-divergence CLAUDE.md forbids.
+**Scope:** `apps/web/src/shared/components/kit/**` and the feature screens
+each lane touches; no kit additions beyond what `ui/tokens` lands.
 
-**Scope:** Anything that exists in more than one feature and should exist once.
-CLAUDE.md's consolidation rule is the standing instruction: when two variants of
-one pattern exist, the newer one wins and the older is migrated in the same pass.
+**State:** All three launched at 19:25, no commits reported yet. On landing,
+fold each into the kit per CLAUDE.md's consolidation rule rather than leaving
+a per-feature copy.
 
-**State:** The kit has already absorbed `ActionOutcome` (five copies, three
-divergent), `ENQUIRY_TONE` and `FOLLOW_UP_TONE` (four copies), `formatDateRange`
-(two copies) and the breadcrumb (five screens drew their own). `af92507` landed
-the last three `ActionOutcome` deletions — finance, hrdc and engagements — and
-moved the five screens that drew their own `Breadcrumb` onto the shell's slot.
-`useApi`/`useAction` is the last duplicate and the largest.
-
-⚠ **The error split was the load-bearing part, and it was a live defect, not a
-tidiness problem.** The fixture client throws a `ContractError` for a refusal;
-every thrown value is an `Error`, so `toApiError`'s `instanceof` check
-classified a 403 as a transport `UNKNOWN` — and `ErrorState` reads exactly that
-classification to decide whether to draw "Try again". A policy decision came
-with a retry button, and the server's sentence naming the missing role and
-permission was replaced with "Something went wrong". Pinned as `B-012`.
-
-**Refs:** `apps/web/src/shared/api/useApi.ts`,
-`apps/web/src/shared/api/errors.ts`, `d4ae83d`, `af92507`, `D-115`, `B-012`.
+**Refs:** `ai/resume-brief.md` (verifier carry-over section),
+`docs/reviews/2026-09-13-verification.md`.
 
 ---
 

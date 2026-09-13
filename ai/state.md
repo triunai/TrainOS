@@ -276,6 +276,12 @@ such.
 
 <!-- Latest first, append-only. -->
 
+## 2026-09-13 19:25 — headless blast (API phase + UI carry-over)
+
+- Six lanes running: `cloud/migrations` (014–017), `cloud/web-swap`, plus
+  worktree lanes `lane/rpc-018`, `ui/tokens`, `ui/lists`, `ui/states`. Full
+  detail in `ai/project-log.md` and `ai/resume-brief.md` BLAST 19:25 entry.
+
 ## 2026-09-12 — repo scaffold
 
 - Laid the whole floor: workspaces, build config, tokens, theme, shell, data

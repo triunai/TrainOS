@@ -15,6 +15,74 @@
 
 ---
 
+## 2026-09-13 19:25 — headless blast (API phase + UI carry-over)
+
+**Recovery context.** A network outage at ~16:00 killed the local migrations
+lane mid-014 and the first cloud migrations lane; nothing of 014–017 landed and
+no dirty SQL was left. By 19:05, PR #1 (routing) and PR #2 (worker) had merged
+to main, and `cloud/opus-pass` (PR #3) and `cloud/pack-v3` (PR #4) had also
+merged. This block records the six lanes running as of 19:25, launched by the
+orchestrator on top of that recovery.
+
+**Cloud lanes (continuing from 19:05, no PR yet):**
+
+- `cloud/migrations` — migrations 014–017 from a fresh shim. Owner files:
+  `supabase/migrations/014*` through `017*`.
+- `cloud/web-swap` — enquiries → proposals → approvals swapped from
+  `@trainos/fixtures` onto the `TrainOsClient` seam. Owner files:
+  `apps/web/src/features/{enquiries,proposals,approvals}/**`.
+
+**Worktree lanes (launched 19:25):**
+
+- `lane/rpc-018` — the 018 RPC pack. Owner files: `supabase/migrations/018*`.
+- `ui/tokens` — kit contrast tokens plus mono-uppercase reduction. Owner
+  files: `apps/web/src/shared/components/kit/**` (tokens only).
+- `ui/lists` — HRD Corp + Invoices list leaves, Collections §10b conformance,
+  zebra on two hand-rolled tables. Owner files:
+  `apps/web/src/features/{hrdc,invoices,collections}/**`.
+- `ui/states` — nine empty states, ten tone ternaries, Drawer primary scope,
+  `ListToolbar` on the agent registry. Owner files: feature screens named in
+  `ai/resume-brief.md`'s verifier carry-over section.
+
+**User rulings recorded at 19:23:** go for 018; go for the first hosted apply
+after migration 014 passes `migration-retrofit-qa`; region Singapore confirmed
+by the user and by the hosted project itself (`balzmmsmrawzmefkavte`,
+ap-southeast-1, ACTIVE_HEALTHY, zero migrations applied, reachable via the
+Supabase MCP so the apply lane uses `apply_migration` rather than psql plus a
+DB secret). Still open for the user: exposing `core` in the dashboard (R-F),
+n8n in the proposal, and the four UI rulings tracked in `ai/resume-brief.md`.
+
+**Pruned from workstreams (both ✅ DONE, "Resume: Nothing"):**
+
+- **UI SCREENS** — twenty-seven screens across fourteen features (closed
+  2026-09-12). All fourteen features declared their own route array in
+  `FEATURE_ROUTES`; every screen was built from the kit and read only
+  `@trainos/fixtures`, never a real API response. Superseded by CONSOLIDATION.
+  Refs: `apps/web/src/features/**`, `apps/web/src/routes/routes.tsx`,
+  `docs/research/09-design-pack-inventory.md`, `D-114`, `D-116`.
+- **CONSOLIDATION** — one data seam, closed by `d4ae83d` (2026-09-13 10:40).
+  Thirteen modules had grown their own copy of the client hook in four
+  incompatible shapes; `shared/api/useApi.ts` is now the only one and
+  `ApiProvider` is mounted at the root. The load-bearing fix was `toApiError`
+  misclassifying a thrown `ContractError` (a policy refusal) as a transport
+  `UNKNOWN`, which put a retry button on a 403 — pinned as `B-012`. What
+  remained (two `StandInField.tsx` stand-ins) lives on in KIT DUPLICATE SWEEP,
+  which stays active in `ai/workstreams.md`. Refs:
+  `apps/web/src/shared/api/useApi.ts`, `apps/web/src/shared/api/errors.ts`,
+  `d4ae83d`, `af92507`, `D-115`, `B-012`.
+
+**Things worth telling future-me:**
+
+1. The `.env.local` the api-phase plan (`ai/briefs/2026-09-13-api-phase-plan.md`)
+   references does not exist at the repo root as of 19:25 — do not assume a
+   lane can read it without first checking.
+2. `pg_isready` against `/tmp:5432` reports no shim running as of 19:25, so
+   whichever migrations lane runs next must start one per
+   `supabase/HANDOFF.md` rather than assuming the shim from an earlier session
+   is still up.
+
+---
+
 ## 2026-09-13 — consolidation, and the doc spine backfilled
 
 **Consolidation (web).** `ActionOutcome` deleted from finance and hrdc, both now
