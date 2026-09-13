@@ -701,6 +701,8 @@ export const followUpDrafts: Record<string, MessageDraft> = {
     ratePerMessage: myr(6),
     ratePerMessageExact: "0.0564",
     estimatedCost: myr(6),
+    /** §16 Q4 / R11: these fixtures model a live BSP lookup. */
+    rateSource: "LIVE",
     alternativeCategoryRate: {
       category: "MARKETING",
       ratePerMessage: myr(35),
@@ -728,6 +730,8 @@ export const followUpDrafts: Record<string, MessageDraft> = {
     recipients: 1,
     ratePerMessage: myr(0),
     estimatedCost: myr(0),
+    /** §16 Q4 / R11: these fixtures model a live BSP lookup. */
+    rateSource: "LIVE",
     consent: { channel: "EMAIL", granted: true, recordedAt: "2024-03-04T10:12:00+08:00" },
     provenance: {
       origin: "AI_SUGGESTED",
@@ -745,6 +749,8 @@ export const followUpDrafts: Record<string, MessageDraft> = {
     recipients: 1,
     ratePerMessage: myr(0),
     estimatedCost: myr(0),
+    /** §16 Q4 / R11: these fixtures model a live BSP lookup. */
+    rateSource: "LIVE",
     consent: { channel: "EMAIL", granted: true, recordedAt: "2023-07-11T09:20:00+08:00" },
     provenance: {
       origin: "AI_SUGGESTED",
@@ -763,6 +769,8 @@ export const followUpDrafts: Record<string, MessageDraft> = {
     ratePerMessage: myr(6),
     ratePerMessageExact: "0.0564",
     estimatedCost: myr(6),
+    /** §16 Q4 / R11: these fixtures model a live BSP lookup. */
+    rateSource: "LIVE",
     alternativeCategoryRate: {
       category: "MARKETING",
       ratePerMessage: myr(35),

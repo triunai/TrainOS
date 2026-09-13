@@ -19,10 +19,12 @@ import type {
 import type {
   AutonomyLevel,
   CheckState,
+  CollectionNextActionStatus,
   CollectionStage,
   DocumentPresence,
   HRDCDocumentType,
   HRDCScheme,
+  HrdcDeadlineStatus,
   InvoiceStatus,
   PacketStatus,
   RuleChangeOp,
@@ -124,7 +126,11 @@ export interface HrdcDeadline {
   organisationRef: Ref;
   deadlineAt: Timestamp;
   daysRemaining: number;
-  status: string;
+  /**
+   * Ruling R10: an enum. §9 filters this field by value, so the client and the
+   * query string have to agree on the spelling.
+   */
+  status: HrdcDeadlineStatus;
   severity: Severity;
 }
 
@@ -410,7 +416,11 @@ export interface ReceivablesAging {
  */
 export interface CollectionNextAction {
   type: AnyActionType;
-  status: string;
+  /**
+   * Ruling R10: an enum. What the rung is waiting on, not what an action
+   * request returned — see `COLLECTION_NEXT_ACTION_STATUSES`.
+   */
+  status: CollectionNextActionStatus;
   autonomy: AutonomyLevel;
 }
 

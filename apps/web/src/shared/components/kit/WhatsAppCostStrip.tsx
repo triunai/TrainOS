@@ -22,6 +22,13 @@ import { MONO_LABEL } from "./tokens";
  * and it is then rendered at two decimals rather than four, because four
  * decimals on a value that only has two is a lie about precision.
  *
+ * WHEN THE LOOKUP FAILS the two money fields are absent, which is contract
+ * §16 Q4 / ruling R11: a required `ratePerMessage` left a server whose rate
+ * lookup had failed with nothing honest to send, so it sent a stale rate or a
+ * zero and this strip rendered it to four decimal places with no hedge. The
+ * strip now says the rate is unavailable and that the send still works, which
+ * is true and is what the person about to press send needs to know.
+ *
  * The comparison line reads the alternative's own exact string for the same
  * reason. It used to print the rounded `Money` while the primary rate beside
  * it printed the exact one, so the two halves of a six-fold comparison were
@@ -33,12 +40,15 @@ export interface WhatsAppCostStripProps {
   category: MessageCategory;
   templateLabel: string;
   recipients: number;
-  /** Rounded to the sen at estimate time. Used for arithmetic, not for display. */
-  ratePerMessage: Money;
+  /**
+   * Rounded to the sen at estimate time. Used for arithmetic, not for display.
+   * Absent when the BSP rate lookup failed — see the unavailable state below.
+   */
+  ratePerMessage?: Money;
   /** Unrounded decimal string, e.g. `"0.0564"`. Preferred for display. */
   ratePerMessageExact?: string;
   /** `recipients × rate`, computed server-side so the two cannot disagree. */
-  estimatedCost: Money;
+  estimatedCost?: Money;
   /**
    * The other category's rate, from the contract's `alternativeCategoryRate`.
    * Rendered whichever way it points — see the note on the comparison below.
@@ -81,21 +91,22 @@ export function WhatsAppCostStrip({
    * chosen by which way the rates point.
    */
   const dearer =
-    alternative && alternative.ratePerMessage.amount > ratePerMessage.amount
+    ratePerMessage && alternative && alternative.ratePerMessage.amount > ratePerMessage.amount
       ? alternative
       : undefined;
 
   const cheaper =
-    alternative && alternative.ratePerMessage.amount < ratePerMessage.amount
+    ratePerMessage && alternative && alternative.ratePerMessage.amount < ratePerMessage.amount
       ? alternative
       : undefined;
 
-  const saving = cheaper
-    ? {
-        amount: (ratePerMessage.amount - cheaper.ratePerMessage.amount) * recipients,
-        currency: estimatedCost.currency,
-      }
-    : undefined;
+  const saving =
+    cheaper && ratePerMessage && estimatedCost
+      ? {
+          amount: (ratePerMessage.amount - cheaper.ratePerMessage.amount) * recipients,
+          currency: estimatedCost.currency,
+        }
+      : undefined;
 
   return (
     <section
@@ -110,11 +121,24 @@ export function WhatsAppCostStrip({
           {CATEGORY_LABEL[category]} · {templateLabel}
         </Field>
         <Field label="Recipients">{recipients}</Field>
-        <Field label="Rate">{rateText(ratePerMessage, ratePerMessageExact)}</Field>
+        <Field label="Rate">
+          {ratePerMessage ? rateText(ratePerMessage, ratePerMessageExact) : "Unavailable"}
+        </Field>
         <Field label="Estimated">
-          <MoneyText value={estimatedCost} className="font-semibold text-ink" />
+          {estimatedCost ? (
+            <MoneyText value={estimatedCost} className="font-semibold text-ink" />
+          ) : (
+            "Not estimated"
+          )}
         </Field>
       </div>
+
+      {ratePerMessage && estimatedCost ? null : (
+        <p className="border-t border-divider pt-2 text-[12px] text-ink-secondary">
+          The per-message rate could not be read from the messaging provider, so this send has no
+          cost estimate. Sending still works; the charge lands on the provider bill.
+        </p>
+      )}
 
       {dearer ? (
         <p className="border-t border-divider pt-2 text-[12px] text-ink-secondary">

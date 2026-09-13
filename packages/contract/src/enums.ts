@@ -339,6 +339,102 @@ export type CollectionStage = (typeof COLLECTION_STAGES)[number];
 export const MESSAGE_CATEGORIES = ['MARKETING', 'UTILITY', 'SERVICE'] as const;
 export type MessageCategory = (typeof MESSAGE_CATEGORIES)[number];
 
+/**
+ * §9 `HrdcDeadline.status`.
+ *
+ * Ruling R10: typed `string`. `GET /v1/hrdc/deadlines?filter[status][eq]=AT_RISK`
+ * (§9) is the only spelling the contract gives, and the fixtures carry
+ * `AT_RISK` and `BLOCKED`. `ON_TRACK` and `SUBMITTED` complete the set the way
+ * `HRDC_PACKET_PANEL_STATES` does for the organisation relations panel — a
+ * deadline is either fine, close, stopped by something else, or no longer a
+ * deadline because the claim went in.
+ *
+ * Note the spelling difference from `HrdcPacketPanelState.DEADLINE_AT_RISK`.
+ * The two are different enums on different objects and §9 names this one
+ * `AT_RISK`; unifying them would mean overruling the contract's own filter
+ * example.
+ *
+ * TODO(contract §16): catalogue the deadline status vocabulary.
+ */
+export const HRDC_DEADLINE_STATUSES = [
+  'ON_TRACK',
+  'AT_RISK',
+  'BLOCKED',
+  'SUBMITTED',
+] as const;
+export type HrdcDeadlineStatus = (typeof HRDC_DEADLINE_STATUSES)[number];
+
+/**
+ * §9 `CollectionNextAction.status` — what the ladder's next rung is waiting on.
+ *
+ * Ruling R10: typed `string`. All four values are observed, not derived:
+ * `DRAFT_READY` is the §9 collections-queue example, and the other three are
+ * the states the seeded queue needs — DECISIONS §1 makes reminder 3 always
+ * human (`HUMAN_REQUIRED`), ruling R3's trading hold is MD-approved
+ * (`AWAITING_MD`), and a row whose invoice has not reconciled with the
+ * accounting package cannot be chased yet (`BLOCKED_ON_SYNC`).
+ *
+ * Not `ActionStatus`: that enum is about what `POST /v1/actions` did with a
+ * request. This is about a proposal the ladder has not sent yet.
+ */
+export const COLLECTION_NEXT_ACTION_STATUSES = [
+  'DRAFT_READY',
+  'AWAITING_MD',
+  'HUMAN_REQUIRED',
+  'BLOCKED_ON_SYNC',
+] as const;
+export type CollectionNextActionStatus = (typeof COLLECTION_NEXT_ACTION_STATUSES)[number];
+
+/**
+ * §17 `StateCardPlanStep.status` — a line of the orchestrator's own plan.
+ *
+ * Ruling R10: typed `string`. `DONE` and `HALTED` are both in the §17 state
+ * card example. `PENDING`, `RUNNING` and `FAILED` complete a plan's states;
+ * without them a step that has not started and a step that failed are the same
+ * unrenderable value.
+ *
+ * Not `RunStepStatus`: that is a tool call's outcome (`OK · RETRIED · FAILED ·
+ * HALTED`) and has no member for work not yet begun, which is most of a plan
+ * most of the time.
+ *
+ * `SKIPPED` is not derived either: `packages/agent-runtime` had already
+ * hand-rolled this exact six-value union on `TraceBuilder.step`, which is the
+ * second vocabulary this ruling exists to remove.
+ *
+ * TODO(contract §16): catalogue the plan-step vocabulary. `PENDING`,
+ * `RUNNING` and `FAILED` are derived; the other three are observed.
+ */
+export const PLAN_STEP_STATUSES = [
+  'PENDING',
+  'RUNNING',
+  'DONE',
+  'SKIPPED',
+  'HALTED',
+  'FAILED',
+] as const;
+export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number];
+
+/**
+ * §4 where a WhatsApp per-message rate came from.
+ *
+ * Ruling R11, and the first half of an answer to §16 Q4 ("WhatsApp rates are
+ * billing facts that change. Cached from the BSP with what TTL, and what does
+ * the composer show if the rate lookup fails?").
+ *
+ * The contract does not answer that question and this package cannot answer it
+ * for them — a TTL is an operations decision and belongs in `DECISIONS.md`
+ * beside the other seven, not invented in a type. What the type CAN stop is
+ * the composer showing a number it does not have: with a required
+ * `ratePerMessage`, a failed lookup leaves a server with no honest option, so
+ * it sends a stale or zero rate and the strip prints it with full confidence.
+ *
+ * `UNAVAILABLE` makes the failure a value. `rateFetchedAt` carries the age
+ * without the contract picking a TTL, so a client can say "as at 09:14" and
+ * the decision stays where it belongs.
+ */
+export const RATE_SOURCES = ['LIVE', 'CACHED', 'UNAVAILABLE'] as const;
+export type RateSource = (typeof RATE_SOURCES)[number];
+
 /** §12 `AgentStatus` */
 export const AGENT_STATUSES = ['ACTIVE', 'PAUSED', 'RETIRED'] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];

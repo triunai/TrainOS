@@ -15,15 +15,16 @@ import type {
 } from '../envelope';
 import type {
   AgentStatus,
+  AiProvider,
   AutonomyLevel,
   DeltaDirection,
   HoursSavedBasis,
+  PlanStepStatus,
   RunEventType,
   RunStatus,
   RunStepStatus,
   TierKey,
   TraceNodeKind,
-  AiProvider,
 } from '../enums';
 import type { GovernedActionType } from '../actions';
 import type { ApprovalSummary } from './approvals';
@@ -245,7 +246,11 @@ export interface RunEventDetail {
 export interface StateCardPlanStep {
   n: number;
   label: string;
-  status: string;
+  /**
+   * Ruling R10: an enum. A plan step that has not started and one that failed
+   * were the same untyped string before.
+   */
+  status: PlanStepStatus;
 }
 
 /** §17 the token and cost envelope the run is working inside. */

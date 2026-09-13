@@ -17,6 +17,7 @@ import type {
 } from '../envelope';
 import type {
   HrdcPacketPanelState,
+  InvoiceStatus,
   OpportunityStage,
   OrganisationStatus,
 } from '../enums';
@@ -104,7 +105,12 @@ export interface RelatedEngagement {
 /** §5 an invoice row on the relations panel. */
 export interface RelatedInvoice {
   ref: Ref;
-  status: string;
+  /**
+   * Ruling R10: `InvoiceStatus`, the same enum the invoice record carries. A
+   * relations panel spelling a status differently from the record it points at
+   * would be a second vocabulary for one fact.
+   */
+  status: InvoiceStatus;
   daysOverdue?: number;
   amount: Money;
 }

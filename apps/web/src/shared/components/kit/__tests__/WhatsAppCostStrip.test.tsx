@@ -147,6 +147,44 @@ describe("WhatsAppCostStrip", () => {
     expect(screen.queryByText(/would cost/)).not.toBeInTheDocument();
   });
 
+  /* §16 Q4 / R11. The contract cannot say what the cache TTL should be, but it
+     can stop the composer inventing a rate it never looked up. With both money
+     fields absent the strip says so rather than printing a zero. */
+  it("says the rate is unavailable rather than printing a rate it does not have", () => {
+    render(
+      <WhatsAppCostStrip
+        category="UTILITY"
+        templateLabel="followup_v3"
+        recipients={30}
+        alternative={{
+          category: "MARKETING",
+          ratePerMessage: money(35),
+          ratePerMessageExact: MARKETING_EXACT,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Not estimated")).toBeInTheDocument();
+    expect(screen.getByText(/could not be read from the messaging provider/)).toBeInTheDocument();
+    expect(screen.queryByText("RM 0.00")).not.toBeInTheDocument();
+  });
+
+  /* A comparison against a rate that does not exist is not a comparison. */
+  it("draws no comparison line when there is no rate to compare against", () => {
+    render(
+      <WhatsAppCostStrip
+        category="UTILITY"
+        templateLabel="followup_v3"
+        recipients={30}
+        alternative={{ category: "MARKETING", ratePerMessage: money(35) }}
+      />,
+    );
+
+    expect(screen.queryByText(/would cost/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/would save/)).not.toBeInTheDocument();
+  });
+
   it("renders no comparison line when there is no alternative", () => {
     render(
       <WhatsAppCostStrip

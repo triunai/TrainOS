@@ -17,6 +17,7 @@ import type {
   AutomationRun,
   HaltedBy,
   Money,
+  PlanStepStatus,
   Ref,
   RunEvent,
   RunEventDetail,
@@ -246,8 +247,10 @@ export class TraceBuilder {
   markPlanStep(
     n: number,
     // `PENDING` is where a plan step goes back to when its slice yielded
-    // mid-stage: the work is owed, not done and not skipped.
-    status: 'PENDING' | 'DONE' | 'RUNNING' | 'HALTED' | 'SKIPPED' | 'FAILED',
+    // mid-stage: the work is owed, not done and not skipped. The union used to
+    // be written out here; `PLAN_STEP_STATUSES` in the contract is now the one
+    // place it lives, and `StateCardPlanStep.status` is typed with it.
+    status: PlanStepStatus,
   ): void {
     const step = this.plan.find((s) => s.n === n);
     if (step) step.status = status;

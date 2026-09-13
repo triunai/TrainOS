@@ -300,7 +300,12 @@ Every §16 and §17 open question that constrains a type is marked in place with
 
 - §16 Q1 approval expiry — `ApprovalStatus.EXPIRED` exists with no documented trigger.
 - §16 Q2 diff staleness — `ApprovalDiffChangedDetails` types the 409, the UX is undecided.
-- §16 Q4 WhatsApp rate cache TTL and lookup failure — `MessageDraft`.
+- §16 Q4 WhatsApp rate cache TTL — still open, and deliberately not answered
+  here: a TTL is an operations decision for `DECISIONS.md`, not a type. The
+  lookup-FAILURE half is answered by ruling R11 — `MessageDraft.rateSource`
+  carries `UNAVAILABLE` and the two money fields are optional, so a server
+  whose lookup failed has an honest value to send and the composer renders
+  "unavailable" instead of a zero.
 - §16 Q5 attendance unlock once a claim reference exists — `AttendanceUnlockPayload`.
 - §16 Q6 portal token lifetime and revocation — `PortalProposal`.
 - §16 Q8 sandbox replay determinism — `RunReplayResponse`.

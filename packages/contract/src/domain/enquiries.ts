@@ -21,8 +21,11 @@ import type {
   EnquiryStatus,
   EvidenceType,
   MessageCategory,
+  OpportunityStage,
   OrganisationMatchReason,
+  RateSource,
   Severity,
+  TNAStatus,
 } from '../enums';
 import type { SuggestedAction } from '../actions';
 
@@ -135,8 +138,13 @@ export interface OpportunityConvertPayload {
  * Emits `OpportunityCreated`.
  */
 export interface OpportunityConvertResult {
-  opportunity: { id: string; ref: Ref; stage: string; value: Money };
-  tna: { id: string; ref: Ref; status: string };
+  /**
+   * Ruling R10: `stage` and `status` are the enums their own records carry.
+   * The convert result is the first thing the UI sees of either record, and it
+   * was the one place they arrived as bare strings.
+   */
+  opportunity: { id: string; ref: Ref; stage: OpportunityStage; value: Money };
+  tna: { id: string; ref: Ref; status: TNAStatus };
   effects: import('../actions').Effect[];
 }
 
@@ -197,8 +205,25 @@ export interface AlternativeCategoryRate {
  * Rates are server-side facts, not display constants: `RM 0.0564` utility and
  * `RM 0.3467` marketing, expressed in minor units rounded to the sen at
  * estimate time, with the exact rate returned as a string for display.
- * TODO(contract §16 Q4): rate cache TTL, and what the composer shows when the
- * rate lookup fails.
+ *
+ * **§16 Q4, ruling R11.** The question asks two things and they have different
+ * owners. The cache TTL is an operations decision — it belongs in
+ * `DECISIONS.md` beside the other seven, with a number Finance and the BSP
+ * agree, and this package must not invent one. What the composer shows when
+ * the lookup FAILS is a type question, and the type was answering it wrongly:
+ * `ratePerMessage` and `estimatedCost` were required, so a server whose rate
+ * lookup had failed had no honest value to send. It sends a stale rate or a
+ * zero, and the strip renders it to four decimal places with no hedge — which
+ * is the most convincing way to be wrong about money.
+ *
+ * So the failure becomes a value. `rateSource: 'UNAVAILABLE'` is a member of
+ * the union, the two money fields are optional, and every consumer has to
+ * decide what to render when they are absent instead of being handed a number
+ * that was never looked up. `rateFetchedAt` carries the age of a `CACHED`
+ * rate without the contract picking a TTL, so a composer can say how old the
+ * figure is and the TTL decision stays where it belongs.
+ *
+ * This does not answer Q4. It stops the client answering it by accident.
  */
 export interface MessageDraft {
   channel: 'EMAIL' | 'WHATSAPP';
@@ -206,10 +231,16 @@ export interface MessageDraft {
   category: MessageCategory;
   body: string;
   recipients: number;
-  ratePerMessage: Money;
+  /** Absent when `rateSource` is `UNAVAILABLE`. Rounded to the sen. */
+  ratePerMessage?: Money;
   /** Unrounded rate as a decimal string, e.g. `"0.0564"`. */
   ratePerMessageExact?: string;
-  estimatedCost: Money;
+  /** Absent when `rateSource` is `UNAVAILABLE` — `recipients × rate`. */
+  estimatedCost?: Money;
+  /** §16 Q4 / R11: where the rate came from, including not coming at all. */
+  rateSource: RateSource;
+  /** When a `CACHED` rate was fetched. The TTL itself is not the type's call. */
+  rateFetchedAt?: Timestamp;
   alternativeCategoryRate?: AlternativeCategoryRate;
   consent: ChannelConsent;
   provenance?: Provenance;
