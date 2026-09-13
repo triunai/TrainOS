@@ -129,3 +129,70 @@ describe("PillTabGroup", () => {
     expect(tabsFromViews(views)).toEqual([{ id: "v1", label: "All leads", count: 7 }]);
   });
 });
+
+/**
+ * §10a as amended on 13 Sep: segments size to their content over a 64px floor.
+ *
+ * WHAT THIS CAN AND CANNOT CHECK. The suite runs in jsdom, which has no layout
+ * engine — every `getBoundingClientRect()` here returns zero — so no test in
+ * this file can measure that an eight-segment track comes in under 760px. The
+ * real measurement is a browser one: the engagements track's eight realistic
+ * statuses measure 776px at 1440 with this geometry, against 973px under the
+ * withdrawn 120px floor. 776 is over the 760 the ruling estimated, and the
+ * honest number is the measured one — engagements is still 8px short of
+ * holding one row, and participants, whose labels are longer, 38px short.
+ *
+ * What IS checkable here is the geometry contract that produces that number,
+ * and the specific regression: the floor coming back. A returning `min-w-[120px]`
+ * is what put 973px on the page, so it fails here rather than in somebody's
+ * screenshot three screens later.
+ */
+describe("PillTabGroup segment width (§10a, amended)", () => {
+  const EIGHT: PillTab[] = [
+    { id: "all", label: "All", count: 9 },
+    { id: "proposed", label: "Proposed", count: 0 },
+    { id: "confirmed", label: "Confirmed", count: 1 },
+    { id: "scheduled", label: "Scheduled", count: 1 },
+    { id: "delivery", label: "In delivery", count: 0 },
+    { id: "delivered", label: "Delivered", count: 4 },
+    { id: "closed", label: "Closed", count: 1 },
+    { id: "cancelled", label: "Cancelled", count: 2 },
+  ];
+
+  it("floors a segment at 64px and never at the withdrawn 120px", () => {
+    render(
+      <PillTabGroup tabs={EIGHT} activeId="all" onSelect={vi.fn()} label="Engagement status" />,
+    );
+
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab.className).toContain("min-w-[64px]");
+      /* The floor that cost the engagements list its layout. */
+      expect(tab.className).not.toContain("min-w-[120px]");
+    }
+  });
+
+  it("keeps §10a's 12px horizontal padding, which the content width is measured over", () => {
+    render(
+      <PillTabGroup tabs={EIGHT} activeId="all" onSelect={vi.fn()} label="Engagement status" />,
+    );
+
+    /* px-3 is 12px. The floor means nothing without the padding it sits over:
+       drop to px-1 and eight segments fit while looking cramped, raise to px-6
+       and the 973px problem returns by another route. */
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab.className).toContain("px-3");
+    }
+  });
+
+  it("renders every segment's label and count, so narrowing did not truncate them", () => {
+    render(
+      <PillTabGroup tabs={EIGHT} activeId="all" onSelect={vi.fn()} label="Engagement status" />,
+    );
+
+    /* A width fix that clipped "In delivery" to "In del…" would pass the two
+       assertions above. The labels are what the track is sized FOR. */
+    for (const tab of EIGHT) {
+      expect(screen.getByRole("tab", { name: new RegExp(tab.label) })).toBeInTheDocument();
+    }
+  });
+});

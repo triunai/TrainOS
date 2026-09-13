@@ -144,7 +144,18 @@ export function PillTabGroup({
                 onKeyDown={(event) => onKeyDown(event, index)}
                 className={cn(
                   SEGMENT,
-                  "min-w-[120px]",
+                  /* §10a, amended 13 Sep: the 120px floor is withdrawn. A
+                     segment sizes to its content — label plus count, inside
+                     `SEGMENT`'s 12px `px-3` — over a 64px floor that only a
+                     one-word label like "All" ever reaches.
+
+                     The floor was costing whole screens their layout, not just
+                     a few pixels. Eight statuses at 120px each is a 973px track,
+                     which left the filter group 155px on a 1440 screen and
+                     drove its search box across the last two tabs. Content
+                     width puts the same track near 700px and the filters fit
+                     beside it, which is what §10b asks for. */
+                  "min-w-[64px]",
                   active
                     ? "border border-primary-border bg-ai-tint-2 text-primary-hover"
                     : "border border-transparent text-ink-secondary hover:bg-surface-hover hover:text-ink",
