@@ -69,17 +69,56 @@ describe("§17 usage · the peak / off-peak series", () => {
     await expect(api.getUsageDaily("2019-01")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  /* The invariant whoever seeds the days has to satisfy: the chart and the
-     tile above it must be describing the same month. Vacuously true while the
-     series is empty, and the assertion that will catch a seeding that drifts. */
+  /* The chart and the tile above it have to be describing the same month. */
   it("reconciles with the offPeakShare the same period already publishes", async () => {
     const series = await api.getUsageDaily("2026-11");
-    if (series.data.length === 0) return;
+    expect(series.data.length).toBeGreaterThan(0);
 
     const usage = await api.getUsage("2026-11", "TIER");
     const peak = series.data.reduce((total, day) => total + day.peak.amount, 0);
     const offPeak = series.data.reduce((total, day) => total + day.offPeak.amount, 0);
     expect(offPeak / (peak + offPeak)).toBeCloseTo(usage.totals.offPeakShare, 2);
+  });
+
+  /* And the same money. `totals` is spend so far, not a projection — `forecast`
+     is the projection — so the days have to add up to it exactly. */
+  it("sums to the period's own spend, to the sen", async () => {
+    const series = await api.getUsageDaily("2026-11");
+    const usage = await api.getUsage("2026-11", "TIER");
+    const spent = series.data.reduce((total, day) => total + day.peak.amount + day.offPeak.amount, 0);
+    const totals = usage.totals;
+    expect(spent).toBe(totals.llm.amount + totals.whatsapp.amount + totals.compute.amount);
+  });
+
+  it("runs one entry per day, in order, with no gap and no repeat", async () => {
+    const series = await api.getUsageDaily("2026-11");
+    const dates = series.data.map((day) => day.date);
+    expect(new Set(dates).size).toBe(dates.length);
+    expect([...dates].sort()).toEqual(dates);
+    for (const date of dates) expect(date.startsWith(`${series.period}-`)).toBe(true);
+
+    const first = Date.parse(`${dates[0]}T00:00:00Z`);
+    dates.forEach((date, index) => {
+      expect(Date.parse(`${date}T00:00:00Z`)).toBe(first + index * 86_400_000);
+    });
+  });
+
+  /* The reason the chart exists rather than the tile. §17 restricts
+     batch-eligible tiers to off-peak hours and makes them queue rather than
+     escalate, so the batch window keeps running when nobody is at a desk. If
+     peak ever led at the weekend, the routing policy would not be doing what
+     the screen says it does. */
+  it("shows the batch window still working at the weekend", async () => {
+    const series = await api.getUsageDaily("2026-11");
+    const weekend = series.data.filter((day) => {
+      const weekday = new Date(`${day.date}T00:00:00Z`).getUTCDay();
+      return weekday === 0 || weekday === 6;
+    });
+
+    expect(weekend.length).toBeGreaterThan(0);
+    for (const day of weekend) {
+      expect(day.offPeak.amount, `${day.date} off-peak should lead`).toBeGreaterThan(day.peak.amount);
+    }
   });
 
   it("never carries a negative day, in either half", async () => {

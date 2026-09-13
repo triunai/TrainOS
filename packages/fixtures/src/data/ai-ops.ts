@@ -556,15 +556,44 @@ export const usageForecast = { period: "2026-11", forecast: myr(81200), cap: myr
 /**
  * §17 ruled R13 · `GET /v1/ai/usage/daily?period=` — the peak / off-peak series.
  *
- * SEEDING IS OWED. The type, the endpoint row and the client method are the
- * contract lane's; the days themselves are narrative data and belong to the
- * persona lane, which owns what the demo month looks like. Two constraints
- * bind whoever fills it: `data` must cover 2026-11, and summed across the
- * period `offPeak / (peak + offPeak)` must equal the `offPeakShare` of 0.44
- * that `usageByGrouping` already publishes — otherwise the chart and the tile
- * above it disagree about the same month.
+ * Fourteen days, 1–14 November, because the period is month-to-date: the same
+ * `usageByGrouping` entry reports RM 667.00 spent against an RM 812.00
+ * forecast, which is a month roughly half run. The demo's own clock agrees —
+ * the Aurora delivery is 12–13 November and its attendance locks on the 14th.
  *
- * Empty until then, which the screen renders as an empty state rather than as
- * a flat chart claiming zero spend.
+ * Two invariants hold by construction, and `ai-routing-and-usage.test.ts`
+ * asserts the first:
+ *
+ * 1. The days sum to 66,700 sen, and `offPeak / (peak + offPeak)` is exactly
+ *    the 0.44 `offPeakShare` the same period publishes. A chart that disagreed
+ *    with the tile above it would be two answers to one question.
+ * 2. Off-peak EXCEEDS peak at the weekend (1, 7, 8 November) and on the
+ *    delivery days. That is the point of the chart rather than a texture: §17
+ *    restricts batch-eligible tiers to off-peak hours and makes them queue
+ *    rather than escalate, so the batch window keeps running when nobody is at
+ *    a desk, and packet assembly and rule extraction queue overnight after a
+ *    delivery. The monthly scalar could not show either.
+ *
+ * `runs` is what makes a spike readable. The 12th and 13th carry both the most
+ * spend and the most runs, so they read as busy days rather than as a pricing
+ * change.
  */
-export const usageDaily: UsageDailySeries = { period: "2026-11", data: [] };
+export const usageDaily: UsageDailySeries = {
+  period: "2026-11",
+  data: [
+    { date: "2026-11-01", peak: myr(994), offPeak: myr(1044), runs: 9 },
+    { date: "2026-11-02", peak: myr(2840), offPeak: myr(1880), runs: 41 },
+    { date: "2026-11-03", peak: myr(2840), offPeak: myr(1984), runs: 44 },
+    { date: "2026-11-04", peak: myr(2982), offPeak: myr(2089), runs: 46 },
+    { date: "2026-11-05", peak: myr(2840), offPeak: myr(2089), runs: 43 },
+    { date: "2026-11-06", peak: myr(2698), offPeak: myr(2089), runs: 40 },
+    { date: "2026-11-07", peak: myr(852), offPeak: myr(940), runs: 8 },
+    { date: "2026-11-08", peak: myr(994), offPeak: myr(1044), runs: 10 },
+    { date: "2026-11-09", peak: myr(2982), offPeak: myr(2089), runs: 47 },
+    { date: "2026-11-10", peak: myr(3125), offPeak: myr(2193), runs: 52 },
+    { date: "2026-11-11", peak: myr(3267), offPeak: myr(2298), runs: 55 },
+    { date: "2026-11-12", peak: myr(4261), offPeak: myr(3551), runs: 74 },
+    { date: "2026-11-13", peak: myr(4547), offPeak: myr(3760), runs: 79 },
+    { date: "2026-11-14", peak: myr(2130), offPeak: myr(2298), runs: 31 },
+  ],
+};
