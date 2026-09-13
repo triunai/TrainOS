@@ -11,6 +11,21 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // Three Radix-menu tests open a menu and wait for an item, and each takes
+    // six to nine seconds under jsdom:
+    //   shared/components/kit/__tests__/RowActionMenu.test.tsx
+    //     "runs the action the reader chose"                        ~6.2s
+    //   features/pipeline/__tests__/pipeline.test.tsx
+    //     "offers every other stage in the card's menu"             ~8.3s
+    //   features/knowledge/__tests__/knowledge.test.tsx
+    //     "keeps Check and Re-ingest out of every row"              ~6s
+    // They are not slower than they were: measured on vitest 2 they took the
+    // same six to nine seconds and passed anyway, because vitest 2 did not
+    // hold them to the 5s default. Vitest 3 does, so the limit has to be
+    // stated rather than inherited. 15s leaves headroom on a CI runner, which
+    // is slower than a laptop. It is a ceiling for a hung test, not a budget:
+    // make those three fast and bring it back down.
+    testTimeout: 15_000,
     setupFiles: ["./src/test/setup.ts"],
     // Explicit describe/it/expect imports are preferred — clearer, and no
     // tsconfig types[] fiddling. The runtime supports both.
