@@ -199,9 +199,14 @@ export function RecordHeader({
       </div>
     ) : null;
 
+  /* A chevron only exists if there is something under it. Nine of the eleven
+     record pages pass chips and a ref but no metrics, so `collapsible` on those
+     would otherwise draw a control that opens nothing. */
+  const disclosable = Boolean(collapsible && body);
+
   /* Collapsed, the card keeps the title row and the meta line and loses its
      bottom padding, so it shrinks rather than leaving a blue band of nothing. */
-  const showCard = accent && (expanded || !plainWhenCollapsed);
+  const showCard = accent && (expanded || !disclosable || !plainWhenCollapsed);
 
   const header = (
     <header
@@ -234,11 +239,11 @@ export function RecordHeader({
           {title}
         </h1>
         {chips}
-        {actions || primaryAction || collapsible ? (
+        {actions || primaryAction || disclosable ? (
           <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
             {/* The round chevron sits BEFORE the cluster, as the artboard draws
                 it — chrome ahead of the actions, never competing with them. */}
-            {collapsible ? (
+            {disclosable ? (
               <DisclosureButton
                 open={expanded}
                 onToggle={() => setExpanded(!expanded)}
@@ -275,7 +280,7 @@ export function RecordHeader({
       ) : null}
 
       {body ? (
-        collapsible ? (
+        disclosable ? (
           <Collapse open={expanded} id={bodyId}>
             {body}
           </Collapse>

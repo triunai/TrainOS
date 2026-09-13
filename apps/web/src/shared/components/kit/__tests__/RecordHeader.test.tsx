@@ -196,14 +196,48 @@ describe("RecordHeader accent", () => {
     expect(screen.getByRole("heading", { level: 1 }).className).not.toContain("on-accent");
   });
 
+  it("draws no chevron on a record that has nothing to collapse", () => {
+    /* Nine of the eleven record pages pass chips and a ref but no metrics. A
+       chevron there would open nothing. */
+    render(
+      <RecordHeader
+        accent
+        collapsible
+        recordType="invoice"
+        title="INV-2026-0288"
+        recordRef="INV-2026-0288"
+        meta={["34 days overdue"]}
+      />,
+    );
+
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
   it("remembers the choice against the record TYPE, not the record", () => {
+    const metrics = [{ label: "Value", value: "RM 18,500" }];
     const first = render(
-      <RecordHeader accent collapsible recordType="approval" title="One" recordRef="APV-1" />,
+      <RecordHeader
+        accent
+        collapsible
+        recordType="approval"
+        title="One"
+        recordRef="APV-1"
+        metrics={metrics}
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Hide the record detail" }));
     first.unmount();
 
-    render(<RecordHeader accent collapsible recordType="approval" title="Two" recordRef="APV-2" />);
+    render(
+      <RecordHeader
+        accent
+        collapsible
+        recordType="approval"
+        title="Two"
+        recordRef="APV-2"
+        metrics={metrics}
+      />,
+    );
     expect(screen.getByRole("button", { name: "Show the record detail" })).toBeInTheDocument();
   });
 
