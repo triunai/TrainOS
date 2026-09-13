@@ -30,6 +30,8 @@ Read this first in the new session, then `supabase/HANDOFF.md`, then `docs/revie
 - `lefthook.yml` runs `lint-staged --no-stash` (a stash restore lost work once).
 - **Prefer worktrees next blast** for lanes with disjoint folders and no kit additions; the shared index is the one thing they fix.
 
+## API phase: the executable plan is `ai/briefs/2026-09-13-api-phase-plan.md` (rulings R-A..R-G, eight lanes with prompts, what runs local vs cloud, what needs the user). The section below is the earlier sketch it supersedes.
+
 ## Next session: API phase (user's stated goal: get the API contracts up; a few core flows runnable first)
 
 Sequence, with parallel research from the start:
