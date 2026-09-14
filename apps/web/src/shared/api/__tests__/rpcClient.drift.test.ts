@@ -8,7 +8,7 @@ import { okEnvelope } from "./oracleTransport";
 /**
  * The view reads, against what the database actually keys and grants.
  *
- * `v_organisation_relations` and `v_contact_consent_current` are keyed by a
+ * `v_organisation_relations` and `v_contact_channel_consents` are keyed by a
  * UUID column, but every caller holds a REF — the `:organisationId` route
  * segment, `contact.organisationRef`. A ref in a uuid `.match()` is 22P02, which
  * reads as a server fault. And a view whose body calls a function the invoker
@@ -99,7 +99,7 @@ describe("the uuid-keyed view reads resolve a ref first", () => {
 
     expect(recorded.rpc).toEqual([{ name: "get_contact", args: { p_id: "CON-0007" } }]);
     expect(recorded.match).toEqual([
-      { table: "v_contact_consent_current", filter: { contact_id: CONTACT_UUID } },
+      { table: "v_contact_channel_consents", filter: { contact_id: CONTACT_UUID } },
     ]);
   });
 

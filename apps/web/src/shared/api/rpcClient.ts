@@ -369,8 +369,11 @@ function isApprovalRequestRef(value: unknown): value is ApprovalRequestRef {
  * an RPC, because a flat table read cannot build `{ data, page,
  * appliedFilters }`.
  *
- * Only `v_contact_consent_current` (005) exists today. The rest are named here
- * so the migrations lane has the list and the gap is one grep, not a code read.
+ * 020 built every view below except `v_pipeline_configs` (nothing in the web
+ * calls it — `get_pipeline_config` is the RPC every screen uses). `contactConsent`
+ * reads `v_contact_channel_consents` (020), not 005's `v_contact_consent_current`:
+ * that view's columns are snake_case (`recorded_at`, not `recordedAt`) and were
+ * never contract-shaped for a browser `select("*")`.
  */
 export const VIEW_READS = {
   templates: "v_templates",
@@ -379,7 +382,7 @@ export const VIEW_READS = {
   views: "v_saved_views",
   trainers: "v_trainers",
   contacts: "v_contacts",
-  contactConsent: "v_contact_consent_current",
+  contactConsent: "v_contact_channel_consents",
   programmes: "v_programmes",
   programmeDeliveries: "v_programme_deliveries",
   organisationRelations: "v_organisation_relations",
@@ -527,7 +530,7 @@ export class SupabaseRpcClient implements TrainOsClient {
   /**
    * The UUID a uuid-keyed view is matched on, from whatever the caller holds.
    *
-   * `v_organisation_relations` and `v_contact_consent_current` key their rows
+   * `v_organisation_relations` and `v_contact_channel_consents` key their rows
    * by uuid, but the screens hold REFS — a route segment, `organisationRef` — and
    * a ref in a uuid `.match()` is 22P02, which reads as a server fault. The
    * record's own RPC already accepts id or ref, so it resolves one to the other;
