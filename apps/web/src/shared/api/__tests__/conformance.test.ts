@@ -185,11 +185,11 @@ describe("the two clients answer the same", () => {
    * message; the exception's own message is the reader's sentence.
    */
   it("an unimplemented method rejects by name, as not deployed", async () => {
-    const thrown = await rpc.getExecutiveDashboard().catch((e: unknown) => e);
+    const thrown = await rpc.getHoursSaved().catch((e: unknown) => e);
     expect(thrown).toBeInstanceOf(Error);
     const error = toApiError(thrown);
     expect(error).toMatchObject({ kind: "transport", code: "NOT_DEPLOYED" });
-    expect(error.message).toContain("getExecutiveDashboard()");
+    expect(error.message).toContain("getHoursSaved()");
   });
 });
 

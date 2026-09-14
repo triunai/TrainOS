@@ -17,6 +17,7 @@ import type {
   ComplianceRule,
   Contact,
   Enquiry,
+  ExecutiveDashboard,
   EnquiryDetail,
   EnquiryExtractionPatch,
   FollowUp,
@@ -43,6 +44,7 @@ import type {
   ProposalCreateRequest,
   ProposalSectionRegenerateResponse,
   ProposalSectionWrite,
+  ProposalsVsWonReport,
   Quotation,
   QuotationWrite,
   RateCard,
@@ -141,6 +143,8 @@ export interface TrainOsClient {
   meProfile(): Promise<Result<MeProfile>>;
   navigation(): Promise<Result<NavigationTree>>;
   badges(): Promise<Result<BadgeCounts>>;
+  getExecutiveDashboard(period: string): Promise<Result<ExecutiveDashboard>>;
+  getProposalsVsWon(months: number): Promise<Result<ProposalsVsWonReport>>;
   listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>>;
   getEnquiry(id: string): Promise<Result<EnquiryDetail>>;
   patchExtraction(id: string, patch: EnquiryExtractionPatch): Promise<Result<EnquiryDetail>>;
