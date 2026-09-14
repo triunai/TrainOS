@@ -117,6 +117,12 @@ INSERT INTO auth.users (id, email) VALUES
   -- 013's "one inert auth.users row per agent per tenant" (core.agents.principal_user_id).
   ('a0220000-0000-4000-8000-0000000000a9','agent1@a22.test');
 
+-- `session.activeSessions` is a real COUNT(auth.sessions) - two live sessions
+-- for MD, zero for everyone else, so the count is provably not a constant.
+INSERT INTO auth.sessions (id, user_id) VALUES
+  ('a0220000-dddd-4000-8000-000000000001','a0220000-0000-4000-8000-0000000000a1'),
+  ('a0220000-dddd-4000-8000-000000000002','a0220000-0000-4000-8000-0000000000a1');
+
 INSERT INTO public.tenants (id, slug, name, status, timezone, locale) VALUES
   ('a0220000-1111-4000-8000-000000000001','a22-akademi','Akademi Perdana A22','ACTIVE','Asia/Kuala_Lumpur','en-MY'),
   ('a0220000-1111-4000-8000-000000000002','a22-other','Other Tenant A22','ACTIVE','Asia/Kuala_Lumpur','en-MY');
@@ -384,7 +390,20 @@ SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'location') = 'null':
 SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'jobTitle') = 'null'::jsonb, 'T1g jobTitle null');
 SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'department') = 'null'::jsonb, 'T1h department null');
 SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'staffNumber') = 'null'::jsonb, 'T1i staffNumber null');
-SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session') = 'null'::jsonb, 'T1j session null');
+-- `session` is no longer a blanket null: `browser`/`place` stay null (no
+-- source anywhere), `activeSessions` is a real count off this fixture's two
+-- seeded `auth.sessions` rows, and `lastSignInAt`/`twoFactorEnabled` are null
+-- ONLY because this shim's `auth.users` has no `last_sign_in_at` column and
+-- no `auth.mfa_factors` table at all - both standard GoTrue objects on
+-- hosted Supabase that the function reads for real once present (verified
+-- ad hoc against a locally-extended copy of this schema, not checked in
+-- here, since adding hosted-only columns/tables to the shared shim is not
+-- this pin's fixture to make).
+SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session'->'browser') = 'null'::jsonb, 'T1j1 session.browser null');
+SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session'->'place') = 'null'::jsonb, 'T1j2 session.place null');
+SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session'->>'activeSessions')::int = 2, 'T1j3 session.activeSessions = 2');
+SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session'->'lastSignInAt') = 'null'::jsonb, 'T1j4 session.lastSignInAt null (no column in this shim)');
+SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session'->'twoFactorEnabled') = 'null'::jsonb, 'T1j5 session.twoFactorEnabled null (no table in this shim)');
 -- MD holds 13 of the 14 nav permissions (lacks the bare 'compliance:read').
 SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->>'moduleCount')::int = 13, 'T1k moduleCount = 13');
 
