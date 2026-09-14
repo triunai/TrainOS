@@ -55,22 +55,13 @@
 -- `last_checked_at` / `monitor_status`, so gated on `knowledge:source:write`
 -- (ADMIN) rather than invented as a fourth permission - flagged in the PR.
 --
--- `putBudget`: 013's own comment on `core.ai_budgets` (013:1548) states "Raising
--- cap_sen is BUDGET_CAP_RAISE through 011's envelope, MD-gated". 011 DOES carry
--- that action type, gated `ai:budget:raise` (MD-only, 011:2073), policy FIN-07
--- "always needs MD approval" (011:990) - but 011's own
--- `app.execute_in_database_action` has a stub for it (`WHEN 'BUDGET_CAP_RAISE'
--- THEN NULL; -- app.ai_budgets is created by 013, not invented here`,
--- 011:1896), and FIN-07's unconditional approval requirement means a raise can
--- never complete synchronously even for the MD who requested it - which
--- conflicts with the contract's `PUT /v1/ai/budgets/{scope}/{key}` returning a
--- `Budget` directly (ai-ops.ts:258) and with the fixture's synchronous
--- behaviour (FC:2005, direct write, MD-gated only on a RAISE). Implemented
--- here as a DIRECT write gated on `ai:budget:raise` for a raise and
--- `ai:budget:write` (ADMIN) otherwise, matching the fixture and the contract's
--- synchronous shape rather than wiring the always-escalate action envelope.
--- Flagged in the PR as a product decision to confirm, not a guess taken
--- silently.
+-- `putBudget`: 013's own comment on `core.ai_budgets` (013:1548) and the
+-- contract both require a cap RAISE to use 011's `BUDGET_CAP_RAISE` action.
+-- That path is money-moving (AAL2) and FIN-07 always queues a different MD's
+-- approval. 021 is the effective definition of `app.execute_in_database_action`
+-- and still carries 011's pre-013 NULL stub, so this migration replaces that
+-- definition verbatim except for a real budget branch. Cap lowers remain a
+-- direct `ai:budget:write` write. Neither path requires `ai:budget:read`.
 --
 -- ── pauseAgent AND THE 011/013 SEAM ─────────────────────────────────────────
 --
@@ -102,7 +93,10 @@
 -- any agent runtime - there is no SQL path to real agent execution, and this
 -- lane may not touch the worker. `retryRun`'s new row is written SUCCEEDED
 -- immediately (fixture parity for the hosted demo), not left RUNNING forever
--- with nothing to advance it.
+-- with nothing to advance it. A source must be FAILED (including 013's
+-- FAILED+`failure.deadLettered=true` representation of DEAD_LETTERED) before
+-- retry, and only FAILED may be dead-lettered. Both operations lock the source
+-- before reading that state and return the first result on a repeated call.
 --
 -- `reingestKnowledgeSource`: `apps/worker/src/handlers/index.ts` `JOB_TYPES`
 -- has no reingest/embedding handler, and no `UNIMPLEMENTED_012_JOB_TYPES` row
@@ -1056,6 +1050,7 @@ BEGIN
   -- EditedBy shape {id, name, at} - core.ai_provider_keys.added_by is an
   -- actor jsonb {kind, id, name} with no timestamp of its own; `added_at` is
   -- the separate column that carries it.
+  --
   SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
            'id', key.provider_ref, 'provider', key.provider::text, 'label', key.label,
            'status', key.status::text, 'maskedKey', key.masked_key,
@@ -1172,6 +1167,224 @@ BEGIN
 END;
 $fn$;
 
+-- 021 is the effective executor when 027 applies. Keep its body intact and
+-- replace only the pre-013 BUDGET_CAP_RAISE stub now that core.ai_budgets
+-- exists. The row is locked and the queued request is revalidated at decision
+-- time so an approval cannot write a missing budget, cross currencies, or turn
+-- into a cap lower while it waits.
+CREATE OR REPLACE FUNCTION app.execute_in_database_action(p_action_request_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_request core.action_requests%ROWTYPE;
+BEGIN
+  SELECT request.* INTO v_request
+    FROM core.action_requests AS request
+   WHERE request.id = p_action_request_id
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'action request % does not exist', p_action_request_id
+      USING ERRCODE = 'no_data_found';
+  END IF;
+
+  CASE v_request.action_type
+    WHEN 'ENQUIRY_ARCHIVE' THEN
+      UPDATE core.enquiries SET status = COALESCE(v_request.payload ->> 'status','ARCHIVED')::core.enquiry_status
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'OPPORTUNITY_CONVERT' THEN
+      UPDATE core.enquiries SET status = 'CONVERTED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    -- 021 · R18. Locked, then re-checked: an approval decided later must still
+    -- refuse a deal that moved while it waited.
+    WHEN 'OPPORTUNITY_STAGE_CHANGE' THEN
+      PERFORM 1 FROM core.opportunities
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id
+       FOR UPDATE;
+      PERFORM app.check_opportunity_stage_move(
+        v_request.tenant_id, v_request.target_id, v_request.payload);
+      UPDATE core.opportunities
+         SET stage = (v_request.payload ->> 'stage')::core.opportunity_stage,
+             stage_changed_at = pg_catalog.now(),
+             -- 005's opportunities_lost_needs_reason names LOST; the reason
+             -- lands in the column that CHECK reads, and nowhere else.
+             lost_reason = CASE WHEN (v_request.payload ->> 'stage')::core.opportunity_stage = 'LOST'
+                                THEN v_request.payload ->> 'reason' ELSE lost_reason END
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'TNA_RECOMMENDATION_ACCEPT' THEN
+      UPDATE core.tnas SET status = 'COMPLETE', completed_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'PROPOSAL_SEND' THEN
+      UPDATE core.proposals SET status = 'SENT', sent_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'QUOTATION_APPLY' THEN
+      UPDATE core.quotations SET status = 'APPLIED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'DISCOUNT_APPROVE' THEN
+      UPDATE core.quotations
+         SET sell_price_sen = COALESCE((v_request.payload ->> 'sellPriceSen')::bigint, sell_price_sen),
+             discount_approval_id = v_request.id
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'TRAINER_BOOK' THEN
+      UPDATE core.trainer_bookings SET state = 'CONFIRMED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ENGAGEMENT_CLOSE_OUT' THEN
+      UPDATE core.engagements SET status = 'CLOSED', closed_out_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ATTENDANCE_APPROVE' THEN
+      UPDATE core.attendance_days
+         SET status = 'LOCKED', approved_by_kind = v_request.requested_by_kind::app.actor_kind,
+             approved_by_id = v_request.requested_by_id,
+             approved_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ATTENDANCE_UNLOCK' THEN
+      UPDATE core.attendance_days
+         SET status = 'OPEN', unlock_reason = v_request.payload ->> 'reason'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'HRDC_PACKET_MARK_SUBMITTED' THEN
+      UPDATE core.hrdc_packets
+         SET status = 'SUBMITTED',
+             claim_reference = v_request.payload ->> 'claimReference',
+             claim_submitted_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'INVOICE_CREATE' THEN
+      INSERT INTO core.invoices
+        (id,tenant_id,organisation_id,engagement_id,status,created_by_kind,created_by_id)
+      VALUES
+        (v_request.target_id,v_request.tenant_id,
+         (v_request.payload ->> 'organisationId')::uuid,
+         NULLIF(v_request.payload ->> 'engagementId','')::uuid,
+         'DRAFT',v_request.requested_by_kind::app.actor_kind,v_request.requested_by_id);
+    WHEN 'INVOICE_PUSH' THEN
+      UPDATE core.invoices
+         SET status = 'SENT', issued_at = COALESCE(issued_at,pg_catalog.now()),
+             sync_state = 'SENT', sync_last_attempt_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'PAYMENT_RECORD' THEN
+      INSERT INTO core.payments
+        (tenant_id,invoice_id,amount_sen,currency,method,external_reference,
+         created_by_kind,created_by_id)
+      VALUES
+        (v_request.tenant_id,v_request.target_id,
+         (v_request.payload #>> '{amount,amount}')::bigint,
+         COALESCE(v_request.payload #>> '{amount,currency}','MYR')::core.currency_code,
+         COALESCE(v_request.payload ->> 'method','BANK_TRANSFER'),
+         v_request.payload ->> 'externalReference',
+         v_request.requested_by_kind::app.actor_kind,v_request.requested_by_id);
+    WHEN 'REMINDER_SEND' THEN
+      UPDATE core.collections_cases
+         SET stage = (v_request.payload ->> 'stage')::core.collection_stage,
+             stage_entered_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'FOLLOWUP_SEND' THEN
+      UPDATE core.follow_ups SET status = 'SENT'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'BROADCAST_SEND' THEN
+      NULL; -- fan-out is external and 012 owns its jobs
+    WHEN 'AGENT_AUTONOMY_CHANGE' THEN
+      INSERT INTO core.autonomy_grants
+        (id,tenant_id,agent_id,action_type,level,approver_role,value_threshold_sen,
+         min_confidence,granted_by)
+      VALUES
+        (v_request.target_id,v_request.tenant_id,v_request.payload ->> 'agentId',
+         v_request.payload ->> 'actionType',v_request.payload ->> 'level',
+         v_request.payload ->> 'approverRole',
+         (v_request.payload ->> 'valueThresholdSen')::bigint,
+         COALESCE((v_request.payload ->> 'minConfidence')::numeric,0.700),
+         v_request.requested_by_id)
+      ON CONFLICT (tenant_id,agent_id,action_type) DO UPDATE
+        SET level = EXCLUDED.level,
+            approver_role = EXCLUDED.approver_role,
+            value_threshold_sen = EXCLUDED.value_threshold_sen,
+            min_confidence = EXCLUDED.min_confidence,
+            granted_by = EXCLUDED.granted_by,
+            granted_at = pg_catalog.now();
+    WHEN 'AGENT_PAUSE' THEN
+      UPDATE core.autonomy_grants
+         SET paused = true, paused_at = pg_catalog.now(),
+             paused_reason = COALESCE(v_request.payload ->> 'reason','MANUAL')
+       WHERE tenant_id = v_request.tenant_id
+         AND agent_id = v_request.payload ->> 'agentId'
+         AND (v_request.payload ->> 'actionType' IS NULL
+              OR action_type = v_request.payload ->> 'actionType');
+    WHEN 'BUDGET_CAP_RAISE' THEN
+      DECLARE
+        v_budget             core.ai_budgets%ROWTYPE;
+        v_requested_cap      bigint;
+        v_requested_currency text := v_request.payload #>> '{requestedCap,currency}';
+      BEGIN
+        BEGIN
+          v_requested_cap := (v_request.payload #>> '{requestedCap,amount}')::bigint;
+        EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+          RAISE EXCEPTION 'approved budget cap is invalid'
+            USING ERRCODE = 'TRNOS',
+                  DETAIL = pg_catalog.jsonb_build_object(
+                    'code','VALIDATION_FAILED','reason','INVALID_CAP')::text;
+        END;
+
+        SELECT budget.* INTO v_budget
+          FROM core.ai_budgets AS budget
+         WHERE budget.tenant_id = v_request.tenant_id
+           AND budget.id = NULLIF(v_request.payload ->> 'budgetId','')::uuid
+           AND budget.scope::text = v_request.payload ->> 'scope'
+           AND budget.key = v_request.payload ->> 'key'
+         FOR UPDATE;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'approved budget no longer exists'
+            USING ERRCODE = 'TRNOS',
+                  DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
+        END IF;
+        IF v_requested_currency IS DISTINCT FROM v_budget.currency::text THEN
+          RAISE EXCEPTION 'approved budget currency does not match'
+            USING ERRCODE = 'TRNOS',
+                  DETAIL = pg_catalog.jsonb_build_object(
+                    'code','VALIDATION_FAILED','reason','CURRENCY_MISMATCH',
+                    'expected',v_budget.currency::text)::text;
+        END IF;
+        IF v_requested_cap IS NULL OR v_requested_cap <= v_budget.cap_sen THEN
+          RAISE EXCEPTION 'approved cap is no longer a raise'
+            USING ERRCODE = 'TRNOS',
+                  DETAIL = pg_catalog.jsonb_build_object(
+                    'code','VALIDATION_FAILED','reason','CAP_NOT_RAISE',
+                    'currentCapSen',v_budget.cap_sen)::text;
+        END IF;
+
+        UPDATE core.ai_budgets
+           SET cap_sen = v_requested_cap, updated_at = pg_catalog.now()
+         WHERE tenant_id = v_request.tenant_id AND id = v_budget.id;
+
+        PERFORM app.emit_event(
+          p_tenant_id => v_request.tenant_id,
+          p_type => 'BudgetCapChanged',
+          p_aggregate_type => 'AI_BUDGET',
+          p_aggregate_id => v_budget.id,
+          p_aggregate_ref => v_budget.scope::text || ':' || v_budget.key,
+          p_payload => pg_catalog.jsonb_build_object(
+            'scope',v_budget.scope::text,'key',v_budget.key,'capSen',v_requested_cap),
+          p_summary => pg_catalog.format(
+            '%s/%s cap set to %s sen',v_budget.scope,v_budget.key,v_requested_cap),
+          p_actor => pg_catalog.jsonb_build_object(
+            'kind',v_request.requested_by_kind::text,
+            'id',v_request.requested_by_id,
+            'name',NULL));
+      END;
+    WHEN 'RULE_CHANGE_APPROVE' THEN
+      UPDATE core.rule_changes SET status = 'APPROVED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ACCOUNT_TRADING_HOLD' THEN
+      UPDATE core.collections_cases
+         SET stage = 'TRADING_HOLD', stage_entered_at = pg_catalog.now(),
+             trading_hold_action_id = v_request.id
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    ELSE
+      RAISE EXCEPTION 'unknown action type %L', v_request.action_type
+        USING ERRCODE = 'invalid_parameter_value';
+  END CASE;
+END;
+$fn$;
+
 CREATE OR REPLACE FUNCTION core.put_budget(p_scope text, p_key text, p_body jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -1182,15 +1395,30 @@ AS $fn$
 DECLARE
   v_tenant  uuid := app.require_tenant_id();
   v_row     core.ai_budgets%ROWTYPE;
-  v_new_cap bigint := ((p_body -> 'cap' ->> 'amount')::bigint);
+  v_new_cap bigint;
   v_actor   jsonb;
   v_spend   bigint;
 BEGIN
-  IF NOT app.has_permission('ai:budget:read') THEN
-    RAISE EXCEPTION 'requester lacks %', 'ai:budget:read'
+  -- A raise is authorised inside app.perform_action by ai:budget:raise; a
+  -- direct lower is authorised here by ai:budget:write. Refuse principals that
+  -- hold neither before reading whether the target row exists.
+  IF NOT app.has_permission('ai:budget:raise')
+     AND NOT app.has_permission('ai:budget:write') THEN
+    RAISE EXCEPTION 'requester lacks a budget write permission'
       USING ERRCODE = 'TRNOS',
-            DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','requiredPermission','ai:budget:read')::text;
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','FORBIDDEN','requiredPermission','ai:budget:write')::text;
   END IF;
+
+  BEGIN
+    v_new_cap := (p_body #>> '{cap,amount}')::bigint;
+  EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+    RAISE EXCEPTION 'cap invalid'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields',pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object('field','cap.amount','reason','INVALID')))::text;
+  END;
 
   SELECT budget.* INTO v_row FROM core.ai_budgets AS budget
    WHERE budget.tenant_id = v_tenant AND budget.scope = p_scope::core.budget_scope AND budget.key = p_key
@@ -1201,18 +1429,34 @@ BEGIN
   END IF;
   IF v_new_cap IS NULL OR v_new_cap < 0 THEN
     RAISE EXCEPTION 'cap invalid'
-      USING ERRCODE = 'TRNOS', DETAIL = pg_catalog.jsonb_build_object('code','VALIDATION_FAILED')::text;
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields',pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object('field','cap.amount','reason','INVALID')))::text;
+  END IF;
+  IF (p_body #>> '{cap,currency}') IS DISTINCT FROM v_row.currency::text THEN
+    RAISE EXCEPTION 'budget currency does not match'
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','VALIDATION_FAILED','fields',pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object(
+                  'field','cap.currency','reason','CURRENCY_MISMATCH',
+                  'expected',v_row.currency::text)))::text;
   END IF;
 
-  -- Raising the cap: MD-gated (fixture FC:2005, 013's own comment on
-  -- core.ai_budgets - see the migration header on why this is a direct write
-  -- rather than the always-escalating 011 BUDGET_CAP_RAISE envelope).
-  IF v_new_cap > v_row.cap_sen AND NOT app.has_permission('ai:budget:raise') THEN
-    RAISE EXCEPTION 'raising a cap is MD-gated'
-      USING ERRCODE = 'TRNOS',
-            DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','requiredRole','MD')::text;
+  IF v_new_cap > v_row.cap_sen THEN
+    RETURN core.perform_action(
+      p_type => 'BUDGET_CAP_RAISE',
+      p_target_ref => v_row.scope::text || ':' || v_row.key,
+      p_payload => pg_catalog.jsonb_build_object(
+        'budgetId',v_row.id::text,
+        'scope',v_row.scope::text,
+        'key',v_row.key,
+        'requestedCap',pg_catalog.jsonb_build_object(
+          'amount',v_new_cap,'currency',v_row.currency::text)));
   END IF;
-  IF v_new_cap <= v_row.cap_sen AND NOT app.has_permission('ai:budget:write') THEN
+
+  IF NOT app.has_permission('ai:budget:write') THEN
     RAISE EXCEPTION 'requester lacks %', 'ai:budget:write'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object('code','FORBIDDEN','requiredPermission','ai:budget:write')::text;

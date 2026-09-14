@@ -11,8 +11,8 @@
 -- SUCCEEDED, one FAILED), one core.ai_budgets (scope TIER/STANDARD, cap
 -- 50,000.00 MYR), one core.ai_provider_keys row (masked only), one
 -- core.routing_matrix_versions + core.routing_entries row, one
--- app.usage_rollup row. Principals: the two real akademi-perdana MDs
--- (d1449fad.../ad61591...), one ADMIN, one SALES, one CLIENT (no
+-- app.usage_rollup row. Principals: two same-tenant MDs (requester and
+-- independent approver), a second-tenant MD, one ADMIN, one SALES, one CLIENT (no
 -- library:read/tenant:read/agent:read), and a second tenant's MD for cross-
 -- tenant isolation.
 --
@@ -21,8 +21,10 @@
 --
 -- T1  MD: list_agents/list_runs/get_run/get_ai_routing/get_usage/get_tenant/
 --     list_library_assets succeed with the contract's top-level keys present;
---     pause_agent (whole-agent) flips status/pausedAt/autonomy[].paused; MD
---     may raise a budget cap (ai:budget:raise).
+--     pause_agent (whole-agent) flips status/pausedAt/autonomy[].paused; an
+--     AAL1 cap raise is refused, an AAL2 raise queues FIN-07, and a different
+--     AAL2 MD executes it. An ai:budget:write lower stays direct, and a currency
+--     mismatch is VALIDATION_FAILED.
 -- T2  ADMIN-only: create_knowledge_source/check_knowledge_source/
 --     reingest_knowledge_source/list_providers/put_ai_routing/retry_run/
 --     dead_letter_run succeed for ADMIN and are FORBIDDEN with
@@ -64,6 +66,7 @@ DO $seed$
 DECLARE
   v_tenant uuid := 'a0270000-1000-4000-8000-000000000001';
   v_md1    uuid := 'a0270000-cd01-4000-8000-0000000000d1';
+  v_md3    uuid := 'a0270000-cd03-4000-8000-0000000000d3';
   v_agent1 uuid := 'a0270000-a001-4000-8000-0000000000a1';
   v_agent2 uuid := 'a0270000-a002-4000-8000-0000000000a2';
   v_prin1  uuid := 'a0270000-9001-4000-8000-000000000901';
@@ -79,9 +82,16 @@ BEGIN
   PERFORM app.provision_tenant('t027-tenant', 'T027 Test Co', 'Asia/Kuala_Lumpur', v_tenant);
 
   INSERT INTO auth.users (id, aud, role, email) VALUES
-    (v_md1,   'authenticated','authenticated','t027-md1@internal.trainos');
+    (v_md1,   'authenticated','authenticated','t027-md1@internal.trainos'),
+    (v_md3,   'authenticated','authenticated','t027-md3@internal.trainos');
   INSERT INTO public.memberships (tenant_id,user_id,role,actor_kind,client_scope,team_scope,status,is_default) VALUES
-    (v_tenant, v_md1, 'MD', 'HUMAN', 'ALL','ALL','ACTIVE', true);
+    (v_tenant, v_md1, 'MD', 'HUMAN', 'ALL','ALL','ACTIVE', true),
+    (v_tenant, v_md3, 'MD', 'HUMAN', 'ALL','ALL','ACTIVE', true);
+
+  -- Real AAL2 sessions: app.aal2_verified() ignores a forgeable JWT-only aal2.
+  INSERT INTO auth.sessions (id,user_id,aal) VALUES
+    ('a0270000-5e55-4000-8000-0000000000d1',v_md1,'aal2'),
+    ('a0270000-5e55-4000-8000-0000000000d3',v_md3,'aal2');
 
   INSERT INTO core.tier_keys (tenant_id, tier_key, label, position) VALUES
     (v_tenant, 'FAST', 'Fast', 1), (v_tenant, 'STANDARD', 'Standard', 2);
@@ -128,8 +138,13 @@ BEGIN
 
   INSERT INTO t027_ids VALUES
     ('agent1', v_agent1::text), ('run_ok', v_run_ok::text), ('run_bad', v_run_bad::text),
-    ('md1', v_md1::text), ('md2', v_md2::text), ('sales', v_sales::text),
+    ('md1', v_md1::text), ('md3', v_md3::text), ('md2', v_md2::text), ('sales', v_sales::text),
     ('client', v_client::text), ('admin', v_admin::text);
+
+  -- 002 gives ai:budget:write to ADMIN only. Add it transactionally so the
+  -- direct-lower probe exercises an MD who explicitly holds that permission
+  -- without changing the shipped role matrix.
+  INSERT INTO app.role_permissions (role,permission) VALUES ('MD','ai:budget:write');
 END
 $seed$;
 
@@ -157,12 +172,29 @@ BEGIN
 END;
 $fn$;
 
+CREATE FUNCTION pg_temp.as_user_aal2(p_user uuid, p_session uuid) RETURNS void
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  v_claims jsonb := pg_temp.claims(p_user)::jsonb
+                    || pg_catalog.jsonb_build_object(
+                         'aal','aal2','session_id',p_session::text);
+BEGIN
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_catalog.set_config('request.jwt.claims', v_claims::text, true);
+END;
+$fn$;
+
 -- ═══ T1 · MD ═══════════════════════════════════════════════════════════
 
 SELECT pg_temp.as_user('a0270000-cd01-4000-8000-0000000000d1'::uuid);
 
 DO $t1$
-DECLARE v jsonb;
+DECLARE
+  v              jsonb;
+  v_detail       text;
+  v_approval_id  uuid;
+  v_diff_hash    text;
+  v_before_count bigint;
 BEGIN
   v := core.list_agents();
   IF (v->>'success') <> 'true' OR jsonb_typeof(v->'data'->'data') <> 'array'
@@ -197,11 +229,74 @@ BEGIN
     RAISE EXCEPTION 'T1f: get_usage wrong: %', v;
   END IF;
 
-  -- MD raises the STANDARD/TIER budget cap: allowed (ai:budget:raise).
+  -- An MD permission is not a second factor. 011's money-moving gate must
+  -- refuse the AAL1 request before FIN-07 can queue it.
+  BEGIN
+    PERFORM core.put_budget(
+      'TIER','STANDARD','{"cap":{"amount":6000000,"currency":"MYR"}}'::jsonb);
+    RAISE EXCEPTION 'T1g0: an AAL1-only MD queued or executed a budget cap raise';
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb ->> 'code') <> 'FORBIDDEN'
+       OR (v_detail::jsonb ->> 'reason') <> 'AAL2_REQUIRED' THEN
+      RAISE EXCEPTION 'T1g0: AAL1 cap raise refused for the wrong reason: %', v_detail;
+    END IF;
+  END;
+
+  -- With a real AAL2 session, MD may request the raise but FIN-07 queues it;
+  -- the cap remains unchanged until a different MD decides the approval.
+  PERFORM pg_temp.as_user_aal2(
+    (SELECT id_val::uuid FROM t027_ids WHERE k='md1'),
+    'a0270000-5e55-4000-8000-0000000000d1'::uuid);
   v := core.put_budget('TIER','STANDARD', '{"cap":{"amount":6000000,"currency":"MYR"}}'::jsonb);
-  IF (v->>'success') <> 'true' OR (v->'data'->'cap'->>'amount') <> '6000000' THEN
-    RAISE EXCEPTION 'T1g: MD could not raise a budget cap: %', v;
+  IF (v->>'success') <> 'true'
+     OR (v->'data'->>'status') <> 'QUEUED_FOR_APPROVAL'
+     OR (v#>>'{data,approvalRequest,policyId}') <> 'FIN-07'
+     OR (v#>>'{data,approvalRequest,approverRole}') <> 'MD' THEN
+    RAISE EXCEPTION 'T1g: MD cap raise was not queued for FIN-07 approval: %', v;
   END IF;
+  IF (SELECT cap_sen FROM core.ai_budgets WHERE key='STANDARD') <> 5000000 THEN
+    RAISE EXCEPTION 'T1g1: queued cap raise applied before approval';
+  END IF;
+
+  v_approval_id := (v #>> '{data,approvalRequest,id}')::uuid;
+  PERFORM pg_temp.as_user_aal2(
+    (SELECT id_val::uuid FROM t027_ids WHERE k='md3'),
+    'a0270000-5e55-4000-8000-0000000000d3'::uuid);
+  v := core.get_approval(v_approval_id::text);
+  v_diff_hash := v #>> '{data,diffHash}';
+  v := core.decide_approval(v_approval_id,'APPROVE',NULL,v_diff_hash,NULL);
+  IF (v->>'success') <> 'true'
+     OR (v->'data'->>'status') <> 'APPROVED'
+     OR (SELECT cap_sen FROM core.ai_budgets WHERE key='STANDARD') <> 6000000 THEN
+    RAISE EXCEPTION 'T1g2: a different MD did not execute the approved cap raise: %', v;
+  END IF;
+
+  -- Lowering a cap is a direct ai:budget:write edit, with no AAL2 step-up and
+  -- no second approval row.
+  PERFORM pg_temp.as_user((SELECT id_val::uuid FROM t027_ids WHERE k='md1'));
+  SELECT pg_catalog.count(*) INTO v_before_count
+    FROM core.approval_requests WHERE action_type = 'BUDGET_CAP_RAISE';
+  v := core.put_budget('TIER','STANDARD', '{"cap":{"amount":4000000,"currency":"MYR"}}'::jsonb);
+  IF (v->>'success') <> 'true'
+     OR (v#>>'{data,cap,amount}') <> '4000000'
+     OR (SELECT pg_catalog.count(*) FROM core.approval_requests
+          WHERE action_type = 'BUDGET_CAP_RAISE') <> v_before_count THEN
+    RAISE EXCEPTION 'T1g3: ai:budget:write cap lower was not direct: %', v;
+  END IF;
+
+  -- Currency belongs to the budget row; a body may not silently change it.
+  BEGIN
+    PERFORM core.put_budget(
+      'TIER','STANDARD','{"cap":{"amount":7000000,"currency":"USD"}}'::jsonb);
+    RAISE EXCEPTION 'T1g4: mismatched budget currency was accepted';
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb ->> 'code') <> 'VALIDATION_FAILED'
+       OR (v_detail::jsonb #>> '{fields,0,reason}') <> 'CURRENCY_MISMATCH' THEN
+      RAISE EXCEPTION 'T1g4: currency mismatch returned the wrong detail: %', v_detail;
+    END IF;
+  END;
 
   v := core.get_tenant();
   IF (v->>'success') <> 'true' OR (v->'data'->>'name') IS NULL THEN
