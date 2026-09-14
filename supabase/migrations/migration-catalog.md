@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 29 (numbered up to 034; 024, 026–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022, 023, 025 · **Authored, not applied:** 020, 030, 031, 032, 033, 034
+**Migrations:** 30 (numbered up to 035; 024, 026–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022, 023, 025 · **Authored, not applied:** 020, 030, 031, 032, 033, 034, 035
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -13,6 +13,29 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-14 — **035: `core.get_follow_up_draft` calls a function that does not exist, `pg_catalog.trim(text)`, and 500s the live Follow-ups draft pane whenever a real per-message rate is priced.**
+Reported by api-026. `pg_catalog.trim(text)` — ONE argument — is not a PostgreSQL function: the
+SQL-standard form is `trim([leading|trailing|both] [characters] FROM string)` and the two-argument
+form is `trim(string, characters)`; the one-argument form that exists is `btrim(string)`. Confirmed
+directly on the shim: `SELECT pg_catalog.trim(' x ')` raises `function pg_catalog.trim(unknown)
+does not exist`; `SELECT pg_catalog.btrim(' x ')` returns `x`. 021's `core.get_follow_up_draft`
+calls it once, inside `IF v_source <> 'UNAVAILABLE'`, to strip `to_char`'s `FM9990.000000` padding
+off the unrounded exact rate — i.e. on every draft whose rate lookup succeeded, which is the
+everyday case, not an edge one. `CREATE OR REPLACE` of `core.get_follow_up_draft(text,text)` only,
+one token changed (`pg_catalog.trim(` → `pg_catalog.btrim(`); every other line, including the
+permission gate, channel validation, NOT_FOUND shapes and the `rateSource`/money/provenance
+derivation, is 021's, byte for byte. Pin `tests/test_035_follow_up_draft_trim_fix.sql`: T1 a
+follow-up draft with a real `core.message_rates` row (`rate_exact = 0.346700`, reached via the
+draft's own `rate_per_message_exact` COALESCE fallback) succeeds and returns
+`"ratePerMessageExact":"0.346700"` — reproduced the exact reported failure against 021's original
+body (and against this migration rolled back): `ERROR: function pg_catalog.trim(text) does not
+exist` at the same line; T2 a draft with no rate at all (`rateSource: UNAVAILABLE`) still succeeds
+with no `ratePerMessageExact` key, unchanged by 035 (the buggy call was never reached on this
+path). Rollback restores 021's original body verbatim, `pg_catalog.trim(` included. Round-tripped:
+apply → rollback (reproduces the exact reported error) → re-apply (passes again). `test_001`–
+`test_025`, `test_030`–`test_034` all still pass on a clean 001–035 build. `npm run lint:sql`
+101/101, `check:grants`/`check:rpc` clean.
 
 **Last updated:** 2026-09-14 — **Correction to 034's M1: dropped, not fixed. 002's `app.role_permissions` is ruled authoritative over `endpoints.ts`'s narrower role list for RPC gates.**
 The entry below (and 034's own migration/rollback/pin) originally added a function-local
@@ -588,6 +611,19 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 035 (`035_follow_up_draft_trim_fix.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. `CREATE OR REPLACE` of
+`core.get_follow_up_draft(text,text)` only, one token changed.
+
+- **Pin** — `tests/test_035_follow_up_draft_trim_fix.sql`. T1/T2, ends in `ROLLBACK`. T1
+  reproduces the exact reported error against 021's original body / this migration rolled back.
+- **Rollback** — `rollbacks/035_follow_up_draft_trim_fix_rollback.sql`. Restores 021's original
+  body verbatim, including the nonexistent `pg_catalog.trim(text)` call.
 
 ---
 
