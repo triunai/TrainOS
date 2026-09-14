@@ -555,6 +555,30 @@ BEGIN
       USING ERRCODE = 'TRNOS', DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
   END IF;
 
+  -- core.run_status has no DEAD_LETTERED label: 013 represents that state as
+  -- FAILED with failure.deadLettered=true. Both FAILED forms are retryable;
+  -- SUCCEEDED, RUNNING and HALTED are not.
+  IF v_row.status <> 'FAILED' THEN
+    RAISE EXCEPTION 'run % cannot be retried from %', v_row.ref, v_row.status
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','ILLEGAL_STATE_TRANSITION','actualStatus',v_row.status::text,
+              'allowedStatuses',pg_catalog.jsonb_build_array('FAILED','DEAD_LETTERED'))::text;
+  END IF;
+
+  -- No idempotency-key column exists on this endpoint. The first retry row is
+  -- the durable claim: after the source lock, a repeated call returns it rather
+  -- than starting or emitting a second retry.
+  SELECT run.* INTO v_new FROM core.runs AS run
+   WHERE run.tenant_id = v_tenant
+     AND run.parent_run_id = v_row.id
+     AND run.trigger ->> 'type' = 'RETRY'
+   ORDER BY run.created_at, run.id
+   LIMIT 1;
+  IF FOUND THEN
+    RETURN app.ok(app._run_row(v_new));
+  END IF;
+
   v_actor := pg_catalog.jsonb_build_object(
     'kind', app.actor_kind()::text, 'id', COALESCE(app.jwt() ->> 'sub', 'unknown'), 'name', NULL);
 
@@ -620,6 +644,20 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'no such run'
       USING ERRCODE = 'TRNOS', DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND')::text;
+  END IF;
+
+  -- Replaying an already-dead-lettered source is a stable success, not a
+  -- second write/event and not an error.
+  IF v_row.status = 'FAILED'
+     AND COALESCE((v_row.failure ->> 'deadLettered')::boolean,false) THEN
+    RETURN app.ok(app._run_row(v_row));
+  END IF;
+  IF v_row.status <> 'FAILED' THEN
+    RAISE EXCEPTION 'run % cannot be dead-lettered from %', v_row.ref, v_row.status
+      USING ERRCODE = 'TRNOS',
+            DETAIL = pg_catalog.jsonb_build_object(
+              'code','ILLEGAL_STATE_TRANSITION','actualStatus',v_row.status::text,
+              'allowedStatuses',pg_catalog.jsonb_build_array('FAILED'))::text;
   END IF;
 
   v_failure := pg_catalog.jsonb_build_object(

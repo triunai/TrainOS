@@ -342,19 +342,63 @@ END
 $t2_md$;
 
 DO $t2$
-DECLARE v jsonb; v_admin uuid; v_kid text;
+DECLARE v jsonb; v_admin uuid; v_kid text; v_detail text; v_retry_id text;
 BEGIN
   SELECT id_val::uuid INTO v_admin FROM t027_ids WHERE k='admin';
   PERFORM pg_temp.as_user(v_admin);
 
-  v := core.retry_run((SELECT id_val FROM t027_ids WHERE k='run_ok'), NULL);
+  -- run_ok is seeded SUCCEEDED: retry is illegal from that state, not a
+  -- silent success. 013 only allows retry from FAILED (including the
+  -- FAILED+deadLettered=true representation of DEAD_LETTERED).
+  BEGIN
+    PERFORM core.retry_run((SELECT id_val FROM t027_ids WHERE k='run_ok'), NULL);
+    RAISE EXCEPTION 'T2b0: ADMIN retried a SUCCEEDED run (should be illegal)';
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb ->> 'code') <> 'ILLEGAL_STATE_TRANSITION'
+       OR (v_detail::jsonb ->> 'actualStatus') <> 'SUCCEEDED' THEN
+      RAISE EXCEPTION 'T2b0: retrying a SUCCEEDED run refused for the wrong reason: %', v_detail;
+    END IF;
+  END;
+
+  -- run_bad is seeded FAILED (not yet dead-lettered): retry from FAILED is
+  -- the legal, passing case.
+  v := core.retry_run((SELECT id_val FROM t027_ids WHERE k='run_bad'), NULL);
   IF (v->>'success') <> 'true' OR (v->'data'->>'status') <> 'SUCCEEDED' THEN
-    RAISE EXCEPTION 'T2b: ADMIN retry_run failed: %', v;
+    RAISE EXCEPTION 'T2b: ADMIN retry_run of a FAILED run failed: %', v;
   END IF;
+  v_retry_id := v->'data'->>'id';
+
+  -- Idempotency: a repeated retry of the same source returns the same new
+  -- run rather than starting or emitting a second retry.
+  v := core.retry_run((SELECT id_val FROM t027_ids WHERE k='run_bad'), NULL);
+  IF (v->>'success') <> 'true' OR (v->'data'->>'id') <> v_retry_id THEN
+    RAISE EXCEPTION 'T2b1: retry_run was not idempotent: %', v;
+  END IF;
+
+  -- dead_letter_run is only legal from FAILED; run_ok (SUCCEEDED) must be
+  -- refused the same way retry is.
+  BEGIN
+    PERFORM core.dead_letter_run((SELECT id_val FROM t027_ids WHERE k='run_ok'), '{"reason":"t027 dead letter"}'::jsonb);
+    RAISE EXCEPTION 'T2c0: ADMIN dead-lettered a SUCCEEDED run (should be illegal)';
+  EXCEPTION WHEN SQLSTATE 'TRNOS' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF (v_detail::jsonb ->> 'code') <> 'ILLEGAL_STATE_TRANSITION'
+       OR (v_detail::jsonb ->> 'actualStatus') <> 'SUCCEEDED' THEN
+      RAISE EXCEPTION 'T2c0: dead-lettering a SUCCEEDED run refused for the wrong reason: %', v_detail;
+    END IF;
+  END;
 
   v := core.dead_letter_run((SELECT id_val FROM t027_ids WHERE k='run_bad'), '{"reason":"t027 dead letter"}'::jsonb);
   IF (v->>'success') <> 'true' OR (v->'data'->'failure'->>'deadLettered') <> 'true' THEN
     RAISE EXCEPTION 'T2c: ADMIN dead_letter_run failed: %', v;
+  END IF;
+
+  -- Idempotency: replaying dead_letter_run on an already-dead-lettered
+  -- source is a stable success, not a second write/event or an error.
+  v := core.dead_letter_run((SELECT id_val FROM t027_ids WHERE k='run_bad'), '{"reason":"t027 dead letter again"}'::jsonb);
+  IF (v->>'success') <> 'true' OR (v->'data'->'failure'->>'deadLettered') <> 'true' THEN
+    RAISE EXCEPTION 'T2c1: dead_letter_run was not idempotent: %', v;
   END IF;
 
   v := core.create_knowledge_source('{"name":"T027 source","type":"HRDC_CIRCULAR","retrievalScopes":["COMPLIANCE"]}'::jsonb);
