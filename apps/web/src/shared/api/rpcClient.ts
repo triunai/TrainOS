@@ -1204,8 +1204,8 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<RoutingResponse>("put_ai_routing", { p_entries: entries });
   }
 
-  /* Read only. createProvider/testProvider/revealProvider need an Edge
-     Function this lane does not build — see 027's PR body. */
+  /* The read half (027). The writes — create, test, rotate, reveal, delete —
+     are 029's SQL RPCs below; no Edge Function is involved. */
   listProviders(): Promise<Result<ListResponse<ProviderKey>>> {
     return this.call<ListResponse<ProviderKey>>("list_providers");
   }

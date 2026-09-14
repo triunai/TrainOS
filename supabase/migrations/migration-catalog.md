@@ -1052,7 +1052,7 @@ applied → rolled back (verified `app._body_sql` no longer contains the added `
 
 ## Migration Detail — 029 (`029_byok_provider_keys_vault.sql`)
 
-**Status:** authored, not applied. **Depends on:** 001–021 only, plus the platform extensions supabase_vault (hosted 0.3.1) and pg_net (hosted 0.20.4). **Rollback:** `rollbacks/029_byok_provider_keys_vault_rollback.sql`. **Pin:** `tests/test_029_byok_provider_keys_vault.sql` (57 PASS, ends ROLLBACK).
+**Status:** authored, not applied. **Depends on:** 001–021 only, plus the platform extensions supabase_vault (hosted 0.3.1) and pg_net (hosted 0.20.4). **Rollback:** `rollbacks/029_byok_provider_keys_vault_rollback.sql`. **Pin:** `tests/test_029_byok_provider_keys_vault.sql` (62 PASS, ends ROLLBACK; the pin, not the migration, also needs 027).
 
 **Why.** 013 built the key path around an Edge Function that would hold the raw key and call `public.ai_provider_key_*` with only a mask, fingerprint and locator (013:150-210, 013:2375-2758). That function never existed, and the 2026-09-14 ruling is that none will. 029 moves the secret into Vault through SQL RPCs.
 
@@ -1060,7 +1060,7 @@ applied → rolled back (verified `app._body_sql` no longer contains the added `
 
 | Object | Grant | Contract |
 |---|---|---|
-| `core.create_provider(text,text,text,jsonb,text,text,jsonb,text)` | authenticated; gate `ai:provider:write` | `POST /v1/ai/providers` -> `ProviderKey` |
+| `core.create_provider(text,text,text,jsonb,text,text,jsonb,text,text)` | authenticated; gate `ai:provider:write` | `POST /v1/ai/providers` -> `ProviderKey` |
 | `core.test_provider(text)` | authenticated; `ai:provider:test` | `POST .../{id}/test`, first half (queues pg_net GET) |
 | `core.get_provider_test_result(text)` | authenticated; `ai:provider:test` | second half; the web adapter polls it |
 | `core.rotate_provider(text,text)` | authenticated; `ai:provider:rotate` + aal2 claim | `POST .../{id}/rotate` -> `ProviderKey` |
@@ -1078,6 +1078,8 @@ All `ai:provider:*` permissions are ADMIN-only in 002:1134-1139; MD holds none, 
 **⚠ Standing rule: `net` must never be added to the Data API exposed schemas, and pg_graphql must not be installed over it.** Queued pg_net probes carry the provider key in `net.http_request_queue.headers`, and on hosted anon and authenticated hold SELECT on that table (owned by supabase_admin, not revocable by postgres; measured by main 2026-09-14). Exposing `net` would let any signed-in user of any tenant read in-flight keys. 029 `$verify$` V9 refuses to apply while a catalog-readable `pgrst.db_schemas` names `net`; the dashboard's exposed-schema list is not catalog-readable, so this rule is the control there.
 
 **Follow-ups applied 2026-09-14.** OPENROUTER and OTHER added to `core.ai_provider` (rollback leaves both labels; `test_003` amended to six), with `core.ai_provider_keys.base_url` required for OTHER. The five key-carrying functions carry `statement_timeout = 5s` and `lock_timeout = 2s` (V8), because hosted auto_explain logs statements over 10 s with full parameters; measured on the shim, only `lock_timeout` cancels from inside a function.
+
+**Landed onto main 2026-09-14 (PR #58, merge of 52048dc).** Re-checked against 023–027 and 030–035 as merged. 029 still depends on 001–021 only and redefines nothing of 027's. 027's `core.list_providers` already filters `key_ref NOT LIKE 'retired:%'` and emits `addedBy` as `{id, name, at}`, so both open items from 029's PR checklist are closed on main. One disagreement was found and fixed in 029: `app.provider_key_json` returned `spendMonth` as a constant 0, while 027 sums this period's TIER-scope `app.usage_rollup` rows for the key's `scope_tiers`, so a created or rotated record could differ from its listed row. 029 now uses 027's calculation. New pins: T2i checks that each created record equals its `list_providers` row, with seeded rollup spend; it fails on the pre-fix 029. T10f checks that `list_providers` leaves out the tombstoned key and the hard-deleted key. Rule M2 (`check-grants.mjs`) exempts packs below 31, so 029 was exempt. Its per-function REVOKEs ran inside a dynamic `DO` loop that the static check cannot read, and would have raised 18 M2 findings with the cutoff at 29. §5 now adds a literal `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` for each of the 18 functions. The dynamic loop stays only for 013's five `public.ai_provider_key_*` functions. The runtime EXECUTE matrix is unchanged ($verify$ V4, pin T1a). Shim proof: the hosted-like preamble, 001–027 and 030–035 as `hc_mig`, then 029 last; `test_029` and `test_zz_anon_surface` pass. Rolling back on that build leaves the function catalog, grants and columns identical to a no-029 build. The only residue is the two documented enum labels.
 
 ## Migration Detail — 023 (`023_sales_directory.sql`)
 
