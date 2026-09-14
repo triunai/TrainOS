@@ -148,7 +148,9 @@ export function SidebarProfile({ collapsed }: SidebarProfileProps) {
       name={me.name}
       roleLabel={ROLE_LABEL[me.role]}
       orgAndLocation={
-        details === undefined ? placeholder : `${details.tenant.name} · ${details.location}`
+        details === undefined
+          ? placeholder
+          : `${details.tenant.name}${details.location ? ` · ${details.location}` : ""}`
       }
       lastSignIn={
         details === undefined

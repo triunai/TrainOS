@@ -16,6 +16,7 @@ import type {
   Enquiry,
   EnquiryDetail,
   EnquiryExtractionPatch,
+  ExecutiveDashboard,
   FollowUp,
   ErrorCode,
   ErrorDetails,
@@ -39,6 +40,7 @@ import type {
   ProgrammeDelivery,
   Proposal,
   ProposalSectionRegenerateResponse,
+  ProposalsVsWonReport,
   Quotation,
   RateCard,
   RuleChangeSet,
@@ -414,6 +416,8 @@ export const RPC_NAMES = {
     "me_profile",
     "navigation",
     "badge_counts",
+    "get_executive_dashboard",
+    "get_proposals_vs_won",
     "list_enquiries",
     "get_enquiry",
     "patch_enquiry_extraction",
@@ -557,6 +561,14 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   badges(): Promise<Result<BadgeCounts>> {
     return this.call<BadgeCounts>("badge_counts");
+  }
+
+  getExecutiveDashboard(period: string): Promise<Result<ExecutiveDashboard>> {
+    return this.call<ExecutiveDashboard>("get_executive_dashboard", { p_period: period });
+  }
+
+  getProposalsVsWon(months: number): Promise<Result<ProposalsVsWonReport>> {
+    return this.call<ProposalsVsWonReport>("get_proposals_vs_won", { p_months: months });
   }
 
   listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>> {

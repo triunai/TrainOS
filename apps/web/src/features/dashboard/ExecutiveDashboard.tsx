@@ -138,6 +138,27 @@ export function ExecutiveDashboard() {
   const cells: MetricCellProps[] = useMemo(
     () =>
       (data?.metrics ?? []).map((metric: DashboardMetric) => {
+        /* A metric with no source — today only `ADMIN_HOURS_SAVED`, before
+           anything has measured a baseline — answers `null` rather than a
+           coerced `0`. `0` would read as "measured, and it was zero," a
+           different and false claim, so the cell says the true thing instead
+           and carries nothing else a real reading would: no delta to have
+           moved, no drill target, no estimate caveat on a figure that is not
+           there to caveat. */
+        /* A metric with no source — today only `ADMIN_HOURS_SAVED`, before
+           anything has measured a baseline — answers `null` rather than a
+           coerced `0`. `0` would read as "measured, and it was zero," a
+           different and false claim, so the cell says the true thing instead
+           and carries nothing else a real reading would: no delta to have
+           moved, no drill target, no estimate caveat on a figure that is not
+           there to caveat. */
+        if (metric.value === null) {
+          return {
+            label: metric.label,
+            value: <span className="italic text-ink-muted">Not available</span>,
+          };
+        }
+
         const to = DRILL_TO[metric.key];
         return {
           label: metric.label,

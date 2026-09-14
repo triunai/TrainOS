@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -7,8 +7,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Role } from "@trainos/contract";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { ApiProvider } from "@/shared/api";
+import { createRpcApiClient } from "@/shared/api/apiClient";
+import { __setTransportForTests } from "@/shared/api/supabase";
 import { I18nProvider } from "@/shared/i18n";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
+import { okEnvelope } from "@/shared/api/__tests__/oracleTransport";
 import { SidebarProfile } from "../SidebarProfile";
 
 /**
@@ -66,6 +69,10 @@ const renderProfile = () =>
 beforeEach(() => {
   resetStore();
   fixtureClient.setLatency(0);
+});
+
+afterEach(() => {
+  __setTransportForTests(null);
 });
 
 describe("SidebarProfile", () => {
@@ -161,5 +168,85 @@ describe("SidebarProfile", () => {
     for (const name of [/Save/, /Change password/, /Sign out/]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
+  });
+
+  /**
+   * `location`, `jobTitle`, `department` and `staffNumber` went optional on
+   * `MeProfile`: no table stores them for a principal (`public.user_profiles`
+   * has no such columns — those names belong to `core.contacts`, a different
+   * entity), so `core.me_profile()` (020/022) answers `null` for each. The
+   * fixture oracle always fills them in, so this drives the real Supabase
+   * client against a hand-built envelope to prove the null case, the way
+   * `notDeployed.render.test.tsx` drives it against a hand-built refusal.
+   */
+  it("shows an em dash for a profile field no table stores, and drops a missing location rather than printing it", async () => {
+    const user = userEvent.setup();
+
+    const transport = {
+      rpc: (name: string) =>
+        name === "me_profile"
+          ? Promise.resolve(
+              okEnvelope({
+                id: "u_test",
+                tenant: { name: "Akademi Perdana", code: "APSB" },
+                location: null,
+                jobTitle: null,
+                department: null,
+                email: "amirah.yusof@akademiperdana.my",
+                staffNumber: null,
+                moduleCount: 7,
+                session: {
+                  lastSignInAt: "2026-09-11T08:04:22+08:00",
+                  browser: "Chrome",
+                  place: "Shah Alam",
+                  activeSessions: 2,
+                  twoFactorEnabled: true,
+                },
+              }),
+            )
+          : Promise.reject(new Error(`unexpected rpc: ${name}`)),
+      from: () => {
+        throw new Error("SidebarProfile does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    render(
+      <MemoryRouter initialEntries={["/dashboard"]}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => {} }}>
+            <ApiProvider client={createRpcApiClient()}>
+              <I18nProvider>
+                <SidebarProfile collapsed={false} />
+              </I18nProvider>
+            </ApiProvider>
+          </MeContext.Provider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+
+    const panel = () => within(screen.getByRole("dialog"));
+    const field = (label: string) => {
+      const card = panel().getByText(label).closest("div");
+      if (card === null) throw new Error(`no card for "${label}"`);
+      return card.textContent?.replace(label, "").trim() ?? "";
+    };
+
+    await panel().findByText("Staff no.");
+    expect(field("Job title")).toBe("—");
+    expect(field("Department")).toBe("—");
+    expect(field("Staff no.")).toBe("—");
+
+    /* The identity rail's "org · location" line and the tenant banner's org
+       name are drawn separately (`orgAndLocation` vs `orgName`), and read the
+       same text ONLY when the rail correctly dropped the missing location
+       instead of joining in "undefined" or "null". */
+    expect(panel().getAllByText("Akademi Perdana")).toHaveLength(2);
+    expect(panel().queryByText(/undefined/i)).not.toBeInTheDocument();
+    expect(panel().queryByText(/null/i)).not.toBeInTheDocument();
   });
 });

@@ -84,14 +84,22 @@ export interface MeProfile {
   id: string;
   /** The employing tenant, as the modal's identity line names it. */
   tenant: TenantIdentity;
-  /** Where the holder works, e.g. `Klang Valley`. Not the session's place. */
-  location: string;
-  jobTitle: string;
-  department: string;
+  /**
+   * Where the holder works, e.g. `Klang Valley`. Not the session's place.
+   *
+   * Optional: no table in the schema stores a principal's work location —
+   * `public.user_profiles` carries only `display_name`, `email`, `locale`,
+   * `timezone`, `theme` and `avatar_url` (`location`, like `jobTitle`,
+   * `department` and `staffNumber` below, exists on `core.contacts`, a
+   * different entity). `null` on the wire until something stores it.
+   */
+  location?: string;
+  jobTitle?: string;
+  department?: string;
   email: string;
   /** E.164 with the pack's spacing, e.g. `+60 12-448 9021`. */
   mobile?: string;
-  staffNumber: string;
+  staffNumber?: string;
   /** Modules the principal is entitled to — the modal's first chip. */
   moduleCount: number;
   session: ProfileSession;
