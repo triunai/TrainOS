@@ -138,9 +138,11 @@
 --     RESTRICT, deliberately, so the record of who read a key outlives the key —
 --     and the row becomes a tombstone: key_ref `retired:<id>`, fingerprint
 --     retired, status INVALID, no tiers. Every 029 path treats a `retired:` row
---     as absent. ⚠ 027's core.list_providers must filter
+--     as absent. 027's core.list_providers must filter
 --     `key_ref NOT LIKE 'retired:%'` or a deleted, previously-used key lists as
---     INVALID; that is a data convention, not a dependency on 029.
+--     INVALID; that is a data convention, not a dependency on 029. CONFIRMED
+--     against 027 as merged (027_ops_knowledge_settings.sql, list_providers
+--     WHERE clause), and pinned by test_029 T10f.
 --
 -- R5b ACCESSOR FOR THE WORKER. `app.provider_key_for_tenant(uuid, text)` is the
 --     exact signature apps/worker/src/keys.ts:19,50 already calls
@@ -418,8 +420,12 @@ AS $fn$
                 AND profile.user_id::text = app.jwt() ->> 'sub'));
 $fn$;
 
--- The contract's ProviderKey (ai-ops.ts:178). Same keys as 027's
--- core.list_providers, so a created record and a listed one cannot disagree.
+-- The contract's ProviderKey (ai-ops.ts:178). Same keys AND the same values as
+-- 027's core.list_providers, so a created or rotated record and a listed one
+-- cannot disagree. `spendMonth` is 027's derivation, repeated exactly: the sum
+-- of this period's TIER-scope app.usage_rollup rows for the key's scope_tiers
+-- (027 reads the same table; app.usage_rollup is 013's). test_029 T2i pins the
+-- equality against core.list_providers row for row.
 CREATE OR REPLACE FUNCTION app.provider_key_json(p_row core.ai_provider_keys)
 RETURNS jsonb
 LANGUAGE sql
@@ -433,7 +439,14 @@ AS $fn$
            'status',       p_row.status::text,
            'maskedKey',    p_row.masked_key,
            'scopeTiers',   pg_catalog.to_jsonb(p_row.scope_tiers),
-           'spendMonth',   app._money(0, p_row.currency::text),
+           'spendMonth',   app._money(COALESCE((
+                             SELECT pg_catalog.sum(rollup.spend_sen)
+                               FROM app.usage_rollup AS rollup
+                              WHERE rollup.tenant_id = p_row.tenant_id
+                                AND rollup.period = pg_catalog.to_char(pg_catalog.now(), 'YYYY-MM')
+                                AND rollup.scope = 'TIER'
+                                AND rollup.key = ANY (p_row.scope_tiers)), 0)::bigint,
+                           p_row.currency::text),
            'billingOwner', p_row.billing_owner::text,
            'region',       p_row.region,
            'lastTestedAt', p_row.last_tested_at,

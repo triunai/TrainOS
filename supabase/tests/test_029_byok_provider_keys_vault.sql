@@ -2,8 +2,10 @@
 -- test_029 · BYOK provider keys through SQL RPCs and Supabase Vault
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- Run against 001–021 (+022) + 029, on a database that has supabase_vault and
--- pg_net (029 §0 refuses to apply otherwise). Ends in ROLLBACK.
+-- Run against 001–027 + 029 (030–035 may be present), on a database that has
+-- supabase_vault and pg_net (029 §0 refuses to apply otherwise). Ends in
+-- ROLLBACK. The MIGRATION needs only 001–021; this PIN also needs 027, because
+-- T2i and T10f read 027's core.list_providers back against 029's records.
 --   psql "<db>" -v ON_ERROR_STOP=1 -f supabase/tests/test_029_byok_provider_keys_vault.sql
 --
 -- HARNESS NOTE, stated so nobody reads more into a PASS than it proves. The
@@ -24,7 +26,9 @@
 --     service_role only the accessor; 013's five public.ai_provider_key_* are
 --     executable by nobody; no client role can read vault or 029's tables.
 -- T2  create as ADMIN: contract ProviderKey keys, masked key, NOT_SET, addedBy;
---     row holds a Vault id that decrypts to the key; probe queued and audited.
+--     row holds a Vault id that decrypts to the key; probe queued and audited;
+--     each created record is IDENTICAL to 027's core.list_providers row for it,
+--     spendMonth included (seeded TIER rollup, so a hard-coded 0 cannot pass).
 -- T3  THE GREP: the raw key (text and hex) appears in NO text/varchar/bytea/
 --     json/jsonb/array column of any table in core, app or public, nor in
 --     vault.secrets.secret. It IS in net.http_request_queue.headers until the
@@ -42,7 +46,8 @@
 -- T9  rotate: aal1 refused; new material, old Vault secret gone, ROTATE audit
 --     carries the old key_ref, duplicate refused.
 -- T10 delete: AGENT_PAUSED with blockers; tombstone when audited; hard delete
---     when not; a deleted key is NOT_FOUND everywhere.
+--     when not; a deleted key is NOT_FOUND everywhere, and absent from 027's
+--     core.list_providers (the retired: filter).
 -- T11 accessor: refused to authenticated; service_role gets runtime ids and the
 --     decrypted key, never INVALID or tombstoned keys; one RUN_CALL audit per row.
 -- T12 the T3 sweep again after every path, including the rotated key.
@@ -147,6 +152,12 @@ VALUES
 INSERT INTO public.user_profiles (tenant_id,user_id,display_name,email) VALUES
   ('a0290000-1111-4000-8000-000000000001','a0290000-0000-4000-8000-0000000000a1','Admin A29','admin@a29.test');
 
+-- This period's TIER spend for two tiers tenant A's keys scope, so spendMonth
+-- on a created record is a real sum (027's derivation), not a constant 0.
+INSERT INTO app.usage_rollup (tenant_id, period, scope, key, spend_sen) VALUES
+  ('a0290000-1111-4000-8000-000000000001', to_char(now(),'YYYY-MM'), 'TIER', 'STRONG_1', 4242),
+  ('a0290000-1111-4000-8000-000000000001', to_char(now(),'YYYY-MM'), 'TIER', 'MID', 100);
+
 -- The keys. Each carries a marker that occurs nowhere else in the database.
 SELECT set_config('t29.k1', 'sk-ant-api03-T29K1SECRETabcdefghijklmnopqrstuvwxyz0123', true),
        set_config('t29.k2', 'sk-proj-T29K2SECRETabcdefghijklmnopqrstuvwxyz0123', true),
@@ -225,6 +236,7 @@ SELECT set_config('t29.c3', pg_temp.try(format(
 SELECT set_config('t29.c4', pg_temp.try(format(
   $$SELECT core.create_provider('GOOGLE','Gemini',%L,'["FAST"]'::jsonb,'CLIENT_ACCOUNT','SG')$$,
   current_setting('t29.k4')))::text, true);
+SELECT set_config('t29.list_after_create', pg_temp.try($$SELECT core.list_providers()$$)::text, true);
 SELECT pg_temp.as_user('adminb');
 SELECT set_config('t29.cb', pg_temp.try(format(
   $$SELECT core.create_provider('ANTHROPIC','Tenant B key',%L,'["STRONG_1"]'::jsonb,'CLIENT_ACCOUNT','US')$$,
@@ -281,6 +293,21 @@ BEGIN
       WHERE q.id = (SELECT net_request_id FROM app.provider_key_probes p WHERE p.provider_key_id = r.id))
       = 'https://api.anthropic.com/v1/models',
     'T2h the probe targets the constant Anthropic models URL');
+  -- 027 owns listProviders; 029's records must be indistinguishable from it.
+  PERFORM pg_temp.assert(
+    pg_temp.got('list_after_create') #>> '{value,success}' = 'true'
+    AND (SELECT pg_catalog.jsonb_agg(created.rec ORDER BY created.rec ->> 'id')
+           FROM (SELECT pg_temp.data(pg_temp.got(c)) AS rec
+                   FROM unnest(ARRAY['c1','c2','c3','c4']) AS c) AS created)
+      = (SELECT pg_catalog.jsonb_agg(listed.rec ORDER BY listed.rec ->> 'id')
+           FROM jsonb_array_elements(pg_temp.data(pg_temp.got('list_after_create')) -> 'data') AS listed(rec)
+          WHERE listed.rec ->> 'id' IN (SELECT pg_temp.data(pg_temp.got(c)) ->> 'id'
+                                          FROM unnest(ARRAY['c1','c2','c3','c4']) AS c))
+    AND pg_temp.data(pg_temp.got('c1')) #>> '{spendMonth,amount}' = '4242'
+    AND pg_temp.data(pg_temp.got('c2')) #>> '{spendMonth,amount}' = '100'
+    AND pg_temp.data(pg_temp.got('c3')) #>> '{spendMonth,amount}' = '0',
+    'T2i each created ProviderKey equals 027 core.list_providers row for it, spendMonth summed from the TIER rollup '
+      || COALESCE(pg_temp.got('list_after_create')::text, ''));
 END
 $t2$;
 
@@ -776,6 +803,7 @@ SELECT set_config('t29.manual_ref', (SELECT key_ref FROM core.ai_provider_keys W
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.as_user('admin', 'aal2', 'a0290000-5555-4000-8000-000000000002');
 SELECT set_config('t29.d_hard', pg_temp.try($$SELECT core.delete_provider('prv_anthropic_manual')$$)::text, true);
+SELECT set_config('t29.list_after_delete', pg_temp.try($$SELECT core.list_providers()$$)::text, true);
 RESET ROLE;
 
 DO $t10$
@@ -801,6 +829,11 @@ BEGIN
     AND NOT EXISTS (SELECT 1 FROM core.ai_provider_keys WHERE provider_ref = 'prv_anthropic_manual')
     AND NOT EXISTS (SELECT 1 FROM vault.secrets WHERE id = current_setting('t29.manual_ref')::uuid),
     'T10e an unaudited key is hard-deleted with its Vault secret');
+  PERFORM pg_temp.assert(pg_temp.got('list_after_delete') #>> '{value,success}' = 'true'
+    AND jsonb_array_length(pg_temp.data(pg_temp.got('list_after_delete')) -> 'data') > 0
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(pg_temp.data(pg_temp.got('list_after_delete')) -> 'data') AS listed(rec)
+                     WHERE listed.rec ->> 'id' IN (r.provider_ref, 'prv_anthropic_manual')),
+    'T10f 027 core.list_providers omits the tombstoned key (retired: filter) and the hard-deleted one');
 END
 $t10$;
 
