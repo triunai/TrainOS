@@ -118,10 +118,19 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     getOrganisation: async (id: string) => must(await rpc.getOrganisation(id)),
     getOrganisationRelations: async (id: string) => must(await rpc.getOrganisationRelations(id)),
+    searchOrganisations: async (query: string) => must(await rpc.searchOrganisations(query)),
+    getOrganisationSuggestions: async (id: string) =>
+      must(await rpc.getOrganisationSuggestions(id)),
 
     getOpportunity: async (id: string) => must(await rpc.getOpportunity(id)),
+    listOpportunities: async (page?: PageRequest) => must(await rpc.listOpportunities(page ?? {})),
 
     getTna: async (id: string) => must(await rpc.getTna(id)),
+    listTnas: async (page?: PageRequest) => must(await rpc.listTnas(page ?? {})),
+    /* No options bag on the RPC signature: `reopen_tna` is a `patch_enquiry_
+       extraction`-shaped detail edit, not a doc 09 §9 governed write, so it
+       takes no idempotency key server-side either. */
+    reopenTna: async (id: string, _options?: RequestOptions) => must(await rpc.reopenTna(id)),
     getTnaRecommendations: async (id: string) => must(await rpc.getTnaRecommendations(id)),
 
     createProposal: async (body: ProposalCreateRequest, options?: RequestOptions) =>
