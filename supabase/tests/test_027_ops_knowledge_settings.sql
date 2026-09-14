@@ -116,9 +116,9 @@ BEGIN
   UPDATE core.runs SET failure = '{"code":"X","message":"y","attempts":1,"retryable":true,"deadLettered":false}'::jsonb WHERE id = v_run_bad;
 
   INSERT INTO core.ai_budgets (tenant_id, scope, key, cap_sen) VALUES (v_tenant, 'TIER', 'STANDARD', 5000000);
-  INSERT INTO core.ai_provider_keys (tenant_id, provider_ref, provider, label, status, masked_key, key_fingerprint, key_ref, region, billing_owner, added_by) VALUES
+  INSERT INTO core.ai_provider_keys (tenant_id, provider_ref, provider, label, status, masked_key, key_fingerprint, key_ref, scope_tiers, region, billing_owner, added_by) VALUES
     (v_tenant, 'prv_t027_test', 'ANTHROPIC', 'T027 key', 'VALID', 'sk-ant-••••••••••••t027', sha256('t027'), 'vault:t027',
-     'US', 'CLIENT_ACCOUNT', '{"kind":"HUMAN","id":"test","name":"Test"}'::jsonb);
+     ARRAY['STANDARD'], 'US', 'CLIENT_ACCOUNT', '{"kind":"HUMAN","id":"test","name":"Test"}'::jsonb);
   INSERT INTO core.routing_matrix_versions (id, tenant_id, label, effective_from) VALUES
     ('a0270000-ee00-4000-8000-0000000000e0', v_tenant, 't027-v1', now()-interval '7 days');
   INSERT INTO core.routing_entries (tenant_id, version_id, action_type, tier_key, jury) VALUES
@@ -413,8 +413,12 @@ BEGIN
     RAISE EXCEPTION 'T2f: reingest_knowledge_source did not return the honest queued state: %', v;
   END IF;
 
+  -- spendMonth is computed from the same app.usage_rollup source get_usage()
+  -- reads: the seeded key's scope_tiers=['STANDARD'] and this period's
+  -- TIER/STANDARD rollup row (100000 sen) must be reflected here, not 0.
   v := core.list_providers();
-  IF (v->>'success') <> 'true' OR jsonb_array_length(v->'data'->'data') <> 1 THEN
+  IF (v->>'success') <> 'true' OR jsonb_array_length(v->'data'->'data') <> 1
+     OR (v#>>'{data,data,0,spendMonth,amount}') <> '100000' THEN
     RAISE EXCEPTION 'T2g: ADMIN list_providers wrong: %', v;
   END IF;
 

@@ -1072,6 +1072,7 @@ SET statement_timeout = '10s'
 AS $fn$
 DECLARE
   v_tenant uuid := app.require_tenant_id();
+  v_period text := pg_catalog.to_char(pg_catalog.now(),'YYYY-MM');
   v_data   jsonb;
 BEGIN
   IF NOT app.has_permission('ai:provider:read') THEN
@@ -1089,11 +1090,22 @@ BEGIN
   -- actor jsonb {kind, id, name} with no timestamp of its own; `added_at` is
   -- the separate column that carries it.
   --
+  -- `spendMonth`: core.ai_provider_keys has no per-provider usage of its own
+  -- - the only spend ledger is app.usage_rollup, the same source
+  -- core.get_usage() reads, keyed by (tenant, period, scope, key) with no
+  -- PROVIDER member on core.budget_scope (013's three are AGENT/TIER/
+  -- ACTION_TYPE). A provider key's `scope_tiers` is the tiers it actually
+  -- serves, so its month spend is the sum of this month's TIER-scope rollup
+  -- rows for exactly those tiers - the same rollup and the same default
+  -- TIER grouping get_usage() itself uses, not a second source of truth.
   SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
            'id', key.provider_ref, 'provider', key.provider::text, 'label', key.label,
            'status', key.status::text, 'maskedKey', key.masked_key,
            'scopeTiers', pg_catalog.to_jsonb(key.scope_tiers),
-           'spendMonth', app._money(0, key.currency),
+           'spendMonth', app._money(COALESCE((
+             SELECT pg_catalog.sum(rollup.spend_sen) FROM app.usage_rollup AS rollup
+              WHERE rollup.tenant_id = v_tenant AND rollup.period = v_period
+                AND rollup.scope = 'TIER' AND rollup.key = ANY(key.scope_tiers)), 0)::bigint, key.currency),
            'billingOwner', key.billing_owner::text, 'region', key.region,
            'lastTestedAt', key.last_tested_at,
            'addedBy', pg_catalog.jsonb_build_object(
@@ -1122,7 +1134,9 @@ $fn$;
 COMMENT ON FUNCTION core.list_providers() IS
   '027. GET /v1/ai/providers (read half only - see migration header for the '
   'BYOK write gap: createProvider/testProvider/revealProvider need an Edge '
-  'Function this lane does not build). currency default MYR on core.ai_provider_keys.';
+  'Function this lane does not build). currency default MYR on core.ai_provider_keys. '
+  'spendMonth sums the current-period TIER-scope app.usage_rollup rows for the '
+  'key''s scope_tiers - the same source core.get_usage() reads.';
 
 CREATE OR REPLACE FUNCTION core.get_usage(p_period text DEFAULT NULL, p_group_by text DEFAULT 'TIER')
 RETURNS jsonb
