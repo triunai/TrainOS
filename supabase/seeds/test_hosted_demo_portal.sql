@@ -7,9 +7,12 @@
 --
 -- T0  preconditions; a row-count snapshot of every tenant-scoped table
 -- T1  seed: exact portal-demo rows; the proposal reached SENT through a real
---     PROPOSAL_SEND requested by one MD and APPROVED by another; one live link,
+--     PROPOSAL_SEND requested by codeshern (ADMIN on hosted) and APPROVED by
+--     MD khumeren; one live link,
 --     stored only as its SHA-256; no table outside the envelope's moved
--- T2  the printed link opens the proposal for `anon`, client-safe keys only
+-- T2  the printed link opens the proposal for `anon`, client-safe keys only;
+--     no member's sign-in email (user_profiles or auth.users) anywhere in it,
+--     and vendorContact.email is the tenant's supplier contact or null
 -- T3  a second run writes nothing and prints no link
 -- T4  the link accepts: a PROPOSED engagement on the owner, proposal ACCEPTED
 -- T5  wipe: no portal-demo row, envelope row or link left; every other count as
@@ -178,7 +181,27 @@ BEGIN
      OR v::text ~ '[^0-9](1048000|1716000|1612308|720000)[^0-9]' THEN
     RAISE EXCEPTION 'T2c: internal pricing reached the client: %', v;
   END IF;
-  RAISE NOTICE 'T2 PASS: anon opens the printed link; exact PortalProposal keys, no internal pricing';
+  -- No staff sign-in address, from either source, anywhere in the response;
+  -- the one email allowed is the tenant's own supplier contact (028).
+  IF EXISTS (SELECT 1
+               FROM (SELECT p.email::text AS e FROM public.user_profiles p
+                      JOIN public.tenants t ON t.id = p.tenant_id AND t.slug = 'akademi-perdana'
+                     UNION
+                     SELECT u.email::text FROM auth.users u
+                      JOIN public.memberships m ON m.user_id = u.id
+                      JOIN public.tenants t ON t.id = m.tenant_id AND t.slug = 'akademi-perdana') AS staff
+              WHERE staff.e IS NOT NULL AND staff.e <> ''
+                AND strpos(lower(v::text), lower(staff.e)) > 0) THEN
+    RAISE EXCEPTION 'T2d: a member''s sign-in email reached the anonymous portal response: %', v #> '{data,vendorContact}';
+  END IF;
+  IF (v #> '{data,vendorContact,email}') IS DISTINCT FROM 'null'::jsonb
+     AND v #>> '{data,vendorContact,email}' IS DISTINCT FROM
+         (SELECT btrim(x.contact_email) FROM core.tenant_tax_profiles x
+            JOIN public.tenants t ON t.id = x.tenant_id AND t.slug = 'akademi-perdana') THEN
+    RAISE EXCEPTION 'T2e: vendorContact.email is neither null nor the tenant supplier contact: %', v #> '{data,vendorContact}';
+  END IF;
+  RAISE NOTICE 'T2 PASS: anon opens the printed link; exact PortalProposal keys, no internal pricing, no member sign-in email (vendorContact.email %)',
+    COALESCE(v #>> '{data,vendorContact,email}', 'null');
 END
 $t2$;
 

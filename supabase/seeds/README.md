@@ -47,8 +47,8 @@ It leaves `core.ref_sequences` advanced: refs are never reused.
 
 One working `/p/<token>` link for `akademi-perdana`. It needs migration 028 and must run after
 `hosted_demo_akademi_perdana.sql`. It adds a first proposal for Aurora Precision Tooling, then sends it
-through the real envelope: `PROPOSAL_SEND` by one MD, queued under APV-01, and APPROVED by a
-different MD. It then mints a 30-day link with `app.issue_portal_token`. The link path is printed
+through the real envelope: `PROPOSAL_SEND` by codeshern (ADMIN on hosted; any active member whose
+role holds `proposal:send`), queued under APV-01, and APPROVED by khumeren, who must be MD. It then mints a 30-day link with `app.issue_portal_token`. The link path is printed
 **once**, as the `portal_link` result row. Only its SHA-256 is stored, so a lost link is revoked and
 re-minted, never recovered. A re-run writes nothing and prints nothing.
 
