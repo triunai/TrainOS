@@ -152,7 +152,9 @@ SELECT set_config('t29.k1', 'sk-ant-api03-T29K1SECRETabcdefghijklmnopqrstuvwxyz0
        set_config('t29.k3', 'sk-T29K3SECRETdsqzabcdefghijklmnopqrs', true),
        set_config('t29.k4', 'AIzaSyT29K4SECRETgglqzabcdefghijklmnop', true),
        set_config('t29.k1b', 'sk-ant-api03-T29K1BROTATEDabcdefghijklmnopqrstuvwxyz', true),
-       set_config('t29.kb', 'sk-ant-api03-T29KBTENANTBabcdefghijklmnopqrstuvwxyz', true);
+       set_config('t29.kb', 'sk-ant-api03-T29KBTENANTBabcdefghijklmnopqrstuvwxyz', true),
+       set_config('t29.k5', 'sk-or-v1-T29K5SECRETrtrqzabcdefghijklmnopqrstu', true),
+       set_config('t29.k6', 'gsk_T29K6SECRETothrqzabcdefghijklmnopqrstu', true);
 
 SET LOCAL ROLE supabase_auth_admin;
 SELECT set_config('t29.hook_admin', pg_temp.hook('a0290000-0000-4000-8000-0000000000a1')::text, true),
@@ -341,7 +343,24 @@ SELECT set_config('t29.v_dup', pg_temp.try(format(
   $$SELECT core.create_provider('ANTHROPIC','again',%L,'["FAST"]','CLIENT_ACCOUNT','US')$$,
   current_setting('t29.k1')))::text, true);
 SELECT set_config('t29.v_router', pg_temp.try(
-  $$SELECT core.create_provider('OPENROUTER','Router','sk-or-v1-ROUTERQ7abcdefghijklmnop','["FAST"]','CLIENT_ACCOUNT','Routed')$$)::text, true);
+  $$SELECT core.create_provider('OPENROUTER','Router','sk-xx-v1-ROUTERQ7abcdefghijklmnop','["FAST"]','CLIENT_ACCOUNT','Routed')$$)::text, true);
+SELECT set_config('t29.v_other_nourl', pg_temp.try(
+  $$SELECT core.create_provider('OTHER','Groq','sk-OTHERNOURLQ7abcdefghijklmnop','["FAST"]','CLIENT_ACCOUNT','Unknown')$$)::text, true);
+SELECT set_config('t29.v_other_ip', pg_temp.try(
+  $$SELECT core.create_provider('OTHER','Inward','sk-OTHERIPQ7abcdefghijklmnopqr','["FAST"]','CLIENT_ACCOUNT','Unknown',NULL,NULL,'https://169.254.169.254/v1')$$)::text, true);
+SELECT set_config('t29.v_other_local', pg_temp.try(
+  $$SELECT core.create_provider('OTHER','Local','sk-OTHERLOCALQ7abcdefghijklmnop','["FAST"]','CLIENT_ACCOUNT','Unknown',NULL,NULL,'https://db.internal/v1')$$)::text, true);
+SELECT set_config('t29.v_other_http', pg_temp.try(
+  $$SELECT core.create_provider('OTHER','Plain','sk-OTHERHTTPQ7abcdefghijklmnop','["FAST"]','CLIENT_ACCOUNT','Unknown',NULL,NULL,'http://llm.example.com/v1')$$)::text, true);
+SELECT set_config('t29.v_named_url', pg_temp.try(
+  $$SELECT core.create_provider('ANTHROPIC','Proxy','sk-ant-api03-NAMEDURLQ7abcdefghijklmnop','["FAST"]','CLIENT_ACCOUNT','US',NULL,NULL,'https://proxy.example.com')$$)::text, true);
+-- The two providers 029 adds, for real: OpenRouter, and an OTHER endpoint.
+SELECT set_config('t29.c5', pg_temp.try(format(
+  $$SELECT core.create_provider('OPENROUTER','OpenRouter',%L,'["SPECIAL"]','PASS_THROUGH','Routed')$$,
+  current_setting('t29.k5')))::text, true);
+SELECT set_config('t29.c6', pg_temp.try(format(
+  $$SELECT core.create_provider('OTHER','Groq',%L,'["DEEP_THINK"]','CLIENT_ACCOUNT','Unknown',NULL,NULL,'https://api.groq.example.com/openai/v1/')$$,
+  current_setting('t29.k6')))::text, true);
 SELECT set_config('t29.v_fields', pg_temp.try(
   $$SELECT core.create_provider('ANTHROPIC','','sk-ant-api03-FIELDSQ7abcdefghijklmnop','["NOPE"]','SOMEONE','',
       '{"amount":-1,"currency":"XXX"}','2026-02-30')$$)::text, true);
@@ -381,9 +400,26 @@ BEGIN
     AND NOT pg_temp.leaks(v_dup::text, current_setting('t29.k1')),
     'T4d duplicate key: KEY_ALREADY_ADDED with existingId, no fragment');
   PERFORM pg_temp.assert(pg_temp.code(v_router) = 'VALIDATION_FAILED'
-    AND pg_temp.detail(v_router) -> 'fields' @> '[{"field":"provider","reason":"UNSUPPORTED_PROVIDER"}]'
-    AND NOT pg_temp.leaks(v_router::text, 'sk-or-v1-ROUTERQ7abcdefghijklmnop'),
-    'T4e OPENROUTER (contract enum drift vs 003:107): UNSUPPORTED_PROVIDER, no fragment');
+    AND pg_temp.detail(v_router) -> 'fields' @> '[{"field":"key","reason":"WRONG_PREFIX"}]'
+    AND NOT pg_temp.leaks(v_router::text, 'sk-xx-v1-ROUTERQ7abcdefghijklmnop'),
+    'T4e OPENROUTER key without sk-or-: WRONG_PREFIX, no fragment');
+  PERFORM pg_temp.assert(
+    pg_temp.detail(pg_temp.got('v_other_nourl')) -> 'fields' @> '[{"field":"baseUrl","reason":"BASE_URL_REQUIRED"}]'
+    AND pg_temp.detail(pg_temp.got('v_other_ip')) -> 'fields' @> '[{"field":"baseUrl","reason":"BASE_URL_NOT_ALLOWED"}]'
+    AND pg_temp.detail(pg_temp.got('v_other_local')) -> 'fields' @> '[{"field":"baseUrl","reason":"BASE_URL_NOT_ALLOWED"}]'
+    AND pg_temp.detail(pg_temp.got('v_other_http')) -> 'fields' @> '[{"field":"baseUrl","reason":"BASE_URL_NOT_ALLOWED"}]'
+    AND pg_temp.detail(pg_temp.got('v_named_url')) -> 'fields' @> '[{"field":"baseUrl","reason":"BASE_URL_NOT_SUPPORTED"}]',
+    'T4h OTHER needs an https DNS base URL (no IP literal, no .internal, no http); a named provider takes none');
+  PERFORM pg_temp.assert(pg_temp.code(pg_temp.got('c5')) = 'OK' AND pg_temp.code(pg_temp.got('c6')) = 'OK'
+    AND (SELECT q.url FROM net.http_request_queue q JOIN app.provider_key_probes p ON p.net_request_id = q.id
+           JOIN core.ai_provider_keys k ON k.id = p.provider_key_id
+          WHERE k.provider_ref = pg_temp.data(pg_temp.got('c5')) ->> 'id') = 'https://openrouter.ai/api/v1/key'
+    AND (SELECT q.url FROM net.http_request_queue q JOIN app.provider_key_probes p ON p.net_request_id = q.id
+           JOIN core.ai_provider_keys k ON k.id = p.provider_key_id
+          WHERE k.provider_ref = pg_temp.data(pg_temp.got('c6')) ->> 'id') = 'https://api.groq.example.com/openai/v1/models'
+    AND pg_temp.data(pg_temp.got('c6')) ->> 'id' ~ '^prv_other_'
+    AND NOT pg_temp.data(pg_temp.got('c6')) ? 'baseUrl',
+    'T4i OPENROUTER probes /api/v1/key; OTHER probes <base_url>/models; the record keeps contract keys only');
   PERFORM pg_temp.assert(pg_temp.code(v_fields) = 'VALIDATION_FAILED'
     AND (SELECT array_agg(f ->> 'field' ORDER BY f ->> 'field')
            FROM jsonb_array_elements(pg_temp.detail(v_fields) -> 'fields') f)
@@ -783,9 +819,13 @@ DECLARE v jsonb := pg_temp.got('w_all');
 BEGIN
   PERFORM pg_temp.assert(pg_temp.got('w_auth') ->> 'sqlstate' = '42501',
     'T11a authenticated (even ADMIN at aal2) cannot execute app.provider_key_for_tenant');
-  -- Tenant A live keys now: c1 tombstoned, c2 INVALID, c3 NOT_SET (deepseek), c4 INVALID.
-  PERFORM pg_temp.assert(jsonb_array_length(v) = 1
+  -- Tenant A live keys now: c1 tombstoned, c2 INVALID, c3 NOT_SET (deepseek),
+  -- c4 INVALID, c5 openrouter, c6 OTHER. Ordered by provider.
+  PERFORM pg_temp.assert(jsonb_array_length(v) = 3
     AND v -> 0 ->> 'provider' = 'deepseek' AND v -> 0 ->> 'api_key' = current_setting('t29.k3')
+    AND v -> 1 ->> 'provider' = 'openai-compatible' AND v -> 1 ->> 'api_key' = current_setting('t29.k6')
+    AND v -> 1 ->> 'base_url' = 'https://api.groq.example.com/openai/v1/'
+    AND v -> 2 ->> 'provider' = 'openrouter' AND v -> 2 ->> 'api_key' = current_setting('t29.k5')
     AND (v -> 0) ? 'base_url' AND (v -> 0) ? 'label',
     'T11b service_role gets (provider, api_key, base_url, label): only the live non-INVALID key, by runtime id');
   PERFORM pg_temp.assert(jsonb_array_length(pg_temp.got('w_one')) = 1
@@ -793,8 +833,8 @@ BEGIN
     'T11c a provider filter by runtime id works; tenant B''s ANTHROPIC key is returned for tenant B only');
   PERFORM pg_temp.assert(
     (SELECT count(*) FROM app.key_access_audit WHERE purpose = 'RUN_CALL')
-      = current_setting('t29.w_audit_before')::integer + 3,
-    'T11d one RUN_CALL audit row per key returned (1 + 1 + 1)');
+      = current_setting('t29.w_audit_before')::integer + 5,
+    'T11d one RUN_CALL audit row per key returned (3 + 1 + 1)');
 END
 $t11$;
 
@@ -804,6 +844,7 @@ DECLARE
   v_sweep text[] := string_to_array(pg_temp.key_sweep(ARRAY[
     current_setting('t29.k1'), current_setting('t29.k1b'), current_setting('t29.k2'),
     current_setting('t29.k3'), current_setting('t29.k4'), current_setting('t29.kb'),
+    current_setting('t29.k5'), current_setting('t29.k6'),
     'sk-ant-api03-T29MANUALabcdefghijklmnopq']), '|');
 BEGIN
   PERFORM pg_temp.assert(v_sweep[2] = '0',

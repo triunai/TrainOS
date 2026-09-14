@@ -150,6 +150,27 @@
 --     ProviderId), not the contract enum, because that is what the worker
 --     compares against. Tombstoned and INVALID keys are never returned.
 --
+-- R5c OPENROUTER AND OTHER (main's ruling, "add enum"). 003:107 created
+--     core.ai_provider with four labels; the contract (enums.ts:737) and the Add
+--     Key drawer carry six. §1b adds OPENROUTER and OTHER with ALTER TYPE ... ADD
+--     VALUE IF NOT EXISTS, and a nullable `base_url` column on
+--     core.ai_provider_keys that OTHER REQUIRES (an "OpenAI-compatible endpoint"
+--     has no URL of its own) and every other provider must leave NULL.
+--     OpenRouter is probed at GET https://openrouter.ai/api/v1/key; OTHER at
+--     GET <base_url>/models. base_url must be https to a DNS name — no IP
+--     literal, no localhost, no .local/.internal — because the probe is a
+--     request FROM THE DATABASE HOST carrying the key; the residue is a DNS name
+--     that resolves inward, which a regex cannot see.
+--     ⚠ THE CONTRACT HAS NO baseUrl FIELD (ProviderKeyCreateRequest,
+--     ai-ops.ts:199). `core.create_provider` accepts `p_base_url`, but the web
+--     adapter cannot send what the contract does not carry, so OTHER is
+--     refused (BASE_URL_REQUIRED) from the screen until the contract grows it.
+--     ⚠ ROLLBACK RESIDUE. PostgreSQL cannot drop an enum label without
+--     rewriting the type, and deleting from pg_enum needs a superuser, so the
+--     rollback leaves OPENROUTER and OTHER on core.ai_provider (and restores
+--     003's type comment). A rollback catalog diff must exclude those two labels.
+--     test_003 T3 is ⚠ AMENDED BY 029 to expect six labels.
+--
 -- R6  GRANTS, ASSERTED STRUCTURALLY IN $verify$ (not by reading this file):
 --     authenticated EXECUTEs exactly the six core RPCs; anon nothing;
 --     service_role exactly the accessor; no 029 app.* helper is executable by
@@ -253,6 +274,32 @@ BEGIN
   END IF;
 END
 $pre$;
+
+-- ═══ 1b · Provider vocabulary: OPENROUTER, OTHER, and base_url (R5c) ═════
+--
+-- ADD VALUE inside a transaction block is legal from PostgreSQL 12, but the new
+-- labels cannot be USED before this transaction commits. Nothing below uses them
+-- as enum literals: the CHECK compares provider::text, and every function body
+-- resolves labels at call time.
+ALTER TYPE core.ai_provider ADD VALUE IF NOT EXISTS 'OPENROUTER';
+ALTER TYPE core.ai_provider ADD VALUE IF NOT EXISTS 'OTHER';
+
+COMMENT ON TYPE core.ai_provider IS
+  'Generated from packages/contract/src/enums.ts :: AI_PROVIDERS (6 values). '
+  'OPENROUTER and OTHER added by 029; a rollback of 029 leaves them in place.';
+
+ALTER TABLE core.ai_provider_keys
+  ADD COLUMN base_url text,
+  ADD CONSTRAINT ai_provider_keys_base_url_shape CHECK (
+    base_url IS NULL
+    OR (pg_catalog.length(base_url) <= 200
+        AND base_url ~ '^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$')),
+  ADD CONSTRAINT ai_provider_keys_base_url_other CHECK (
+    (provider::text = 'OTHER') = (base_url IS NOT NULL));
+
+COMMENT ON COLUMN core.ai_provider_keys.base_url IS
+  '029 R5c. The endpoint of an OTHER (OpenAI-compatible) key; NULL for every '
+  'named provider. https to a DNS name only. Not key material.';
 
 -- ═══ 1 · Tables ════════════════════════════════════════════════════════════
 
@@ -380,6 +427,7 @@ AS $fn$
            WHEN p_provider = 'ANTHROPIC' AND pg_catalog."left"(p_key, 7) <> 'sk-ant-' THEN 'WRONG_PREFIX'
            WHEN p_provider IN ('OPENAI', 'DEEPSEEK') AND pg_catalog."left"(p_key, 3) <> 'sk-' THEN 'WRONG_PREFIX'
            WHEN p_provider = 'GOOGLE' AND pg_catalog."left"(p_key, 4) <> 'AIza' THEN 'WRONG_PREFIX'
+           WHEN p_provider = 'OPENROUTER' AND pg_catalog."left"(p_key, 6) <> 'sk-or-' THEN 'WRONG_PREFIX'
            ELSE NULL
          END;
 $fn$;
@@ -407,7 +455,7 @@ $fn$;
 
 -- R4. The probe request for one provider: a constant URL and the auth header.
 -- The return value CONTAINS THE KEY and is only ever passed to net.http_get.
-CREATE OR REPLACE FUNCTION app.provider_key_probe_request(p_provider text, p_key text)
+CREATE OR REPLACE FUNCTION app.provider_key_probe_request(p_provider text, p_key text, p_base_url text)
 RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
@@ -427,6 +475,14 @@ AS $fn$
            WHEN 'GOOGLE' THEN pg_catalog.jsonb_build_object(
              'url', 'https://generativelanguage.googleapis.com/v1beta/models',
              'headers', pg_catalog.jsonb_build_object('x-goog-api-key', p_key))
+           -- OpenRouter's cheapest authenticated call: the key's own info.
+           WHEN 'OPENROUTER' THEN pg_catalog.jsonb_build_object(
+             'url', 'https://openrouter.ai/api/v1/key',
+             'headers', pg_catalog.jsonb_build_object('Authorization', 'Bearer ' || p_key))
+           -- The stored, shape-checked endpoint; never a caller string at probe time.
+           WHEN 'OTHER' THEN pg_catalog.jsonb_build_object(
+             'url', pg_catalog.rtrim(p_base_url, '/') || '/models',
+             'headers', pg_catalog.jsonb_build_object('Authorization', 'Bearer ' || p_key))
          END;
 $fn$;
 
@@ -442,7 +498,7 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 DECLARE
-  v_request jsonb := app.provider_key_probe_request(p_row.provider::text, p_key);
+  v_request jsonb := app.provider_key_probe_request(p_row.provider::text, p_key, p_row.base_url);
   v_net_id  bigint;
   v_probe   app.provider_key_probes;
 BEGIN
@@ -516,7 +572,8 @@ CREATE OR REPLACE FUNCTION app.provider_key_validate(
   p_cap           jsonb   DEFAULT NULL,
   p_rotation_date text    DEFAULT NULL,
   p_full          boolean DEFAULT true,
-  p_except_id     uuid    DEFAULT NULL
+  p_except_id     uuid    DEFAULT NULL,
+  p_base_url      text    DEFAULT NULL
 )
 RETURNS bytea
 LANGUAGE plpgsql
@@ -529,17 +586,28 @@ DECLARE
   v_existing    text;
 BEGIN
   IF p_full THEN
-    IF p_provider IN ('OPENROUTER', 'OTHER') THEN
-      -- ⚠ CONTRACT DRIFT: enums.ts:737 carries OPENROUTER and OTHER, 003:107's
-      -- core.ai_provider does not. Refused honestly rather than mis-stored.
-      v_fields := v_fields || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
-        'field', 'provider', 'reason', 'UNSUPPORTED_PROVIDER'));
-    ELSIF p_provider IS NULL OR NOT EXISTS (
+    IF p_provider IS NULL OR NOT EXISTS (
       SELECT 1 FROM pg_catalog.pg_enum AS label
        WHERE label.enumtypid = 'core.ai_provider'::pg_catalog.regtype
          AND label.enumlabel = p_provider) THEN
       v_fields := v_fields || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', 'provider', 'reason', 'INVALID'));
+    END IF;
+
+    -- R5c. OTHER needs an https endpoint on a DNS name; nothing else takes one.
+    IF p_provider = 'OTHER' AND p_base_url IS NULL THEN
+      v_fields := v_fields || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', 'baseUrl', 'reason', 'BASE_URL_REQUIRED'));
+    ELSIF p_provider = 'OTHER' AND NOT (
+            pg_catalog.length(p_base_url) <= 200
+            AND p_base_url ~ '^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+            AND pg_catalog.lower(pg_catalog.substring(p_base_url, '^https://([^/:]+)'))
+                !~ '(^localhost$|^[0-9.]+$|\.local$|\.internal$|\.localhost$)') THEN
+      v_fields := v_fields || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', 'baseUrl', 'reason', 'BASE_URL_NOT_ALLOWED'));
+    ELSIF p_provider IS DISTINCT FROM 'OTHER' AND p_base_url IS NOT NULL THEN
+      v_fields := v_fields || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'field', 'baseUrl', 'reason', 'BASE_URL_NOT_SUPPORTED'));
     END IF;
 
     IF NULLIF(pg_catalog.btrim(COALESCE(p_label, '')), '') IS NULL
@@ -661,7 +729,8 @@ CREATE OR REPLACE FUNCTION core.create_provider(
   p_billing_owner text,
   p_region        text,
   p_cap           jsonb DEFAULT NULL,
-  p_rotation_date text  DEFAULT NULL
+  p_rotation_date text  DEFAULT NULL,
+  p_base_url      text  DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -691,7 +760,7 @@ BEGIN
   BEGIN
     v_fingerprint := app.provider_key_validate(
       v_tenant, p_provider, p_key, p_label, p_scope_tiers, p_billing_owner,
-      p_region, p_cap, p_rotation_date);
+      p_region, p_cap, p_rotation_date, p_base_url => p_base_url);
 
     v_actor := app.provider_key_actor(v_tenant);
     v_ref := 'prv_' || pg_catalog.lower(p_provider) || '_'
@@ -704,7 +773,8 @@ BEGIN
 
     INSERT INTO core.ai_provider_keys
       (id, tenant_id, provider_ref, provider, label, status, masked_key, key_fingerprint,
-       key_ref, scope_tiers, cap_sen, currency, rotation_date, billing_owner, region, added_by)
+       key_ref, scope_tiers, cap_sen, currency, rotation_date, billing_owner, region, added_by,
+       base_url)
     SELECT v_id, v_tenant, v_ref, p_provider::core.ai_provider, pg_catalog.btrim(p_label),
            'NOT_SET', app.mask_key(p_key), v_fingerprint, v_secret::text,
            ARRAY(SELECT tier.value FROM pg_catalog.jsonb_array_elements_text(p_scope_tiers) AS tier(value)),
@@ -712,7 +782,7 @@ BEGIN
            COALESCE((CASE WHEN pg_catalog.jsonb_typeof(p_cap) = 'object' THEN p_cap ->> 'currency' END),
                     'MYR')::core.currency_code,
            p_rotation_date::date, p_billing_owner::core.billing_owner, pg_catalog.btrim(p_region),
-           v_actor
+           v_actor, p_base_url
     RETURNING * INTO v_row;
 
     PERFORM app.provider_key_fire_probe(v_row, p_key, v_actor, 'sql:core.create_provider');
@@ -746,7 +816,7 @@ BEGIN
 END;
 $fn$;
 
-COMMENT ON FUNCTION core.create_provider(text,text,text,jsonb,text,text,jsonb,text) IS
+COMMENT ON FUNCTION core.create_provider(text,text,text,jsonb,text,text,jsonb,text,text) IS
   '029. POST /v1/ai/providers. The raw key goes to vault.create_secret and nowhere '
   'else; the row gets the Vault id, app.mask_key and a salted HMAC fingerprint. '
   'Returns the masked ProviderKey and queues a probe (see get_provider_test_result).';
@@ -1298,9 +1368,12 @@ BEGIN
                  WHEN 'DEEPSEEK'  THEN 'deepseek'
                  WHEN 'OPENAI'    THEN 'openai-compatible'
                  WHEN 'GOOGLE'    THEN 'google'
+                 WHEN 'OPENROUTER' THEN 'openrouter'
+                 WHEN 'OTHER'     THEN 'openai-compatible'
                END AS id,
                CASE provider_key.provider::text
                  WHEN 'OPENAI' THEN 'https://api.openai.com/v1'
+                 WHEN 'OTHER'  THEN provider_key.base_url
                END AS base_url) AS runtime
      WHERE provider_key.tenant_id = p_tenant_id
        AND provider_key.key_ref NOT LIKE 'retired:%'
@@ -1371,7 +1444,7 @@ BEGIN
 END
 $revoke$;
 
-GRANT EXECUTE ON FUNCTION core.create_provider(text,text,text,jsonb,text,text,jsonb,text) TO authenticated;
+GRANT EXECUTE ON FUNCTION core.create_provider(text,text,text,jsonb,text,text,jsonb,text,text) TO authenticated;
 GRANT EXECUTE ON FUNCTION core.test_provider(text)                                     TO authenticated;
 GRANT EXECUTE ON FUNCTION core.get_provider_test_result(text)                          TO authenticated;
 GRANT EXECUTE ON FUNCTION core.rotate_provider(text,text)                              TO authenticated;
