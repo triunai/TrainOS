@@ -233,9 +233,10 @@ describe("L1 reads as its own plane against the card it sits on", () => {
 describe("the one solid button clears AA in both themes", () => {
   /*
    * WAS THE LAST KNOWN GAP. `--primary` was the fill AND the accent as text,
-   * and the dark map lifts it to #4C82FF so the accent can be read on #171C25
-   * — which put `--on-primary` on the fill at 3.24:1. The fill is now
-   * `--primary-solid`, which is the brand hex in both themes.
+   * and the dark map lifts it (to #FF4806 on the orange-accent trial branch)
+   * so the accent can be read on the dark card — which put `--on-primary` on
+   * the lifted fill under AA. The fill is now `--primary-solid`, which is the
+   * brand hex in both themes.
    *
    * These cases are the contract that keeps the split honest: if someone ever
    * "tidies" the fill back onto `--primary`, or lifts the fill for dark the way

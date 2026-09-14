@@ -33,27 +33,31 @@
 [data-theme="light"] {
   /* ---- Surfaces ------------------------------------------------------- */
   /* The shell ground: the sidebar, the top bar and the canvas band around the
-     content card are ONE surface. Every artboard in the pack draws its
-     1440x900 frame on this single colour — 25 of 25 light frames at #F3F5F7,
-     including the external proposal screen — and nothing sits on a second
-     ground behind the card. `--sidebar` is kept as a name for the same value
-     so `bg-sidebar` still reads as intent at a call site; it must never hold a
-     different colour, or the junction between the rail and the top bar comes
-     back as a visible cutoff. */
-  --canvas: 243 245 247; /* #F3F5F7  the shell ground, behind and around the card */
+     content card are ONE surface. `--sidebar` is kept as a name for the same
+     value so `bg-sidebar` still reads as intent at a call site; it must never
+     hold a different colour, or the junction between the rail and the top bar
+     comes back as a visible cutoff.
+
+     ORANGE-ACCENT TRIAL: nudged very slightly warm toward the new accent —
+     hue rotated from the pack's cool #F3F5F7 to #F7F5F3 at the SAME relative
+     luminance (Y 0.9108 → 0.9155), so every contrast pair below that used to
+     resolve against this token resolves to the same ratio, unchanged. It
+     still reads as white, not cream. */
+  --canvas: 247 245 243; /* #F7F5F3  the shell ground, behind and around the card */
   --sidebar: var(--canvas); /* the rail is the same ground, by the pack */
-  --card: 255 255 255; /* #FFFFFF  every content card and popover */
-  /* L1 — the recess INSIDE a card. At the pack's #FAFBFC this sat 1.43 L*
-     below the white card, which is under the threshold at which a flat tint
-     reads as a separate plane at all: the pipeline lane, which is nothing but
-     this surface on a white card, came back reported as invisible. 3.19 L* is
-     the step that makes a borderless lane read as a lane — enough to separate
-     the plane, short of reading as a second card, and it is what lets
-     CLAUDE.md's "surface before borders" rule actually carry the hierarchy.
-     It cannot go darker: `--ink-muted` is the floor for readable text and it
-     measures 4.56:1 here, so a further step would put muted text under AA. */
-  --surface: 244 246 249; /* #F4F6F9  table headers, recessed rails, zebra rows, kanban lanes */
-  --surface-hover: 241 244 248; /* #F1F4F8  row and nav hover */
+  --card: 255 255 255; /* #FFFFFF  every content card and popover — left pure white; the brief warms the ground and the fills, not the card plane */
+  /* L1 — the recess INSIDE a card. 3.21 L* below the white card — enough to
+     separate the plane, short of reading as a second card, and it is what
+     lets CLAUDE.md's "surface before borders" rule actually carry the
+     hierarchy. It cannot go darker: `--ink-muted` is the floor for readable
+     text and it measures 4.56:1 here, so a further step would put muted text
+     under AA.
+
+     ORANGE-ACCENT TRIAL: same warm hue rotation as `--canvas`, luminance held
+     within a rounding error of the pack's #F4F6F9 so the 4.56:1 floor above
+     and the 3.21 L* step both hold exactly as before. */
+  --surface: 249 245 243; /* #F9F5F3  table headers, recessed rails, zebra rows, kanban lanes */
+  --surface-hover: 247 243 240; /* #F7F3F0  row and nav hover */
 
   /* ---- Lines ---------------------------------------------------------- */
   --border: 227 231 236; /* #E3E7EC  1px container border */
@@ -67,10 +71,20 @@
   --ink-muted: 105 113 124; /* #69717C  floor for text a user must read */
   --ink-disabled: 163 169 178; /* #A3A9B2  disabled controls and rules ONLY */
 
-  /* ---- Accent (the one accent; blue budget 5-15% per screen) ---------- */
-  --primary: 31 91 255; /* #1F5BFF  electric blue */
-  --primary-hover: 24 73 214; /* #1849D6  hover, links, text-on-tint */
-  --primary-border: 203 216 255; /* #CBD8FF  accent border */
+  /* ---- Accent (the one accent; orange budget 5-15% per screen) -------- *
+   * ORANGE-ACCENT TRIAL (feat/orange-accent). Replaces the electric blue
+   * #1F5BFF everywhere it appeared — as text/marks, as the solid fill, as the
+   * AI tint, and in the record-header gradient below — with a red-orange at
+   * hue ~16°, chosen to stay clearly out of the warning chip's amber hue band
+   * (~33-38°, see `--warning`/`--warning-accent`) so "AI/accent" and "warning"
+   * never read as the same colour family. Every token in this section keeps
+   * the SAME relationship to its neighbours the blue system had — same
+   * lift-for-dark pattern, same fill/text split, same tint ladder — just at
+   * the new hue. See `docs/research/`-adjacent scratch notes in the PR
+   * description for the full contrast table. */
+  --primary: 213 57 0; /* #D53900  red-orange, ~4.76:1 white on it (was #1F5BFF, 5.25:1) */
+  --primary-hover: 167 44 0; /* #A72C00  hover, links, text-on-tint — deepens, same as the fill hover below */
+  --primary-border: 255 206 188; /* #FFCEBC  accent border */
   --on-primary: 255 255 255; /* #FFFFFF  label on a solid primary button */
 
   /* The SOLID FILL, split out of `--primary` (verification row 1c).
@@ -78,120 +92,119 @@
      One token was being asked to do two contradictory jobs. `--primary` is
      TEXT and MARKS on the shell's own grounds — a link, a selected dot, an
      `accent-primary` checkbox, a focus ring — so on the dark map it is lifted
-     to #4C82FF to clear 4.5:1 against #171C25. `--primary` was ALSO the fill
-     under a near-white label, and there that same lift is the defect:
-     `--on-primary` #F2F5FF on #4C82FF measures 3.24:1. Darkening the token
-     fixes the fill and breaks the text; lightening it does the reverse. No
-     single value does both, so the fill becomes its own token.
+     to #FF4806 to clear 4.5:1 against the dark card. `--primary` was ALSO the
+     fill under a near-white label, and there that same lift is the defect.
+     Darkening the token fixes the fill and breaks the text; lightening it
+     does the reverse. No single value does both, so the fill becomes its own
+     token.
 
      THE FILL IS THE BRAND HEX, IN BOTH THEMES, and is deliberately NOT
-     redefined in the dark map below. This is not a fourth accent and not a new
-     colour: it is #1F5BFF, the one accent CLAUDE.md names, painted at the one
-     place the rule is about — "solid blue means a human triggered it". A
-     promise that changes colour between themes is a weaker promise.
+     redefined in the dark map below. This is not a fourth accent and not a
+     second colour: it is #D53900, the one accent this trial branch names,
+     painted at the one place the rule is about — "solid orange means a human
+     triggered it". A promise that changes colour between themes is a weaker
+     promise.
 
      Measured, dark theme:
-       --on-primary on the fill          4.82:1  (AA text, was 3.24:1)
-       the fill against --card           3.25:1  (non-text floor 3:1)
-       the fill against --canvas         3.39:1
-       the fill against --surface        3.01:1
-     Light is unchanged in appearance: the fill is the value `--primary`
-     already carried there, and white on it is 5.25:1.
+       --on-primary on the fill          4.62:1  (AA text)
+       the fill against --card           3.59:1  (non-text floor 3:1)
+       the fill against --canvas         3.72:1
+       the fill against --surface        3.33:1
+     Measured, light theme:
+       white on the fill                 4.76:1  (AA text, on `--card`)
 
      The HOVER deepens in both themes rather than lifting in dark, for the same
-     reason: lifting is what puts the label under AA. #1849D6 carries
-     `--on-primary` at 6.51:1 light and dark. Its own separation from the dark
-     card drops to 2.41:1, which is a hover state under the reader's cursor
-     with a 6.5:1 label on it, not a resting boundary they have to find. */
-  --primary-solid: 31 91 255; /* #1F5BFF  fill of the one solid button */
-  --primary-solid-hover: 24 73 214; /* #1849D6  that fill, hovered */
+     reason: lifting is what puts the label under AA. #A72C00 carries
+     `--on-primary` at 6.99:1 light and 6.79:1 dark. Its own separation from the
+     dark card drops to 2.44:1, which is a hover state under the reader's cursor
+     with a 6.8:1 label on it, not a resting boundary they have to find. */
+  --primary-solid: 213 57 0; /* #D53900  fill of the one solid button */
+  --primary-solid-hover: 167 44 0; /* #A72C00  that fill, hovered */
 
   /* ---- AI surfaces (6% tint + the glyph + a label; never a solid fill) - */
-  --ai-tint: 244 247 255; /* #F4F7FF  AI surfaces */
-  --ai-tint-2: 235 241 255; /* #EBF1FF  selected row, active nav, active pill */
+  --ai-tint: 255 245 242; /* #FFF5F2  AI surfaces */
+  --ai-tint-2: 255 237 231; /* #FFEDE7  selected row, active nav, active pill */
 
-  /* The accent BAND — the record header's blue card (tightening brief §15a).
+  /* The accent BAND — the record header's accent card (tightening brief §15a).
      Two candidates, both live, so the user can pick on screen; the card reads
      `--surface-accent-gradient` is the chosen one; `?gradient=alt` swaps in the
      `-alt` so the two can still be compared on the real screen.
 
-     RULES THIS OBEYS, from the 11:56 correction: blue family only, THREE colour
-     stops maximum, electric #1F5BFF as the anchor, one deeper stop for depth
-     and at most one lighter or violet-leaning stop at the far corner. The
-     interest comes from the angle, the stop positions and the hue pairing, not
-     from more colours.
+     RULES THIS OBEYS: one hue family, THREE colour stops maximum, the new
+     accent #D53900 as the anchor, one deeper stop for depth and at most one
+     lighter stop at the far corner. The interest comes from the angle, the
+     stop positions and the hue pairing, not from more colours. Every stop
+     stays inside the orange family (hue 6°-24°) — nothing drifts up into the
+     warning chip's amber band (~33°-38°) the way the old blue ramp was free to
+     lean violet.
 
-     WHITE AA IS THE BINDING CONSTRAINT, and it is why neither candidate simply
-     quotes the artboard. Kit.dc.html §07 runs `120deg, #123AC9, #1F5BFF 52%,
-     #4E82FF` and white on that last stop reads 3.52:1 — every label on this
-     card is white at 11px, so the published ramp fails. Sampling white against
-     every percent of each candidate below, the worst point is 4.56:1 (A) and
-     5.25:1 (B).
+     WHITE AA IS THE BINDING CONSTRAINT. Sampling white against every stop of
+     each candidate below, the worst point is 4.59:1 (A) and 4.70:1 (B) — both
+     clear AA with a small margin, same shape of guarantee the blue ramp held.
 
      No sheen layer. A white overlay would be the obvious way to make these
-     prettier, but it lightens the ramp and A has only 0.06 of headroom over the
+     prettier, but it lightens the ramp and A has under 0.1 of headroom over the
      4.5:1 floor — the sheen would spend the contrast the labels need.
 
      OPAQUE and identical in both themes. This is a brand surface, not a tint:
      it does not take its lightness from the card behind it, it does not read
-     `--primary*` (which theme-swap, and whose dark values put white at 3.53:1
-     and 2.44:1), and `[data-theme="dark"]` redefines neither. */
+     `--primary*` (which theme-swap, and whose dark value puts white under 4:1),
+     and `[data-theme="dark"]` redefines neither. */
 
-  /* CHOSEN · "violet edge". Electric #1F5BFF anchors the middle; the origin is
-     a near-pure blue and the far corner leans violet rather than simply
-     lighter, so the card gains depth without gaining brightness. Three stops,
-     one hue family, and the interest is in the angle and the stop positions.
+  /* CHOSEN · "ember edge". #D53900 anchors the middle; the origin runs deeper
+     red for depth and the far corner leans toward amber rather than simply
+     lighter, so the card gains depth without gaining brightness or crossing
+     into the warning hue. Three stops, one hue family, and the interest is in
+     the angle and the stop positions.
 
-     Both stops are pushed as SATURATED as the contrast floor allows rather than
-     muted toward it: mean chroma 0.793, and white clears 5.25:1 at every point
-     along the ramp because the violet end is bounded by HUE rather than by
-     lightness. That headroom is why this one won — the alternate spends its
-     margin getting bright, this one spends it getting deep. */
-  --surface-accent-gradient: linear-gradient(128deg, #0f1fdb 0%, #1f5bff 48%, #5a3df0 100%);
+     White clears AA at every stop (7.53:1 / 4.76:1 / 4.59:1) because the
+     lighter corner is bounded by luminance, not by taste — pushed only as
+     far toward amber as the 4.5:1 floor allows. */
+  --surface-accent-gradient: linear-gradient(128deg, #a51e09 0%, #d53900 48%, #c05610 100%);
 
-  /* ALTERNATE · "indigo rise", kept live at `?gradient=alt` for comparison. The
-     artboard's shape with real depth at the origin: #0413D6 is 0.98 HSV
-     saturation and still 10.15:1 for white. Mean chroma 0.835, higher than the
-     chosen ramp, but its worst point is 4.72:1 rather than 5.25:1 because it
-     ends bright — and the artboard's own #4E82FF end, which this replaces,
-     measured 3.52:1 and would have failed every white label on the card.
-     Delete this and the `isAltGradient` reader once the comparison is over. */
-  --surface-accent-gradient-alt: linear-gradient(115deg, #0413d6 0%, #1f5bff 55%, #3568f5 100%);
+  /* ALTERNATE · "coal rise", kept live at `?gradient=alt` for comparison. Real
+     depth at the origin (#961304, 8.78:1 for white) and a slightly brighter
+     far corner than the chosen ramp — its worst point is 4.70:1 rather than
+     4.59:1. Delete this and the `isAltGradient` reader once the comparison is
+     over. */
+  --surface-accent-gradient-alt: linear-gradient(115deg, #961304 0%, #d53900 55%, #c64d10 100%);
 
   /* Ink ON the band. Full white for both levels, and the hierarchy is size,
-     weight and tracking rather than opacity — 70% white over #1F5BFF reads
-     3.35:1 and fails AA at the 11px the captions use. Only the hairlines and
-     the ghost-button borders are translucent white; neither carries information
-     the layout does not already carry. */
+     weight and tracking rather than opacity — 70% white over #D53900 fails AA
+     at the 11px the captions use for the same reason it failed on blue. Only
+     the hairlines and the ghost-button borders are translucent white; neither
+     carries information the layout does not already carry. */
   --on-accent: 255 255 255;
 
-  /* Ink for text on a WHITE surface inside the blue card — the label of the
+  /* Ink for text on a WHITE surface inside the accent card — the label of the
      solid primary, which on this card is a white button. Theme-stable for the
-     same reason the gradient is, and deliberately not `--primary`: #1F5BFF on
-     white is 5.25:1 and the dark `--primary` #4C82FF is 3.53:1, which fails.
-     This is the gradient's own deep stop, at 10.54:1 on white.
+     same reason the gradient is, and deliberately not `--primary`: the dark
+     map's lifted `--primary` (#FF4806) fails on white. This is the gradient's
+     own deep stop, at 10.52:1 on white.
 
-     NOTE ON THE ARTBOARD'S REJECT. Kit.dc.html §11-13 draws Reject as a pale
-     red label directly on the blue. No red reaches 4.5:1 there — #FFDEDB, which
-     is already almost white, peaks at 3.63:1 on the lighter end of the ramp —
-     so there is no danger-on-accent token and there should not be one. On the
-     card the three actions escalate by WEIGHT, not by hue: Reject borderless,
-     Request changes white-outlined, Approve solid white. CLAUDE.md already says
-     status colour lives on chips, and Button's own contract already says the
-     red fill is earned in the confirm step rather than spent on the trigger. */
-  --accent-ink: 15 47 168; /* #0F2FA8 */
+     NOTE ON REJECT. No red reaches 4.5:1 as text on this orange — a pale red
+     label, already almost white, peaks well under AA on the lighter end of the
+     ramp — so there is no danger-on-accent TEXT token and there should not be
+     one. On the card the three actions escalate by WEIGHT, not by hue: Reject
+     borderless, Request changes white-outlined, Approve solid white. CLAUDE.md
+     already says status colour lives on chips, and Button's own contract
+     already says the red fill is earned in the confirm step rather than spent
+     on the trigger. */
+  --accent-ink: 114 38 10; /* #72260A */
 
   /* The destructive outline ON the accent card. A 1px rule, never a fill, and
-     the label beside it stays white.
+     the label beside it stays white. Same danger family as `--danger`, not
+     the accent hue — but the old blue ramp's #FFB3AE was tuned against a
+     darker background (Y 0.06-0.15) than the new orange ramp's mid and light
+     stops (Y 0.17-0.18), so it no longer clears 3:1 there (2.69-2.79:1). This
+     token is lightened accordingly, same hue, so "destructive" keeps reading
+     as a distinct signal from "accent" at every stop.
 
-     The artboard draws Reject as a pale red LABEL, which cannot work: no red
-     reaches 4.5:1 as text on this blue (#FFDEDB, already almost white, peaks at
-     3.63:1). A 1px border is a non-text affordance and CLAUDE.md sets that floor
-     at 3:1, which is reachable — #FFB3AE measures 3.08:1 at the ramp's electric
-     midpoint and 3.67:1 at its violet end, so it clears everywhere the button
-     can sit. The destructiveness is carried by the outline; the reading is
-     carried by white type. Status colour still never becomes a fill. */
-  --danger-on-accent: 255 179 174; /* #FFB3AE */
+     A 1px border is a non-text affordance and CLAUDE.md sets that floor at
+     3:1: #FFCECB clears it against every stop of the new orange ramp
+     (3.26-6.25:1). The destructiveness is carried by the outline; the reading
+     is carried by white type. Status colour still never becomes a fill. */
+  --danger-on-accent: 255 206 203; /* #FFCECB */
 
   /* ---- Status (chips ONLY — status colour never leaves a chip) -------- */
   --success: 43 113 83; /* #2B7153 */
@@ -211,10 +224,12 @@
    * Three values the Kit.dc.html artboards use that §1.1 does not name.
    * They live here, with every other colour, so there is one token file. */
 
-  /* AI badge hover popover surface. Kit §02: #FCFAFF on a bblue border. NOT
-     --ai-tint — the popover is a half-step warmer than the chip it belongs to,
-     which is what separates the two planes without a shadow. */
-  --ai-popover: 252 250 255; /* #FCFAFF */
+  /* AI badge hover popover surface. NOT --ai-tint — the popover is a
+     half-step warmer than the chip it belongs to, which is what separates the
+     two planes without a shadow. ORANGE-ACCENT TRIAL: hue nudged a few degrees
+     toward red (6° vs `--ai-tint`'s 16°) at the same luminance, so it still
+     reads as "one step warmer" the way the blue version leaned violet. */
+  --ai-popover: 254 250 250; /* #FEFAFA */
 
   /* The low-confidence dot on an AI badge. Kit §02 draws it amber at #B67422.
      A non-text affordance, deliberately NOT --warning (#966119), which is a
@@ -277,16 +292,18 @@
   /* Only the tokens the §1.2 map changes. Geometry, type and spacing are
      identical across themes by design. */
 
-  /* 27 of 27 dark frames in the pack draw the shell ground at #131820. */
-  --canvas: 19 24 32; /* #131820  the shell ground, behind and around the card */
+  /* ORANGE-ACCENT TRIAL: `--canvas`, `--card`, `--surface` and `--surface-hover`
+     all get the same warm hue rotation as the light map, luminance held to a
+     rounding error of the pack's cool values so every relationship below
+     (the 3.2 L* surface step, the muted-text floors) resolves unchanged. */
+  --canvas: 30 23 18; /* #1E1712  the shell ground, behind and around the card */
   --sidebar: var(--canvas);
-  --card: 23 28 37; /* #171C25 */
-  /* L1 in dark, held at the same 3.3 L* step above `--card` that light holds
+  --card: 35 26 21; /* #231A15  a "raised panel" per the brief, warmed along with the ground */
+  /* L1 in dark, held at the same 3.2 L* step above `--card` that light holds
      below it, so a lane reads as a lane in both themes and the theme stays a
-     straight token swap. The pack's #1B212B was 2.42 L* and drifts under the
-     step for the same reason the light value did. */
-  --surface: 28 35 45; /* #1C232D */
-  --surface-hover: 30 37 48; /* #1E2530 */
+     straight token swap. */
+  --surface: 43 32 27; /* #2B201B */
+  --surface-hover: 45 35 28; /* #2D231C */
 
   --border: 42 50 62; /* #2A323E */
   --divider: 35 42 53; /* #232A35 */
@@ -298,13 +315,13 @@
   --ink-muted: 137 146 160; /* #8992A0  AA on the dark card at 12px */
   --ink-disabled: 92 101 114; /* #5C6572 */
 
-  --primary: 76 130 255; /* #4C82FF  lifted to keep 4.5:1 on dark */
-  --primary-hover: 157 187 255; /* #9DBBFF */
-  --primary-border: 46 68 120; /* #2E4478 */
-  --on-primary: 242 245 255; /* #F2F5FF  the accent never carries dark text */
+  --primary: 255 72 6; /* #FF4806  lifted to keep 4.5:1 on dark (5.03:1 measured) */
+  --primary-hover: 255 166 133; /* #FFA685 */
+  --primary-border: 104 57 40; /* #683928 */
+  --on-primary: 254 251 251; /* #FEFBFB  the accent never carries dark text */
 
-  --ai-tint: 22 33 58; /* #16213A */
-  --ai-tint-2: 27 42 71; /* #1B2A47 */
+  --ai-tint: 51 28 19; /* #331C13 */
+  --ai-tint-2: 64 35 24; /* #402318 */
 
   --success: 111 211 160; /* #6FD3A0 */
   --success-fill: 18 42 32; /* #122A20 */
@@ -322,7 +339,7 @@
   /* Kit supplements. All three DERIVED — the pack's dark map covers none of
      them. Each sits at the same lightness step from its dark neighbour as the
      light value sits from its light neighbour. */
-  --ai-popover: 28 34 52; /* one step warmer than --ai-tint */
+  --ai-popover: 50 30 27; /* #321E1B  one step warmer than --ai-tint */
   --warning-accent: 232 180 92; /* tracks --warning on dark, already a lifted amber */
   --peak: 74 58 24; /* the amber band at dark-surface lightness */
 
