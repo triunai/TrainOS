@@ -119,16 +119,26 @@ export interface TenantIdentity {
  * `browser` and `place` are separate because the artboard's "Chrome · Shah
  * Alam, GMT+8" is a sentence the screen builds, and because a place is the
  * thing a person scans for when checking whether a session is theirs.
+ *
+ * All four fields below `lastSignInAt` are optional. Nothing in the schema
+ * stores a user-agent string or a geo-located place, so `browser` and `place`
+ * have no source and are optional for that reason alone. `activeSessions` and
+ * `twoFactorEnabled` are optional too, provisionally: Supabase's `auth.sessions`
+ * and `auth.mfa_factors` could in principle derive them, but until the SQL
+ * lane building `core.me_profile()` (022) confirms it actually populates them,
+ * treating them as certain would be a claim this file cannot back up.
+ * `lastSignInAt` stays required — `auth.users.last_sign_in_at` is a stored
+ * column, not a derivation.
  */
 export interface ProfileSession {
   lastSignInAt: Timestamp;
   /** e.g. `Chrome`. */
-  browser: string;
+  browser?: string;
   /** e.g. `Shah Alam`. */
-  place: string;
+  place?: string;
   /** Sessions open right now, this one included. */
-  activeSessions: number;
-  twoFactorEnabled: boolean;
+  activeSessions?: number;
+  twoFactorEnabled?: boolean;
 }
 
 /**

@@ -197,10 +197,10 @@ describe("SidebarProfile", () => {
                 moduleCount: 7,
                 session: {
                   lastSignInAt: "2026-09-11T08:04:22+08:00",
-                  browser: "Chrome",
-                  place: "Shah Alam",
-                  activeSessions: 2,
-                  twoFactorEnabled: true,
+                  browser: null,
+                  place: null,
+                  activeSessions: null,
+                  twoFactorEnabled: null,
                 },
               }),
             )
@@ -248,5 +248,17 @@ describe("SidebarProfile", () => {
     expect(panel().getAllByText("Akademi Perdana")).toHaveLength(2);
     expect(panel().queryByText(/undefined/i)).not.toBeInTheDocument();
     expect(panel().queryByText(/null/i)).not.toBeInTheDocument();
+
+    /* `browser`, `place`, `activeSessions` and `twoFactorEnabled` are all
+       optional too, pending 022 confirming which of them `core.me_profile()`
+       actually populates. With none of them sent, the session line falls back
+       to just the timezone's own GMT offset, and the 2FA / active-sessions
+       chips — which would otherwise assert a false "off" / a count that is
+       not there — are dropped rather than drawn wrong. `moduleCount` has a
+       real source and still renders. */
+    expect(panel().getByText("GMT+8")).toBeInTheDocument();
+    expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
+    expect(panel().getByText("7 modules")).toBeInTheDocument();
   });
 });
