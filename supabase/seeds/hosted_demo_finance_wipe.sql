@@ -1,6 +1,7 @@
 -- Removes what supabase/seeds/hosted_demo_finance.sql added to tenant
 -- `akademi-perdana` — EXCEPT the two things the product itself never lets
--- anyone remove, voided instead, as documented below.
+-- anyone remove (voided instead), and the `core.action_requests` audit trail,
+-- which this file deliberately keeps, as documented below.
 --
 -- Run:
 --   psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/hosted_demo_finance_wipe.sql
@@ -31,8 +32,17 @@
 --
 -- Fully removed: the Meridian collections case, its drafted reminder message,
 -- and the one message rate this seed added (nothing restricts deleting any of
--- those), plus the `core.action_requests` rows this seed opened, which are
--- pure audit trail with no other row pointing back at them.
+-- those).
+--
+-- KEPT, BY DESIGN — the audit trail: every `core.action_requests` row this
+-- seed opened has `ref` prefixed `seed:hosted-demo:` (see
+-- `hosted_demo_finance.sql`'s own header) and is never deleted here, even
+-- though nothing else references those rows back. They document the seeded
+-- decisions permanently, the same way `pay:aurora:1` documents its payment
+-- permanently above — an auditor reading `core.action_requests` should see
+-- what happened, wipe or no wipe. `target_id` is not a hard FK (011's
+-- `action_requests` definition has none on that column), so these rows are
+-- left safely referencing entities this file voids or never touches.
 
 DROP TABLE IF EXISTS pg_temp.demo_id;
 CREATE OR REPLACE FUNCTION pg_temp.demo_id(p_key text)
@@ -62,11 +72,9 @@ DELETE FROM core.message_rates
  WHERE tenant_id = (SELECT t FROM demo_wipe_ctx) AND id = pg_temp.demo_id('rate:whatsapp:utility');
 DELETE FROM core.collections_cases
  WHERE tenant_id = (SELECT t FROM demo_wipe_ctx) AND id = pg_temp.demo_id('col:meridian');
-DELETE FROM core.action_requests
- WHERE tenant_id = (SELECT t FROM demo_wipe_ctx)
-   AND target_id IN (pg_temp.demo_id('quo:aurora'), pg_temp.demo_id('quo:meridian'),
-                     pg_temp.demo_id('inv:aurora'), pg_temp.demo_id('inv:meridian'),
-                     pg_temp.demo_id('col:meridian'));
+
+-- `core.action_requests` rows this seed opened are the permanent audit
+-- trail (see the header above) and are deliberately NOT deleted here.
 
 -- Meridian carries no payment, so it is fully void-able and left with no live
 -- collections case pointing at it (deleted above).
@@ -91,6 +99,12 @@ BEGIN
   END IF;
   IF (SELECT status FROM core.invoices WHERE tenant_id = v_t AND id = pg_temp.demo_id('inv:aurora')) <> 'PARTIALLY_PAID' THEN
     RAISE EXCEPTION 'hosted finance wipe: the Aurora invoice changed status unexpectedly';
+  END IF;
+  -- Positive check: the audit trail is KEPT, not just "not explicitly
+  -- deleted here" — confirms no other trigger/cascade silently removed it.
+  IF (SELECT count(*) FROM core.action_requests
+       WHERE tenant_id = v_t AND ref LIKE 'seed:hosted-demo:%') = 0 THEN
+    RAISE EXCEPTION 'hosted finance wipe: the seeded action_requests audit trail was lost';
   END IF;
 END
 $verify$;

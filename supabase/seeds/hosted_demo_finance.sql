@@ -55,6 +55,22 @@
 -- seed already wrote — this file references its organisations and quotations
 -- by key, not by a copy-pasted uuid. Every INSERT is guarded by NOT EXISTS on
 -- that id; a second run writes nothing.
+--
+-- ── Permanent audit trail ────────────────────────────────────────────────────
+--
+-- (a) Every `core.action_requests` row `pg_temp.demo_act` opens below has its
+-- `ref` set to `seed:hosted-demo:<action_type>:<target_ref-or-target_id>`
+-- (never left for `core.assign_ref` to fill), so it is unambiguously
+-- identifiable as seed data rather than a real decision, for anyone auditing
+-- `core.action_requests` later. `supabase/seeds/hosted_demo_finance_wipe.sql`
+-- does NOT delete these rows — they are kept permanently as this domain's
+-- seeded audit trail, even after a wipe removes the invoices/quotations/etc.
+-- they reference via `target_id` (not a hard FK, so the now-dangling
+-- reference is fine; see the wipe file's own comment).
+-- (b) Aurora's partial payment (`pg_temp.demo_id('pay:aurora:1')`, below) is
+-- likewise permanent: the wipe does not delete `core.payments` rows, so this
+-- payment survives a wipe/re-seed cycle exactly like the action_requests
+-- audit trail above.
 
 DROP TABLE IF EXISTS pg_temp.demo_ctx;
 CREATE OR REPLACE FUNCTION pg_temp.demo_id(p_key text)
@@ -115,15 +131,49 @@ CREATE OR REPLACE FUNCTION pg_temp.demo_act(
   p_tenant uuid, p_type text, p_target_ref text, p_target_entity text, p_target_id uuid,
   p_requested_by uuid, p_requested_by_name text, p_value_sen bigint DEFAULT NULL
 ) RETURNS uuid LANGUAGE plpgsql AS $fn$
-DECLARE v_id uuid;
+DECLARE v_id uuid; v_ref text;
 BEGIN
+  -- `ref` is explicitly set (rather than left NULL for `core.assign_ref`'s
+  -- BEFORE INSERT trigger to fill, 004:526-528, which only fills a NULL ref)
+  -- so every `action_requests` row this seed writes is unambiguously marked
+  -- as seed data, not a real decision, for anyone auditing the table later —
+  -- see the header comment above for the full rule. `p_type || ':' ||
+  -- p_target_id` keeps each row's ref both distinct (action_requests has a
+  -- UNIQUE (tenant_id, ref), 004:346-348: two calls here can share a target
+  -- entity — INVOICE_PUSH and PAYMENT_RECORD both target the same invoice —
+  -- but never share both type AND target together) AND STABLE across a
+  -- wipe/reseed cycle. `p_target_id` is always one of this file's own
+  -- `pg_temp.demo_id(<key>)` values, deterministic for a given key; the
+  -- caller's OWN `p_target_ref` (an entity's `ref` column, e.g. a
+  -- collections_case's) is NOT stable the same way — `core.assign_ref`
+  -- (004:512) mints a fresh sequential ref for a row `hosted_demo_finance_
+  -- wipe.sql` deletes and this file recreates (e.g. Meridian's collections
+  -- case), so keying on target_ref would mint a NEW action_requests row,
+  -- not update the old one, on every wipe/reseed cycle — verified against
+  -- the shim, this exact drift is why target_id is used here instead.
+  v_ref := 'seed:hosted-demo:' || p_type || ':' || p_target_id::text;
+  -- ON CONFLICT, not a plain INSERT: the row this marks is permanent (never
+  -- deleted by the wipe, see the header above), but the ENTITY it gates a
+  -- write for is not always permanent — e.g. `hosted_demo_finance_wipe.sql`
+  -- fully removes Meridian's collections case, and a reseed recreates it and
+  -- re-walks REMINDER_SEND. Without ON CONFLICT that second `demo_act` call
+  -- would collide on this same stable `ref` (a plain INSERT raised
+  -- `action_requests_tenant_ref_key`, verified against the shim) instead of
+  -- reopening the SAME permanent audit row for the new cycle — `ref`,
+  -- `action_type` and `requested_by_id` are frozen by 004's immutability
+  -- trigger either way (only `status` and the target/value columns move),
+  -- so the row's identity and its `seed:hosted-demo:` marker never change.
   INSERT INTO core.action_requests
-    (tenant_id, action_type, target_ref, target_entity, target_id, value_sen, currency,
+    (tenant_id, ref, action_type, target_ref, target_entity, target_id, value_sen, currency,
      requested_by_kind, requested_by_id, requested_by_role, status)
   VALUES
-    (p_tenant, p_type, p_target_ref, p_target_entity, p_target_id, p_value_sen,
+    (p_tenant, v_ref, p_type, p_target_ref, p_target_entity, p_target_id, p_value_sen,
      CASE WHEN p_value_sen IS NOT NULL THEN 'MYR' END,
      'HUMAN', p_requested_by::text, 'MD', 'EXECUTING')
+  ON CONFLICT ON CONSTRAINT action_requests_tenant_ref_key DO UPDATE SET
+    target_ref = EXCLUDED.target_ref, target_entity = EXCLUDED.target_entity,
+    target_id = EXCLUDED.target_id, value_sen = EXCLUDED.value_sen, currency = EXCLUDED.currency,
+    status = 'EXECUTING', completed_at = NULL
   RETURNING id INTO v_id;
   PERFORM pg_catalog.set_config('app.effect_applier', v_id::text, true);
   RETURN v_id;
