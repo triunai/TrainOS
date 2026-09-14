@@ -526,7 +526,11 @@ are byte-identical (sorted) to a fresh 001–021 build after 027 applies then ro
 ### ⚠ Carried risk and standing conditions
 
 - **createProvider/testProvider/revealProvider are not built** — see above. `listProviders` (read)
-  ships.
+  ships. Its row shape was aligned with lane 029 (which owns those three writes in a separate
+  migration): `addedBy` projects the contract's `EditedBy` {id, name, at} rather than the raw
+  `added_by` actor jsonb, `activeFallbackTier` is included when set, and rows whose `key_ref` is
+  tombstoned (`retired:%`, 029's delete convention for a key `app.key_access_audit` still
+  references) are excluded.
 - **`put_budget`'s cap-raise path bypasses 011's `BUDGET_CAP_RAISE` action envelope** — see above,
   a product decision to confirm.
 - **`AutomationRun.nodes/events/stateCard/steps` are not populated** — all optional in the

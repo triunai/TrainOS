@@ -1048,6 +1048,14 @@ BEGIN
 
   -- MASKED ROWS ONLY. Never the key - core.ai_provider_keys never holds it
   -- (013). See migration header for createProvider/testProvider/revealProvider.
+  --
+  -- `key_ref LIKE 'retired:%'` is excluded: 029's delete tombstones a key
+  -- that still has app.key_access_audit rows rather than deleting it (013's
+  -- FK there is ON DELETE RESTRICT), so a "deleted" key would otherwise keep
+  -- showing up here as INVALID. `addedBy` is projected into the contract's
+  -- EditedBy shape {id, name, at} - core.ai_provider_keys.added_by is an
+  -- actor jsonb {kind, id, name} with no timestamp of its own; `added_at` is
+  -- the separate column that carries it.
   SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
            'id', key.provider_ref, 'provider', key.provider::text, 'label', key.label,
            'status', key.status::text, 'maskedKey', key.masked_key,
@@ -1055,17 +1063,23 @@ BEGIN
            'spendMonth', app._money(0, key.currency),
            'billingOwner', key.billing_owner::text, 'region', key.region,
            'lastTestedAt', key.last_tested_at,
-           'addedBy', key.added_by)
+           'addedBy', pg_catalog.jsonb_build_object(
+                        'id', key.added_by ->> 'id',
+                        'name', COALESCE(key.added_by ->> 'name', key.added_by ->> 'id'),
+                        'at', key.added_at))
          || CASE WHEN key.cap_sen IS NULL THEN '{}'::jsonb
                  ELSE pg_catalog.jsonb_build_object('cap', app._money(key.cap_sen, key.currency)) END
          || CASE WHEN key.rotation_date IS NULL THEN '{}'::jsonb
                  ELSE pg_catalog.jsonb_build_object('rotationDate', key.rotation_date::text) END
          || CASE WHEN key.invalid_since IS NULL THEN '{}'::jsonb
                  ELSE pg_catalog.jsonb_build_object('invalidSince', key.invalid_since) END
+         || CASE WHEN key.active_fallback_tier IS NULL THEN '{}'::jsonb
+                 ELSE pg_catalog.jsonb_build_object('activeFallbackTier', key.active_fallback_tier) END
          ORDER BY key.provider_ref), '[]'::jsonb)
     INTO v_data
     FROM core.ai_provider_keys AS key
-   WHERE key.tenant_id = v_tenant;
+   WHERE key.tenant_id = v_tenant
+     AND key.key_ref NOT LIKE 'retired:%';
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'data', v_data, 'page', pg_catalog.jsonb_build_object('next', NULL, 'total', pg_catalog.jsonb_array_length(v_data))));
