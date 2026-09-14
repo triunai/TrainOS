@@ -11,6 +11,9 @@ import type {
   ApprovalBulkDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AttendanceCaptureRequest,
+  AttendanceExport,
+  AttendanceSheet,
   AuditEntry,
   AutomationRun,
   BadgeCounts,
@@ -24,6 +27,7 @@ import type {
   ComplianceChecksResponse,
   ComplianceRule,
   Contact,
+  Engagement,
   Enquiry,
   ExecutiveDashboard,
   EnquiryDetail,
@@ -49,6 +53,7 @@ import type {
   OrganisationRelations,
   OrganisationSuggestion,
   PageRequest,
+  Participant,
   PipelineConfig,
   PipelineObject,
   Policy,
@@ -188,6 +193,19 @@ export interface TrainOsClient {
   listTnas(query: PageRequest): Promise<Result<ListResponse<Tna>>>;
   reopenTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
+  listEngagements(query: PageRequest): Promise<Result<ListResponse<Engagement>>>;
+  getEngagement(id: string): Promise<Result<Engagement>>;
+  getEngagementParticipants(
+    id: string,
+    query: PageRequest,
+  ): Promise<Result<ListResponse<Participant>>>;
+  getAttendance(id: string, day: number): Promise<Result<AttendanceSheet>>;
+  captureAttendance(
+    id: string,
+    day: number,
+    body: AttendanceCaptureRequest,
+  ): Promise<Result<AttendanceSheet>>;
+  exportAttendance(id: string, format: string): Promise<Result<AttendanceExport>>;
   createProposal(input: ProposalInput): Promise<Result<Proposal>>;
   listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>>;
   getProposal(id: string): Promise<Result<Proposal>>;
@@ -216,6 +234,7 @@ export interface TrainOsClient {
   listProgrammes(): Promise<Result<ListResponse<Programme>>>;
   getProgramme(id: string): Promise<Result<Programme>>;
   getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>>;
+  putProgramme(id: string, body: Partial<Programme>): Promise<Result<Programme>>;
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>>;
   getClaimPacket(id: string): Promise<Result<ClaimPacket>>;
   attachPacketDocument(id: string, input: HrdcDocumentAttachInput): Promise<Result<ClaimPacket>>;
