@@ -40,6 +40,7 @@
     "check:barrels": "npm run check:barrels -w apps/web",
     "check:rpc": "node scripts/check-rpc-contract.mjs",
     "check:grants": "node scripts/check-grants.mjs",
+    "test:check-grants": "node scripts/check-grants.m2.test.mjs",
     "prepare": "lefthook install"
   },
   "lint-staged": {

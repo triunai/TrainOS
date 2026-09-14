@@ -269,32 +269,47 @@ BEGIN
   -- no stamp, so the four that are granted are named, which they already were in
   -- this assertion's own message. A fifth granted view is then a deliberate edit
   -- here rather than a silent drift, which is the property worth keeping.
+  -- ⚠ AMENDED BY 033 (2026-09-14). 033 calls `app.apply_tenant_policies` again
+  -- on 28 of these 117 tables to add a permission gate (H1/M5) — same GRANT,
+  -- re-stamped policy. `apply_tenant_policies` writes the CURRENT pack's number
+  -- into the policy comment by design (014:557-577: "the stamp is written here,
+  -- by the function, from a required argument" — provenance of the POLICY, not
+  -- of the table's SELECT grant, which 033 never touches). The `<= '017'` cutoff
+  -- therefore silently dropped those 28 tables from this count the moment 033
+  -- re-stamped them — found by running this pin against a 033 build, not by
+  -- reading it. `= '033'` is added to the recognised stamps for the same
+  -- reason `<= '017'` covers 017's three re-policied tables already: a table
+  -- 014 granted does not stop being 014-granted because a LATER pack narrowed
+  -- who may read it. The total is unchanged — 033 adds no new grant and removes
+  -- none — 121 stands.
   SELECT pg_catalog.count(*) INTO v_grants
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname='core'
      AND has_table_privilege('authenticated', c.oid, 'SELECT')
      AND (
-       -- a table this pack or an earlier one policied
+       -- a table this pack or an earlier one policied, or one 033 re-gated
        (c.relkind = 'r' AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_policy p
             JOIN pg_catalog.pg_description d
               ON d.objoid = p.oid
              AND d.classoid = 'pg_catalog.pg_policy'::pg_catalog.regclass
            WHERE p.polrelid = c.oid
-             AND pg_catalog.substring(d.description, 'migration:([0-9]{3})') <= '017'))
+             AND (pg_catalog.substring(d.description, 'migration:([0-9]{3})') <= '017'
+                  OR pg_catalog.substring(d.description, 'migration:([0-9]{3})') = '033')))
        -- or one of the four views 014 and 017 grant, by name
        OR c.relname IN ('audit_entries','v_contact_consent_current',
                         'v_tax_policy_unverified','v_trainer_accreditation'));
   ASSERT v_grants = 121,
     pg_catalog.format('T1c FAIL: expected 121 SELECT grants in core to '
       'authenticated ON 014-TIME OBJECTS — 117 tables (114 from 014 + 3 from 017, '
-      'identified by the migration stamp on their policies) plus four views: '
-      'core.audit_entries, core.v_contact_consent_current, and 017''s '
-      'v_tax_policy_unverified and v_trainer_accreditation. Three views are '
-      'deliberately excluded: v_approval_requests (doc 09 §12) and budget_status '
-      '/ model_tier_status (security_invoker over app.usage_rollup, so a grant '
-      'cannot work). Found %s.', v_grants);
+      'identified by the migration stamp on their policies, INCLUDING 28 of them '
+      '033 later re-stamped while re-gating — see the AMENDED note above) plus '
+      'four views: core.audit_entries, core.v_contact_consent_current, and '
+      '017''s v_tax_policy_unverified and v_trainer_accreditation. Three views '
+      'are deliberately excluded: v_approval_requests (doc 09 §12) and '
+      'budget_status / model_tier_status (security_invoker over '
+      'app.usage_rollup, so a grant cannot work). Found %s.', v_grants);
 
   SELECT pg_catalog.count(*) INTO v_writes
     FROM pg_catalog.pg_class c
@@ -1488,29 +1503,50 @@ BEGIN
         'it covers and argues provenance for the rest.', r.x);
   END LOOP;
 
+  -- ⚠ AMENDED BY 033 (2026-09-14). Was 9 — 014's own §4b set (ai_provider_keys,
+  -- the seven run_* tables, public_share_tokens). 033 (H1/M5) gates 28 more —
+  -- approval_requests/decisions, action_requests, quotations(+lines), the six
+  -- rate_card_* pricing tables, the three rate_card_* margin/commission/
+  -- discount-authority tables, invoices, payments, credit_notes(+lines),
+  -- collections_cases, contacts, contact_consents, organisations, opportunities,
+  -- enquiries, proposals(+sections), ai_budgets, model_tiers — the exact list is
+  -- 033's migration header, not restated here as a second copy that could drift.
+  -- core.events is deliberately NOT in the 28: 033's own header explains why
+  -- apply_tenant_policies refuses a permission-based gate for it (audit:read is
+  -- held by every non-CLIENT/AGENT role) and gates it with a bespoke
+  -- role-name policy instead, which this LIKE '%has_permission%' probe correctly
+  -- does not count. 9 + 28 = 37.
   ASSERT (SELECT pg_catalog.count(*)
             FROM pg_catalog.pg_policy p
             JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
            WHERE n.nspname='core'
              AND p.polname = c.relname || '_tenant_isolation'
-             AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%') = 9,
+             AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%has_permission%') = 37,
     'T12l FAIL: the number of core tables whose isolation policy carries a '
-    'permission term is not nine. If a table joined the gated set this pin needs '
-    'a probe column for it, not a bigger number.';
+    'permission term is not 37 (9 from 014 + 28 from 033). If a table joined '
+    'the gated set this pin needs a probe column for it, not a bigger number.';
 
   -- And nothing grew a third policy shape: 004 T1c and 013 T1d both inventory
   -- core by exactly the two names, and folding the gate into the isolation policy
   -- rather than adding a `_role_gate` policy is what keeps those pins true.
+  -- ⚠ AMENDED BY 033 (2026-09-14). Four more named exceptions: 033's H4
+  -- MY_ACCOUNTS narrowing (organisations/opportunities/enquiries — a SEPARATE
+  -- RESTRICTIVE policy rather than folded into `_tenant_isolation`, because it
+  -- is role-conditional in a way the permission gate is not — see 033's header)
+  -- and 033's bespoke core.events CLIENT-exclusion. test_004 T1c is amended in
+  -- the same commit to name all four.
   ASSERT NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_policy p
       JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname='core'
        AND p.polname NOT IN (c.relname || '_tenant_select', c.relname || '_tenant_isolation')
-       AND p.polname NOT IN ('provenance_subjects_read','autonomy_grants_agents_cannot_write')),
+       AND p.polname NOT IN ('provenance_subjects_read','autonomy_grants_agents_cannot_write',
+         'organisations_my_accounts_narrow_033','opportunities_my_accounts_narrow_033',
+         'enquiries_my_accounts_narrow_033','events_no_client_033')),
     'T12m FAIL: a policy in core is neither one of 014''s two shapes nor one of '
-    'the two named exceptions. test_004 T1c and test_013 T1d inventory core by '
+    'the six named exceptions. test_004 T1c and test_013 T1d inventory core by '
     'those names and would fail next.';
 
   RAISE NOTICE
