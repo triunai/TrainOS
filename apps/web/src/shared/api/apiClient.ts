@@ -1,19 +1,31 @@
 import type {
   ActionRequest,
+  AgentPauseRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  Budget,
   ComplianceRule,
   EnquiryExtractionPatch,
   HrdcDocumentAttachRequest,
+  KnowledgeSourceCreateRequest,
   MessageChannel,
   PageRequest,
   ProposalCreateRequest,
   ProposalSectionWrite,
   QuotationWrite,
+  RoutingEntry,
+  RunDeadLetterRequest,
   SavedView,
   TemplateType,
 } from "@trainos/contract";
-import { ContractError, EventBus, paginate, type FixtureClient } from "@trainos/fixtures";
+import {
+  ContractError,
+  EventBus,
+  paginate,
+  type FixtureClient,
+  type FixtureLibraryAsset,
+  type FixtureTenant,
+} from "@trainos/fixtures";
 
 import type { TrainOsClient } from "./client";
 import {
@@ -287,7 +299,95 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       paginate(must(await rpc.listKnowledgeSources()).data, page),
     getAiTiers: async () => must(await rpc.listAiTiers()),
     getBudgets: async () => must(await rpc.listBudgets()),
+
+    /* §10 automation: agents and runs (027). */
+    listAgents: async () => must(await rpc.listAgents()),
+    pauseAgent: async (id: string, body: AgentPauseRequest, _options?: RequestOptions) =>
+      must(await rpc.pauseAgent(id, body)),
+    listRuns: async (page?: PageRequest) => must(await rpc.listRuns(page ?? {})),
+    getRun: async (id: string) => must(await rpc.getRun(id)),
+    retryRun: async (id: string, from?: "checkpoint") => must(await rpc.retryRun(id, from)),
+    deadLetterRun: async (id: string, body: RunDeadLetterRequest, _options?: RequestOptions) =>
+      must(await rpc.deadLetterRun(id, body)),
+
+    /* §17 knowledge (027). */
+    createKnowledgeSource: async (body: KnowledgeSourceCreateRequest) =>
+      must(await rpc.createKnowledgeSource(body)),
+    checkKnowledgeSource: async (id: string) => must(await rpc.checkKnowledgeSource(id)),
+    reingestKnowledgeSource: async (id: string) => must(await rpc.reingestKnowledgeSource(id)),
+    /* Fixture-only shape; the RPC layer returns it as `unknown` because it has
+       no contract type (see client.ts). Cast back here — the one seam that
+       already knows the fixture's shape is the oracle — through a runtime
+       shape guard rather than a double cast through `unknown` (E2's rule:
+       that double-cast pattern is what hid a real envelope-drift incident). */
+    listLibraryAssets: async (page?: PageRequest) =>
+      asLibraryAssetPage(must(await rpc.listLibraryAssets(page ?? {}))),
+
+    /* §17 AI settings: routing, providers (read), usage, budgets, tenant (027). */
+    getAiRouting: async () => must(await rpc.getAiRouting()),
+    putAiRouting: async (entries: RoutingEntry[]) => must(await rpc.putAiRouting(entries)),
+    listProviders: async () => must(await rpc.listProviders()),
+    getUsage: async (period?: string, groupBy?: "TIER" | "AGENT" | "ACTION_TYPE") =>
+      must(await rpc.getUsage(period, groupBy)),
+    putBudget: async (scope: Budget["scope"], budgetKey: string, body: { cap: Budget["cap"] }) =>
+      must(await rpc.putBudget(scope, budgetKey, body)),
+    getTenant: async () => asFixtureTenant(must(await rpc.getTenant())),
   };
+}
+
+/** Runtime guard for {@link asFixtureTenant} — see its comment. */
+function isFixtureTenantShape(value: unknown): value is FixtureTenant {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).id === "string" &&
+    typeof (value as Record<string, unknown>).name === "string" &&
+    typeof (value as Record<string, unknown>).locale === "string" &&
+    typeof (value as Record<string, unknown>).timezone === "string" &&
+    typeof (value as Record<string, unknown>).currency === "string"
+  );
+}
+
+/**
+ * `core.get_tenant` (027) has no contract type to check against at the RPC
+ * layer (see client.ts), so the shape is checked here, once, at the seam that
+ * already treats `FixtureTenant` as the oracle for this endpoint.
+ */
+function asFixtureTenant(value: unknown): FixtureTenant {
+  if (!isFixtureTenantShape(value)) {
+    throw new Error("getTenant(): response does not match FixtureTenant's shape");
+  }
+  return value;
+}
+
+/** Runtime guard for {@link asLibraryAssetPage} — see its comment. */
+function isLibraryAssetPageShape(
+  value: unknown,
+): value is { data: FixtureLibraryAsset[]; page: { next: string | null; total: number } } {
+  if (typeof value !== "object" || value === null) return false;
+  const data = (value as Record<string, unknown>).data;
+  const page = (value as Record<string, unknown>).page;
+  return (
+    Array.isArray(data) &&
+    typeof page === "object" &&
+    page !== null &&
+    typeof (page as Record<string, unknown>).total === "number"
+  );
+}
+
+/**
+ * `core.list_library_assets` (027) has no contract type (see client.ts), so
+ * the envelope shape — `{data: [], page: {next, total}}` — is checked here
+ * rather than double-cast through `unknown`.
+ */
+function asLibraryAssetPage(value: unknown): {
+  data: FixtureLibraryAsset[];
+  page: { next: string | null; total: number };
+} {
+  if (!isLibraryAssetPageShape(value)) {
+    throw new Error("listLibraryAssets(): response does not match the expected page shape");
+  }
+  return value;
 }
 
 /**
