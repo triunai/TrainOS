@@ -180,16 +180,15 @@ describe("SidebarProfile", () => {
    * `notDeployed.render.test.tsx` drives it against a hand-built refusal.
    */
   /**
-   * The fields `core.me_profile()` (022, confirmed by sql-022) actually
-   * sends `null` for: `location`/`jobTitle`/`department`/`staffNumber` (no
-   * table stores them), `session.browser`/`session.place` (no source ever),
-   * and — guarded against hosted GoTrue the SQL lane could not confirm —
-   * `session.lastSignInAt` and `session.twoFactorEnabled`. `session` itself
-   * and `session.activeSessions` are never null; a real number is included
-   * here specifically to prove the active-sessions chip is NOT swept up by
-   * the same "drop it" handling as its guarded siblings.
+   * `core.me_profile()`'s FINAL shape (022, PR #46 2551359, sql-022):
+   * `location`/`jobTitle`/`department`/`staffNumber` are `null` (no table
+   * stores them), and WITHIN a present `session`, `browser`/`place` are
+   * always `null` and `twoFactorEnabled` can be `null` (guarded against
+   * hosted GoTrue the SQL lane could not confirm). `lastSignInAt` and
+   * `activeSessions` are real whenever `session` is present at all — see the
+   * next test for the case where `session` itself is `null`.
    */
-  it("shows an em dash or drops a field no table stores or the SQL lane could not confirm, rather than printing null", async () => {
+  it("shows an em dash for a profile field no table stores, and drops twoFactorEnabled/browser/place the SQL lane could not confirm or has no source for", async () => {
     const user = userEvent.setup();
 
     const transport = {
@@ -206,7 +205,7 @@ describe("SidebarProfile", () => {
                 staffNumber: null,
                 moduleCount: 7,
                 session: {
-                  lastSignInAt: null,
+                  lastSignInAt: "2026-09-11T08:04:22+08:00",
                   browser: null,
                   place: null,
                   activeSessions: 3,
@@ -259,9 +258,11 @@ describe("SidebarProfile", () => {
     expect(panel().queryByText(/undefined/i)).not.toBeInTheDocument();
     expect(panel().queryByText(/null/i)).not.toBeInTheDocument();
 
-    /* `lastSignInAt` null: the line is gone, not "Last sign in Invalid Date"
-       and not `new Date(null)`'s silent 1970-01-01. */
-    expect(panel().queryByText(/Last sign in/)).not.toBeInTheDocument();
+    /* `lastSignInAt` is real whenever `session` is present — the line
+       renders, not omitted and not "01-01-1970" (`new Date(null)`'s silent
+       epoch date, which is what a bug reintroducing a per-field null check
+       for this field would produce against the real shape). */
+    expect(panel().getByText(/Last sign in 11-09-2026/)).toBeInTheDocument();
 
     /* `browser`/`place` null (always, not just here): the session line falls
        back to just the timezone's own GMT offset rather than joining in
@@ -272,11 +273,77 @@ describe("SidebarProfile", () => {
        "2FA off" is dropped rather than drawn wrong. */
     expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
 
-    /* `activeSessions` is NEVER null — unlike its two guarded siblings above,
-       it still renders. Regressing this back under the same "drop it when
-       null" handling as `twoFactorEnabled` is exactly the mistake this
-       assertion exists to catch. */
+    /* `activeSessions` is real whenever `session` is present — unlike
+       `twoFactorEnabled`, it still renders. */
     expect(panel().getByText("3 active sessions")).toBeInTheDocument();
+    expect(panel().getByText("7 modules")).toBeInTheDocument();
+  });
+
+  /**
+   * `core.me_profile()`'s FINAL shape: `session` is `null` AS A WHOLE
+   * precisely when `lastSignInAt` cannot be derived — the guard withholds
+   * the whole block rather than leaving it partial. Nothing inside `session`
+   * can be read at all in that case, so the "Last sign in" line, the
+   * "browser · place, GMT+8" line and both session chips have to be gone
+   * together, not fall back to a GMT-only line the way the per-field-null
+   * case above does.
+   */
+  it("omits the whole session block when the server sends session: null, rather than reading into it", async () => {
+    const user = userEvent.setup();
+
+    const transport = {
+      rpc: (name: string) =>
+        name === "me_profile"
+          ? Promise.resolve(
+              okEnvelope({
+                id: "u_test",
+                tenant: { name: "Akademi Perdana", code: "APSB" },
+                location: "Klang Valley",
+                jobTitle: "Senior Sales Consultant",
+                department: "Commercial",
+                email: "amirah.yusof@akademiperdana.my",
+                staffNumber: "APSB-0142",
+                moduleCount: 7,
+                session: null,
+              }),
+            )
+          : Promise.reject(new Error(`unexpected rpc: ${name}`)),
+      from: () => {
+        throw new Error("SidebarProfile does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    render(
+      <MemoryRouter initialEntries={["/dashboard"]}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => {} }}>
+            <ApiProvider client={createRpcApiClient()}>
+              <I18nProvider>
+                <SidebarProfile collapsed={false} />
+              </I18nProvider>
+            </ApiProvider>
+          </MeContext.Provider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+
+    const panel = () => within(screen.getByRole("dialog"));
+    await panel().findByText("Senior Sales Consultant");
+
+    /* Neither line the session powers is drawn — not even a GMT-offset-only
+       fallback, which is the per-field-null case's answer, not this one. */
+    expect(panel().queryByText(/Last sign in/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/GMT\+/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
+
+    /* Everything that does NOT depend on `session` is unaffected. */
+    expect(panel().getByText("Akademi Perdana · Klang Valley")).toBeInTheDocument();
     expect(panel().getByText("7 modules")).toBeInTheDocument();
   });
 });

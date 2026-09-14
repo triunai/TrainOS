@@ -103,13 +103,16 @@ export interface MeProfile {
   /** Modules the principal is entitled to — the modal's first chip. */
   moduleCount: number;
   /**
-   * `core.me_profile()` (022, confirmed by sql-022) never answers `session:
-   * null` as a whole — the earlier "coarser than its own fields" reading of
-   * this was wrong, built on secondhand relay rather than the SQL lane's own
-   * word. Individual fields inside it are the ones that go missing; see
-   * `ProfileSession`.
+   * `core.me_profile()`'s FINAL shape (022, PR #46 2551359, sql-022):
+   * `session` is `null` AS A WHOLE precisely when `lastSignInAt` cannot be
+   * derived — the guard that would otherwise leave a partial object instead
+   * withholds the block entirely, so a present `session` always has a real
+   * `lastSignInAt`. (Two earlier readings of this got it wrong in opposite
+   * directions: one had `session` always present with `lastSignInAt`
+   * possibly null, the other had `session` always present full stop. This is
+   * the SQL lane's own word, superseding both.)
    */
-  session: ProfileSession;
+  session?: ProfileSession;
 }
 
 /**
@@ -133,23 +136,21 @@ export interface TenantIdentity {
  * Alam, GMT+8" is a sentence the screen builds, and because a place is the
  * thing a person scans for when checking whether a session is theirs.
  *
- * Confirmed against `core.me_profile()` (022, sql-022):
+ * Confirmed against `core.me_profile()`'s FINAL shape (022, PR #46 2551359,
+ * sql-022):
+ *   - `lastSignInAt` — required WITHIN a present `session`. `session` itself
+ *     goes `null` instead of carrying this field as null — see `MeProfile`.
  *   - `browser`, `place` — always `null`. Nothing in the schema stores a
  *     user-agent string or a geo-located place; there is no path to ever
  *     populate these two, not just a gap today.
- *   - `lastSignInAt` — from `auth.users.last_sign_in_at`, GoTrue's own
- *     column, but read through a guard that catches `undefined_column` and
- *     answers `null` rather than 500ing, because the SQL lane could not
- *     confirm the column against hosted GoTrue from its own access. Optional
- *     for that reason, not because the value is expected to be absent.
- *   - `twoFactorEnabled` — `EXISTS(auth.mfa_factors …)`, same
- *     unconfirmed-on-hosted guard (`to_regclass('auth.mfa_factors')`),
- *     `null` if the table is not there. Optional for the same reason.
+ *   - `twoFactorEnabled` — `EXISTS(auth.mfa_factors …)`, guarded on
+ *     `to_regclass('auth.mfa_factors')` (unconfirmed against hosted GoTrue
+ *     from the SQL lane's own access), `null` if the table is not there.
  *   - `activeSessions` — `COUNT(auth.sessions)` for the caller, no guard: a
- *     plain number, always present.
+ *     plain number, always present within a present `session`.
  */
 export interface ProfileSession {
-  lastSignInAt?: Timestamp;
+  lastSignInAt: Timestamp;
   /** e.g. `Chrome`. */
   browser?: string;
   /** e.g. `Shah Alam`. */
