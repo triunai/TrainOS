@@ -834,6 +834,19 @@ $fn$;
 -- (`FC:1342`), which is itself a stub. A real export is later work; this
 -- migration does not invent a storage layer to unblock a read the contract
 -- already specifies narrowly (`{url, expiresAt}`).
+--
+-- `status`/`snapshotAt`: `AttendanceExport` (packages/contract/src/domain/
+-- engagements.ts:305) is a plain TS interface with no runtime (zod) schema
+-- anywhere on this response's path (rpcClient.ts just casts the RPC result),
+-- so it does not reject unknown fields — but it is widened to type these two
+-- for callers anyway, same as any other contract field. `p_id` names an
+-- engagement, not a specific day, so "day status" is the status of that
+-- engagement's LATEST attendance day (MAX(day) in core.attendance_days) —
+-- the one this HRDC export is most likely being taken for or against (an
+-- in-progress multi-day engagement's most recent day is the one still
+-- capturing; once the whole engagement is done, its last day is the one
+-- whose LOCK finalises the packet). No attendance_days row at all (day
+-- never opened) reports status NULL rather than inventing one.
 
 CREATE OR REPLACE FUNCTION core.export_attendance(p_id text, p_format text DEFAULT 'HRDC')
 RETURNS jsonb
@@ -845,6 +858,7 @@ AS $fn$
 DECLARE
   v_tenant uuid := app.require_tenant_id();
   v_eng    core.engagements%ROWTYPE;
+  v_status core.attendance_status;
 BEGIN
   IF NOT app.has_permission('attendance:export') THEN
     RETURN app.err('FORBIDDEN', pg_catalog.jsonb_build_object(
@@ -858,9 +872,15 @@ BEGIN
     RETURN app.err('NOT_FOUND', pg_catalog.jsonb_build_object('id', p_id));
   END IF;
 
+  SELECT day.status INTO v_status FROM core.attendance_days AS day
+   WHERE day.tenant_id = v_tenant AND day.engagement_id = v_eng.id
+   ORDER BY day.day DESC LIMIT 1;
+
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'url', '/exports/' || v_eng.ref || '-attendance-' || pg_catalog.lower(COALESCE(NULLIF(p_format,''),'HRDC')) || '.xlsx',
-    'expiresAt', now() + interval '1 hour'));
+    'expiresAt', now() + interval '1 hour',
+    'status', v_status,
+    'snapshotAt', now()));
 END;
 $fn$;
 
