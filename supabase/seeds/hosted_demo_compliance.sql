@@ -81,16 +81,29 @@ SELECT tenant.id                                  AS t,
  WHERE tenant.slug = 'akademi-perdana';
 
 DO $pre$
-DECLARE v_md integer; v_orgs integer; v_progs integer; v_pipe integer;
+DECLARE v_active integer; v_verifier text; v_orgs integer; v_progs integer; v_pipe integer;
 BEGIN
   IF (SELECT count(*) FROM demo_ctx) <> 1 THEN
     RAISE EXCEPTION 'compliance demo seed: tenant akademi-perdana not found; this seed never provisions';
   END IF;
-  SELECT count(*) INTO v_md FROM public.memberships m, demo_ctx c
+  -- Roles are hosted's own assignment, not a fixture this seed dictates:
+  -- khucode/codeshern are ADMIN, khumeren/wishes2vows are MD. All three
+  -- named members must exist as ACTIVE, whatever role they hold.
+  SELECT count(*) INTO v_active FROM public.memberships m, demo_ctx c
    WHERE m.tenant_id = c.t AND m.user_id IN (c.u1, c.u2, c.u3)
-     AND m.role = 'MD' AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
-  IF v_md <> 3 THEN
-    RAISE EXCEPTION 'compliance demo seed: expected all three MD users as ACTIVE members, found %', v_md;
+     AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
+  IF v_active <> 3 THEN
+    RAISE EXCEPTION 'compliance demo seed: expected all three named users as ACTIVE members, found %', v_active;
+  END IF;
+  -- The rule verifier (u2, khumeren) must hold compliance:rule:approve
+  -- (002's matrix: FINANCE and MD only — ADMIN does not) since the packet
+  -- submitter below needs hrdc:mark_submitted the same way (FINANCE/MD/OPS,
+  -- not ADMIN). Checked by role rather than assumed.
+  SELECT m.role::text INTO v_verifier FROM public.memberships m, demo_ctx c
+   WHERE m.tenant_id = c.t AND m.user_id = c.u2 AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
+  IF v_verifier NOT IN ('MD','FINANCE') THEN
+    RAISE EXCEPTION 'compliance demo seed: u2 must hold MD or FINANCE (has compliance:rule:approve '
+      'and hrdc:mark_submitted per 002''s matrix); found %', v_verifier;
   END IF;
   SELECT count(*) INTO v_orgs FROM core.organisations o, demo_ctx c WHERE o.tenant_id = c.t;
   SELECT count(*) INTO v_progs FROM core.programmes p, demo_ctx c WHERE p.tenant_id = c.t;
@@ -125,9 +138,12 @@ BEGIN
      WHERE tenant_id IS NULL AND status = 'PROPOSED'
        AND rule_code IN ('HRD-QUERY-5D','HRD-007','HRD-009')
   LOOP
-    PERFORM pg_temp.gate(v_ctx.t, 'RULE_CHANGE_APPROVE', v_rule.id, v_ctx.u1::text);
+    -- u2 (khumeren, MD): 002's matrix gives compliance:rule:approve to
+    -- FINANCE and MD only, not ADMIN — the verifier has to be someone who
+    -- could actually hold that permission.
+    PERFORM pg_temp.gate(v_ctx.t, 'RULE_CHANGE_APPROVE', v_rule.id, v_ctx.u2::text);
     UPDATE core.compliance_rules
-       SET status = 'ACTIVE', verified_by_user_id = v_ctx.u1, verified_at = v_ctx.at - interval '30 days'
+       SET status = 'ACTIVE', verified_by_user_id = v_ctx.u2, verified_at = v_ctx.at - interval '30 days'
      WHERE id = v_rule.id;
     PERFORM pg_temp.ungate();
   END LOOP;
@@ -262,7 +278,8 @@ BEGIN
   SELECT * INTO v_ctx FROM demo_ctx;
   v_id := pg_temp.demo_id('pkt-meridian');
   IF (SELECT status FROM core.hrdc_packets WHERE id = v_id) = 'READY' THEN
-    PERFORM pg_temp.gate(v_ctx.t, 'HRDC_PACKET_MARK_SUBMITTED', v_id, v_ctx.u1::text);
+    -- u2 (khumeren, MD): hrdc:mark_submitted is FINANCE/MD/OPS, not ADMIN.
+    PERFORM pg_temp.gate(v_ctx.t, 'HRDC_PACKET_MARK_SUBMITTED', v_id, v_ctx.u2::text);
     UPDATE core.hrdc_packets
        SET status = 'SUBMITTED',
            claim_reference = 'CLM-MER-2026-0311',
