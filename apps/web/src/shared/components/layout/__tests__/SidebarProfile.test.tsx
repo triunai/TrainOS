@@ -179,7 +179,17 @@ describe("SidebarProfile", () => {
    * client against a hand-built envelope to prove the null case, the way
    * `notDeployed.render.test.tsx` drives it against a hand-built refusal.
    */
-  it("shows an em dash for a profile field no table stores, and drops a missing location rather than printing it", async () => {
+  /**
+   * The fields `core.me_profile()` (022, confirmed by sql-022) actually
+   * sends `null` for: `location`/`jobTitle`/`department`/`staffNumber` (no
+   * table stores them), `session.browser`/`session.place` (no source ever),
+   * and — guarded against hosted GoTrue the SQL lane could not confirm —
+   * `session.lastSignInAt` and `session.twoFactorEnabled`. `session` itself
+   * and `session.activeSessions` are never null; a real number is included
+   * here specifically to prove the active-sessions chip is NOT swept up by
+   * the same "drop it" handling as its guarded siblings.
+   */
+  it("shows an em dash or drops a field no table stores or the SQL lane could not confirm, rather than printing null", async () => {
     const user = userEvent.setup();
 
     const transport = {
@@ -196,10 +206,10 @@ describe("SidebarProfile", () => {
                 staffNumber: null,
                 moduleCount: 7,
                 session: {
-                  lastSignInAt: "2026-09-11T08:04:22+08:00",
+                  lastSignInAt: null,
                   browser: null,
                   place: null,
-                  activeSessions: null,
+                  activeSessions: 3,
                   twoFactorEnabled: null,
                 },
               }),
@@ -249,83 +259,24 @@ describe("SidebarProfile", () => {
     expect(panel().queryByText(/undefined/i)).not.toBeInTheDocument();
     expect(panel().queryByText(/null/i)).not.toBeInTheDocument();
 
-    /* `browser`, `place`, `activeSessions` and `twoFactorEnabled` are all
-       optional too, pending 022 confirming which of them `core.me_profile()`
-       actually populates. With none of them sent, the session line falls back
-       to just the timezone's own GMT offset, and the 2FA / active-sessions
-       chips — which would otherwise assert a false "off" / a count that is
-       not there — are dropped rather than drawn wrong. `moduleCount` has a
-       real source and still renders. */
-    expect(panel().getByText("GMT+8")).toBeInTheDocument();
-    expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
-    expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
-    expect(panel().getByText("7 modules")).toBeInTheDocument();
-  });
-
-  /**
-   * `core.me_profile()` answers `session: null` as a WHOLE when it has
-   * nothing to report, not an object with every field null — sql-022
-   * confirmed this is the actual RPC shape. That is coarser than the
-   * per-field nulls above: nothing inside `session` can be read at all, so
-   * the "Last sign in" line, the "browser · place, GMT+8" line and both
-   * session chips have to be gone together, not fall back to a GMT-only line.
-   */
-  it("omits the whole session block when the server sends session: null, rather than reading into it", async () => {
-    const user = userEvent.setup();
-
-    const transport = {
-      rpc: (name: string) =>
-        name === "me_profile"
-          ? Promise.resolve(
-              okEnvelope({
-                id: "u_test",
-                tenant: { name: "Akademi Perdana", code: "APSB" },
-                location: "Klang Valley",
-                jobTitle: "Senior Sales Consultant",
-                department: "Commercial",
-                email: "amirah.yusof@akademiperdana.my",
-                staffNumber: "APSB-0142",
-                moduleCount: 7,
-                session: null,
-              }),
-            )
-          : Promise.reject(new Error(`unexpected rpc: ${name}`)),
-      from: () => {
-        throw new Error("SidebarProfile does not read a view");
-      },
-    };
-    __setTransportForTests(transport);
-
-    render(
-      <MemoryRouter initialEntries={["/dashboard"]}>
-        <QueryClientProvider
-          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        >
-          <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => {} }}>
-            <ApiProvider client={createRpcApiClient()}>
-              <I18nProvider>
-                <SidebarProfile collapsed={false} />
-              </I18nProvider>
-            </ApiProvider>
-          </MeContext.Provider>
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-
-    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
-
-    const panel = () => within(screen.getByRole("dialog"));
-    await panel().findByText("Senior Sales Consultant");
-
-    /* Neither line the session powers is drawn — not even a GMT-offset-only
-       fallback, which is the per-field-null case's answer, not this one. */
+    /* `lastSignInAt` null: the line is gone, not "Last sign in Invalid Date"
+       and not `new Date(null)`'s silent 1970-01-01. */
     expect(panel().queryByText(/Last sign in/)).not.toBeInTheDocument();
-    expect(panel().queryByText(/GMT\+/)).not.toBeInTheDocument();
-    expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
-    expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
 
-    /* Everything that does NOT depend on `session` is unaffected. */
-    expect(panel().getByText("Akademi Perdana · Klang Valley")).toBeInTheDocument();
+    /* `browser`/`place` null (always, not just here): the session line falls
+       back to just the timezone's own GMT offset rather than joining in
+       "undefined". */
+    expect(panel().getByText("GMT+8")).toBeInTheDocument();
+
+    /* `twoFactorEnabled` null: the chip that would otherwise assert a false
+       "2FA off" is dropped rather than drawn wrong. */
+    expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
+
+    /* `activeSessions` is NEVER null — unlike its two guarded siblings above,
+       it still renders. Regressing this back under the same "drop it when
+       null" handling as `twoFactorEnabled` is exactly the mistake this
+       assertion exists to catch. */
+    expect(panel().getByText("3 active sessions")).toBeInTheDocument();
     expect(panel().getByText("7 modules")).toBeInTheDocument();
   });
 });

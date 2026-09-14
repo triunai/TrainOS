@@ -103,21 +103,27 @@ export interface MeProfile {
   /** Modules the principal is entitled to — the modal's first chip. */
   moduleCount: number;
   /**
-   * Optional, and coarser than its own fields' optionality: `core.me_profile()`
-   * answers `session: null` as a WHOLE when it has nothing to report, not an
-   * object with every field null. A reader that unwrapped `session` first and
-   * only then checked its fields would throw on that shape; the block is
-   * gated on `session` itself before anything inside it is read.
+   * `core.me_profile()` (022, confirmed by sql-022) never answers `session:
+   * null` as a whole — the earlier "coarser than its own fields" reading of
+   * this was wrong, built on secondhand relay rather than the SQL lane's own
+   * word. Individual fields inside it are the ones that go missing; see
+   * `ProfileSession`.
    */
-  session?: ProfileSession;
+  session: ProfileSession;
 }
 
-/** §2 ruled R14 · the tenant as the profile panel names it. */
+/**
+ * §2 ruled R14 · the tenant as the profile panel names it.
+ *
+ * `code` is optional for the same reason the fields below `MeProfile.email`
+ * are: `core.me_profile()` (022) always answers it `null` today — nothing
+ * populates a tenant short code yet.
+ */
 export interface TenantIdentity {
   /** Trading name, e.g. `Akademi Perdana`. Not the registered name. */
   name: string;
   /** The tenant's short code, e.g. `APSB`. */
-  code: string;
+  code?: string;
 }
 
 /**
@@ -127,24 +133,29 @@ export interface TenantIdentity {
  * Alam, GMT+8" is a sentence the screen builds, and because a place is the
  * thing a person scans for when checking whether a session is theirs.
  *
- * All four fields below `lastSignInAt` are optional. Nothing in the schema
- * stores a user-agent string or a geo-located place, so `browser` and `place`
- * have no source and are optional for that reason alone. `activeSessions` and
- * `twoFactorEnabled` are optional too, provisionally: Supabase's `auth.sessions`
- * and `auth.mfa_factors` could in principle derive them, but until the SQL
- * lane building `core.me_profile()` (022) confirms it actually populates them,
- * treating them as certain would be a claim this file cannot back up.
- * `lastSignInAt` stays required — `auth.users.last_sign_in_at` is a stored
- * column, not a derivation.
+ * Confirmed against `core.me_profile()` (022, sql-022):
+ *   - `browser`, `place` — always `null`. Nothing in the schema stores a
+ *     user-agent string or a geo-located place; there is no path to ever
+ *     populate these two, not just a gap today.
+ *   - `lastSignInAt` — from `auth.users.last_sign_in_at`, GoTrue's own
+ *     column, but read through a guard that catches `undefined_column` and
+ *     answers `null` rather than 500ing, because the SQL lane could not
+ *     confirm the column against hosted GoTrue from its own access. Optional
+ *     for that reason, not because the value is expected to be absent.
+ *   - `twoFactorEnabled` — `EXISTS(auth.mfa_factors …)`, same
+ *     unconfirmed-on-hosted guard (`to_regclass('auth.mfa_factors')`),
+ *     `null` if the table is not there. Optional for the same reason.
+ *   - `activeSessions` — `COUNT(auth.sessions)` for the caller, no guard: a
+ *     plain number, always present.
  */
 export interface ProfileSession {
-  lastSignInAt: Timestamp;
+  lastSignInAt?: Timestamp;
   /** e.g. `Chrome`. */
   browser?: string;
   /** e.g. `Shah Alam`. */
   place?: string;
   /** Sessions open right now, this one included. */
-  activeSessions?: number;
+  activeSessions: number;
   twoFactorEnabled?: boolean;
 }
 

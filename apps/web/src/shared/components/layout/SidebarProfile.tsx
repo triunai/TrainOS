@@ -152,37 +152,35 @@ export function SidebarProfile({ collapsed }: SidebarProfileProps) {
           ? placeholder
           : `${details.tenant.name}${details.location ? ` · ${details.location}` : ""}`
       }
-      /* `core.me_profile()` answers `session: null` as a WHOLE when it has
-         nothing to report — not an object with every field null — so both
-         lines below are gated on `details.session` itself, before anything
-         inside it is read. Loading and errored still show the placeholder
-         line; only a LOADED profile with no session omits it (`undefined`,
-         which `ProfileModal` does not draw a `<p>` for at all). */
+      /* `session` itself is never null — confirmed against `core.me_profile()`
+         (022, sql-022) — but `lastSignInAt` and `twoFactorEnabled` inside it
+         individually can be: each is read through a guard that answers
+         `null` rather than fail when the SQL lane could not confirm the
+         underlying GoTrue column/table against hosted Supabase. Gated on the
+         FIELD, not the block, for that reason. */
       lastSignIn={
         details === undefined
           ? `Last sign in ${placeholder}`
-          : details.session
+          : details.session.lastSignInAt
             ? `Last sign in ${formatSignIn(details.session.lastSignInAt, me.timezone)}`
             : undefined
       }
       session={
         details === undefined
           ? placeholder
-          : details.session
-            ? /* `browser` and `place` are both optional — nothing in the
-                 schema stores a user-agent or a geo-located place — so each
-                 is included only when the server sent it, rather than
-                 joining in "undefined". The GMT offset is always there: it
-                 comes from `Me.timezone`, not from the session. */
-              [
-                [details.session.browser, details.session.place]
-                  .filter((part): part is string => Boolean(part))
-                  .join(" · "),
-                gmtOffset(me.timezone),
-              ]
-                .filter(Boolean)
-                .join(", ")
-            : undefined
+          : /* `browser` and `place` are always null — nothing in the schema
+               stores a user-agent or a geo-located place, not just a gap
+               today — so each is included only when present, rather than
+               joining in "undefined". The GMT offset is always there: it
+               comes from `Me.timezone`, not from the session. */
+            [
+              [details.session.browser, details.session.place]
+                .filter((part): part is string => Boolean(part))
+                .join(" · "),
+              gmtOffset(me.timezone),
+            ]
+              .filter(Boolean)
+              .join(", ")
       }
       version={VERSION_LINE}
       orgName={details?.tenant.name ?? placeholder}
@@ -192,28 +190,23 @@ export function SidebarProfile({ collapsed }: SidebarProfileProps) {
           ? []
           : [
               { label: `${details.moduleCount} modules`, tone: "accent" as const },
-              /* `session` itself, then `twoFactorEnabled`/`activeSessions`
-                 within it, are all optional pending 022 — `?.` covers a
-                 missing `session` the same way the `== null` below covers a
-                 present-but-null field (the wire sends JSON `null` for an
-                 absent column, not a missing key). `undefined` is not "off":
-                 a chip claiming 2FA is off when the server did not say so
+              /* `twoFactorEnabled` is guarded server-side and can answer
+                 `null` — see `ProfileSession`. `undefined` is not "off": a
+                 chip claiming 2FA is off when the server did not say so
                  would be a false claim stronger than no chip at all. */
-              ...(details.session?.twoFactorEnabled == null
+              ...(details.session.twoFactorEnabled == null
                 ? []
                 : [
                     details.session.twoFactorEnabled
                       ? { label: "2FA on", tone: "success" as const }
                       : { label: "2FA off", tone: "neutral" as const },
                   ]),
-              ...(details.session?.activeSessions == null
-                ? []
-                : [
-                    {
-                      label: `${details.session.activeSessions} active sessions`,
-                      tone: "neutral" as const,
-                    },
-                  ]),
+              /* `activeSessions` is a plain `COUNT(...)`, never null — no
+                 guard needed, unlike its two siblings above. */
+              {
+                label: `${details.session.activeSessions} active sessions`,
+                tone: "neutral" as const,
+              },
             ]
       }
       dataScope={scopeLabels(me)}
