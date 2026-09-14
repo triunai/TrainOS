@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 21 · **Applied (hosted):** 001–019 · **Authored, not applied:** 020, 021
+**Migrations:** 23 (numbered up to 030; 023–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -13,6 +13,12 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-14 — **030: `core.me_profile()`'s `session` block never leaks a null required field, closing a defect 022 shipped and hosted's own run of `test_022` caught.**
+One `CREATE OR REPLACE FUNCTION core.me_profile()`, nothing else — no table, no type, no policy, no other function touched. **The defect, found by running 022's own pin against hosted rather than by reading:** 022's header promises `session` answers `null` AS A WHOLE whenever `lastSignInAt` cannot be derived, and 022's `v_has_session` variable exists to keep that promise — but it only flips to `false` inside `EXCEPTION WHEN undefined_column`, the COLUMN-ABSENT case. When `auth.users.last_sign_in_at` EXISTS (true on hosted) but a particular row's VALUE is `NULL` — true for `test_022`'s own INSERT-not-signed-in fixture users, and equally true for any real hosted account GoTrue has not yet stamped a sign-in for — the read succeeds with no exception, `v_has_session` stays at its default `true`, and the function emits exactly the shape its own header forbids: a populated `session` object with `lastSignInAt: null`. `test_022`'s `T1j` (PR #48, commit `05e7360`) asserted the branch the column's PRESENCE implies and failed on hosted — not because the assertion was wrong, but because the function did not keep its own promise. **The fix is one `IF` statement**, immediately after the existing exception handler: `v_has_session` is now also set `false` when the read succeeds but `v_last_sign_in IS NULL`, subsuming the exception path (a harmless no-op re-confirmation there, since `v_last_sign_in` is already `NULL` by its declared default whenever the exception fires) and closing the gap it did not cover. Every other line — permission gates, `moduleCount`, `activeSessions`, `twoFactorEnabled`, the two dashboard RPCs (untouched, not redefined) — is 022's, unchanged. **Nothing changes for a caller who has actually signed in**: GoTrue stamps `last_sign_in_at` on every real sign-in, so a real session continues to get a populated `session` with a real `lastSignInAt`, confirmed against hosted directly before this migration was authored. This migration only changes the answer for a principal GoTrue has not yet stamped one for, closing a leak rather than opening a gap. **`packages/contract/src/domain/shell.ts` and the web reader (`SidebarProfile.tsx`) already document and expect this exact corrected shape** (PRs #49/#50, landed on `origin/main` ahead of this migration) — this migration is what makes the database true of the contract the web lane already built against, not the reverse. Pin `test_030`: three cases, branched STRUCTURALLY on whether `auth.users.last_sign_in_at` exists rather than assuming one environment — column absent (this local shim): `session` null as a whole, unchanged from 022; column present, value null (the closed defect): `session` null as a whole; column present, value set: a full object with exactly the 5 `ProfileSession` keys and a real, non-null `lastSignInAt`. Verified against both the unmodified local shim (only the absent-column case fires) and a locally-extended copy with `auth.users.last_sign_in_at` and `auth.mfa_factors` added (not checked in; both hosted-shaped cases fire and pass). `test_022`'s own `T1j` fixture gained a small addition in the same commit: its T1 principal now gets a real `last_sign_in_at` WHEN the column exists (a no-op `UPDATE` guarded the same structural way, otherwise absent), so `test_022` exercises the "real value" branch it always intended rather than accidentally tripping over 030's own defect — the never-signed-in/null-value case is deliberately left to `test_030` alone rather than duplicated. Rollback restores 022's original (defective) body verbatim. `test_001`–`test_022` all still pass unmodified on a clean 001–030 build (021, 023–029 excluded — the latter are sibling lanes not on this branch). `npm run lint:sql` 74/74, `npm run check:grants`/`npm run check:rpc` clean. Spine untouched: no action type, no handler, no branch in the envelope.
+
+**Last updated:** 2026-09-14 — **022: `core.me_profile` and the two executive-dashboard RPCs 020 reported NOT BUILT, built from real tenant data with `null` where nothing real exists.**
+Three new `core` functions (`me_profile()`, `get_executive_dashboard(text)`, `get_proposals_vs_won(integer)`), no table, no type, no policy, nothing replaced. `core.get_hours_saved` is deliberately NOT built and `ADMIN_HOURS_SAVED` deliberately does not appear in the metrics array — no baseline-minutes table exists anywhere in 001–020, and DECISIONS §4 calls the figure ILLUSTRATIVE in its own words. **The ruling, applied rather than argued around:** `MeProfile.location`/`jobTitle`/`department`/`staffNumber` are emitted `null` — no table in 001–020 carries a work location, a job title, a department or a staff number — with the web/contract lane widening those fields to optional in the same window. `session` (`ProfileSession`) is neither a blanket `null` nor a blanket object: a second, later ruling (raised by `web-022`, answered by the coordinator, then tightened once `packages/contract/src/domain/shell.ts` landed on origin/main making `lastSignInAt` a REQUIRED field and `session` itself optional and nullable AS A WHOLE) makes the ENTIRE block answer `null` whenever `lastSignInAt` cannot be derived — never a populated object with a null required field — and a FULL object otherwise: `browser`/`place` stay `null` inside it (no user-agent/geoip storage anywhere in this schema); `activeSessions` is a real `COUNT(auth.sessions)` for the caller (confirmed definer-readable); `twoFactorEnabled` reads `auth.mfa_factors`, guarded on `to_regclass` and `null` where the relation is absent. `lastSignInAt` itself reads `auth.users.last_sign_in_at` guarded on a caught `undefined_column` — both are standard GoTrue objects on hosted Supabase that this lane has no hosted access to confirm, absent (as here) from the local shim. Verified ad hoc against a locally-extended copy of the shim's `auth` schema (not checked in) that both the whole-block-null path and the full-object real-derivation path produce the contract's exact shape, matching the merged web reader (`apps/web/src/shared/components/layout/SidebarProfile.tsx`), which gates on `details.session` before reading anything inside it. **Every other field is real.** `moduleCount` reuses (duplicated, the cost named) the same 14-row nav-permission match `core.navigation()` (018) filters its `MAIN` group by, counted rather than rendered — MD reads 13, because MD holds the three scoped `compliance:*` permissions but not the bare `compliance:read` the nav list actually checks. `email` comes from `auth.users`, not the nullable `user_profiles.email`. **The four dashboard metrics are each one real aggregate**, formulas worked in the migration header: `OPEN_PIPELINE` sums `core.opportunities.value_sen` over the three stages the fixture's own drillTo names (QUALIFYING/PROPOSAL_SENT/NEGOTIATION — not all five non-terminal stages); `AR_OVERDUE` sums `core.invoices.outstanding_sen` where `status='OVERDUE' AND voided_at IS NULL`; `PROPOSALS_SENT` counts `core.proposals` whose frozen `sent_at` falls in the quarter `p_period`'s month sits in, regardless of a later status change; `CLAIM_VALUE_AT_RISK` sums `core.hrdc_packets.claim_value_sen` where `panel_state IN ('DEADLINE_AT_RISK','BLOCKED')` — the DB spelling of the contract's `HrdcDeadlineStatus='AT_RISK'`, a divergence `packages/contract/src/enums.ts` documents and says not to unify. `approvalsPending` reuses `core.v_approval_requests` (011/020) unchanged rather than re-deriving urgency. `agentActivity`/`autonomyMix` derive per-run autonomy from `core.action_requests.granted_level` (defaulting `OBSERVE` for an ungoverned run), `costMonth` from `core.runs.cost_sen`, `evalScore` from `percentile_cont(0.5)` over `core.evals` (013's own comment calls this "a rolling median"), rounded to 3 decimals to kill a `0.8500000000000001` double-precision artifact found by running the pin. `agentSpend` sums `core.budget_status` at `scope='AGENT'` — `core.budget_scope` has no TENANT value, so per-agent budgets are the tenant-wide figure at the same granularity as `agentActivity`. **No `delta` is emitted anywhere**: no table in 001–020 snapshots a prior period, and `DashboardMetric.delta`/`MetricResponse.delta` are optional — inventing a "vs last period" figure would be exactly the fabrication the ruling forbids. `TenantIdentity.code` is `null` (`public.tenants` has no short-code column); `mobile` stays absent (already optional, no table carries one). Both dashboard RPCs gate on `dashboard:executive:read` — narrower than the generic `dashboard:read` six roles hold, already seeded for SALES_MANAGER/FINANCE/MD/ADMIN, and the closer match to the contract's `roles:['MD']` on all three `/v1/dashboards`, `/v1/reports/*` endpoints; `me_profile` gates on membership only, matching `core.me()` (018). **Found by executing, not by reading:** `jsonb_agg` cannot wrap a window-function call directly ("aggregate function calls cannot contain window function calls"), so `autonomyMix`'s rate is materialised in its own CTE first; `app._money(bigint,text)` refuses a bare `SUM(bigint)` result because Postgres's `sum(bigint)→numeric` has no implicit cast to `bigint` in function-argument position, closed with explicit `::bigint` casts at both call sites that pass a live aggregate rather than a declared `bigint` variable. Pin `test_022`: built and run against a hosted-like PostgreSQL 17 shim (a NOSUPERUSER BYPASSRLS role standing in for hosted `postgres`, akademi-perdana-shaped fixtures), 50/50 assertions pass — MD's exact 9 `MeProfile` keys, the 4 unstorable top-level fields, and `session` answering `null` AS A WHOLE (this shim has no `auth.users.last_sign_in_at` column, so the REQUIRED `ProfileSession.lastSignInAt` cannot be derived); all four dashboard metrics equal hand-computed sums against seeded opportunities/invoices/hrdc_packets/proposals (walked through `core.state_transitions`' registered edges — `opportunities.stage`, `proposals.status` and `invoices.status` are all gated columns, and a direct `INSERT ... VALUES ('QUALIFYING', ...)` is refused as an illegal `NULL -> QUALIFYING` transition; the PROPOSAL_SEND/INVOICE_CREATE/INVOICE_PUSH-gated hops are crossed with test_005's `app.effect_applier` fixture pattern, not gone around); agentActivity/autonomyMix/agentSpend equal seeded runs/evals/usage-rollup/budget rows; OPS (holds `dashboard:read`, not `dashboard:executive:read`) is FORBIDDEN naming the missing permission; anon is refused 42501 on both RPCs; a malformed and a NULL `period` are `VALIDATION_FAILED`; tenant B's MD sees zero on every metric and an empty agent/approval list; `get_proposals_vs_won` hand-verifies the current month and the month 4 months back, and a 0/NULL `months` is `VALIDATION_FAILED`. **Re-verified after merging `origin/main`** (which had landed 021 and the web PR in the meantime): rebuilt as 001–021+022, `test_021` (10/10) and `test_022` (50/50) both pass individually; `app.provision_tenant`'d `akademi-perdana` with its three real MD users and loaded `supabase/seeds/hosted_demo_akademi_perdana.sql`, then `supabase/seeds/test_hosted_demo.sql` (the seed's own pin) — ALL PASS. A clean 001–021+022 build (no demo seed) re-runs every `test_00N` pin unmodified, all still green (the same two pre-existing special-purpose scripts, `test_014_rollback_restores_002_grants.sql` and `test_017_applies_over_existing_quotations.sql`, fail standalone as they always have — unrelated to 021 or 022). Running the full pin suite AFTER the demo seed (rather than each in isolation) makes `test_014` and `test_019` fail on seed-state collisions (a duplicate tenant slug, a seeded-approvals count) — expected, since neither pin is written to coexist with persisted demo data in the same database, and not evidence of a regression. `npm run lint:sql` 71/71 (PR #45 fixed the psql-meta-commands gap that previously excluded one seed file), `npm run check:grants` clean, `npm run check:rpc` 0 broken. **Confirmed no collision with 021**: 021 replaces `badge_counts` plus 23 other 018 RPCs, three 011 dispatch functions and 019's seed function — none of `me_profile`, `get_executive_dashboard` or `get_proposals_vs_won`, and 021 does not touch `app.role_permissions` or `core.navigation()`'s permission list, so MD's `moduleCount` = 13 is unaffected. **Owed, not run here:** the skill's G5 dual adversarial review (thermonuclear + Codex trace) — a Codex review was dispatched in parallel by the coordinator instead. Spine untouched: no action type, no handler, no branch in the envelope.
 
 **Last updated:** 2026-09-13 — **017: the amendment pass. Nine PUBLIC grants nobody intended, seven unconstrained jsonb columns, two wrong numeric precisions, and the regulatory shape the September research says the baseline is missing.**
 Three tables, four functions, two views, nine REVOKEs, seven CHECKs, two type changes, eight new columns, one unique constraint and the HRD Corp registry rows. **Applied nowhere.** This is the most dangerous migration in the pack: every statement runs against a table that may already hold rows, and two of them change a column's TYPE.
@@ -213,7 +219,9 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 030 | `030_me_profile_session_null.sql` | **`core.me_profile()`'s `session` block never leaks a null required field (2026-09-14).** `CREATE OR REPLACE` of 022's function only — one `IF` added: `v_has_session` now also goes `false` when `auth.users.last_sign_in_at` exists but its VALUE is null (022 only guarded the column-ABSENT case, via `EXCEPTION WHEN undefined_column`), closing a defect where a populated `session` object could carry `lastSignInAt: null` — found by running `test_022`'s own `T1j` against hosted, where it failed. A real, signed-in caller is unaffected (GoTrue always stamps `last_sign_in_at` on a real sign-in). Pin `test_030`: three cases branched structurally on the column's presence — absent (null as a whole, unchanged), present+null (null as a whole, the fix), present+set (full object, exact 5 keys, real value) — verified against both the unmodified shim and a locally-extended hosted-shaped copy. `test_022`'s own fixture gained a matching `UPDATE` so its T1 principal exercises the real-value branch instead of tripping the defect this migration closes. Rollback restores 022's original body verbatim. `test_001`–`test_022` unmodified and still green. `lint:sql` 74/74, `check:grants`/`check:rpc` clean. |
 | 025 | `025_hrdc_compliance.sql` | **The six compliance/HRD Corp RPCs the web calls with no adapter and no SQL: `getComplianceChecks`, `getClaimPacket`, `attachPacketDocument`, `exportClaimPacket`, `createComplianceRule`, `getRuleChangeSet` (2026-09-14).** Six new `core` functions, two `app` provisioning functions with a tenant trigger and one `app.tenant_seed_checks` row, no table, no enum value, no 002 permission added (all six already exist in the matrix). No 001–021 function replaced. **`core.hrdc_document_types` was never seeded**: `core.hrdc_packet_documents.document_type` FK's to it and no migration through 021 ever inserted a row, so `attachPacketDocument` would foreign-key-violate on every call. Provisioned the way 016/017 provision `ref_formats`/`check_keys` — seed function, `AFTER INSERT` trigger on `public.tenants`, registered in `app.tenant_seed_checks`, backfilled. **No compliance rule could ever resolve ACTIVE**: 009:298's `cr_active_needs_verification` and 011's `enforce_state_transition` gate `PROPOSED -> ACTIVE` behind `RULE_CHANGE_APPROVE`, but 011's own `execute_in_database_action` for that action type updates `core.rule_changes` only, never the `compliance_rules` row a change targets — a real gap in 011, out of reach here. Not fixed in SQL (001–021 not edited); the compliance demo seed (`hosted_demo_compliance.sql`) verifies 017's three national rules over the LEGAL `RULE_CHANGE_APPROVE` path instead, the same mechanism `test_009`'s own `pg_temp.activate_rule` fixture helper uses. **Reads are `app.ok`/`app.err`, writes RAISE `TRNOS`** (`attachPacketDocument`, `createComplianceRule`), both with an optional `p_idempotency_key` in `core.put_quotation`'s shape — advisory lock, `app.idempotency_keys`, same-body replay, `IDEMPOTENT_REPLAY` on a different body. **`createComplianceRule` is tenant-scoped, never national** (009's own documented rule: a national write is a `service_role` provisioning act). ⚠ **`compliance:rule:write` is FINANCE/ADMIN only, not MD** — 002's existing matrix, unchanged here since widening it means editing 002; the "Add rule" screen will FORBID an MD tester. ⚠ **Amends one prior pin in place**: `test_009` T6b's own `hrdc_document_types` fixture INSERT is now `ON CONFLICT DO NOTHING`, since 025's provisioning trigger already seeds the row on a 001-021-plus-025 build (passes either way). Pin `test_025`: nine cases including a teeth check (removing MD's `hrdc:read` mid-transaction FORBIDS `getClaimPacket`, restoring it restores access). Seed `hosted_demo_compliance.sql` (+ wipe): verifies three national rules ACTIVE, creates three minimal engagements (no engagements exist in the base demo seed or any lane merged at authoring time), three claim packets across DRAFT/READY/SUBMITTED, four compliance check results with one version-drift row, and one rule-change set. Web: `apiClient.ts`/`rpcClient.ts`/`client.ts`, same commit, plus `conformance.compliance.test.ts` (15 cases, fixture-vs-RPC parity and not-deployed degradation). |
+| 022 | `022_profile_and_dashboard.sql` | **`core.me_profile` and the two executive-dashboard RPCs 020 reported NOT BUILT, built from real data (2026-09-14).** Three new `core` functions, nothing replaced, nothing in the spine touched. `core.get_hours_saved` and `ADMIN_HOURS_SAVED` are deliberately not built — no baseline-minutes table exists. `MeProfile.location`/`jobTitle`/`department`/`staffNumber` are `null` (no table carries them); `session` answers `null` AS A WHOLE whenever the REQUIRED `lastSignInAt` (`auth.users.last_sign_in_at`) cannot be derived, never a populated object with a null required field; otherwise a full object with `browser`/`place` null (no user-agent/geoip storage), `activeSessions` real off `auth.sessions`, `twoFactorEnabled` real off `auth.mfa_factors` where present. Every other field, including `moduleCount` (the same nav-permission match `core.navigation()` uses, MD reads 13 of 14) and `email` (from `auth.users`), is real. The four dashboard metrics are each one worked aggregate over `core.opportunities`/`invoices`/`proposals`/`hrdc_packets`, formulas in the migration header; `agentActivity`/`autonomyMix` derive per-run autonomy from `core.action_requests.granted_level`; `agentSpend` sums `core.budget_status` at `scope='AGENT'` (no TENANT scope exists). No `delta` anywhere — no snapshot table exists to compute one honestly. Both dashboard RPCs gate on the already-seeded `dashboard:executive:read` (SALES_MANAGER/FINANCE/MD/ADMIN), narrower than `dashboard:read` and the closer match to the contract's `roles:['MD']`; `me_profile` gates on membership only. Pin `test_022`: 50/50 assertions against a hosted-like shim, hand-computed sums against seeded fixtures walked through `core.state_transitions`' gated edges (not gone around), tenant isolation, permission refusal, anon 42501, and validation on both RPCs. Re-verified against 001–021+022 after merging `origin/main`: `test_021` (10/10), `test_022` (50/50) and the hosted demo seed's own pin (`test_hosted_demo.sql`, ALL PASS) each individually green; a clean 001–021+022 build re-runs every prior pin unmodified, still green. `lint:sql` 71/71, `check:grants`/`check:rpc` clean. **Owed:** the skill's G5 dual adversarial review — a Codex review was dispatched in parallel by the coordinator instead. **No collision with 021**: 021 touches `badge_counts` and 23 other 018 RPCs plus 011's dispatch functions and 019's seed function; none of the three names this migration creates, and 021 does not touch `app.role_permissions` or `core.navigation()`'s permission list. |
 | 021 | `021_golden_path_authz.sql` | **Role authorization on the golden-path RPCs, `OPPORTUNITY_STAGE_CHANGE`, and the 019 seed fix (2026-09-14).** 24 018 functions are replaced (`badge_counts` plus 23 gated), along with three 011 dispatch functions and 019's `app.seed_pipelines`. Each body is its prior text apart from blocks marked `-- 021 ·`. Also adds one action type, one move-check function, one tenant trigger with its seed function and backfill, and one policy. No table, no enum value. **Any principal with a tenant claim could call every read and write**: only `list_quotations` checked a permission. The 23 now check their 002 permission as the first statement, reads through `app.err('FORBIDDEN')` and writes through a TRNOS raise, identically for every argument. `badge_counts` zeroes the HRDC and run counts a role may not read. **The approval audit tab was still empty**: the shipped client sends `get_audit('APPROVAL', ref)` and 020 mapped only `approvals`, so 020's `get_audit` is replaced to map what `aggregateTypeOf` sends (`APPROVAL`, and the misspelt `ENQUIRIE`/`OPPORTUNITIE`). `get_rate_card` has no 002 permission and is gated on `quotation:read` (flagged). **The pipeline board could not move a deal**: 011 never catalogued R18's type. It is now an action type needing `opportunity:stage`, with arms in 011's three per-type dispatch functions. The move is refused if `fromStage` is stale (`STAGE_MOVED`), if the stage is not a step of the tenant's pipeline, or if a terminal step has no reason. It is checked when the target resolves and again under the executor's lock. `OPP-01` routes WON/LOST moves to SALES_MANAGER approval, seeded per tenant and backfilled. **019's seed aborted on a tenant with its own default pipeline** (`pipelines_one_default_uq`), and now steps aside. `app.seeded_pipelines` is FORCED with an owner-only policy. ⚠ **Amends three prior pins** in place: test_011 T1b/T1c and test_012 T1p (22→23 action types), and test_018 T19g/T36 (compliance-rule reads as SALES). |
 | 020 | `020_api_read_surface.sql` | **The API read surface: approvals that can be decided, and views a browser can read (2026-09-14).** It replaces three 018 functions (`core.list_approvals`, `core.get_approval`, `core.get_audit`) whose bodies stay 018's apart from blocks marked `-- 020 ·`. It repairs three 018 views, adds fourteen `security_invoker` views and adds two `core` definer row sources. No table, enum value or policy. **Nobody could approve anything**: 014's `core.decide_approval` requires the diff hash and 011 compares it, but 018's list and detail never sent `diffHash`, so every APPROVE was refused. Both now carry it (contract `ApprovalRequest.diffHash`). The list also accepts the contract's `value.amount` filter. **The audit drawer was always empty**: the client sends the URL segment (`approvals`) and 012 stores UPPER_SNAKE. `get_audit` maps the unambiguous segments and returns an approval's trail by action-request correlation. **Every client view raised or 404'd**: 018's three views called `app` helpers REVOKEd from `authenticated` (42501, shown to the user as signed out), and fourteen `VIEW_READS` names had no view. Money is now inlined, the budget and tier rows come from `core.ai_*_rows()`, and each view's columns are the contract keys, with no rows for a caller who lacks the 002 read permission. `$verify$` V6 asserts off `pg_depend` that no client-readable `core` view calls a function `authenticated` cannot execute. The three reads get the `approval:read` / `audit:read` gate. `decide_approval` keeps 014's uuid signature. **Not built:** `me_profile` (no table carries its required fields) and the dashboard RPCs (nothing to compute them from). Pin `test_020`: every probe runs as `authenticated`, and the build ran as a NOSUPERUSER BYPASSRLS role. |
 | 019 | `019_pipeline_provisioning.sql` | **Per-tenant pipeline provisioning: the dedicated seed pack 016 asked for, split out of 018 (2026-09-13).** One table (`app.seeded_pipelines`), four `app` functions, one trigger on `public.tenants`, two rows in 016's `app.tenant_seed_checks`, and a backfill. No enum value; no existing function, view, policy or grant modified. **A tenant had no lifecycle**: `core.pipelines` and `core.pipeline_steps` exist from 004 and nothing in 001–018 put a row in either, so `core.navigation` and `core.get_pipeline_config` returned an empty stage list for every tenant. 016 named the owner — *"it belongs in a pack that can cite `docs/architecture/01` §5.3 per row. **Owner: 018 or a dedicated seed pack.**"* — 018 took it and should not have. **The trigger name is load-bearing**: per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER, and `core.pipelines` carries `trg_pipelines_ref` → `core.assign_ref('PIP')`, which raises without 016's ref format, so `trg_tenants_z_seed_pipelines` must sort after `trg_tenants_seed_ref_formats`; the `z` is not decoration and V1b asserts it. **The backfill RAISES naming every tenant it could not seed** rather than warning — it used to swallow a foreign-key violation and finish green, leaving a tenant whose shell opened on an empty stage list that read as configuration. **And the seed is REVERSIBLE**, which is the whole reason it is a pack of its own: `app.seeded_pipelines` records every row the seed actually inserted (a row that already existed under the same derived id was never inserted and is never recorded), `app.unseed_pipelines()` deletes exactly those and refuses with a count and the blocking constraint names when live data references any of them, and the rollback calls it before dropping the mechanism. Without that, rolling back left `pipelines_one_default_uq` rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. Registered in `app.tenant_seed_checks` so `app.provision_tenant` refuses a tenant whose lifecycle did not land. ⚠ **Forces a fixture amendment in every pin that inserted its own default `ENGAGEMENT` pipeline** — test_008 and test_009 are amended in this pack's commit; test_016 and test_017 on `cloud/migrations` are owed at rebase. |
@@ -415,6 +423,116 @@ re-applied, verify green each time.
 
 ---
 
+## Migration Detail — 030 (`030_me_profile_session_null.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against a hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database at authoring time** (the coordinator applies after review). `CREATE OR
+REPLACE` of `core.me_profile()` only — no table, no type, no policy, no other function touched.
+
+### The defect, found by running 022's own pin against hosted
+
+022's header states the contract in as many words: "`session` ... answers `null` AS A WHOLE when
+it has nothing to report, not an object with every field null" — and 022's `v_has_session`
+variable exists to keep that promise. But the guard only flips `v_has_session` to `false` inside
+`EXCEPTION WHEN undefined_column`, the case where `auth.users.last_sign_in_at` does not exist as
+a column at all. When the column EXISTS (true on hosted) but a particular row's VALUE is `NULL` —
+true for `test_022`'s own fixture users, who are `INSERT`ed directly rather than signed in through
+GoTrue, and equally true for any real hosted account GoTrue has not yet stamped a sign-in for —
+the read succeeds with no exception, `v_has_session` stays at its default `true`, and the function
+emits exactly the shape its own header forbids: a populated `session` object with
+`lastSignInAt: null`.
+
+`test_022`'s `T1j` (PR #48, commit `05e7360`) asserts the branch the column's PRESENCE implies,
+and team-lead ran it directly against hosted: it FAILED, not because the assertion was wrong but
+because the function did not keep its own promise. Reproduced locally against a copy of the
+shim's `auth` schema with the column added and left at its column default (no row-level value
+set): `core.me_profile()` returned
+`"session": {"lastSignInAt": null, "browser": null, "place": null, "activeSessions": 0,
+"twoFactorEnabled": false}` — not `"session": null`.
+
+### The fix
+
+One `IF` statement, immediately after the existing `BEGIN … EXCEPTION` block:
+
+```sql
+IF v_last_sign_in IS NULL THEN
+  v_has_session := false;
+END IF;
+```
+
+This subsumes the exception path (a harmless no-op re-confirmation there, since `v_last_sign_in`
+is already at its declared `NULL` default whenever the exception fires) and closes the gap it did
+not cover. Every other line of the function — permission gates, `moduleCount`, `activeSessions`,
+`twoFactorEnabled` — is 022's, byte for byte. The two dashboard RPCs are not redefined here.
+
+### What this does to a caller who has actually signed in
+
+Nothing: GoTrue stamps `last_sign_in_at` on every real sign-in, so every authenticated caller
+with a real session continues to get a populated `session` with a real `lastSignInAt` —
+team-lead confirmed this directly against hosted before this migration was authored ("on hosted,
+me_profile returns a REAL session (lastSignInAt, activeSessions 1, twoFactorEnabled false)"). This
+migration only changes the answer for a principal GoTrue has not yet stamped a sign-in for, which
+used to leak a null-valued required field and now correctly withholds the block.
+
+### Already-merged consumers this migration makes true
+
+`packages/contract/src/domain/shell.ts` and `apps/web/src/shared/components/layout/
+SidebarProfile.tsx` (PRs #49/#50, merged on `origin/main` ahead of this migration) already
+document and are built against `core.me_profile()`'s corrected shape — `session` optional and
+nullable AS A WHOLE, `lastSignInAt` REQUIRED within a present one. This migration is what makes
+the deployed function true of the contract and web reader the app already ships, not the reverse.
+
+### Pin — `tests/test_030_me_profile_session_null.sql`
+
+Three cases, branched STRUCTURALLY on whether `auth.users.last_sign_in_at` exists (via
+`pg_catalog.pg_attribute`) rather than assuming one environment:
+- **column absent** (this local shim): `session` is `null` as a whole — 022's original, correct
+  behaviour for this case, unchanged by 030.
+- **column present, value `NULL`** (the closed defect): `session` is `null` as a whole, not a
+  populated object with a null `lastSignInAt` — the exact case `test_022`'s `T1j` caught failing
+  on hosted.
+- **column present, value set**: a full object with exactly the 5 `ProfileSession` keys
+  (`activeSessions`, `browser`, `lastSignInAt`, `place`, `twoFactorEnabled`) and a real, non-null
+  `lastSignInAt`.
+
+FORBIDDEN (no membership) and anon (42501) paths are reasserted briefly so this pin does not
+depend on `test_022` alone for that coverage. Verified against both the unmodified local shim
+(only the absent-column case fires; the other two are marked `SKIP` with the reason) and a
+locally-extended copy of the shim with `auth.users.last_sign_in_at` and `auth.mfa_factors` added
+(not checked in — adding hosted-only GoTrue objects to the shared shim is not this pin's fixture
+to make; both hosted-shaped cases fire and pass).
+
+**`test_022`'s own fixture was amended in the same commit**, not left to accidentally exercise the
+defect: its T1 principal now gets a real `last_sign_in_at` via a structurally-guarded `UPDATE`
+(a no-op when the column is absent) BEFORE calling `me_profile`, so `test_022` exercises the
+"populated session, real value" branch it always intended, and the never-signed-in / null-value
+case is deliberately left to `test_030` alone rather than duplicated.
+
+**Regression check:** `test_001`–`test_022` re-run against a clean 001–030 build (021 included;
+023–029 excluded as sibling lanes not on this branch), unmodified, all still green — the same two
+pre-existing special-purpose scripts (`test_014_rollback_restores_002_grants.sql`,
+`test_017_applies_over_existing_quotations.sql`) fail standalone as they always have, unrelated to
+030. `npm run lint:sql` 74/74, `npm run check:grants` clean, `npm run check:rpc` 0 broken.
+
+### Rollback — `rollbacks/030_me_profile_session_null_rollback.sql`
+
+Restores 022's `core.me_profile()` body EXACTLY — the null-value gate is removed, restoring the
+defect this migration's header documents. Same signature, no data touched (a read). Round-tripped:
+applied → rolled back (verified `app._body_sql` no longer contains the added `IF`) → re-applied
+(verified it does again), `$verify$` green each time.
+
+### ⚠ Carried risk and standing conditions
+
+- **The column-absent case (this local shim) was never exercised against a real GoTrue schema.**
+  Confirmed correct by construction (022's original behaviour, unchanged) and by hosted's own
+  report of a populated `session` for a real user, but the "no column at all" branch itself has
+  no hosted counterpart to test against — hosted always has the column.
+- **No hosted access from this lane.** Everything above is measured against the local shim and a
+  locally-extended, not-checked-in copy of it; `main` applies and re-runs `test_022`'s `T1j` and
+  `test_030` against the real thing.
+
+---
+
 ## Migration Detail — 025 (`025_hrdc_compliance.sql`)
 
 **Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
@@ -493,6 +611,136 @@ the table is empty, and the trigger no longer exists.
 - `ClaimPacket.submissionLog` is derived from `core.audit_entries` (012), since 009 has no dedicated
   submission-log table; empty for a packet nothing has happened to yet, which is correct but is a
   narrower source of truth than a dedicated log would be.
+
+---
+
+## Migration Detail — 022 (`022_profile_and_dashboard.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against a hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** First executed as 001–020 + 022 while 021 was a sibling lane not yet on
+this branch; re-executed as 001–021 + 022 (plus the hosted demo seed) after merging `origin/main`,
+which had landed 021 in the meantime — see the merge note in the pin section below.
+
+### What it does
+
+| Object | Change | Why |
+|---|---|---|
+| `core.me_profile()` | new | `GET /v1/me/profile`, ruled R14. 018/020 both reported this NOT BUILT — "MeProfile requires location, jobTitle, department, staffNumber and a session block that no table carries." `location`/`jobTitle`/`department`/`staffNumber` stay `null` (no source); `session` is NOT a blanket null — `activeSessions`/`lastSignInAt`/`twoFactorEnabled` derive from `auth.sessions`/`auth.users.last_sign_in_at`/`auth.mfa_factors` per a second ruling, guarded to degrade to `null` where the hosted-only GoTrue object is absent (as on this shim). |
+| `core.get_executive_dashboard(p_period text)` | new | `GET /v1/dashboards/executive?period=`. 020 reported this NOT BUILT — "nothing to compute them from." Four of the five contract metrics DO have a real source; the fifth (`ADMIN_HOURS_SAVED`) still does not and is not emitted. |
+| `core.get_proposals_vs_won(p_months integer DEFAULT 6)` | new | `GET /v1/reports/proposals-vs-won?months=`. Same reasoning; `sent`/`won` are independent monthly counts over `core.proposals`. |
+| `core.get_hours_saved()` | **not built** | `GET /v1/reports/hours-saved`. No baseline-minutes table exists anywhere in 001-020, and DECISIONS §4 calls the figure ILLUSTRATIVE in its own words — building this RPC would mean fabricating a number the product itself says is not measured yet. The web shows "not available." |
+
+### Metric definitions (worked)
+
+- **`session` (`ProfileSession`)** — answers `null` AS A WHOLE, never a populated object with a null required field, whenever `lastSignInAt` cannot be derived: the contract makes `session` optional-and-nullable at the top level but `lastSignInAt` itself REQUIRED inside it (`auth.users.last_sign_in_at` "is a stored column, not a derivation"), and the merged web reader (`SidebarProfile.tsx`) is gated on `details.session` before reading anything inside it. `lastSignInAt` = `auth.users.last_sign_in_at`, read defensively (a caught `undefined_column` means "nothing to report") since this migration has no hosted access to confirm the column exists — it is a standard GoTrue column on every real Supabase project. WHEN `session` is populated: `browser`/`place` are always `null` (no user-agent or geoip storage anywhere in this schema); `activeSessions` = `COUNT(auth.sessions)` for the caller, confirmed definer-readable; `twoFactorEnabled` = `EXISTS(auth.mfa_factors WHERE user_id = caller AND status = 'verified')`, guarded on `pg_catalog.to_regclass('auth.mfa_factors')` and `null` when the relation is absent — present on hosted Supabase, absent from this local shim, so the guard is the only way to prove the function does not hard-fail in either environment. Second ruling, prompted by `web-022`'s question about which `ProfileSession` fields are actually derivable, tightened once the contract itself landed with `lastSignInAt` required and `session` nullable as a whole.
+- **`OPEN_PIPELINE`** — `SUM(core.opportunities.value_sen)` where `stage IN ('QUALIFYING','PROPOSAL_SENT','NEGOTIATION')`, matching the fixture's own drillTo filter exactly (not all five non-terminal stages — `NEW` and `TNA_SENT` are pre-qualification).
+- **`AR_OVERDUE`** — `SUM(core.invoices.outstanding_sen)` where `status='OVERDUE' AND voided_at IS NULL`.
+- **`PROPOSALS_SENT`** — `COUNT(core.proposals)` where the frozen `sent_at` falls in the calendar quarter containing `p_period`'s month. A proposal that later moved to VIEWED/ACCEPTED/LOST still counts — this is "how many went out," not "how many are still sitting at SENT."
+- **`CLAIM_VALUE_AT_RISK`** — `SUM(core.hrdc_packets.claim_value_sen)` where `panel_state IN ('DEADLINE_AT_RISK','BLOCKED') AND voided_at IS NULL`. `DEADLINE_AT_RISK` is the DB spelling of the contract's `HrdcDeadlineStatus = 'AT_RISK'` — `packages/contract/src/enums.ts` documents the divergence and says not to unify it.
+- **`approvalsPending`** — the 5 `PENDING` rows from `core.v_approval_requests` (011/020) in the same urgency order `core.list_approvals` groups by.
+- **`agentActivity`** — one row per `core.agents` row with `status='ACTIVE'`. `actionsToday` = `COUNT(core.runs)` today (UTC calendar day — the contract defines no tenant-local "today"). `autonomy` = the MODE of `COALESCE(core.action_requests.granted_level, 'OBSERVE')` across today's runs (joined on `action_request_id`), defaulting `OBSERVE` for a run with no governed action. `costMonth` = `SUM(core.runs.cost_sen)` this UTC calendar month. `evalScore` = `percentile_cont(0.5)` over `core.evals.score` where `kind IN ('GOLDEN_SET','JURY_GATE')` — 013's own comment calls this "a rolling median" — `null` when the agent has no such eval, rounded to 3 decimals to remove a `0.8500000000000001` double-precision artifact found by running the pin.
+- **`autonomyMix`** — the same per-run autonomy resolution, distributed over every run today tenant-wide; `[]` when nothing ran today.
+- **`agentSpend`** — `spent`/`budget` = `SUM(core.budget_status.spend_sen)`/`SUM(cap_sen)` at `scope='AGENT'`. `core.budget_scope` has no `TENANT` value (`TIER | AGENT | ACTION_TYPE`); AGENT-scope is the axis that matches `agentActivity`'s granularity.
+- **`get_proposals_vs_won`** series — for each of the trailing `p_months` calendar months, `sent` = proposals whose `sent_at` falls in that month, `won` = proposals `status='ACCEPTED'` whose `accepted_at` falls in that month. Independent monthly counts, not a cohort conversion rate — a proposal sent in month M and accepted in M+2 contributes to `sent` in M and `won` in M+2.
+- **Deliberately not computed:** no `delta` on any cell (no table in 001-020 snapshots a prior period, and `delta` is optional on both contract types — fabricating a "vs last period" figure is exactly what the ruling forbids); `TenantIdentity.code` is `null` (`public.tenants` has no short-code column); `mobile` stays absent (already optional, no table carries one).
+
+### Permission
+
+Both dashboard RPCs gate on `dashboard:executive:read` — already seeded in 002 for `SALES_MANAGER`,
+`FINANCE`, `MD`, `ADMIN` (narrower than the six-role `dashboard:read`, which gates the plain nav item)
+and the closer match to `packages/contract/src/endpoints.ts`'s `roles: ['MD']` on all three
+`/v1/dashboards/executive`, `/v1/reports/proposals-vs-won`, `/v1/reports/hours-saved` entries.
+`core.me_profile` gates on membership only, matching `core.me()` (018) — the profile modal is the
+caller's own record.
+
+### The 7-point RPC contract check, worked
+
+Worked in the forward file's header. In short: `app.ok`/`app.err`, no sibling top-level key, three
+new RpcMap entries the contract's `endpoints.ts` already names, no existing call site (M01-S01 is
+not wired to these RPCs on this branch — `web-022` is the consuming lane, so a dead RPC is expected
+here rather than a finding), no TypeScript in this migration, all three are reads, nothing granted
+to anon.
+
+### Pin — `tests/test_022_profile_and_dashboard.sql`
+
+50/50 assertions pass. T1: MD's `me_profile` carries exactly the 9 `MeProfile` keys (no `mobile`),
+the 4 unstorable top-level fields are JSON `null`, `tenant.code` is `null`, `moduleCount` = 13 (MD
+holds 13 of the 14 nav permissions `core.navigation()` filters on — it lacks the bare
+`compliance:read`, only the three scoped `compliance:*` strings). `session` is `null` AS A WHOLE in
+this shim specifically because it has no `last_sign_in_at` column on `auth.users` (a REQUIRED
+`ProfileSession` field per the contract, so the whole block has nothing to report rather than a
+half-populated object) — the full-object real-derivation path (`browser`/`place` null,
+`activeSessions` a real count, `twoFactorEnabled` real where `auth.mfa_factors` exists) was verified
+ad hoc against a locally-extended copy of the shim's `auth` schema, not checked into this pin. T2: an
+AGENT principal is `FORBIDDEN`; anon is refused
+42501. T3: MD's four dashboard metrics equal hand-computed sums/counts over seeded
+opportunities/invoices/hrdc_packets/proposals; `approvalsPending` carries the one seeded `PENDING`
+row; `agentActivity`/`autonomyMix`/`agentSpend` equal the seeded runs/evals/usage-rollup/budget
+rows exactly (3 actions today, mode `ACT_WITH_APPROVAL` 2-of-3, 1000 sen this month, evalScore
+median(0.9,0.8)=0.85, mix 0.667/0.333, spend 1000/100000). T4: OPS (`dashboard:read` only) is
+`FORBIDDEN`, naming the missing permission; anon is refused 42501. T5: a malformed and a `NULL`
+`period` are `VALIDATION_FAILED`. T6: tenant B's MD sees zero on every metric, an empty
+approvals/agent list, zero agent spend — nothing of tenant A's leaks across the boundary. T7:
+`get_proposals_vs_won` hand-verifies the current month (sent=2, won=1) and the month 4 months back
+(sent=1), a 6-month series length, and `VALIDATION_FAILED` on `months=0`/`months=NULL`. T8:
+`core.get_hours_saved` does not exist.
+
+**The fixture had to walk `core.state_transitions`' registered edges rather than insert a target
+status directly** — `opportunities.stage`, `proposals.status` and `invoices.status` are all gated
+columns (011), and a direct `INSERT ... ('QUALIFYING', ...)` is refused as an illegal
+`NULL -> QUALIFYING` transition. `QUALIFYING -> PROPOSAL_SENT` and `proposals.DRAFT -> SENT` are
+additionally gated behind `PROPOSAL_SEND`, `invoices.NULL -> DRAFT` behind `INVOICE_CREATE`,
+`DRAFT -> SENT` behind `INVOICE_PUSH` — each crossed with test_005's `pg_temp.gate()`/`ungate()`
+fixture pattern (a real `action_request` published as `app.effect_applier`), not gone around.
+
+**Regression check:** `test_001`-`test_020` re-run against a 001-020+022 build, unmodified,
+all still green (no `FAIL` notice in any log; the naive `grep NOTICE.*FAIL` false-positives on
+notice text like `VALIDATION_FAILED` were checked by hand). **Re-run again after merging
+`origin/main`** (which had landed 021, PR #45's `lint:sql` fix, and the web PR in the meantime):
+rebuilt clean as 001-021+022 (no demo seed), the full `test_00N` suite re-run unmodified — all
+still green, including `test_021` (10/10) itself. `app.provision_tenant`'d `akademi-perdana` with
+its three real MD users (the same shape `scratchpad/seed-hosted`'s provisioning scripts use),
+loaded `supabase/seeds/hosted_demo_akademi_perdana.sql`, then ran the seed's own pin
+`supabase/seeds/test_hosted_demo.sql` — T0 through T5, `ALL PASS`. Running the full `test_00N`
+suite a SECOND time, now AFTER the demo seed is loaded into the same database, surfaces two
+failures (`test_014` T7a2, an approvals-count collision; `test_019`, a duplicate tenant slug) —
+both are the seed's persisted data colliding with a pin's own fresh fixture, not a regression;
+neither pin is written to coexist with demo data in the same database, and both pass individually
+and on the clean (no-seed) rebuild. `npm run lint:sql` 71/71 (PR #45 fixed the psql-meta-commands
+gap that previously excluded `test_hosted_demo.sql`). `npm run check:grants` clean.
+`npm run check:rpc` 4 pass/watch, 0 broken.
+
+### Rollback — `rollbacks/022_profile_and_dashboard_rollback.sql`
+
+022 created three new functions and replaced nothing, so the rollback is a straight `DROP FUNCTION`
+of all three plus a verify that none remains — no prior body to reproduce, no data touched (all
+three are reads). Round-tripped: applied → rolled back (confirmed all three `to_regprocedure` calls
+return `NULL`) → re-applied clean, `$verify$` green each time.
+
+### ⚠ Carried risk and standing conditions
+
+- **`get_hours_saved` remains unbuilt** and `ADMIN_HOURS_SAVED` remains absent from the metrics
+  array. Both need a measured baseline-minutes table this migration does not invent.
+- **No `delta` on any metric.** A snapshot table (period-over-period sums for the four metrics) is
+  a clean, scoped follow-up if the product wants trend arrows on M01-S01; this migration does not
+  add one to fill an optional field.
+- **`moduleCount`'s nav list is duplicated** from `core.navigation()` (018) rather than shared — a
+  future edit to that function's 14-row `VALUES` list will not automatically update this count.
+  Named rather than hidden; not closed here.
+- **`session.lastSignInAt` and `session.twoFactorEnabled` were never proven against a real GoTrue
+  schema, only against an ad hoc local extension of the shim's `auth.users`/`auth.mfa_factors`
+  that is not checked in.** The guards (`undefined_column`, `to_regclass`) make the function fail
+  soft rather than hard if the assumption about hosted's schema is wrong in some way this lane could
+  not observe; they do not prove hosted's actual shape. First hosted apply should read the real
+  values back and confirm.
+- **G5 (the skill's dual adversarial review — thermonuclear + Codex trace) was not run by this
+  lane.** The lane brief's own Proof section (lint:sql / check:grants / check:rpc / the pin,
+  executed) did not ask for it. A Codex review was dispatched in parallel by the coordinator ahead
+  of hosted apply instead.
+- **No hosted access from this lane.** Everything above is measured against the local shim; `main`
+  applies.
+
+---
 
 ## Migration Detail — 021 (`021_golden_path_authz.sql`)
 
@@ -582,6 +830,8 @@ present, the rollback refused and changed nothing.
   contract `ErrorCode`. It is unreachable while 018's routing row exists, and not changed here.
 - The worker has no `AI_DRAFT_PROPOSAL_SECTION` handler (`apps/worker/src/handlers/index.ts`), so
   a regenerate enqueues a job nothing claims. Not SQL.
+
+---
 
 ## Migration Detail — 020 (`020_api_read_surface.sql`)
 
