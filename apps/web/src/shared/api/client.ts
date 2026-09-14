@@ -8,6 +8,9 @@ import type {
   ApprovalBulkDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AttendanceCaptureRequest,
+  AttendanceExport,
+  AttendanceSheet,
   AuditEntry,
   BadgeCounts,
   Budget,
@@ -15,6 +18,7 @@ import type {
   CollectionRule,
   ComplianceRule,
   Contact,
+  Engagement,
   Enquiry,
   EnquiryDetail,
   EnquiryExtractionPatch,
@@ -32,6 +36,7 @@ import type {
   Organisation,
   OrganisationRelations,
   PageRequest,
+  Participant,
   PipelineConfig,
   PipelineObject,
   Policy,
@@ -147,6 +152,19 @@ export interface TrainOsClient {
   getOpportunity(id: string): Promise<Result<Opportunity>>;
   getTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
+  listEngagements(query: PageRequest): Promise<Result<ListResponse<Engagement>>>;
+  getEngagement(id: string): Promise<Result<Engagement>>;
+  getEngagementParticipants(
+    id: string,
+    query: PageRequest,
+  ): Promise<Result<ListResponse<Participant>>>;
+  getAttendance(id: string, day: number): Promise<Result<AttendanceSheet>>;
+  captureAttendance(
+    id: string,
+    day: number,
+    body: AttendanceCaptureRequest,
+  ): Promise<Result<AttendanceSheet>>;
+  exportAttendance(id: string, format: string): Promise<Result<AttendanceExport>>;
   createProposal(input: ProposalInput): Promise<Result<Proposal>>;
   listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>>;
   getProposal(id: string): Promise<Result<Proposal>>;
@@ -175,6 +193,7 @@ export interface TrainOsClient {
   listProgrammes(): Promise<Result<ListResponse<Programme>>>;
   getProgramme(id: string): Promise<Result<Programme>>;
   getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>>;
+  putProgramme(id: string, body: Partial<Programme>): Promise<Result<Programme>>;
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>>;
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>>;
   listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>>;

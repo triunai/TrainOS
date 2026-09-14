@@ -5,6 +5,9 @@ import type {
   ApprovalDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AttendanceCaptureRequest,
+  AttendanceExport,
+  AttendanceSheet,
   AuditEntry,
   ApprovalRequestRef,
   BadgeCounts,
@@ -13,6 +16,7 @@ import type {
   CollectionRule,
   ComplianceRule,
   Contact,
+  Engagement,
   Enquiry,
   EnquiryDetail,
   EnquiryExtractionPatch,
@@ -32,6 +36,7 @@ import type {
   Organisation,
   OrganisationRelations,
   PageRequest,
+  Participant,
   PipelineConfig,
   PipelineObject,
   Policy,
@@ -441,6 +446,13 @@ export const RPC_NAMES = {
     "get_contact",
     "get_programme",
     "get_compliance_rule",
+    "list_engagements",
+    "get_engagement",
+    "get_engagement_participants",
+    "get_attendance",
+    "capture_attendance",
+    "export_attendance",
+    "put_programme",
   ],
 } as const;
 
@@ -619,6 +631,40 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>> {
     return this.call<TnaRecommendationsResponse>("get_tna_recommendations", { p_id: id });
+  }
+
+  listEngagements(query: PageRequest): Promise<Result<ListResponse<Engagement>>> {
+    return this.call<ListResponse<Engagement>>("list_engagements", pageArgs(query));
+  }
+
+  getEngagement(id: string): Promise<Result<Engagement>> {
+    return this.call<Engagement>("get_engagement", { p_id: id });
+  }
+
+  getEngagementParticipants(
+    id: string,
+    query: PageRequest,
+  ): Promise<Result<ListResponse<Participant>>> {
+    return this.call<ListResponse<Participant>>("get_engagement_participants", {
+      p_id: id,
+      p_page: { size: query.page?.size ?? 50, cursor: query.page?.cursor ?? null },
+    });
+  }
+
+  getAttendance(id: string, day: number): Promise<Result<AttendanceSheet>> {
+    return this.call<AttendanceSheet>("get_attendance", { p_id: id, p_day: day });
+  }
+
+  captureAttendance(
+    id: string,
+    day: number,
+    body: AttendanceCaptureRequest,
+  ): Promise<Result<AttendanceSheet>> {
+    return this.call<AttendanceSheet>("capture_attendance", { p_id: id, p_day: day, p_body: body });
+  }
+
+  exportAttendance(id: string, format: string): Promise<Result<AttendanceExport>> {
+    return this.call<AttendanceExport>("export_attendance", { p_id: id, p_format: format });
   }
 
   createProposal(input: ProposalInput): Promise<Result<Proposal>> {
@@ -820,8 +866,24 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<Programme>("get_programme", { p_id: id });
   }
 
-  getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>> {
-    return this.view<ProgrammeDelivery>(VIEW_READS.programmeDeliveries, { programme_id: id });
+  /**
+   * `v_programme_deliveries` (020) keys `programme_id` by UUID, but the
+   * screen holds a REF — the `:programmeRef` route segment. Same fix as
+   * `getOrganisationRelations`/`getContactConsent`: resolve to the uuid
+   * through the record's own RPC (which already accepts id or ref) before
+   * the view `.match()`, rather than a ref landing in a uuid column and
+   * silently matching nothing.
+   */
+  async getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>> {
+    const uuid = await this.uuidOf("get_programme", id);
+    if (uuid.error !== null) return fail(uuid.error);
+    return this.view<ProgrammeDelivery>(VIEW_READS.programmeDeliveries, {
+      programme_id: uuid.data,
+    });
+  }
+
+  putProgramme(id: string, body: Partial<Programme>): Promise<Result<Programme>> {
+    return this.call<Programme>("put_programme", { p_id: id, p_body: body });
   }
 
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>> {

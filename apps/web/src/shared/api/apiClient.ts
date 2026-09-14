@@ -2,9 +2,11 @@ import type {
   ActionRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  AttendanceCaptureRequest,
   EnquiryExtractionPatch,
   MessageChannel,
   PageRequest,
+  Programme,
   ProposalCreateRequest,
   ProposalSectionWrite,
   QuotationWrite,
@@ -122,6 +124,16 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
     getTna: async (id: string) => must(await rpc.getTna(id)),
     getTnaRecommendations: async (id: string) => must(await rpc.getTnaRecommendations(id)),
 
+    listEngagements: async (page?: PageRequest) => must(await rpc.listEngagements(page ?? {})),
+    getEngagement: async (id: string) => must(await rpc.getEngagement(id)),
+    getEngagementParticipants: async (id: string, page?: PageRequest) =>
+      must(await rpc.getEngagementParticipants(id, page ?? {})),
+    getAttendance: async (id: string, day = 1) => must(await rpc.getAttendance(id, day)),
+    captureAttendance: async (id: string, day: number, body: AttendanceCaptureRequest) =>
+      must(await rpc.captureAttendance(id, day, body)),
+    exportAttendance: async (id: string, format = "HRDC") =>
+      must(await rpc.exportAttendance(id, format)),
+
     createProposal: async (body: ProposalCreateRequest, options?: RequestOptions) =>
       must(
         await rpc.createProposal({
@@ -234,6 +246,8 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       paginate(must(await rpc.listProgrammes()).data, page),
     getProgramme: async (id: string) => must(await rpc.getProgramme(id)),
     getProgrammeDeliveries: async (id: string) => must(await rpc.getProgrammeDeliveries(id)),
+    putProgramme: async (id: string, body: Partial<Programme>) =>
+      must(await rpc.putProgramme(id, body)),
     listHrdcDeadlines: async (page?: PageRequest) =>
       paginate(must(await rpc.listHrdcDeadlines()).data, page),
     getCollectionRules: async () => must(await rpc.listCollectionRules()),
