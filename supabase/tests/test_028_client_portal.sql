@@ -54,8 +54,8 @@
 --     any fixture user, compared case-insensitively. vendorContact.email is
 --     JSON null with no tenant tax profile (tenant A, the pin's default), null
 --     with a blank contact_email, null when contact_email is a member's own
---     sign-in address, and exactly the trimmed tax-profile contact_email
---     otherwise (tenant B).
+--     profile email or a member's auth.users sign-in email that has no profile,
+--     and exactly the trimmed tax-profile contact_email otherwise (tenant B).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -664,9 +664,17 @@ $t7$;
 
 -- ════════ T8 · No staff email reaches a portal response, ever ════════
 
--- Tenant B's tax profile, three ways: blank, a member's own sign-in address
--- (upper-cased and padded, to prove the comparison is citext and trimmed), and
--- a real business contact. Each state is read by anon in its own statement.
+-- Tenant B's tax profile, four ways: blank, a member's own profile address
+-- (upper-cased and padded, to prove the comparison is case-blind and trimmed),
+-- the auth.users sign-in address of a member with no profile, and a real
+-- business contact. Each state is read by anon in its own statement.
+-- B's second MD keeps a profile address that differs from their sign-in
+-- address, so the profile check and the auth.users check are each proven alone.
+UPDATE public.user_profiles SET email = 'b-md2-profile@t028.test'
+ WHERE tenant_id = pg_temp.id('B:tenant') AND user_id = pg_temp.id('B:md2');
+INSERT INTO auth.users (id, email) VALUES (pg_temp.id('B:ops'), 'b-ops-login@t028.test');
+INSERT INTO public.memberships (tenant_id,user_id,role,actor_kind,client_scope,team_scope,mfa_required,status,is_default)
+VALUES (pg_temp.id('B:tenant'), pg_temp.id('B:ops'), 'OPS','HUMAN','ALL','ALL',false,'ACTIVE',true);
 INSERT INTO core.tenant_tax_profiles (tenant_id, legal_name, tin, registration_no, address_line1, city, state_code, postcode, contact_email)
 VALUES (pg_temp.id('B:tenant'), 'Provider B Sdn Bhd', 'C1234567890', '202601000001', '1 Jalan B', 'Shah Alam', '10', '40000', '   ');
 
@@ -675,11 +683,18 @@ SET LOCAL ROLE anon;
 SELECT pg_catalog.set_config('p28.e_blank', core.get_portal_proposal(pg_temp.tok('tenantb'))::text, true);
 RESET ROLE;
 
-UPDATE core.tenant_tax_profiles SET contact_email = '  B-MD2@T028.TEST ' WHERE tenant_id = pg_temp.id('B:tenant');
+UPDATE core.tenant_tax_profiles SET contact_email = '  B-MD2-PROFILE@T028.TEST ' WHERE tenant_id = pg_temp.id('B:tenant');
 
 SELECT pg_catalog.set_config('request.jwt.claims', '{"role":"anon"}', true);
 SET LOCAL ROLE anon;
 SELECT pg_catalog.set_config('p28.e_staff', core.get_portal_proposal(pg_temp.tok('tenantb'))::text, true);
+RESET ROLE;
+
+UPDATE core.tenant_tax_profiles SET contact_email = 'B-Ops-Login@T028.test' WHERE tenant_id = pg_temp.id('B:tenant');
+
+SELECT pg_catalog.set_config('request.jwt.claims', '{"role":"anon"}', true);
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('p28.e_auth', core.get_portal_proposal(pg_temp.tok('tenantb'))::text, true);
 RESET ROLE;
 
 UPDATE core.tenant_tax_profiles SET contact_email = ' hello@provider-b.example ' WHERE tenant_id = pg_temp.id('B:tenant');
@@ -696,7 +711,8 @@ DECLARE
     'b_as_a', pg_temp.got('b_as_a'), 'c_ok', pg_temp.got('c_ok'),
     'a_first', pg_temp.got('a_first'), 'a_second', pg_temp.got('a_second'),
     'a_read', pg_temp.got('a_read'), 'e_blank', pg_temp.got('e_blank'),
-    'e_staff', pg_temp.got('e_staff'), 'e_contact', pg_temp.got('e_contact'));
+    'e_staff', pg_temp.got('e_staff'), 'e_auth', pg_temp.got('e_auth'),
+    'e_contact', pg_temp.got('e_contact'));
   v_emails    text[];
   v_hit       text;
 BEGIN
@@ -709,8 +725,8 @@ BEGIN
            WHERE u.id IN (SELECT m.user_id FROM public.memberships m
                            WHERE m.tenant_id IN (pg_temp.id('A:tenant'), pg_temp.id('B:tenant'), pg_temp.id('S:tenant')))) AS x
    WHERE e IS NOT NULL;
-  IF pg_catalog.cardinality(v_emails) IS DISTINCT FROM 7 THEN
-    RAISE EXCEPTION 'T8 SETUP: expected 7 fixture person emails (6 MDs + the CLIENT member), got %', v_emails;
+  IF pg_catalog.cardinality(v_emails) IS DISTINCT FROM 9 THEN
+    RAISE EXCEPTION 'T8 SETUP: expected 9 fixture person emails (6 MD logins, B md2''s distinct profile address, the CLIENT member, B''s profile-less OPS member), got %', v_emails;
   END IF;
 
   SELECT r.key || ' contains ' || e INTO v_hit
@@ -737,7 +753,11 @@ BEGIN
   END IF;
   IF pg_temp.got('e_staff') ->> 'success' IS DISTINCT FROM 'true'
      OR pg_temp.got('e_staff') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb THEN
-    RAISE EXCEPTION 'T8d: a supplier contact equal to a member''s sign-in address was not withheld: %', pg_temp.got('e_staff');
+    RAISE EXCEPTION 'T8d: a supplier contact equal to a member''s profile address was not withheld: %', pg_temp.got('e_staff');
+  END IF;
+  IF pg_temp.got('e_auth') ->> 'success' IS DISTINCT FROM 'true'
+     OR pg_temp.got('e_auth') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'T8d: a supplier contact equal to a profile-less member''s auth.users sign-in address was not withheld: %', pg_temp.got('e_auth');
   END IF;
   IF pg_temp.got('e_contact') #>> '{data,vendorContact,email}' IS DISTINCT FROM 'hello@provider-b.example'
      OR pg_temp.got('e_contact') #>> '{data,vendorContact,name}' IS DISTINCT FROM 'Owner B'
@@ -751,7 +771,7 @@ BEGIN
   IF pg_temp.got('e_contact')::text ~ '(C1234567890|202601000001|Jalan B|Provider B Sdn Bhd)' THEN
     RAISE EXCEPTION 'T8f: tax-profile fields other than contact_email reached the client: %', pg_temp.got('e_contact');
   END IF;
-  RAISE NOTICE 'T8 PASS: 10 portal responses (anon, authenticated, comment, both accepts, 3 tax-profile states) contain none of the 7 fixture person emails; vendorContact.email is null with no/blank tax profile or a member-address contact, and the trimmed supplier contact otherwise';
+  RAISE NOTICE 'T8 PASS: 11 portal responses (anon, authenticated, comment, both accepts, 4 tax-profile states) contain none of the 9 fixture person emails; vendorContact.email is null with no/blank tax profile or a member profile/sign-in address as contact, and the trimmed supplier contact otherwise';
 END
 $t8$;
 

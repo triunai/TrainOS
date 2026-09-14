@@ -98,7 +98,7 @@
 --   tenant invoices under, one row per tenant), trimmed, or JSON null when
 --   the tenant has no tax profile or left it blank. It is never backfilled from
 --   user_profiles, auth.users or any other person's row, and a supplier contact
---   equal to any member's profile email is withheld as null. A dedicated public
+--   equal to any member's profile or sign-in email is withheld as null. A dedicated public
 --   contact address is a product decision still to make; until then the
 --   supplier contact is the only per-tenant address meant for customers.
 --
@@ -403,15 +403,21 @@ AS $fn$
                END,
       -- The tenant's supplier contact, or null. Never a staff sign-in address:
       -- see the header, "vendorContact.email IS NEVER A STAFF ADDRESS"; V7.
-      -- A supplier contact typed as some member's own sign-in address is
-      -- withheld too, so no tenant setting can put one on the page.
+      -- A supplier contact typed as some member's own address — the profile
+      -- email or the sign-in email on auth.users, which can differ (022 reads
+      -- auth.users for exactly that reason) — is withheld too, so no tenant
+      -- setting can put one on the page. lower() on both sides, not citext's
+      -- `=`: under search_path '' the bare operator resolves to pg_catalog's
+      -- case-sensitive text = text.
       'email', CASE
                  WHEN EXISTS (SELECT 1 FROM public.user_profiles AS staff
                                WHERE staff.tenant_id = proposal.tenant_id
-                                 -- lower() on both sides, not citext's `=`: under
-                                 -- search_path '' the bare operator resolves to
-                                 -- pg_catalog's case-sensitive text = text.
                                  AND pg_catalog.lower(staff.email::text)
+                                     = pg_catalog.lower(pg_catalog.btrim(tax_profile.contact_email)))
+                   OR EXISTS (SELECT 1 FROM public.memberships AS member
+                                JOIN auth.users AS account ON account.id = member.user_id
+                               WHERE member.tenant_id = proposal.tenant_id
+                                 AND pg_catalog.lower(account.email::text)
                                      = pg_catalog.lower(pg_catalog.btrim(tax_profile.contact_email)))
                    THEN NULL
                  ELSE NULLIF(pg_catalog.btrim(tax_profile.contact_email), '')

@@ -1093,7 +1093,7 @@ the fixed message `portal link not found`, or `VALIDATION_FAILED` with `fields`/
   opportunity owner's `user_profiles.email` — a staff login — returned to anyone holding a link. It is
   now `core.tenant_tax_profiles.contact_email` (010's supplier identity, `UNIQUE (tenant_id)`), trimmed,
   or JSON `null` when the tenant has no tax profile, left it blank, or typed a member's own profile
-  email there (compared with `lower()`: under `search_path ''` citext's `=` resolves to case-sensitive
+  email or `auth.users` sign-in email there (compared with `lower()`: under `search_path ''` citext's `=` resolves to case-sensitive
   `text = text`, which the pin caught). `@trainos/contract`'s `PortalVendorContact.email` is
   `string | null` to match. The supplier contact is the closest existing per-tenant business address,
   not a designed public one: a product-level public contact address is still to decide.
@@ -1127,14 +1127,16 @@ HTML round-trips literally, seven malformed bodies name their fields, and the 20
 writes one signature, engagement, acceptance and event. A second accept under another name and JWT is
 byte-identical and writes nothing. T6: accept on an expired or revoked link is `NOT_FOUND` and changes
 nothing. T7: fifteen other functions and tables refuse anon with 42501, and a CLIENT member is FORBIDDEN on
-`perform_action`. T8: ten portal responses (anon and authenticated reads, the comment, both accepts,
-three tax-profile states) contain none of the seven fixture person emails from `user_profiles` or
-`auth.users`; `vendorContact.email` is null with no tax profile, a blank one, or a member's address
-typed in, and the trimmed supplier contact otherwise. **Mutation-tested**, each red: expiry predicate removed (T2a), `marginRate` added
+`perform_action`. T8: eleven portal responses (anon and authenticated reads, the comment, both accepts,
+four tax-profile states) contain none of the nine fixture person emails from `user_profiles` or
+`auth.users`; `vendorContact.email` is null with no tax profile, a blank one, a member's profile
+address typed in, or a profile-less member's sign-in address typed in, and the trimmed supplier
+contact otherwise. **Mutation-tested**, each red: expiry predicate removed (T2a), `marginRate` added
 to the projection (T1b), replay branch removed (T5), whitespace trim reverted (T4b), comment cap
 lifted (T4c), tenant-status predicate removed (T2a), DRAFT/LOST made visible (T2a), token echoed in
 NOT_FOUND details (T2a); owner profile email restored (T1e, and V7 refuses the migration), member-address
-exclusion removed or compared with citext `=` (T8a), an owner-name fallback for a missing contact (T1e).
+exclusion removed, compared with citext `=`, or either its profile or its `auth.users` arm dropped (T8a),
+an owner-name fallback for a missing contact (T1e).
 `$verify$` refuses the migration when anon is granted
 `app._portal_proposal` (V1) or a column of `core.public_share_tokens` (V1).
 
