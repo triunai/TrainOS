@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 21 · **Applied (hosted):** 001–019 · **Authored, not applied:** 020, 021
+**Migrations:** 22 · **Applied (hosted):** 001–019 · **Authored, not applied:** 020, 021, 027
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -413,6 +413,125 @@ all three are platform-provided and none is 001's to drop. Round-tripped: applie
 re-applied, verify green each time.
 
 ---
+
+## Migration Detail — 027 (`027_ops_knowledge_settings.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+Depends only on 001–021; no other 02x lane's objects are touched.
+
+### What it does
+
+| § | Object | Change |
+|---|---|---|
+| 1 | `app.role_permissions` | two new permissions, `library:read` and `tenant:read`, granted to the six staff roles (SALES, SALES_MANAGER, OPS, FINANCE, MD, ADMIN) — 002 has neither, and both endpoints are fixture-only (no contract type) |
+| 2 | `core.library_assets` | new table, forced RLS / zero policies, mirrors `FixtureLibraryAsset` (fixtures `data/library.ts`) — the Library corpus has no table anywhere in 001–021 |
+| 3 | `core.list_agents`, `core.pause_agent` | contract 10 `AgentRegistryResponse`/`Agent`; `pause_agent` writes `core.agents` directly (011's pre-013 `AGENT_PAUSE` handler only touches `core.autonomy_grants` — see the migration header) |
+| 3 | `core.list_runs`, `core.get_run`, `core.retry_run`, `core.dead_letter_run` | contract 10 `AutomationRun`; `nodes`/`events`/`stateCard`/`steps` all omitted (optional in the contract, not independently verified against `TraceNode`/`RunEvent`/`RunStateCard`'s exact shapes — flagged as follow-up); `retry_run`/`dead_letter_run` are direct writes, ADMIN-gated, no job/worker involvement |
+| 4 | `core.create_knowledge_source`, `core.check_knowledge_source`, `core.reingest_knowledge_source` | contract 17 `KnowledgeSource`/`KnowledgeSourceCheckResponse`/`KnowledgeSourceReingestResponse` over the existing `core.knowledge_sources` (009); reingest reports the honestly-queued state (`embeddingStatus: PENDING`, no `runId`) — no worker handler exists to claim a reingest job |
+| 4 | `core.list_library_assets` | new, gated on `library:read` |
+| 5 | `core.get_ai_routing`, `core.put_ai_routing` | contract 17 `RoutingResponse`/`RoutingEntry` over `core.routing_entries`/`core.routing_matrix_versions` (013); `staged`/`unsavedChanges` always empty/0 — no staged-edit ledger exists in 001–021 |
+| 5 | `core.list_providers` | READ ONLY. `createProvider`/`testProvider`/`revealProvider` are NOT in this migration — see "BYOK gap" below |
+| 5 | `core.get_usage`, `core.put_budget` | contract 17 `UsageResponse`/`Budget` over `app.usage_rollup`/`core.ai_budgets` (013); `put_budget` is a direct write, MD-gated on a cap raise — see "Budget raise" below |
+| 5 | `core.get_tenant` | new, gated on `tenant:read`, over `public.tenants` |
+
+Permission per RPC: `list_agents`/`pause_agent` agent:read/agent:pause · `list_runs`/`get_run`
+run:read · `retry_run` run:retry (ADMIN-only, 002's own invariant) · `dead_letter_run`
+run:dead_letter (ADMIN-only) · `create_knowledge_source`/`check_knowledge_source`
+knowledge:source:write · `reingest_knowledge_source` knowledge:source:reingest ·
+`list_library_assets` library:read (new) · `get_ai_routing` ai:routing:read · `put_ai_routing`
+ai:routing:write · `list_providers` ai:provider:read · `get_usage` ai:usage:read · `put_budget`
+ai:budget:raise (raise) / ai:budget:write (otherwise) · `get_tenant` tenant:read (new).
+
+`$verify$`: V1 one definition, correct posture (SECURITY DEFINER, `search_path=''`,
+`statement_timeout=10s`, authenticated-only) for all sixteen. V2 every gate is the first
+permission-relevant statement, no read before it. V3 the two new permissions are granted to
+exactly the six staff roles. V4 `core.library_assets` is forced RLS with zero policies. V5/V6
+`run:retry`/`run:dead_letter`/`ai:budget:raise` stay at their 002 role restriction.
+
+### ⚠ The BYOK gap: createProvider / testProvider / revealProvider
+
+013 already ships the client-facing SQL for all five provider-key writes
+(`public.ai_provider_key_set/_test/_rotate/_delete/_reveal`, 013:2375–2758) — applied to hosted
+already. By design they never let the raw key transit Postgres: `_set`/`_rotate` take an
+already-computed mask + fingerprint + vault locator, `_test` only records a status an Edge
+Function already produced by probing the provider with the decrypted key, and `_reveal` returns
+the opaque locator, never the key. `supabase/functions/` in this repo holds only a README — there
+is no Edge Function anywhere to derive the mask/fingerprint, run the probe, or perform the
+decrypt. Building one is a worker/edge change (out of this lane's scope per its brief), and
+inventing a path that lets the raw key transit Postgres would contradict 013's own stated design.
+Escalated to the orchestrator (NEEDS OPUS) before writing anything in this area; `list_providers`
+(read, masked rows only) ships, the three writes do not.
+
+### ⚠ The `put_budget` design decision
+
+013's own comment on `core.ai_budgets` states "Raising cap_sen is BUDGET_CAP_RAISE through 011's
+envelope, MD-gated." 011 does carry that action type (`ai:budget:raise`, MD-only) and policy FIN-07
+("Budget cap raise always needs MD approval" — `ALL` combinator, no conditions), but 011's own
+`app.execute_in_database_action` has only a stub for it (`WHEN 'BUDGET_CAP_RAISE' THEN NULL`), and
+FIN-07's unconditional approval requirement means a raise could never complete synchronously even
+for the MD who requested it — which conflicts with the contract's `PUT /v1/ai/budgets/{scope}/{key}`
+returning a `Budget` directly and with the fixture's synchronous behaviour (FC:2005: MD-gated only
+on a raise, not queued). Implemented here as a direct write, MD-gated on a raise, matching the
+contract's synchronous shape and the fixture — not wired through the always-escalating action
+envelope. Flagged as a product decision to confirm.
+
+### The 7-point RPC contract check, worked
+
+1 IDENTITY. `p_id`/`p_body`/`p_page` etc., matching the SQL exactly. 2 UNWRAP. Every function
+returns through `app.ok()`/`app.err()`, or raises TRNOS. 3 RpcMap. `apps/web/src/shared/api/rpcClient.ts`
+`RPC_NAMES.newSql` gained the sixteen names. 4 CALL SITES. `apps/web/src/shared/api/apiClient.ts`
+`adapters()` maps each `FixtureClient` method name to the matching `TrainOsClient` call; two methods
+(`listLibraryAssets`, `getTenant`) have no contract type, so the RPC layer returns `unknown` and
+`apiClient.ts` casts back to the fixture's shape behind a runtime guard (not a double cast — `check:rpc`
+E2 forbids that). 5 CASTS. Zero `as unknown as` in `apps/web/src/shared/api` (`check:rpc` E2 passes).
+6 RELOAD. Nothing here is on the shell bootstrap path. 7 PUBLIC ROUTES. Nothing granted to anon.
+
+### Pin — `tests/test_027_ops_knowledge_settings.sql`
+
+Self-contained (provisions its own tenant and users; no psql meta-commands — `lint:sql` only
+tolerates those in seeds). T1 MD succeeds on every MD-permitted read/write with the contract's
+top-level keys present, including raising a budget cap. T2 ADMIN-only paths (retry, dead-letter,
+knowledge writes, provider list, routing write) succeed for ADMIN and are FORBIDDEN with the right
+`requiredPermission` for MD. T3 SALES is FORBIDDEN on agent/run/knowledge/provider/routing but
+succeeds on the two new permissions. T4 CLIENT is FORBIDDEN everywhere, byte-identical for a real
+and an invented id. T5 anon gets 42501. T6 cross-tenant isolation: a second tenant's MD sees zero
+rows and `NOT_FOUND` on tenant 1's run. T7 `listProviders` never returns a `key` field and every
+non-empty `maskedKey` carries the mask character. T8 teeth-check, in `pg_temp` only (`check:grants`
+T1/T2 forbid a test from defining a real SECURITY DEFINER function or granting `authenticated`): a
+`pg_temp` copy of `get_tenant` with the gate deleted lets CLIENT through, proving the assertion is
+live, then the real, untouched `core.get_tenant` is called as the same CLIENT and still refuses.
+
+Executed against 001–021+027 on the shim: `lint:sql` 71/71, `check:grants` clean, `check:rpc` 4/4
+pass. Functional probes (`scratchpad/api-027-ops/{probe_seed,md_probe,admin_probe}.sql`) confirmed
+every one of the sixteen functions against seeded `core.agents`/`core.runs`/`core.ai_budgets`/
+`core.ai_provider_keys`/`core.routing_entries` rows, as MD and ADMIN, plus SALES/anon negative paths.
+
+### Rollback — `rollbacks/027_ops_knowledge_settings_rollback.sql`
+
+Purely additive migration, so a straight teardown: refuses if `core.library_assets` holds rows,
+otherwise drops the sixteen functions and two private helpers (`app._run_row`,
+`app._knowledge_source_row`), drops `core.library_assets`, deletes the two new
+`app.role_permissions` rows. Measured: `pg_proc`/`pg_class` catalog and `app.role_permissions`
+are byte-identical (sorted) to a fresh 001–021 build after 027 applies then rolls back.
+
+### ⚠ Carried risk and standing conditions
+
+- **createProvider/testProvider/revealProvider are not built** — see above. `listProviders` (read)
+  ships.
+- **`put_budget`'s cap-raise path bypasses 011's `BUDGET_CAP_RAISE` action envelope** — see above,
+  a product decision to confirm.
+- **`AutomationRun.nodes/events/stateCard/steps` are not populated** — all optional in the
+  contract; omitted rather than guessed at, since this pass did not independently verify
+  `TraceNode`/`RunEvent`/`RunStateCard`'s exact key shapes against their contract types.
+- **`AgentRegistrySummary.approvalsRaised`/`autoApproved`/`incidents30d`** are computed
+  best-effort (no unambiguous source table in 001–021 for what counts as "raised by an agent" or
+  an "incident") — flagged for confirmation, not silently guessed.
+- **013's claim that "016 provisions tier_keys per tenant" is incorrect** — checked: 016 seeds no
+  `core.tier_keys` rows anywhere. The functional probes and the pin both seed their own; the
+  seed for this migration does the same and reports the gap.
+- `reingestKnowledgeSource` reports its gap explicitly (no worker handler exists, not even in
+  `UNIMPLEMENTED_012_JOB_TYPES`) rather than enqueuing a job nothing will ever claim.
 
 ## Migration Detail — 021 (`021_golden_path_authz.sql`)
 
