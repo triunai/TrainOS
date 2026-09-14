@@ -104,6 +104,8 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
     getMeProfile: async () => must(await rpc.meProfile()),
     getNavigation: async () => must(await rpc.navigation()),
     getBadges: async () => must(await rpc.badges()),
+    getExecutiveDashboard: async (period: string) => must(await rpc.getExecutiveDashboard(period)),
+    getProposalsVsWon: async (months: number) => must(await rpc.getProposalsVsWon(months)),
 
     listEnquiries: async (page?: PageRequest) => must(await rpc.listEnquiries(page ?? {})),
     getEnquiry: async (id: string) => must(await rpc.getEnquiry(id)),
