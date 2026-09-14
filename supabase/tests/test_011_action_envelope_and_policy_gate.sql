@@ -790,11 +790,13 @@ BEGIN
    WHERE pg_catalog.to_regclass(expected.name) IS NOT NULL;
   ASSERT v_count = 11,
     pg_catalog.format('T1a FAIL: 011 table count is %s, expected 11',v_count);
-  ASSERT (SELECT pg_catalog.count(*) FROM app.action_types) = 22,
-    'T1b FAIL: action type count is not exactly 22';
+  -- ⚠ AMENDED BY 021: 22 -> 23. 021 catalogues OPPORTUNITY_STAGE_CHANGE (ruling
+  -- R18) and seeds its OPP-01 policy per tenant; 011's own 22 are unchanged.
+  ASSERT (SELECT pg_catalog.count(*) FROM app.action_types) = 23,
+    'T1b FAIL: action type count is not exactly 23 (011''s 22 + 021''s R18)';
   ASSERT (SELECT pg_catalog.count(*) FROM core.action_policies
-           WHERE tenant_id = '00000011-1111-1111-1111-111111111111') = 22,
-    'T1c FAIL: policy count is not exactly 22 for the fixture tenant';
+           WHERE tenant_id = '00000011-1111-1111-1111-111111111111') = 23,
+    'T1c FAIL: policy count is not exactly 23 for the fixture tenant (011''s 22 + 021''s OPP-01)';
   -- 121 from doc 01 §5.3 + 3 payment-reversal edges that section omits and
   -- 010's reversal path requires. See the marked note at the seed in 011.
   ASSERT (SELECT pg_catalog.count(*) FROM core.state_transitions) = 124,
