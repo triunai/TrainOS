@@ -17,8 +17,9 @@
 //       allowlist, including the schema-wide `GRANT EXECUTE ON ALL FUNCTIONS`
 //       form — which is never allowlistable, because it grants everything that
 //       exists AND says nothing about what it covers.
-//   A1  the allowlist is textually identical everywhere it lives: here, in the
-//       hardening migration, and in the SQL test that pins it.
+//   A1  every allowlist entry is spelled identically in the three places it
+//       lives: here, in the migration that grants it, and in that migration's
+//       SQL pin (supabase/tests/test_<NNN>_*.sql).
 //
 // THE NON-OBVIOUS PART OF M1: a grant is excused when a STRICTLY LATER
 // migration revokes it. Judging each file in isolation flags grants that a
@@ -42,14 +43,22 @@ const TESTS = join(ROOT, "supabase", "tests");
  * or `public`. Every entry needs a written reason; an unreasoned entry is how
  * an allowlist becomes a rubber stamp.
  *
- * Empty on purpose. The client-portal endpoints (§16, the unauthenticated
- * proposal view) are the only plausible future entries, and each one has to be
- * argued for when it is written, not pre-approved here.
+ * The client portal (028, M07-S07 at `/p/:token`) is the only surface a signed-out
+ * browser reaches. Each entry takes a token and a body and nothing else; the
+ * token is resolved to exactly one sent proposal by `app._resolve_portal_token`,
+ * which is granted to nobody. The full argument is 028's header.
  *
- * A1 requires this exact list to appear identically in the hardening migration
- * and in its SQL test once those exist.
+ * A1 requires each entry to appear, spelled exactly like this, in the migration
+ * that grants it and in that migration's SQL pin.
  */
-export const ANON_EXECUTE_ALLOWLIST = [];
+export const ANON_EXECUTE_ALLOWLIST = [
+  // 028 · GET /v1/public/proposals/{token}: the client-safe PortalProposal.
+  "core.get_portal_proposal(text)",
+  // 028 · POST …/comments: a plain-text comment, capped at 200 per proposal.
+  "core.add_portal_comment(text,jsonb)",
+  // 028 · POST …/accept: idempotent by proposal; signature + engagement + event.
+  "core.accept_portal_proposal(text,jsonb)",
+];
 
 /** Roles that must never receive EXECUTE on a definer function by default. */
 const PUBLIC_ROLES = ["anon", "public"];
@@ -276,32 +285,45 @@ for (const grant of grants) {
  * A1 — allowlist parity across the three places it lives
  * ---------------------------------------------------------------- */
 
-const hardening = migrations.find((file) => /hardening|grants?/i.test(file));
-
 if (ANON_EXECUTE_ALLOWLIST.length === 0) {
   notes.push(
     "A1: the allowlist is empty, so there is nothing to keep in sync yet. The first " +
-      "entry must be added HERE, in the hardening migration and in its SQL test in the " +
-      "same commit.",
-  );
-} else if (!hardening) {
-  finding(
-    "A1",
-    "scripts/check-grants.mjs",
-    1,
-    "the allowlist has entries but no hardening migration carries them. The " +
-      "allowlist must be textually identical in all three places it lives.",
+      "entry must be added HERE, in the migration that grants it and in that " +
+      "migration's SQL pin in the same commit.",
   );
 } else {
-  const text = readFileSync(hardening, "utf8");
+  // The allowlist names specific functions, and the migration that grants one is
+  // where its argument lives, so parity is checked THERE — not in 014, which
+  // created no allowlist entry and is immutable once applied.
   for (const entry of ANON_EXECUTE_ALLOWLIST) {
-    if (!text.includes(entry)) {
+    const granting = grants.filter(
+      (grant) => normalise(grant.target) === normalise(entry),
+    );
+    if (granting.length === 0) {
       finding(
         "A1",
-        relative(ROOT, hardening),
+        "scripts/check-grants.mjs",
         1,
-        `allowlist entry \`${entry}\` is in this script but not in the hardening migration.`,
+        `allowlist entry \`${entry}\` is granted to anon/public by no migration. An ` +
+          "allowlist entry nothing uses is a pre-approval waiting for a function.",
       );
+      continue;
+    }
+    for (const grant of granting) {
+      const migration = join(ROOT, grant.file);
+      if (!readFileSync(migration, "utf8").includes(entry)) {
+        finding("A1", grant.file, grant.line, `allowlist entry \`${entry}\` is not spelled identically here.`);
+      }
+      const number = /(\d{3})_[^/]+\.sql$/.exec(grant.file)?.[1];
+      const pins = sqlFiles(TESTS).filter((file) => new RegExp(`/test_${number}_`).test(file));
+      if (pins.length === 0 || !pins.some((file) => readFileSync(file, "utf8").includes(entry))) {
+        finding(
+          "A1",
+          grant.file,
+          grant.line,
+          `allowlist entry \`${entry}\` is not pinned: no supabase/tests/test_${number}_*.sql names it.`,
+        );
+      }
     }
   }
 }
