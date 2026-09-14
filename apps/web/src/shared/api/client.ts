@@ -1,7 +1,10 @@
 import type {
   ActionRequest,
   ActionResponse,
+  Agent,
   AgentEval,
+  AgentPauseRequest,
+  AgentRegistryResponse,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
   ApprovalDecideResponse,
@@ -9,8 +12,11 @@ import type {
   ApprovalDetail,
   ApprovalListResponse,
   AuditEntry,
+  AutomationRun,
   BadgeCounts,
   Budget,
+  BudgetScope,
+  BudgetWrite,
   ChannelConsent,
   CollectionRule,
   ComplianceRule,
@@ -21,6 +27,9 @@ import type {
   FollowUp,
   HrdcDeadline,
   KnowledgeSource,
+  KnowledgeSourceCheckResponse,
+  KnowledgeSourceCreateRequest,
+  KnowledgeSourceReingestResponse,
   ListResponse,
   MessageChannel,
   MessageDraft,
@@ -41,16 +50,21 @@ import type {
   ProposalCreateRequest,
   ProposalSectionRegenerateResponse,
   ProposalSectionWrite,
+  ProviderKey,
   Quotation,
   QuotationWrite,
   RateCard,
+  RoutingEntry,
+  RoutingResponse,
   RuleChangeSet,
+  RunDeadLetterRequest,
   SavedView,
   Template,
   TemplateType,
   Tna,
   TnaRecommendationsResponse,
   Trainer,
+  UsageResponse,
 } from "@trainos/contract";
 
 import type { Result } from "./errors";
@@ -123,6 +137,9 @@ export type SectionInput = Idempotent<{ title: string; body?: string }>;
 /** `PUT /v1/proposals/{id}/sections/{n}`. */
 export type SectionWriteInput = Idempotent<ProposalSectionWrite>;
 
+/** `GET /v1/ai/usage?groupBy=`. Kept local so the signature fits one line (027). */
+export type UsageGroupBy = "TIER" | "AGENT" | "ACTION_TYPE";
+
 /**
  * The methods, grouped by golden-path order then by the §8 view reads.
  *
@@ -184,4 +201,30 @@ export interface TrainOsClient {
   listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>>;
   listAiTiers(): Promise<Result<ListResponse<ModelTier>>>;
   listBudgets(): Promise<Result<ListResponse<Budget>>>;
+
+  /* §10 automation: agents and runs (027). */
+  listAgents(): Promise<Result<AgentRegistryResponse>>;
+  pauseAgent(id: string, body: AgentPauseRequest): Promise<Result<Agent>>;
+  listRuns(query: PageRequest): Promise<Result<ListResponse<AutomationRun>>>;
+  getRun(id: string): Promise<Result<AutomationRun>>;
+  retryRun(id: string, from?: "checkpoint"): Promise<Result<AutomationRun>>;
+  deadLetterRun(id: string, body: RunDeadLetterRequest): Promise<Result<AutomationRun>>;
+
+  /* §17 knowledge (027). */
+  createKnowledgeSource(body: KnowledgeSourceCreateRequest): Promise<Result<KnowledgeSource>>;
+  checkKnowledgeSource(id: string): Promise<Result<KnowledgeSourceCheckResponse>>;
+  reingestKnowledgeSource(id: string): Promise<Result<KnowledgeSourceReingestResponse>>;
+  /* Fixture-only (data/library.ts) — no contract type, so this is untyped
+     past ListResponse. See 027's PR body. */
+  listLibraryAssets(query: PageRequest): Promise<Result<ListResponse<unknown>>>;
+
+  /* §17 AI settings: routing, providers (read), usage, budgets, tenant (027). */
+  getAiRouting(): Promise<Result<RoutingResponse>>;
+  putAiRouting(entries: RoutingEntry[]): Promise<Result<RoutingResponse>>;
+  listProviders(): Promise<Result<ListResponse<ProviderKey>>>;
+  getUsage(period?: string, groupBy?: UsageGroupBy): Promise<Result<UsageResponse>>;
+  putBudget(scope: BudgetScope, key: string, body: BudgetWrite): Promise<Result<Budget>>;
+  /* Fixture-only (data/tenant.ts) — §1 keeps tenancy out of the API surface,
+     so there is no contract type. See 027's PR body. */
+  getTenant(): Promise<Result<unknown>>;
 }
