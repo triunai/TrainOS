@@ -107,9 +107,9 @@ BEGIN
   SELECT count(*) INTO v_md
     FROM public.memberships m
    WHERE m.tenant_id = v_ctx.t AND m.user_id IN (v_ctx.u1, v_ctx.u2, v_ctx.u3)
-     AND m.role = 'MD' AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
+     AND m.role IN ('MD','ADMIN') AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
   IF v_md <> 3 OR v_ctx.u1n IS NULL OR v_ctx.u2n IS NULL OR v_ctx.u3n IS NULL THEN
-    RAISE EXCEPTION 'hosted finance seed: expected all three MD users as ACTIVE members with profiles, found % membership(s)', v_md;
+    RAISE EXCEPTION 'hosted finance seed: expected all three staff users (MD or ADMIN) as ACTIVE members with profiles, found % membership(s)', v_md;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM core.quotations WHERE id = pg_temp.demo_id('quo:aurora'))
      OR NOT EXISTS (SELECT 1 FROM core.quotations WHERE id = pg_temp.demo_id('quo:meridian')) THEN
