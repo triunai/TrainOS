@@ -20,6 +20,7 @@
 -- transaction-local GUC, assertions after RESET ROLE.
 --
 -- T1  grants: authenticated EXECUTEs exactly the six core RPCs; anon none;
+--     the key-carrying five store both timeouts (R7);
 --     service_role only the accessor; 013's five public.ai_provider_key_* are
 --     executable by nobody; no client role can read vault or 029's tables.
 -- T2  create as ADMIN: contract ProviderKey keys, masked key, NOT_SET, addedBy;
@@ -199,6 +200,12 @@ BEGIN
                                                  'rotate_provider','reveal_provider','delete_provider')
         AND p.prosecdef AND p.proconfig @> ARRAY['search_path=""']) = 6,
     'T1c six core RPCs are SECURITY DEFINER at search_path="" exactly');
+  PERFORM pg_temp.assert(
+    (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE ((n.nspname = 'core' AND p.proname IN ('create_provider','test_provider','rotate_provider','reveal_provider'))
+          OR (n.nspname = 'app' AND p.proname = 'provider_key_for_tenant'))
+        AND p.proconfig @> ARRAY['statement_timeout=5s','lock_timeout=2s']) = 5,
+    'T1d the five key-carrying functions store statement_timeout=5s and lock_timeout=2s (029 R7)');
 END
 $t1$;
 

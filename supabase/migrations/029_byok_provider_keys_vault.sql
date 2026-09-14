@@ -179,6 +179,32 @@
 --     app.provider_key_probes; every 029 function is SECURITY DEFINER or a
 --     plain helper at `search_path=""` exactly, with one overload.
 --
+-- R7  NO KEY-CARRYING CALL MAY RUN LONG ENOUGH FOR auto_explain TO LOG IT.
+--     Hosted loads auto_explain with log_min_duration = 10000 and
+--     log_parameter_max_length = -1 (main, read-only check, 14 Sep), so a
+--     statement that COMPLETES after 10 seconds is logged with its bind
+--     parameters in full — the key, for create and rotate. The five functions
+--     that receive or return key material (create, test, rotate, reveal, the
+--     worker accessor) therefore carry `SET statement_timeout = '5s'` and
+--     `SET lock_timeout = '2s'`, and $verify$ V8 asserts both exact strings.
+--     ⚠ MEASURED, AND IT CHANGES WHICH OF THE TWO IS THE CONTROL: a function's
+--     own `SET statement_timeout` does NOT cancel the statement that called it
+--     — PostgreSQL arms that timer when the top-level statement starts, and a
+--     function with `SET statement_timeout = '1s'` around `pg_sleep(2.5)`
+--     returned after 2.5 s on the shim. `lock_timeout` IS read when each lock
+--     is requested, so the same SET cancelled a blocked
+--     `pg_advisory_xact_lock` after exactly 1 s. Every wait these functions can
+--     hit is a lock wait (the key row's FOR UPDATE, the reveal advisory lock,
+--     the fingerprint and Vault-name unique indexes), so lock_timeout is what
+--     bounds them; a cancelled statement never reaches ExecutorEnd, so
+--     auto_explain does not log it. statement_timeout stays declared because it
+--     documents intent and binds any statement these bodies start themselves.
+--     The top-level bound on hosted is PostgREST's per-role statement_timeout
+--     (Supabase defaults `authenticated` to 8s); confirm with
+--     `SELECT rolname, rolconfig FROM pg_roles WHERE rolname IN ('authenticated','service_role')`.
+--     The same measurement means the pack's `SET statement_timeout = '10s'` on
+--     018–022's RPCs does not bound those calls either. Reported, not changed.
+--
 -- ═══ WHAT I CANNOT CLOSE FROM SQL, STATED RATHER THAN MINIMISED ════════════
 --
 -- L1  RPC ARGUMENTS IN LOGS. PostgREST sends an RPC's JSON body as a BIND
@@ -736,7 +762,8 @@ RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-SET statement_timeout = '10s'
+SET statement_timeout = '5s'
+SET lock_timeout = '2s'
 AS $fn$
 DECLARE
   v_tenant      uuid := app.require_tenant_id();
@@ -827,7 +854,8 @@ RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-SET statement_timeout = '10s'
+SET statement_timeout = '5s'
+SET lock_timeout = '2s'
 AS $fn$
 DECLARE
   v_tenant uuid := app.require_tenant_id();
@@ -1019,7 +1047,8 @@ RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-SET statement_timeout = '10s'
+SET statement_timeout = '5s'
+SET lock_timeout = '2s'
 AS $fn$
 DECLARE
   v_tenant      uuid := app.require_tenant_id();
@@ -1118,7 +1147,8 @@ RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-SET statement_timeout = '10s'
+SET statement_timeout = '5s'
+SET lock_timeout = '2s'
 AS $fn$
 DECLARE
   v_tenant  uuid := app.require_tenant_id();
@@ -1347,7 +1377,8 @@ RETURNS TABLE (provider text, api_key text, base_url text, label text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-SET statement_timeout = '10s'
+SET statement_timeout = '5s'
+SET lock_timeout = '2s'
 AS $fn$
 DECLARE
   v_key record;
@@ -1571,6 +1602,18 @@ BEGIN
   IF v_offender IS DISTINCT FROM
      'app.provider_key_probes.outcome,app.provider_key_probes.requested_by,app.provider_key_salts.salt' THEN
     RAISE EXCEPTION '029 verify V7: unexpected text/jsonb/bytea columns: %', v_offender;
+  END IF;
+
+  -- V8 R7: the five key-carrying functions carry both timeouts, exactly.
+  SELECT pg_catalog.string_agg(procedure.oid::regprocedure::text, ', ') INTO v_offender
+    FROM pg_catalog.pg_proc AS procedure
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+   WHERE ((namespace.nspname = 'core'
+           AND procedure.proname IN ('create_provider','test_provider','rotate_provider','reveal_provider'))
+       OR (namespace.nspname = 'app' AND procedure.proname = 'provider_key_for_tenant'))
+     AND NOT (procedure.proconfig @> ARRAY['statement_timeout=5s', 'lock_timeout=2s']);
+  IF v_offender IS NOT NULL THEN
+    RAISE EXCEPTION '029 verify V8: missing statement_timeout=5s / lock_timeout=2s on %', v_offender;
   END IF;
 END
 $verify$;
