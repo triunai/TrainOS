@@ -62,17 +62,22 @@ SELECT tenant.id                                    AS t,
  WHERE tenant.slug = 'akademi-perdana';
 
 DO $pre$
-DECLARE v_md integer;
+DECLARE v_staff integer;
 BEGIN
   IF (SELECT count(*) FROM demo_ops_ctx) <> 1 THEN
     RAISE EXCEPTION 'hosted demo ops seed: tenant akademi-perdana not found; this seed never provisions';
   END IF;
-  SELECT count(*) INTO v_md
+  -- Any active staff role, not specifically MD: nothing this seed writes is
+  -- role-conditioned on u1/u2/u3 (they are only used as generic owner/creator
+  -- references), so it must not assume hosted's MD/ADMIN split, which has
+  -- changed at least once already (khucode/codeshern are ADMIN, khumeren is MD).
+  SELECT count(*) INTO v_staff
     FROM public.memberships m, demo_ops_ctx c
    WHERE m.tenant_id = c.t AND m.user_id IN (c.u1, c.u2, c.u3)
-     AND m.role = 'MD' AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
-  IF v_md <> 3 THEN
-    RAISE EXCEPTION 'hosted demo ops seed: expected all three MD users as ACTIVE members, found %', v_md;
+     AND m.role IN ('SALES','SALES_MANAGER','OPS','FINANCE','MD','ADMIN')
+     AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
+  IF v_staff <> 3 THEN
+    RAISE EXCEPTION 'hosted demo ops seed: expected all three named users as ACTIVE staff members, found %', v_staff;
   END IF;
 END
 $pre$;

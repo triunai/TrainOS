@@ -69,7 +69,7 @@ BEGIN
 END
 $t2$;
 
--- T3: 027's RPCs, as the first real MD.
+-- T3: 027's RPCs, as the first named real user (agent:read/run:read/ai:routing:read are held by both MD and ADMIN, so this holds regardless of which role hosted currently assigns them).
 DO $t3$
 DECLARE v jsonb; v_claims text;
 BEGIN
