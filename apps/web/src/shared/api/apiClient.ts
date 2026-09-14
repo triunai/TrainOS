@@ -5,6 +5,8 @@ import type {
   EnquiryExtractionPatch,
   MessageChannel,
   PageRequest,
+  PortalAcceptRequest,
+  PortalCommentRequest,
   ProposalCreateRequest,
   ProposalSectionWrite,
   QuotationWrite,
@@ -250,6 +252,15 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       paginate(must(await rpc.listKnowledgeSources()).data, page),
     getAiTiers: async () => must(await rpc.listAiTiers()),
     getBudgets: async () => must(await rpc.listBudgets()),
+
+    /* §11 the client portal. The fixture signature's options bag is accepted
+       and not forwarded: the portal passes the token as the key, and the
+       database already keys the acceptance by the proposal the token names. */
+    getPortalProposal: async (token: string) => must(await rpc.getPortalProposal(token)),
+    addPortalComment: async (token: string, body: PortalCommentRequest) =>
+      must(await rpc.addPortalComment(token, body)),
+    acceptPortalProposal: async (token: string, body: PortalAcceptRequest) =>
+      must(await rpc.acceptPortal(token, body)),
   };
 }
 

@@ -35,6 +35,10 @@ import type {
   PipelineConfig,
   PipelineObject,
   Policy,
+  PortalAcceptRequest,
+  PortalAcceptResponse,
+  PortalCommentRequest,
+  PortalProposal,
   Programme,
   ProgrammeDelivery,
   Proposal,
@@ -184,4 +188,7 @@ export interface TrainOsClient {
   listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>>;
   listAiTiers(): Promise<Result<ListResponse<ModelTier>>>;
   listBudgets(): Promise<Result<ListResponse<Budget>>>;
+  getPortalProposal(token: string): Promise<Result<PortalProposal>>;
+  addPortalComment(token: string, body: PortalCommentRequest): Promise<Result<PortalProposal>>;
+  acceptPortal(token: string, body: PortalAcceptRequest): Promise<Result<PortalAcceptResponse>>;
 }
