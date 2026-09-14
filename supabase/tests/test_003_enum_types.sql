@@ -51,7 +51,9 @@ INSERT INTO t003_expected (type_name, labels) VALUES
     ('absence_reason', ARRAY['MEDICAL_LEAVE', 'WORK_CONFLICT', 'NO_SHOW', 'OTHER']::text[]),
     ('action_status', ARRAY['EXECUTED', 'QUEUED_FOR_APPROVAL', 'SUGGESTED', 'REJECTED']::text[]),
     ('agent_status', ARRAY['ACTIVE', 'PAUSED', 'RETIRED']::text[]),
-    ('ai_provider', ARRAY['ANTHROPIC', 'GOOGLE', 'OPENAI', 'DEEPSEEK']::text[]),
+    -- ⚠ AMENDED BY 029: 4 -> 6. 029 adds OPENROUTER and OTHER (enums.ts:737);
+    -- ADD VALUE appends, so the four 003 labels keep their order.
+    ('ai_provider', ARRAY['ANTHROPIC', 'GOOGLE', 'OPENAI', 'DEEPSEEK', 'OPENROUTER', 'OTHER']::text[]),
     ('approval_decision', ARRAY['APPROVE', 'REQUEST_CHANGES', 'REJECT']::text[]),
     ('approval_status', ARRAY['PENDING', 'APPROVED', 'CHANGES_REQUESTED', 'REJECTED', 'EXPIRED']::text[]),
     ('attendance_status', ARRAY['OPEN', 'PENDING_APPROVAL', 'LOCKED']::text[]),
