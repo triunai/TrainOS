@@ -21,26 +21,31 @@
 --     does not exist for runs; every knowledge source starts WATCHING/PENDING;
 --   * leaves every `ref` NULL so core.assign_ref allocates it.
 --
--- ⚠ ONE DELIBERATE EXCEPTION TO "never writes auth.users": core.agents.principal_user_id
+-- ⚠ NO auth.users WRITES, ANYWHERE IN THIS FILE. core.agents.principal_user_id
 -- is NOT NULL REFERENCES auth.users(id) (013's "one inert auth.users row per
--- agent per tenant, so sub points at something" — 013:983). These rows are not
--- simulated humans: they never log in, hold no membership, and 013 itself
--- designed them as pure plumbing so an agent's JWT `sub` resolves to something.
--- Four such rows are created below, one per seeded agent, each keyed off
--- pg_temp.demo_id so a second run finds them and writes nothing new. Flagged
--- for the orchestrator to confirm before hosted apply.
+-- agent per tenant, so sub points at something" — 013:983), and core.runs has
+-- a composite FK to core.agents(tenant_id, agent_id) (013:1676) that only an
+-- agent row can satisfy. A hosted-safe seed cannot create auth.users rows (the
+-- orchestrator's review flagged an earlier draft that did, for exactly this
+-- reason), so this seed carries NO core.agents, NO core.autonomy_grants (they
+-- would dangle on an agent_id with nothing behind it) and NO core.runs rows.
+-- listAgents/listRuns/getRun/pauseAgent/retryRun/deadLetterRun have no hosted
+-- demo data as a result — flagged in the PR as a follow-up (a worker-owned
+-- agent-principal provisioning path, out of this lane's scope, would be
+-- needed to seed those safely). Knowledge sources, library assets, AI
+-- routing, usage and budget rows need no agent principal and are kept in full.
 --
 -- Idempotent: every id is pg_temp.demo_id(<stable key>), a uuid in the
 -- de270272-5eed-4xxx-8xxx-xxxxxxxxxxxx range (027, "ops" — distinct from
 -- hosted_demo_akademi_perdana.sql's de30da7a-5eed-4… range and from every
 -- other domain seed's own range), and every INSERT is guarded by NOT EXISTS on
--- that id. A second run writes nothing.
+-- that id. A second run writes nothing. tier_keys rows are also given an
+-- explicit demo_id (013's own default is a random uuid) so the wipe can find
+-- them the same way it finds every other table here: by id marker, not name.
 --
--- Row counts: 3 tier_keys, 4 agents (+4 autonomy_grants, +4 principal
--- auth.users rows), 6 runs (3 SUCCEEDED, 2 FAILED, 1 FAILED+dead-lettered), 1
--- routing matrix version + 3 routing_entries, 1 ai_budget, usage_rollup for
--- the current period, 1 ai_provider_key (placeholder, no key material), 3
--- knowledge_sources, 4 library_assets.
+-- Row counts: 3 tier_keys, 1 routing matrix version + 3 routing_entries, 1
+-- ai_budget, usage_rollup for the current period, 1 ai_provider_key
+-- (placeholder, no key material), 3 knowledge_sources, 4 library_assets.
 
 CREATE OR REPLACE FUNCTION pg_temp.demo_id(p_key text)
 RETURNS uuid
@@ -87,69 +92,12 @@ $pre$;
 -- seeds none. Provisioned here since every table below has a composite FK to
 -- this reference table.
 
-INSERT INTO core.tier_keys (tenant_id, tier_key, label, position)
-SELECT c.t, v.key, v.label, v.pos
+INSERT INTO core.tier_keys (id, tenant_id, tier_key, label, position)
+SELECT pg_temp.demo_id('tier:' || v.key), c.t, v.key, v.label, v.pos
   FROM demo_ops_ctx c, (VALUES
     ('FAST', 'Fast', 1::smallint), ('STANDARD', 'Standard', 2::smallint), ('DEEP', 'Deep', 3::smallint)
   ) AS v(key, label, pos)
  WHERE NOT EXISTS (SELECT 1 FROM core.tier_keys x WHERE x.tenant_id = c.t AND x.tier_key = v.key);
-
--- ── Agent principals (see the header exception) and the roster ─────────────
-
-INSERT INTO auth.users (id, aud, role, email)
-SELECT pg_temp.demo_id('agent-principal:' || v.slug), 'authenticated', 'authenticated',
-       v.slug || '@agents.akademiperdana.my'
-  FROM (VALUES ('agent_sales_copilot'), ('agent_ops_scheduler'), ('agent_compliance_watch'),
-               ('agent_collections_copilot')) AS v(slug)
- WHERE NOT EXISTS (SELECT 1 FROM auth.users x WHERE x.id = pg_temp.demo_id('agent-principal:' || v.slug));
-
-INSERT INTO core.agents (id, tenant_id, agent_id, name, status, principal_user_id, scopes, default_tier, last_run_at)
-SELECT pg_temp.demo_id('agent:' || v.slug), c.t, v.slug, v.name, 'ACTIVE',
-       pg_temp.demo_id('agent-principal:' || v.slug), v.scopes, v.tier, c.at - v.last_run_ago
-  FROM demo_ops_ctx c, (VALUES
-    ('agent_sales_copilot',      'Sales Copilot',       ARRAY['proposal:draft','followup:draft'], 'STANDARD', interval '3 hours'),
-    ('agent_ops_scheduler',      'Ops Scheduler',       ARRAY['trainer:book','engagement:schedule'], 'FAST', interval '1 day'),
-    ('agent_compliance_watch',   'Compliance Watch',    ARRAY['hrdc:monitor','knowledge:check'], 'STANDARD', interval '6 hours'),
-    ('agent_collections_copilot','Collections Copilot', ARRAY['collections:draft'], 'FAST', interval '2 days')
-  ) AS v(slug, name, scopes, tier, last_run_ago)
- WHERE NOT EXISTS (SELECT 1 FROM core.agents x WHERE x.tenant_id = c.t AND x.agent_id = v.slug);
-
-INSERT INTO core.autonomy_grants (tenant_id, agent_id, action_type, level, approver_role, granted_by)
-SELECT c.t, v.slug, v.action_type, v.level, v.approver, 'seed:hosted-demo-ops'
-  FROM demo_ops_ctx c, (VALUES
-    ('agent_sales_copilot',       'PROPOSAL_SEND',   'ACT_WITH_APPROVAL', 'SALES_MANAGER'),
-    ('agent_ops_scheduler',       'TRAINER_BOOK',     'SUGGEST',          'OPS'),
-    ('agent_compliance_watch',    'RULE_CHANGE_APPROVE','SUGGEST',        'OPS'),
-    ('agent_collections_copilot', 'REMINDER_SEND',    'ACT_WITH_APPROVAL','FINANCE')
-  ) AS v(slug, action_type, level, approver)
- WHERE NOT EXISTS (
-   SELECT 1 FROM core.autonomy_grants x
-    WHERE x.tenant_id = c.t AND x.agent_id = v.slug AND x.action_type = v.action_type);
-
--- ── Runs: 3 SUCCEEDED, 2 FAILED, 1 FAILED + dead-lettered ───────────────────
-
-INSERT INTO core.runs (id, tenant_id, agent_id, trigger, status, outcome, failure, model, tokens_in, tokens_out,
-                        cost_sen, currency, guardrails, started_at, finished_at, duration_ms)
-SELECT pg_temp.demo_id('run:' || v.key), c.t, v.agent, v.trigger::jsonb, v.status::core.run_status, v.outcome, v.failure::jsonb,
-       v.model, v.tin, v.tout, v.cost, 'MYR', v.guardrails, c.at - v.ago, c.at - v.ago + (v.dur_ms || ' ms')::interval, v.dur_ms
-  FROM demo_ops_ctx c, (VALUES
-    ('sales-1', 'agent_sales_copilot', '{"type":"ENQUIRY_RECEIVED","ref":"aurora-mfg"}', 'SUCCEEDED', 'PROPOSAL_DRAFTED', NULL,
-      'claude-sonnet', 2100, 380, 1200, ARRAY['pdpa_redaction'], interval '2 days', 32000),
-    ('ops-1',   'agent_ops_scheduler', '{"type":"SCHEDULE"}', 'SUCCEEDED', 'TRAINER_BOOKED', NULL,
-      'claude-haiku', 900, 150, 300, ARRAY[]::text[], interval '1 days', 8000),
-    ('cw-1',    'agent_compliance_watch', '{"type":"MONITOR_TICK"}', 'SUCCEEDED', 'NO_CHANGE', NULL,
-      'claude-haiku', 400, 60, 120, ARRAY[]::text[], interval '5 hours', 4000),
-    ('sales-2', 'agent_sales_copilot', '{"type":"ENQUIRY_RECEIVED","ref":"nusantara-eng"}', 'FAILED', NULL,
-      '{"code":"PROVIDER_5XX","message":"Upstream model timeout after 3 attempts","attempts":3,"retryable":true,"deadLettered":false}',
-      'claude-sonnet', 1800, 0, 900, ARRAY['pdpa_redaction'], interval '3 days', 41000),
-    ('coll-1',  'agent_collections_copilot', '{"type":"RECEIVABLE_AGED","ref":"INV-2026-0279"}', 'FAILED', NULL,
-      '{"code":"WA_TEMPLATE_REJECTED","message":"Template not approved for the UTILITY category","attempts":1,"retryable":false,"deadLettered":false}',
-      'claude-haiku', 500, 20, 80, ARRAY[]::text[], interval '4 days', 5000),
-    ('cw-2',    'agent_compliance_watch', '{"type":"MONITOR_TICK"}', 'FAILED', NULL,
-      '{"code":"SOURCE_UNREACHABLE","message":"HRDC portal returned 503 three times","attempts":3,"retryable":false,"deadLettered":true}',
-      'claude-haiku', 300, 0, 90, ARRAY[]::text[], interval '6 days', 3000)
-  ) AS v(key, agent, trigger, status, outcome, failure, model, tin, tout, cost, guardrails, ago, dur_ms)
- WHERE NOT EXISTS (SELECT 1 FROM core.runs x WHERE x.id = pg_temp.demo_id('run:' || v.key));
 
 -- ── AI routing ───────────────────────────────────────────────────────────────
 

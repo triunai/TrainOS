@@ -4,11 +4,14 @@
 -- provisioned, all three MD users are members, and 001-021+027 are applied:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/seeds/test_hosted_demo_ops.sql
 --
--- T1  seed: exact row counts per table in the de270272-5eed-4… range
+-- T1  seed: exact row counts per table in the de270272-5eed-4… range, and
+--     zero rows written to auth.users, core.agents, core.autonomy_grants or
+--     core.runs (this seed must never require an agent principal)
 -- T2  second seed run changes nothing (same counts, same ids)
 -- T3  027's RPCs return the seeded rows for an MD, as `authenticated` with
---     real hook claims: list_agents (4), list_runs (6, 1 dead-lettered),
---     get_ai_routing (3 entries), list_providers (1, masked only), get_usage
+--     real hook claims: get_ai_routing (3 entries), list_providers (1, masked
+--     only), get_usage; list_agents/list_runs return empty (no agent/run
+--     demo data — see the seed's header)
 -- T4  wipe: zero seed rows anywhere in the de270272-5eed-4… range
 
 \set ON_ERROR_STOP on
@@ -21,15 +24,17 @@ CREATE FUNCTION pg_temp.snapshot(p_phase text) RETURNS void LANGUAGE plpgsql AS 
 DECLARE v_t uuid := (SELECT id FROM public.tenants WHERE slug = 'akademi-perdana');
 BEGIN
   INSERT INTO pin_ops_counts VALUES
-    (p_phase, 'core.agents',            (SELECT count(*) FROM core.agents WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
-    (p_phase, 'core.autonomy_grants',   (SELECT count(*) FROM core.autonomy_grants ag JOIN core.agents a ON a.tenant_id = ag.tenant_id AND a.agent_id = ag.agent_id WHERE ag.tenant_id = v_t AND a.id::text LIKE 'de270272-5eed-4%')),
-    (p_phase, 'core.runs',              (SELECT count(*) FROM core.runs WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
+    (p_phase, 'core.tier_keys',         (SELECT count(*) FROM core.tier_keys WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
     (p_phase, 'core.routing_entries',   (SELECT count(*) FROM core.routing_entries WHERE tenant_id = v_t AND version_id::text LIKE 'de270272-5eed-4%')),
     (p_phase, 'core.ai_budgets',        (SELECT count(*) FROM core.ai_budgets WHERE tenant_id = v_t AND scope = 'TIER' AND key = 'STANDARD')),
     (p_phase, 'core.ai_provider_keys',  (SELECT count(*) FROM core.ai_provider_keys WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
     (p_phase, 'core.knowledge_sources', (SELECT count(*) FROM core.knowledge_sources WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
     (p_phase, 'core.library_assets',    (SELECT count(*) FROM core.library_assets WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
-    (p_phase, 'auth.users',             (SELECT count(*) FROM auth.users WHERE id::text LIKE 'de270272-5eed-4%'));
+    -- Never written by this seed; asserted at zero every phase, including T1.
+    (p_phase, 'auth.users',             (SELECT count(*) FROM auth.users WHERE id::text LIKE 'de270272-5eed-4%')),
+    (p_phase, 'core.agents',            (SELECT count(*) FROM core.agents WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%')),
+    (p_phase, 'core.autonomy_grants',   (SELECT count(*) FROM core.autonomy_grants WHERE tenant_id = v_t AND granted_by = 'seed:hosted-demo-ops')),
+    (p_phase, 'core.runs',              (SELECT count(*) FROM core.runs WHERE tenant_id = v_t AND id::text LIKE 'de270272-5eed-4%'));
 END; $fn$;
 
 \i supabase/seeds/hosted_demo_ops.sql
@@ -39,15 +44,18 @@ DO $t1$
 DECLARE r record;
 BEGIN
   FOR r IN SELECT * FROM pin_ops_counts WHERE phase = 'T1' LOOP
-    IF (r.tbl = 'core.agents' AND r.n <> 4)
-       OR (r.tbl = 'core.autonomy_grants' AND r.n <> 4)
-       OR (r.tbl = 'core.runs' AND r.n <> 6)
+    IF (r.tbl = 'core.tier_keys' AND r.n <> 3)
        OR (r.tbl = 'core.routing_entries' AND r.n <> 3)
        OR (r.tbl = 'core.ai_budgets' AND r.n <> 1)
        OR (r.tbl = 'core.ai_provider_keys' AND r.n <> 1)
        OR (r.tbl = 'core.knowledge_sources' AND r.n <> 3)
        OR (r.tbl = 'core.library_assets' AND r.n <> 4)
-       OR (r.tbl = 'auth.users' AND r.n <> 4) THEN
+       -- Fail-closed teeth check: a hosted-safe ops seed must never require
+       -- an agent principal, so these stay at zero.
+       OR (r.tbl = 'auth.users' AND r.n <> 0)
+       OR (r.tbl = 'core.agents' AND r.n <> 0)
+       OR (r.tbl = 'core.autonomy_grants' AND r.n <> 0)
+       OR (r.tbl = 'core.runs' AND r.n <> 0) THEN
       RAISE EXCEPTION 'T1: unexpected row count for %: %', r.tbl, r.n;
     END IF;
   END LOOP;
@@ -81,19 +89,16 @@ BEGIN
   SET LOCAL ROLE authenticated;
   PERFORM pg_catalog.set_config('request.jwt.claims', v_claims, true);
 
+  -- No agent/run demo data (see the seed's header): both RPCs must still
+  -- succeed for an MD, just with nothing seeded for them to return.
   v := core.list_agents();
-  IF (v->>'success') <> 'true' OR jsonb_array_length(v -> 'data' -> 'data') <> 4 THEN
-    RAISE EXCEPTION 'T3a: list_agents did not return the 4 seeded agents: %', v;
+  IF (v->>'success') <> 'true' OR jsonb_array_length(v -> 'data' -> 'data') <> 0 THEN
+    RAISE EXCEPTION 'T3a: list_agents unexpectedly returned agents with no agent demo data: %', v;
   END IF;
 
   v := core.list_runs();
-  IF (v->>'success') <> 'true' OR jsonb_array_length(v -> 'data' -> 'data') <> 6 THEN
-    RAISE EXCEPTION 'T3b: list_runs did not return the 6 seeded runs: %', v;
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM jsonb_array_elements(v -> 'data' -> 'data') row
-     WHERE row -> 'failure' ->> 'deadLettered' = 'true') THEN
-    RAISE EXCEPTION 'T3c: no dead-lettered run among the seeded runs';
+  IF (v->>'success') <> 'true' OR jsonb_array_length(v -> 'data' -> 'data') <> 0 THEN
+    RAISE EXCEPTION 'T3b: list_runs unexpectedly returned runs with no run demo data: %', v;
   END IF;
 
   v := core.get_ai_routing();
