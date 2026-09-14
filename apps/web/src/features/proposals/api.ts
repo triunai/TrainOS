@@ -148,6 +148,10 @@ export function useEditSection(id: string | undefined) {
   return useMutation({
     mutationFn: ({ n, body }: { n: number; body: ProposalSectionWrite }) =>
       client.putProposalSection(id as string, n, body),
+    /* An explicit "Save" click on the editor panel, not autosave-on-keystroke
+       — see `ProposalBuilderPage`'s `SectionEditor` — so one toast per save is
+       the right cardinality, not noise. */
+    meta: { toastOnSuccess: "Section saved" },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.detail(id ?? "") });
     },
@@ -168,6 +172,7 @@ export function useAddSection(id: string | undefined) {
   return useMutation({
     mutationFn: (body: { title: string; body?: string }) =>
       client.addProposalSection(id as string, body),
+    meta: { toastOnSuccess: "Section added" },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.detail(id ?? "") });
     },
@@ -180,6 +185,10 @@ export function useRegenerateSection(id: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (n: number) => client.regenerateProposalSection(id as string, n),
+    /* The content changes underneath the reader without them typing anything
+       — the one write here where "did that actually run" is a real question,
+       not merely an unconfirmed one. */
+    meta: { toastOnSuccess: "Section regenerated" },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposals.detail(id ?? "") });
     },
@@ -266,8 +275,11 @@ export function useSaveQuotation(id: string | undefined) {
   return useMutation({
     mutationFn: (body: QuotationWrite) => client.putQuotation(id as string, body),
     /* Fire-and-forget from a button: nothing awaits this call and no screen
-       renders its `error`, so without the flag a refusal is invisible. R3. */
-    meta: { toastOnError: true },
+       renders its `error`, so without the flag a refusal is invisible. R3.
+       `CostingWorksheetPage`'s "Save" had no success feedback at all — the
+       price simply updated on screen, indistinguishable from a click that had
+       not landed yet. */
+    meta: { toastOnError: true, toastOnSuccess: "Quotation saved" },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.quotations.detail(id ?? "") });
     },

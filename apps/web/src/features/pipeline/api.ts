@@ -98,7 +98,10 @@ export interface StageMove {
  * somebody else has already moved the deal underneath it.
  */
 export function useMoveDealStage() {
-  const action = useAction();
+  /* The board renders its `ActionOutcome` unconditionally whenever `subject`
+     (local state, set by `move` below) is set — not keyed off any data this
+     action invalidates — so a toast on top would repeat it. */
+  const action = useAction({ toast: false });
   const actor = useActor();
   const queryClient = useQueryClient();
 

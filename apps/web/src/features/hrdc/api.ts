@@ -13,6 +13,7 @@ import type {
 } from "@trainos/contract";
 import { isContractError } from "@trainos/fixtures";
 import { ApiErrorException, domainErrorFromEnvelope, queryKeys, useApi } from "@/shared/api";
+import { humanise } from "@/shared/components/kit/format";
 
 /**
  * The HRD Corp feature's data boundary. Screens call hooks from this file and
@@ -130,7 +131,11 @@ export function useAttachDocument(engagementRef: string) {
 
   return useMutation<ClaimPacket, unknown, HrdcDocumentAttachRequest>({
     mutationFn: (body) => call(() => api.attachPacketDocument(engagementRef, body)),
-    meta: { toastOnError: true },
+    meta: {
+      toastOnError: true,
+      toastOnSuccess: (_data, variables) =>
+        `Document attached · ${humanise((variables as HrdcDocumentAttachRequest).type)}`,
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.claimPackets.all });
       /* The checks count the packet's documents. Invalidating the packet alone
@@ -169,7 +174,7 @@ export function useCreateComplianceRule() {
 
   return useMutation<ComplianceRule, unknown, Omit<ComplianceRule, "status">>({
     mutationFn: (body) => call(() => api.createComplianceRule(body)),
-    meta: { toastOnError: true },
+    meta: { toastOnError: true, toastOnSuccess: "Rule added — loaded as proposed, unverified" },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.complianceRules.all });
     },

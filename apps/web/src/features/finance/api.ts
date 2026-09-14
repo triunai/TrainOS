@@ -111,6 +111,10 @@ export function useRecordPayment(invoiceRef: string) {
           idempotencyKey: `payment-${invoiceRef}-${body.reference ?? body.at}`,
         }),
       ),
+    /* The dialog just closed and cleared its own fields on success — the only
+       trace a payment landed was the balance changing on a screen the reader
+       had usually already navigated off of `InvoiceDetailScreen` records. */
+    meta: { toastOnSuccess: `Payment recorded · ${invoiceRef}` },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.collections.all });

@@ -230,6 +230,11 @@ export function useEngagementAction() {
   const queryClient = useQueryClient();
 
   return useAction({
+    /* Both callers (`EngagementDetailPage`, `AttendanceCapturePage`) render an
+       `ActionOutcome` keyed off `action.data` — the mutation's own state, not
+       page data this action can invalidate — right beside the button, and it
+       stays mounted until dismissed. A toast on top would repeat it. */
+    toast: false,
     onSettled: (result) => {
       if (result.kind === "error") return;
       void queryClient.invalidateQueries({ queryKey: engagementKeys.all });

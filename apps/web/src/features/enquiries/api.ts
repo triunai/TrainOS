@@ -126,11 +126,21 @@ export function useFollowUpDraft(id: string | undefined, channel: MessageChannel
  * what is specific to the feature, which is what a converted enquiry makes
  * stale. Refusals are skipped deliberately: nothing moved, so there is nothing
  * to refetch.
+ *
+ * `useAction`'s toast defaults ON, and stays on here: the inbox card and the
+ * follow-up queue both render their `ActionOutcome` inside a section keyed off
+ * `suggestion`/`draft.data` — data this very action invalidates — so the
+ * banner can disappear on the SAME refetch that made the write succeed. That
+ * was the actual bug behind "convert gave no feedback": the banner was
+ * unmounted by its own refetch before anyone read it. The detail page's
+ * `ActionOutcome` doesn't have that problem (see `EnquiryDetailPage`, fixed to
+ * render unconditionally) and opts out with `toast: false` at the call site.
  */
-export function useEnquiryAction() {
+export function useEnquiryAction(options?: { toast?: boolean }) {
   const queryClient = useQueryClient();
 
   return useAction({
+    ...(options?.toast === false ? { toast: false } : {}),
     onSettled: (result) => {
       if (result.kind === "error") return;
       void queryClient.invalidateQueries({ queryKey: queryKeys.enquiries.all });

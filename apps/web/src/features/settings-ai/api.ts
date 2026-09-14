@@ -74,6 +74,9 @@ export function usePutAiRouting() {
   return useMutation<RoutingResponse, ApiError, RoutingEntry[]>({
     mutationFn: (entries) =>
       api.putAiRouting(entries).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* No `toastOnSuccess`: `AiModelsScreen` already renders `apply.isSuccess`
+       as an unconditional inline banner ("Applied to future runs") — a toast
+       on top would repeat it. */
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.routing });
     },
@@ -101,6 +104,10 @@ export function useCreateProvider() {
     gcTime: 0,
     mutationFn: (body) =>
       api.createProvider(body).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* `AddProviderKeyDrawer` closes on success with no confirmation of its
+       own — see `RefusalBanner` two lines below its close, which is the only
+       feedback this write had before. */
+    meta: { toastOnSuccess: (data) => `Provider "${(data as ProviderKey).label}" added` },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.providers });
     },
@@ -113,6 +120,14 @@ export function useTestProvider() {
   const client = useQueryClient();
   return useMutation<ProviderKeyTestResponse, ApiError, string>({
     mutationFn: (id) => api.testProvider(id).catch((thrown) => Promise.reject(toApiError(thrown))),
+    meta: {
+      /* Only the pass case: `toastOnSuccess` always rings a GREEN toast, and a
+         200 response is exactly how this probe answers a FAILED test too (see
+         the doc comment above) — the row's `StatusChip` and the "Rejected
+         since" banner already carry INVALID/EXPIRING, in the right colour. */
+      toastOnSuccess: (data) =>
+        (data as ProviderKeyTestResponse).status === "VALID" ? "Connection test passed" : undefined,
+    },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.providers });
     },
@@ -175,6 +190,9 @@ export function usePutBudget() {
   return useMutation<Budget, ApiError, { scope: Budget["scope"]; key: string; body: BudgetWrite }>({
     mutationFn: ({ scope, key, body }) =>
       api.putBudget(scope, key, body).catch((thrown) => Promise.reject(toApiError(thrown))),
+    /* No `toastOnSuccess`: `UsageBudgetsScreen` already renders `raise.isSuccess`
+       as an unconditional inline banner naming the new cap — a toast on top
+       would repeat it. */
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: aiKeys.usageRoot });
     },
