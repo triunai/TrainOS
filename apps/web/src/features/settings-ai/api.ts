@@ -88,10 +88,17 @@ export function useProviders(): UseQueryResult<ListResponse<ProviderKey>, ApiErr
   });
 }
 
+/**
+ * `gcTime: 0` because the mutation's VARIABLES are the request body, and the
+ * body carries the raw key. TanStack keeps a finished mutation — variables and
+ * all — in the MutationCache for five minutes by default after its observer
+ * unmounts; with 0 it is dropped the moment the drawer closes.
+ */
 export function useCreateProvider() {
   const api = useApi();
   const client = useQueryClient();
   return useMutation<ProviderKey, ApiError, ProviderKeyCreateRequest>({
+    gcTime: 0,
     mutationFn: (body) =>
       api.createProvider(body).catch((thrown) => Promise.reject(toApiError(thrown))),
     onSuccess: () => {
@@ -119,10 +126,16 @@ export function useTestProvider() {
  * Deliberately a mutation and not a query: it has a side effect, it must never
  * be cached, and it must never be re-run by a refetch. A revealed key that a
  * cache could replay is not an audited reveal.
+ *
+ * A mutation is still CACHED, though: TanStack holds its `data` in the
+ * MutationCache for `gcTime` (five minutes by default) after the screen that
+ * asked unmounts. `gcTime: 0` drops it with its last observer, so the key lives
+ * exactly as long as the card showing it. Pinned by provider-secrets.test.tsx.
  */
 export function useRevealProvider() {
   const api = useApi();
   return useMutation<ProviderKeyRevealResponse, ApiError, string>({
+    gcTime: 0,
     mutationFn: (id) =>
       api.revealProvider(id).catch((thrown) => Promise.reject(toApiError(thrown))),
   });

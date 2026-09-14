@@ -43,6 +43,10 @@ import type {
   ProposalSectionRegenerateResponse,
   ProposalSectionWrite,
   ProposalsVsWonReport,
+  ProviderKey,
+  ProviderKeyCreateRequest,
+  ProviderKeyRevealResponse,
+  ProviderKeyTestResponse,
   Quotation,
   QuotationWrite,
   RateCard,
@@ -188,4 +192,9 @@ export interface TrainOsClient {
   listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>>;
   listAiTiers(): Promise<Result<ListResponse<ModelTier>>>;
   listBudgets(): Promise<Result<ListResponse<Budget>>>;
+  createProvider(body: ProviderKeyCreateRequest): Promise<Result<ProviderKey>>;
+  testProvider(id: string): Promise<Result<ProviderKeyTestResponse>>;
+  rotateProvider(id: string, key: string): Promise<Result<ProviderKey>>;
+  revealProvider(id: string): Promise<Result<ProviderKeyRevealResponse>>;
+  deleteProvider(id: string): Promise<Result<void>>;
 }

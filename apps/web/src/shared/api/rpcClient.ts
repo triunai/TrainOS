@@ -41,6 +41,11 @@ import type {
   Proposal,
   ProposalSectionRegenerateResponse,
   ProposalsVsWonReport,
+  ProviderKey,
+  ProviderKeyCreateRequest,
+  ProviderKeyRevealResponse,
+  ProviderKeyStatus,
+  ProviderKeyTestResponse,
   Quotation,
   RateCard,
   RuleChangeSet,
@@ -445,6 +450,12 @@ export const RPC_NAMES = {
     "get_contact",
     "get_programme",
     "get_compliance_rule",
+    "create_provider",
+    "test_provider",
+    "get_provider_test_result",
+    "rotate_provider",
+    "reveal_provider",
+    "delete_provider",
   ],
 } as const;
 
@@ -470,11 +481,46 @@ const asList = <T>(rows: T[]): ListResponse<T> => ({
   page: { next: null, total: rows.length },
 });
 
+/**
+ * What `core.test_provider` and `core.get_provider_test_result` answer (029).
+ *
+ * NOT a contract shape, and deliberately not exported: the contract's
+ * `ProviderKeyTestResponse` is synchronous, and a provider probe cannot be. The
+ * database queues the request through pg_net, whose worker sends it only after
+ * the queuing transaction commits, so the verdict is a second call. This client
+ * polls that second call and hands the app the contract's shape.
+ */
+interface ProviderProbe {
+  state: "PENDING" | "DONE";
+  outcome: string;
+  status: ProviderKeyStatus;
+  lastTestedAt: string;
+  requestedAt: string;
+  message?: string;
+}
+
+/** How long a provider probe is polled before the client stops waiting. */
+export interface ProbePolling {
+  intervalMs: number;
+  attempts: number;
+}
+
+/**
+ * pg_net's worker normally answers inside a second; a provider's models list
+ * inside another. Twelve polls at 750ms bounds the wait at nine seconds, under
+ * the probe's own five-second HTTP timeout plus the worker's batch delay.
+ */
+export const DEFAULT_PROBE_POLLING: ProbePolling = { intervalMs: 750, attempts: 12 };
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /* ------------------------------------------------------------------ *
  * The client
  * ------------------------------------------------------------------ */
 
 export class SupabaseRpcClient implements TrainOsClient {
+  constructor(private readonly probePolling: ProbePolling = DEFAULT_PROBE_POLLING) {}
+
   /**
    * Every `supabase.rpc()` call in the app funnels through here.
    *
@@ -876,7 +922,100 @@ export class SupabaseRpcClient implements TrainOsClient {
   listBudgets(): Promise<Result<ListResponse<Budget>>> {
     return this.view<Budget>(VIEW_READS.aiBudgets);
   }
+
+  /**
+   * §17 `POST /v1/ai/providers`. The key rides as `p_key` in the POST body and
+   * nowhere else; the database stores it in Vault and answers the masked record.
+   * 029 queues a probe with the create, so the record comes back carrying the
+   * probe's verdict when the provider answers inside the poll window — a new
+   * key left at NOT_SET is drawn as an empty slot with no Test button.
+   */
+  async createProvider(body: ProviderKeyCreateRequest): Promise<Result<ProviderKey>> {
+    const created = await this.call<ProviderKey>("create_provider", {
+      p_provider: body.provider,
+      p_label: body.label,
+      p_key: body.key,
+      p_scope_tiers: body.scopeTiers,
+      p_billing_owner: body.billingOwner,
+      p_region: body.region,
+      p_cap: body.cap ?? null,
+      p_rotation_date: body.rotationDate ?? null,
+    });
+    if (created.error !== null) return created;
+    return ok(await this.withProbeVerdict(created.data));
+  }
+
+  /** §17 `POST /v1/ai/providers/{id}/test` — fire, then poll for the verdict. */
+  async testProvider(id: string): Promise<Result<ProviderKeyTestResponse>> {
+    const fired = await this.call<ProviderProbe>("test_provider", { p_id: id });
+    if (fired.error !== null) return fail(fired.error);
+    const probe = fired.data.state === "DONE" ? ok(fired.data) : await this.pollProbe(id);
+    if (probe.error !== null) return fail(probe.error);
+    return ok(testResponseOf(probe.data));
+  }
+
+  /** §17 `POST /v1/ai/providers/{id}/rotate` — the old key is gone on commit. */
+  async rotateProvider(id: string, key: string): Promise<Result<ProviderKey>> {
+    const rotated = await this.call<ProviderKey>("rotate_provider", { p_id: id, p_key: key });
+    if (rotated.error !== null) return rotated;
+    return ok(await this.withProbeVerdict(rotated.data));
+  }
+
+  /**
+   * §17 `POST /v1/ai/providers/{id}/reveal` — ADMIN at AAL2, audited, rate
+   * limited. The key is returned to the caller and held nowhere in this client.
+   */
+  revealProvider(id: string): Promise<Result<ProviderKeyRevealResponse>> {
+    return this.call<ProviderKeyRevealResponse>("reveal_provider", { p_id: id });
+  }
+
+  /** §17 `DELETE /v1/ai/providers/{id}` — AGENT_PAUSED when a tier would be keyless. */
+  async deleteProvider(id: string): Promise<Result<void>> {
+    const deleted = await this.call<unknown>("delete_provider", { p_id: id });
+    return deleted.error !== null ? fail(deleted.error) : ok(undefined);
+  }
+
+  /**
+   * Poll `get_provider_test_result` until the probe is DONE or the window
+   * closes. A still-PENDING probe at the end is returned as it stands; the
+   * caller decides what that means.
+   */
+  private async pollProbe(id: string): Promise<Result<ProviderProbe>> {
+    let last: Result<ProviderProbe> = fail(
+      transportError("NETWORK", "The provider test did not start.", {}),
+    );
+    for (let attempt = 0; attempt < this.probePolling.attempts; attempt++) {
+      await sleep(this.probePolling.intervalMs);
+      last = await this.call<ProviderProbe>("get_provider_test_result", { p_id: id });
+      if (last.error !== null || last.data.state === "DONE") return last;
+    }
+    return last;
+  }
+
+  /** The written record, with the probe's verdict folded in when it arrived. */
+  private async withProbeVerdict(record: ProviderKey): Promise<ProviderKey> {
+    const probe = await this.pollProbe(record.id);
+    if (probe.error !== null || probe.data.state !== "DONE") return record;
+    return { ...record, status: probe.data.status, lastTestedAt: probe.data.lastTestedAt };
+  }
+}
+
+/** The contract's synchronous answer, from a probe that may still be pending. */
+function testResponseOf(probe: ProviderProbe): ProviderKeyTestResponse {
+  if (probe.state === "PENDING") {
+    return {
+      status: probe.status,
+      lastTestedAt: probe.requestedAt,
+      message: "The provider has not answered yet. Test again in a moment to read its verdict.",
+    };
+  }
+  return {
+    status: probe.status,
+    lastTestedAt: probe.lastTestedAt,
+    ...(probe.message === undefined ? {} : { message: probe.message }),
+  };
 }
 
 /** The client the seam mounts when `VITE_API_MODE=supabase`. */
-export const createRpcClient = (): TrainOsClient => new SupabaseRpcClient();
+export const createRpcClient = (probePolling?: ProbePolling): TrainOsClient =>
+  new SupabaseRpcClient(probePolling);

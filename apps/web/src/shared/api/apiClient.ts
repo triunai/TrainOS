@@ -7,6 +7,8 @@ import type {
   PageRequest,
   ProposalCreateRequest,
   ProposalSectionWrite,
+  ProviderKeyCreateRequest,
+  ProviderKeyRotateRequest,
   QuotationWrite,
   SavedView,
   TemplateType,
@@ -252,6 +254,18 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       paginate(must(await rpc.listKnowledgeSources()).data, page),
     getAiTiers: async () => must(await rpc.listAiTiers()),
     getBudgets: async () => must(await rpc.listBudgets()),
+
+    /* §17 BYOK (029). No idempotency key: a replayed create is refused by the
+       database's per-tenant key fingerprint, which is the idempotency that
+       matters for a secret — the same key cannot be stored twice. */
+    createProvider: async (body: ProviderKeyCreateRequest) => must(await rpc.createProvider(body)),
+    testProvider: async (id: string) => must(await rpc.testProvider(id)),
+    rotateProvider: async (id: string, body: ProviderKeyRotateRequest) =>
+      must(await rpc.rotateProvider(id, body.key)),
+    revealProvider: async (id: string) => must(await rpc.revealProvider(id)),
+    deleteProvider: async (id: string) => {
+      must(await rpc.deleteProvider(id));
+    },
   };
 }
 
