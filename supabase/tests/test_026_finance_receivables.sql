@@ -24,6 +24,9 @@
 --     withdrawn consent reads `granted: false`.
 -- T6  `list_commissions`: the QUOTATION-basis row's rate, amount and status
 --     (ACCRUED — invoiced, not yet collected) match the fixture by hand.
+-- T6b `list_commissions` with 3 commission-eligible deals and a size-2 page:
+--     `p_sort` (`amount`/`-amount`) is honoured both directions, and
+--     `page.total` is the unbounded count of all 3, not just the page.
 -- T7  Authorization: OPS (holds none of invoice:read/receivable:read/
 --     collection:read/quotation:read, 002 §11) is FORBIDDEN on all six with
 --     `requiredPermission` naming the right key; anon gets 42501 on the RPC
@@ -445,6 +448,113 @@ BEGIN
   RAISE NOTICE 'T6 PASS - one QUOTATION-basis commission at 96000 sen, ACCRUED.';
 END;
 $t6$;
+
+-- ── T6 sort/total fixtures: two more commission-eligible deals on the same
+-- organisation, each with its own QUOTATION-basis rate so the three
+-- commission amounts (50000 / 96000 / 100000 sen) are distinct and their
+-- order is known ahead of the probe below. Added AFTER T6's own assertion
+-- (which expects exactly one row) runs, so T6 is unaffected.
+INSERT INTO core.proposals (id, tenant_id, ref, opportunity_id, organisation_id, template_id, programme_id,
+                            value_sen, margin_rate)
+VALUES
+  ('00000026-6666-4000-8000-000000000002','00000026-1111-4000-8000-000000000001','PRO-T26-0002',
+   '00000026-3333-4000-8000-000000000001','00000026-2222-4000-8000-000000000001',
+   '00000026-4444-4000-8000-000000000001','00000026-5555-4000-8000-000000000001',2000000,0.4000),
+  ('00000026-6666-4000-8000-000000000003','00000026-1111-4000-8000-000000000001','PRO-T26-0003',
+   '00000026-3333-4000-8000-000000000001','00000026-2222-4000-8000-000000000001',
+   '00000026-4444-4000-8000-000000000001','00000026-5555-4000-8000-000000000001',500000,0.4000);
+
+-- Deal 2: 2,000,000 sen x 0.0500 = 100,000 sen commission (the highest).
+INSERT INTO core.quotations (id, tenant_id, ref, proposal_id, rate_card_id, pax,
+                             sell_price_sen, direct_cost_sen, programme_floor_price_sen, floor_margin_rate,
+                             commission_rate, commission_payable_on)
+VALUES ('00000026-8888-4000-8000-000000000002','00000026-1111-4000-8000-000000000001','QUO-T26-0002',
+        '00000026-6666-4000-8000-000000000002','00000026-7777-4000-8000-000000000001',20,
+        2000000, 1200000, 900000, 0.3000, 0.0500, 'COLLECTION');
+SELECT pg_temp.gate('00000026-1111-4000-8000-000000000001','QUOTATION_APPLY','00000026-8888-4000-8000-000000000002');
+UPDATE core.quotations SET status = 'APPLIED' WHERE id = '00000026-8888-4000-8000-000000000002';
+SELECT pg_temp.ungate();
+
+-- Deal 3: 500,000 sen x 0.1000 = 50,000 sen commission (the lowest).
+INSERT INTO core.quotations (id, tenant_id, ref, proposal_id, rate_card_id, pax,
+                             sell_price_sen, direct_cost_sen, programme_floor_price_sen, floor_margin_rate,
+                             commission_rate, commission_payable_on)
+VALUES ('00000026-8888-4000-8000-000000000003','00000026-1111-4000-8000-000000000001','QUO-T26-0003',
+        '00000026-6666-4000-8000-000000000003','00000026-7777-4000-8000-000000000001',10,
+        500000, 300000, 900000, 0.3000, 0.1000, 'COLLECTION');
+SELECT pg_temp.gate('00000026-1111-4000-8000-000000000001','QUOTATION_APPLY','00000026-8888-4000-8000-000000000003');
+UPDATE core.quotations SET status = 'APPLIED' WHERE id = '00000026-8888-4000-8000-000000000003';
+SELECT pg_temp.ungate();
+
+INSERT INTO core.engagements (id, tenant_id, organisation_id, opportunity_id, proposal_id, programme_id,
+                              owner_id, pipeline_id, title, value_sen, currency, starts_on, ends_on,
+                              created_by_kind, created_by_id)
+SELECT '00000026-9999-4000-8000-000000000002','00000026-1111-4000-8000-000000000001',
+       '00000026-2222-4000-8000-000000000001','00000026-3333-4000-8000-000000000001',
+       '00000026-6666-4000-8000-000000000002','00000026-5555-4000-8000-000000000001',
+       '00000026-0000-4000-8000-0000000000a2', pipeline.id, 'Deal Two for Chrome T26',
+       2000000,'MYR','2026-07-01','2026-07-02','HUMAN','00000026-0000-4000-8000-0000000000a2'
+  FROM core.pipelines AS pipeline
+ WHERE pipeline.tenant_id = '00000026-1111-4000-8000-000000000001'
+   AND pipeline.object = 'ENGAGEMENT' AND pipeline.is_default;
+
+INSERT INTO core.engagements (id, tenant_id, organisation_id, opportunity_id, proposal_id, programme_id,
+                              owner_id, pipeline_id, title, value_sen, currency, starts_on, ends_on,
+                              created_by_kind, created_by_id)
+SELECT '00000026-9999-4000-8000-000000000003','00000026-1111-4000-8000-000000000001',
+       '00000026-2222-4000-8000-000000000001','00000026-3333-4000-8000-000000000001',
+       '00000026-6666-4000-8000-000000000003','00000026-5555-4000-8000-000000000001',
+       '00000026-0000-4000-8000-0000000000a2', pipeline.id, 'Deal Three for Chrome T26',
+       500000,'MYR','2026-08-01','2026-08-02','HUMAN','00000026-0000-4000-8000-0000000000a2'
+  FROM core.pipelines AS pipeline
+ WHERE pipeline.tenant_id = '00000026-1111-4000-8000-000000000001'
+   AND pipeline.object = 'ENGAGEMENT' AND pipeline.is_default;
+
+-- ════════ T6b · list_commissions honours p_sort, page.total is unbounded ═════
+--
+-- Three commission-eligible deals now exist: 50000 / 96000 / 100000 sen.
+-- p_page.size := 2 with p_sort := 'amount' must return the two SMALLEST
+-- (ascending) with page.total counting all 3, not just the 2 returned; with
+-- p_sort := '-amount' the two LARGEST (descending), same total.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('00000026-0000-4000-8000-0000000000a1','00000026-1111-4000-8000-000000000001','FINANCE'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t26.comm_asc',
+  pg_temp.try($$SELECT core.list_commissions('[]'::jsonb, 'amount', '{"size":2}'::jsonb)$$)::text, true);
+SELECT pg_catalog.set_config('t26.comm_desc',
+  pg_temp.try($$SELECT core.list_commissions('[]'::jsonb, '-amount', '{"size":2}'::jsonb)$$)::text, true);
+RESET ROLE;
+
+DO $t6b$
+DECLARE v_asc jsonb; v_desc jsonb; v_rows jsonb;
+BEGIN
+  v_asc := pg_temp.got('comm_asc');
+  ASSERT (v_asc -> 'value' ->> 'success')::boolean, format('T6b-asc FAIL: refused: %s', v_asc);
+  v_rows := v_asc -> 'value' -> 'data' -> 'data';
+  ASSERT pg_catalog.jsonb_array_length(v_rows) = 2,
+    format('T6b-asc FAIL: expected 2 rows on a size-2 page, got %s', v_rows);
+  ASSERT (v_rows -> 0 -> 'amount' ->> 'amount')::bigint = 50000
+     AND (v_rows -> 1 -> 'amount' ->> 'amount')::bigint = 96000,
+    format('T6b-asc FAIL: expected [50000, 96000] ascending, got %s', v_rows);
+  ASSERT (v_asc -> 'value' -> 'data' -> 'page' ->> 'total')::integer = 3,
+    format('T6b-asc FAIL: page.total should be the unbounded count 3, got %s',
+      v_asc -> 'value' -> 'data' -> 'page');
+
+  v_desc := pg_temp.got('comm_desc');
+  ASSERT (v_desc -> 'value' ->> 'success')::boolean, format('T6b-desc FAIL: refused: %s', v_desc);
+  v_rows := v_desc -> 'value' -> 'data' -> 'data';
+  ASSERT pg_catalog.jsonb_array_length(v_rows) = 2,
+    format('T6b-desc FAIL: expected 2 rows on a size-2 page, got %s', v_rows);
+  ASSERT (v_rows -> 0 -> 'amount' ->> 'amount')::bigint = 100000
+     AND (v_rows -> 1 -> 'amount' ->> 'amount')::bigint = 96000,
+    format('T6b-desc FAIL: expected [100000, 96000] descending, got %s', v_rows);
+  ASSERT (v_desc -> 'value' -> 'data' -> 'page' ->> 'total')::integer = 3,
+    format('T6b-desc FAIL: page.total should be the unbounded count 3, got %s',
+      v_desc -> 'value' -> 'data' -> 'page');
+  RAISE NOTICE 'T6b PASS - p_sort is honoured both directions, page.total is the unbounded count of 3.';
+END;
+$t6b$;
 
 -- ════════ T7 · authorization ════════
 

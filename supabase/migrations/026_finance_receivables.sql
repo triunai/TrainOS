@@ -633,6 +633,10 @@ DECLARE
   v_size   integer;
   v_rows   jsonb;
   v_total  integer;
+  -- `-amount` (or an absent sort, the pre-existing default) sorts descending;
+  -- `amount` sorts ascending. Mirrors the `v_desc` idiom `core.list_invoices`
+  -- (§6, ~line 375) uses for the same `-field`/`field` convention.
+  v_desc   boolean;
 BEGIN
   -- Mirrors `FixtureClient.listCommissions`'s own gate exactly
   -- (packages/fixtures/src/client/FixtureClient.ts:1543): a commission row
@@ -655,6 +659,8 @@ BEGIN
       'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
         'field', 'sort', 'reason', 'UNKNOWN_SORT_FIELD'))));
   END IF;
+  -- Absent sort keeps the pre-existing default (highest commission first).
+  v_desc := COALESCE(p_sort, '-amount') <> 'amount';
   IF pg_catalog.jsonb_array_length(COALESCE(p_filter, '[]'::jsonb)) > 0 THEN
     RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
       'fields', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
@@ -704,44 +710,62 @@ BEGIN
       ) AS inv ON true
       LEFT JOIN core.collections_cases AS cc
         ON cc.tenant_id = v_tenant AND cc.invoice_id = inv.id AND cc.closed_at IS NULL
+  ),
+  -- `page.total` is the unbounded count of every matching row in `priced`,
+  -- before `v_size`/`ORDER BY` are applied in `paged` below — matching
+  -- `core.list_invoices`'s (§6, ~line 384) separate-count convention, since
+  -- the row query itself LIMITs to the page size and cannot also report the
+  -- full match count. Kept in the same WITH as `priced` (rather than a
+  -- second statement) because CTEs do not survive past the statement that
+  -- defines them.
+  counted AS (
+    SELECT pg_catalog.count(*) AS total FROM priced
+  ),
+  paged AS (
+    SELECT p.commission_sen AS amount_sen,
+           pg_catalog.jsonb_build_object(
+             'id',              'com_' || p.engagement_id::text,
+             'engagementRef',   p.engagement_ref,
+             'quotationRef',    p.quotation_ref,
+             'proposalRef',     p.proposal_ref,
+             'organisation',    pg_catalog.jsonb_build_object('ref', p.org_ref, 'name', p.org_name),
+             'owner',           app._actor('HUMAN', p.owner_id::text, NULL),
+             'ownerRole',       p.owner_role::text,
+             'dealValue',       app._money(p.deal_value_sen, 'MYR'),
+             'rate',            p.rate,
+             'rateBasis',       p.rate_basis,
+             'rateCardVersion', p.rate_card_version,
+             'amount',          app._money(p.commission_sen, 'MYR'),
+             'payableOn',       COALESCE(p.commission_payable_on, 'COLLECTION'),
+             'status', CASE
+                         WHEN p.collection_stage = 'TRADING_HOLD' THEN 'AT_RISK'
+                         WHEN p.invoice_status = 'PAID'           THEN 'PAYABLE'
+                         WHEN p.invoice_id IS NOT NULL            THEN 'ACCRUED'
+                         ELSE 'FORECAST'
+                       END,
+             'invoiceRef',      p.invoice_ref,
+             'invoiceStatus',   p.invoice_status,
+             'outstanding',     app._money(p.outstanding_sen, 'MYR'),
+             'daysOverdue',     CASE WHEN p.due_at IS NULL THEN NULL
+                                     ELSE GREATEST(current_date - p.due_at, 0) END,
+             'collectedAt', (SELECT pg_catalog.max(pay.received_at) FROM core.payments AS pay
+                               WHERE pay.tenant_id = v_tenant AND pay.invoice_id = p.invoice_id
+                                 AND NOT pay.is_reversal AND p.invoice_status = 'PAID')
+           ) AS row
+      FROM priced AS p
+     -- `-amount` (default) sorts highest commission first; `amount` sorts
+     -- ascending. The ORDER BY here (not just on the outer jsonb_agg below)
+     -- is what picks *which* v_size rows survive the LIMIT.
+     ORDER BY CASE WHEN v_desc THEN p.commission_sen END DESC,
+              CASE WHEN NOT v_desc THEN p.commission_sen END ASC
+     LIMIT v_size
   )
-  SELECT COALESCE(pg_catalog.jsonb_agg(item.row ORDER BY item.amount_sen DESC), '[]'::jsonb),
-         pg_catalog.count(*)
-    INTO v_rows, v_total
-    FROM (
-      SELECT p.commission_sen AS amount_sen,
-             pg_catalog.jsonb_build_object(
-               'id',              'com_' || p.engagement_id::text,
-               'engagementRef',   p.engagement_ref,
-               'quotationRef',    p.quotation_ref,
-               'proposalRef',     p.proposal_ref,
-               'organisation',    pg_catalog.jsonb_build_object('ref', p.org_ref, 'name', p.org_name),
-               'owner',           app._actor('HUMAN', p.owner_id::text, NULL),
-               'ownerRole',       p.owner_role::text,
-               'dealValue',       app._money(p.deal_value_sen, 'MYR'),
-               'rate',            p.rate,
-               'rateBasis',       p.rate_basis,
-               'rateCardVersion', p.rate_card_version,
-               'amount',          app._money(p.commission_sen, 'MYR'),
-               'payableOn',       COALESCE(p.commission_payable_on, 'COLLECTION'),
-               'status', CASE
-                           WHEN p.collection_stage = 'TRADING_HOLD' THEN 'AT_RISK'
-                           WHEN p.invoice_status = 'PAID'           THEN 'PAYABLE'
-                           WHEN p.invoice_id IS NOT NULL            THEN 'ACCRUED'
-                           ELSE 'FORECAST'
-                         END,
-               'invoiceRef',      p.invoice_ref,
-               'invoiceStatus',   p.invoice_status,
-               'outstanding',     app._money(p.outstanding_sen, 'MYR'),
-               'daysOverdue',     CASE WHEN p.due_at IS NULL THEN NULL
-                                       ELSE GREATEST(current_date - p.due_at, 0) END,
-               'collectedAt', (SELECT pg_catalog.max(pay.received_at) FROM core.payments AS pay
-                                 WHERE pay.tenant_id = v_tenant AND pay.invoice_id = p.invoice_id
-                                   AND NOT pay.is_reversal AND p.invoice_status = 'PAID')
-             ) AS row
-        FROM priced AS p
-       LIMIT v_size
-    ) AS item;
+  SELECT (SELECT total FROM counted),
+         COALESCE((SELECT pg_catalog.jsonb_agg(paged.row ORDER BY
+                     CASE WHEN v_desc THEN paged.amount_sen END DESC,
+                     CASE WHEN NOT v_desc THEN paged.amount_sen END ASC)
+                     FROM paged), '[]'::jsonb)
+    INTO v_total, v_rows;
 
   RETURN app.ok(pg_catalog.jsonb_build_object(
     'data', COALESCE(v_rows, '[]'::jsonb),
