@@ -17,6 +17,11 @@
 //       allowlist, including the schema-wide `GRANT EXECUTE ON ALL FUNCTIONS`
 //       form — which is never allowlistable, because it grants everything that
 //       exists AND says nothing about what it covers.
+//   M2  every CREATE [OR REPLACE] FUNCTION in core/app/public carries an
+//       explicit REVOKE ALL ... FROM PUBLIC (and anon), in the SAME FILE.
+//       PUBLIC holds EXECUTE on a new function by default in this Postgres
+//       and ALTER DEFAULT PRIVILEGES does not close it (001:199-224); M1
+//       catches an explicit grant, M2 catches the default nobody revoked.
 //   A1  every allowlist entry is spelled identically in the three places it
 //       lives: here, in the migration that grants it, and in that migration's
 //       SQL pin (supabase/tests/test_<NNN>_*.sql).
@@ -35,8 +40,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const MIGRATIONS = join(ROOT, "supabase", "migrations");
-const TESTS = join(ROOT, "supabase", "tests");
+// Overridable so scripts/check-grants.m2.test.mjs can point this at a scratch
+// fixture directory instead of the real migration tree, without touching it.
+const MIGRATIONS = process.env.CHECK_GRANTS_MIGRATIONS_DIR
+  ? resolve(process.env.CHECK_GRANTS_MIGRATIONS_DIR)
+  : join(ROOT, "supabase", "migrations");
+const TESTS = process.env.CHECK_GRANTS_TESTS_DIR
+  ? resolve(process.env.CHECK_GRANTS_TESTS_DIR)
+  : join(ROOT, "supabase", "tests");
 
 /**
  * THE ALLOWLIST — functions that may legitimately be EXECUTE-granted to `anon`
@@ -279,6 +290,94 @@ for (const grant of grants) {
       "runs with its owner's privileges for an unauthenticated caller. Add it to " +
       "ANON_EXECUTE_ALLOWLIST with a written reason, or revoke it.",
   );
+}
+
+/* ---------------------------------------------------------------- *
+ * M2 — every CREATE [OR REPLACE] FUNCTION in core/app/public carries an
+ *       explicit REVOKE, IN THE SAME FILE.
+ *
+ * 001's own header (001:199-224) measured this directly: PUBLIC holds
+ * EXECUTE on a new function BY DEFAULT in this Postgres, and
+ * `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`
+ * records nothing in pg_default_acl and changes nothing — a function
+ * created afterwards is still executable by PUBLIC and by `anon`. The one
+ * guard 001 names as measured to work is "every migration REVOKEs EXECUTE
+ * per function, at creation." M1 above catches an EXPLICIT grant to a
+ * public role; M2 catches the far more common way this actually breaks —
+ * a function that is simply never revoked from PUBLIC at all, silently
+ * inheriting the default no migration author had to write down.
+ *
+ * Same-file, not same-migration-set-so-far: a function created in one
+ * migration and revoked only by a LATER one is still PUBLIC-executable for
+ * every statement in between, on any database that stops applying migrations
+ * partway (exactly the state a fresh `supabase db reset` interrupted by a
+ * failure, or a review database built to an intermediate pack, is in). The
+ * rule the codebase already follows (018's `REVOKE ALL ON FUNCTION x(...)
+ * FROM PUBLIC, anon, authenticated;` immediately after each definition) is
+ * asserted here as a requirement, not inferred as a convention.
+ *
+ * ⚠ GRANDFATHERED BELOW `M2_FROM_PACK`. Run without a cutoff, this rule finds
+ * 166 pre-existing same-file gaps in 011, 012, 013, 018, 021 and 023 — not
+ * false positives from a bad regex; they are real files that never repeat a
+ * per-function REVOKE for a function they CREATE OR REPLACE that an EARLIER
+ * migration already revoked (021 replacing several 018 RPCs without a fresh
+ * REVOKE), or that revoke their whole set through a DYNAMIC loop this static
+ * script cannot read (011 §13's `EXECUTE pg_catalog.format('REVOKE ALL ON
+ * FUNCTION %s FROM PUBLIC, anon, authenticated', v_function)` over an ARRAY
+ * of bare names — a deliberate, documented pattern, not an oversight).
+ * `test_014` T1c/T1d/T1e (has_table_privilege, not this script) and this
+ * migration set's own runtime enumeration (`supabase/tests/
+ * test_zz_anon_surface.sql`, added alongside this rule) already confirm
+ * `anon` holds EXECUTE on NONE of them on a real built database — measured,
+ * not assumed, by querying `has_function_privilege` directly. So this is a
+ * static-analysis gap in files already on hosted, not a live hole, and
+ * fixing 166 findings across six already-applied migrations is a hardening
+ * migration of its own, not this commit's scope. `M2_FROM_PACK` grandfathers
+ * every migration numbered below it; a NEW migration at or above it gets no
+ * such excuse. Lower this number (or remove it) the day someone does that
+ * hardening pass.
+ * ---------------------------------------------------------------- */
+
+const M2_FROM_PACK = 31;
+
+const CREATE_FN_RE =
+  /create\s+(?:or\s+replace\s+)?function\s+((?:core|app|public)\.[a-z_][a-z0-9_]*)\s*\(/gi;
+
+for (const file of migrations) {
+  const shown = relative(ROOT, file);
+  const packNumber = parseInt(shown.match(/(\d{3})_/)?.[1] ?? "0", 10);
+  if (packNumber < M2_FROM_PACK) continue;
+  const sql = stripComments(readFileSync(file, "utf8"));
+
+  // Every REVOKE ... ON FUNCTION <name>(...) FROM ... in THIS file that
+  // names a public role, keyed by the bare schema.name it targets. Same
+  // extraction shape as M1's `onFunction`, so a REVOKE this rule accepts is
+  // one M1 would also recognise as closing a grant.
+  const revokedHere = new Set();
+  for (const match of sql.matchAll(/revoke\s+(?:all|execute)[\s\S]{0,400}?;/gi)) {
+    const statement = match[0];
+    if (!PUBLIC_ROLES.some((role) => new RegExp(`\\b${role}\\b`, "i").test(statement))) continue;
+    const onFunction = /on\s+function\s+([^\s;(]+)/i.exec(statement);
+    if (!onFunction) continue;
+    revokedHere.add(onFunction[1].toLowerCase());
+  }
+
+  for (const match of sql.matchAll(CREATE_FN_RE)) {
+    const bareName = match[1].toLowerCase();
+    if (revokedHere.has(bareName)) continue;
+
+    finding(
+      "M2",
+      shown,
+      lineOf(sql, match.index),
+      `CREATE [OR REPLACE] FUNCTION ${match[1]} has no matching ` +
+        "REVOKE ALL ON FUNCTION ... FROM PUBLIC (and anon) in this same file. PUBLIC " +
+        "holds EXECUTE on a new function by default in this Postgres (001:199-224) " +
+        "and ALTER DEFAULT PRIVILEGES does not close it — an explicit per-function " +
+        "REVOKE, written in the migration that creates the function, is the only " +
+        "guard measured to work.",
+    );
+  }
 }
 
 /* ---------------------------------------------------------------- *

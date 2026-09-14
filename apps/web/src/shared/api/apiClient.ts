@@ -1,19 +1,37 @@
 import type {
   ActionRequest,
+  AgentPauseRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  AttendanceCaptureRequest,
+  Budget,
+  ComplianceRule,
   EnquiryExtractionPatch,
+  HrdcDocumentAttachRequest,
+  KnowledgeSourceCreateRequest,
+  ListResponse,
   MessageChannel,
   PageRequest,
   PortalAcceptRequest,
   PortalCommentRequest,
+  Programme,
   ProposalCreateRequest,
   ProposalSectionWrite,
   QuotationWrite,
+  RoutingEntry,
+  RunDeadLetterRequest,
   SavedView,
   TemplateType,
 } from "@trainos/contract";
-import { ContractError, EventBus, paginate, type FixtureClient } from "@trainos/fixtures";
+import {
+  ContractError,
+  EventBus,
+  paginate,
+  type FixtureClient,
+  type FixtureCommission,
+  type FixtureLibraryAsset,
+  type FixtureTenant,
+} from "@trainos/fixtures";
 
 import type { TrainOsClient } from "./client";
 import {
@@ -120,11 +138,30 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     getOrganisation: async (id: string) => must(await rpc.getOrganisation(id)),
     getOrganisationRelations: async (id: string) => must(await rpc.getOrganisationRelations(id)),
+    searchOrganisations: async (query: string) => must(await rpc.searchOrganisations(query)),
+    getOrganisationSuggestions: async (id: string) =>
+      must(await rpc.getOrganisationSuggestions(id)),
 
     getOpportunity: async (id: string) => must(await rpc.getOpportunity(id)),
+    listOpportunities: async (page?: PageRequest) => must(await rpc.listOpportunities(page ?? {})),
 
     getTna: async (id: string) => must(await rpc.getTna(id)),
+    listTnas: async (page?: PageRequest) => must(await rpc.listTnas(page ?? {})),
+    /* No options bag on the RPC signature: `reopen_tna` is a `patch_enquiry_
+       extraction`-shaped detail edit, not a doc 09 §9 governed write, so it
+       takes no idempotency key server-side either. */
+    reopenTna: async (id: string, _options?: RequestOptions) => must(await rpc.reopenTna(id)),
     getTnaRecommendations: async (id: string) => must(await rpc.getTnaRecommendations(id)),
+
+    listEngagements: async (page?: PageRequest) => must(await rpc.listEngagements(page ?? {})),
+    getEngagement: async (id: string) => must(await rpc.getEngagement(id)),
+    getEngagementParticipants: async (id: string, page?: PageRequest) =>
+      must(await rpc.getEngagementParticipants(id, page ?? {})),
+    getAttendance: async (id: string, day = 1) => must(await rpc.getAttendance(id, day)),
+    captureAttendance: async (id: string, day: number, body: AttendanceCaptureRequest) =>
+      must(await rpc.captureAttendance(id, day, body)),
+    exportAttendance: async (id: string, format = "HRDC") =>
+      must(await rpc.exportAttendance(id, format)),
 
     createProposal: async (body: ProposalCreateRequest, options?: RequestOptions) =>
       must(
@@ -238,14 +275,54 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       paginate(must(await rpc.listProgrammes()).data, page),
     getProgramme: async (id: string) => must(await rpc.getProgramme(id)),
     getProgrammeDeliveries: async (id: string) => must(await rpc.getProgrammeDeliveries(id)),
+    putProgramme: async (id: string, body: Partial<Programme>) =>
+      must(await rpc.putProgramme(id, body)),
     listHrdcDeadlines: async (page?: PageRequest) =>
       paginate(must(await rpc.listHrdcDeadlines()).data, page),
+    getClaimPacket: async (engagementRef: string) => must(await rpc.getClaimPacket(engagementRef)),
+    /* No options bag on the fixture signature, so the key is derived here —
+       the same derivation the hooks use, not a second one. */
+    attachPacketDocument: async (engagementRef: string, body: HrdcDocumentAttachRequest) =>
+      must(
+        await rpc.attachPacketDocument(engagementRef, {
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("hrdc-packet-attach", engagementRef, body),
+        }),
+      ),
+    exportClaimPacket: async (engagementRef: string) =>
+      must(await rpc.exportClaimPacket(engagementRef)),
+    getComplianceChecks: async (engagementRef: string) =>
+      must(await rpc.getComplianceChecks(engagementRef)),
     getCollectionRules: async () => must(await rpc.listCollectionRules()),
+
+    /* 026 · finance receivables. `listCommissions` narrows the interface's
+       honest `unknown` (client.ts, E3) to the real fixture shape once, here —
+       one cast to `ListResponse<FixtureCommission>`, not the double cast
+       through `unknown` that E2 forbids in this folder. */
+    listInvoices: async (page?: PageRequest) => must(await rpc.listInvoices(page ?? {})),
+    getInvoice: async (id: string) => must(await rpc.getInvoice(id)),
+    getReceivablesAging: async () => must(await rpc.getReceivablesAging()),
+    getCollectionsQueue: async (page?: PageRequest) =>
+      must(await rpc.getCollectionsQueue(page ?? {})),
+    getCollectionDraft: async (invoiceRef: string) =>
+      must(await rpc.getCollectionDraft(invoiceRef)),
+    listCommissions: async (page?: PageRequest) =>
+      must(await rpc.listCommissions(page ?? {})) as ListResponse<FixtureCommission>,
     listComplianceRules: async (page?: PageRequest) =>
       paginate(must(await rpc.listComplianceRules()).data, page),
     getComplianceRule: async (id: string) => must(await rpc.getComplianceRule(id)),
+    /* No options bag on the fixture signature, so the key is derived here —
+       the same derivation the hooks use, not a second one. */
+    createComplianceRule: async (body: Omit<ComplianceRule, "status">) =>
+      must(
+        await rpc.createComplianceRule({
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("compliance-rule-create", body.id, body),
+        }),
+      ),
     listRuleChanges: async (page?: PageRequest) =>
       paginate(must(await rpc.listRuleChanges()).data, page),
+    getRuleChangeSet: async (documentId: string) => must(await rpc.getRuleChangeSet(documentId)),
     listEvals: async (agentId?: string) => {
       const rows = must(await rpc.listEvals()).data;
       return paginate(agentId === undefined ? rows : rows.filter((e) => e.agentId === agentId));
@@ -263,7 +340,95 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
       must(await rpc.addPortalComment(token, body)),
     acceptPortalProposal: async (token: string, body: PortalAcceptRequest) =>
       must(await rpc.acceptPortal(token, body)),
+
+    /* §10 automation: agents and runs (027). */
+    listAgents: async () => must(await rpc.listAgents()),
+    pauseAgent: async (id: string, body: AgentPauseRequest, _options?: RequestOptions) =>
+      must(await rpc.pauseAgent(id, body)),
+    listRuns: async (page?: PageRequest) => must(await rpc.listRuns(page ?? {})),
+    getRun: async (id: string) => must(await rpc.getRun(id)),
+    retryRun: async (id: string, from?: "checkpoint") => must(await rpc.retryRun(id, from)),
+    deadLetterRun: async (id: string, body: RunDeadLetterRequest, _options?: RequestOptions) =>
+      must(await rpc.deadLetterRun(id, body)),
+
+    /* §17 knowledge (027). */
+    createKnowledgeSource: async (body: KnowledgeSourceCreateRequest) =>
+      must(await rpc.createKnowledgeSource(body)),
+    checkKnowledgeSource: async (id: string) => must(await rpc.checkKnowledgeSource(id)),
+    reingestKnowledgeSource: async (id: string) => must(await rpc.reingestKnowledgeSource(id)),
+    /* Fixture-only shape; the RPC layer returns it as `unknown` because it has
+       no contract type (see client.ts). Cast back here — the one seam that
+       already knows the fixture's shape is the oracle — through a runtime
+       shape guard rather than a double cast through `unknown` (E2's rule:
+       that double-cast pattern is what hid a real envelope-drift incident). */
+    listLibraryAssets: async (page?: PageRequest) =>
+      asLibraryAssetPage(must(await rpc.listLibraryAssets(page ?? {}))),
+
+    /* §17 AI settings: routing, providers (read), usage, budgets, tenant (027). */
+    getAiRouting: async () => must(await rpc.getAiRouting()),
+    putAiRouting: async (entries: RoutingEntry[]) => must(await rpc.putAiRouting(entries)),
+    listProviders: async () => must(await rpc.listProviders()),
+    getUsage: async (period?: string, groupBy?: "TIER" | "AGENT" | "ACTION_TYPE") =>
+      must(await rpc.getUsage(period, groupBy)),
+    putBudget: async (scope: Budget["scope"], budgetKey: string, body: { cap: Budget["cap"] }) =>
+      must(await rpc.putBudget(scope, budgetKey, body)),
+    getTenant: async () => asFixtureTenant(must(await rpc.getTenant())),
   };
+}
+
+/** Runtime guard for {@link asFixtureTenant} — see its comment. */
+function isFixtureTenantShape(value: unknown): value is FixtureTenant {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Record<string, unknown>).id === "string" &&
+    typeof (value as Record<string, unknown>).name === "string" &&
+    typeof (value as Record<string, unknown>).locale === "string" &&
+    typeof (value as Record<string, unknown>).timezone === "string" &&
+    typeof (value as Record<string, unknown>).currency === "string"
+  );
+}
+
+/**
+ * `core.get_tenant` (027) has no contract type to check against at the RPC
+ * layer (see client.ts), so the shape is checked here, once, at the seam that
+ * already treats `FixtureTenant` as the oracle for this endpoint.
+ */
+function asFixtureTenant(value: unknown): FixtureTenant {
+  if (!isFixtureTenantShape(value)) {
+    throw new Error("getTenant(): response does not match FixtureTenant's shape");
+  }
+  return value;
+}
+
+/** Runtime guard for {@link asLibraryAssetPage} — see its comment. */
+function isLibraryAssetPageShape(
+  value: unknown,
+): value is { data: FixtureLibraryAsset[]; page: { next: string | null; total: number } } {
+  if (typeof value !== "object" || value === null) return false;
+  const data = (value as Record<string, unknown>).data;
+  const page = (value as Record<string, unknown>).page;
+  return (
+    Array.isArray(data) &&
+    typeof page === "object" &&
+    page !== null &&
+    typeof (page as Record<string, unknown>).total === "number"
+  );
+}
+
+/**
+ * `core.list_library_assets` (027) has no contract type (see client.ts), so
+ * the envelope shape — `{data: [], page: {next, total}}` — is checked here
+ * rather than double-cast through `unknown`.
+ */
+function asLibraryAssetPage(value: unknown): {
+  data: FixtureLibraryAsset[];
+  page: { next: string | null; total: number };
+} {
+  if (!isLibraryAssetPageShape(value)) {
+    throw new Error("listLibraryAssets(): response does not match the expected page shape");
+  }
+  return value;
 }
 
 /**

@@ -274,10 +274,16 @@ BEGIN
   -- cross-tenant read it warned about is what those policies now prevent. The
   -- eight app.* relations in the list still carry no 014 policy and no grant,
   -- which is asserted separately below rather than folded into a number.
-  ASSERT v_count = 5,
-    pg_catalog.format('T1d FAIL: expected 5 policies (app.job_type_map''s global '
-      'catalogue policy, plus 014''s select+isolation pair on each of core.events '
-      'and core.event_subjects), found %s', v_count);
+  -- ⚠ AMENDED BY 033 (2026-09-14). +1: 033 adds a third, bespoke RESTRICTIVE
+  -- policy on core.events, events_no_client_033, excluding CLIENT — see 033's
+  -- migration header for why core.events could not use the permission-gate
+  -- mechanism 033 uses everywhere else (audit:read is held by every
+  -- non-CLIENT/AGENT role, so app.apply_tenant_policies correctly refuses to
+  -- build a gate from it). core.event_subjects is untouched by 033. 5 + 1 = 6.
+  ASSERT v_count = 6,
+    pg_catalog.format('T1d FAIL: expected 6 policies (app.job_type_map''s global '
+      'catalogue policy, 014''s select+isolation pair on each of core.events '
+      'and core.event_subjects, plus 033''s events_no_client_033), found %s', v_count);
   SELECT pg_catalog.count(*)::integer INTO v_count
     FROM pg_catalog.pg_policy AS policy
    WHERE policy.polrelid IN (

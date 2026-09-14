@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 23 (numbered up to 030; 023–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030
+**Migrations:** 33 (numbered up to 035; 028, 029 are open PRs not on this branch) · **Applied (hosted):** 001–027, 030, 031, 032, 033, 034, 035 · **Authored, not applied:** none on this branch
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -13,6 +13,199 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-14 — **024 authored and EXECUTED: training delivery — the seven §8/§6 client methods the gap matrix marks NO-ADAPTER (`listEngagements`, `getEngagement`, `getEngagementParticipants`, `getAttendance`, `captureAttendance`, `exportAttendance`, `putProgramme`).**
+Seven new `core` RPCs, no DDL — every table they read or write already exists (008 delivery, 006 catalogue). **The gap-matrix audit was stale for this domain**: its SQL truth predates 020, which already shipped `core.v_trainers`, `core.v_programmes` and `core.v_programme_deliveries`, so `/training/trainers` and `/training/programmes` already had SQL; verified by grep against 001–021 before writing a line, and confirmed by leaving all three untouched here. **A second, pre-existing bug found on the way**: `rpcClient.ts`'s `getProgrammeDeliveries` matched PostgREST's `.match({programme_id: id})` against `v_programme_deliveries.programme_id`, a UUID column, while the caller always holds the route's REF (`:programmeRef`) — fixed the same way `getOrganisationRelations` already does, by resolving through `get_programme`'s own id-or-ref lookup before the view read; not a 024 SQL change, an adapter fix in the same commit because it blocks the same screens. **Every function follows 018/021's pattern exactly**: `SECURITY DEFINER`, `SET search_path = ''`, the permission gate as the first statement (021's rule), reads refuse `app.err('FORBIDDEN', {requiredPermission})`, writes raise `TRNOS`, list/get pairs reuse 018's keyset-pagination helpers rather than a new engine, and writers return through their sibling reader (`capture_attendance` → `get_attendance`, `put_programme` → `get_programme`). **`get_engagement` drops `finance`, not zeroes it**, for a caller without `quotation:read` — the same R7 ruling 018 made for `get_proposal`'s margin block. **`capture_attendance` reconciles a schema/fixture mismatch**: `core.attendance_entries`' `ae_absent_needs_reason` CHECK (008) requires a reason whenever `present = false`, but the fixture client leaves it optional; an absence with no caller-supplied reason now defaults to `OTHER` rather than violating the constraint the fixture never had to satisfy. **`put_programme` is scoped to the record's own scalar fields, not its four child arrays**: `core.programme_pricing_tiers.floor_price_sen` is NOT NULL and the contract's `PricingTier` (`{maxPax, price}`) carries no floor, so a client-supplied tier cannot be inserted without inventing a business number the contract never sent — flagged as a decision to confirm, not built silently. **Scope-narrowing (○ in 002 §11) is not applied**, same posture 018/021 already state for the rest of the golden path: a TRAINER with `engagement:read` sees every engagement in the tenant through these RPCs, not only their own; reported again here rather than fixed as a side effect of an unrelated lane. Pin `test_024`: ADMIN reads real data with `finance`; OPS reads the same record without it; CLIENT is FORBIDDEN on all seven, byte-identical for a real id and an invented one; `anon` gets 42501 from the grant itself; a tenant-B ADMIN reading tenant A's engagement ref gets non-enumerable NOT_FOUND; an OPEN day accepts a present and a defaulted-reason absent mark, a LOCKED day refuses with the contract's exact `AttendanceLockedDetails` shape; ADMIN's `put_programme` write reads back through `get_programme`, OPS is FORBIDDEN naming `requiredRole: 'ADMIN'`. Executed against the hosted-like PostgreSQL 17 shim as a NOSUPERUSER BYPASSRLS role; `test_021` re-run on a fresh 001–021 build to confirm no regression; `lint:sql`, `check:grants`, `check:rpc`, `typecheck`, `typecheck:strict`, `lint`, the full `npm test -- --run` (128 files / 1223 tests plus fixtures/agent-runtime/worker), `npm run build` and the `VITE_API_MODE=supabase` build all pass. **⚠ Review-fix pass (2026-09-14, PR #55):** TRAINER granted `attendance:export` (002 lacked it though `endpoints.ts` already lists TRAINER for all three attendance endpoints — patched in via a new labelled section, 002 itself frozen). `capture_attendance` is now scope-narrowed for TRAINER via `core.engagement_trainers`, folded into the engagement lookup itself so a real engagement id they don't own and a fabricated one answer identically (non-enumerable FORBIDDEN); OPS/MD/ADMIN unrestricted. `export_attendance` now returns `status` (the latest attendance day) and `snapshotAt`; `AttendanceExport` widened with both as optional. The T8 teeth-check the pin's own header promised but never implemented is now built (renumbered T10; T8/T9 added for the two probes above), using `pg_get_functiondef`+`regexp_replace` to disable and restore `get_engagement`'s gate rather than a hand-copied duplicate. Full pin, `lint:sql`, `check:grants`, `check:rpc` pass; `apps/web` typecheck and full test suite (128 files/1230 tests) pass since the contract was touched.
+
+**Last updated:** 2026-09-14 — **035: `core.get_follow_up_draft` calls a function that does not exist, `pg_catalog.trim(text)`, and 500s the live Follow-ups draft pane whenever a real per-message rate is priced.**
+Reported by api-026. `pg_catalog.trim(text)` — ONE argument — is not a PostgreSQL function: the
+SQL-standard form is `trim([leading|trailing|both] [characters] FROM string)` and the two-argument
+form is `trim(string, characters)`; the one-argument form that exists is `btrim(string)`. Confirmed
+directly on the shim: `SELECT pg_catalog.trim(' x ')` raises `function pg_catalog.trim(unknown)
+does not exist`; `SELECT pg_catalog.btrim(' x ')` returns `x`. 021's `core.get_follow_up_draft`
+calls it once, inside `IF v_source <> 'UNAVAILABLE'`, to strip `to_char`'s `FM9990.000000` padding
+off the unrounded exact rate — i.e. on every draft whose rate lookup succeeded, which is the
+everyday case, not an edge one. `CREATE OR REPLACE` of `core.get_follow_up_draft(text,text)` only,
+one token changed (`pg_catalog.trim(` → `pg_catalog.btrim(`); every other line, including the
+permission gate, channel validation, NOT_FOUND shapes and the `rateSource`/money/provenance
+derivation, is 021's, byte for byte. Pin `tests/test_035_follow_up_draft_trim_fix.sql`: T1 a
+follow-up draft with a real `core.message_rates` row (`rate_exact = 0.346700`, reached via the
+draft's own `rate_per_message_exact` COALESCE fallback) succeeds and returns
+`"ratePerMessageExact":"0.346700"` — reproduced the exact reported failure against 021's original
+body (and against this migration rolled back): `ERROR: function pg_catalog.trim(text) does not
+exist` at the same line; T2 a draft with no rate at all (`rateSource: UNAVAILABLE`) still succeeds
+with no `ratePerMessageExact` key, unchanged by 035 (the buggy call was never reached on this
+path). Rollback restores 021's original body verbatim, `pg_catalog.trim(` included. Round-tripped:
+apply → rollback (reproduces the exact reported error) → re-apply (passes again). `test_001`–
+`test_025`, `test_030`–`test_034` all still pass on a clean 001–035 build. `npm run lint:sql`
+101/101, `check:grants`/`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **Correction to 034's M1: dropped, not fixed. 002's `app.role_permissions` is ruled authoritative over `endpoints.ts`'s narrower role list for RPC gates.**
+The entry below (and 034's own migration/rollback/pin) originally added a function-local
+`app.role() IS DISTINCT FROM 'MD'` check to both dashboard RPCs, narrowing them to MD alone per
+`endpoints.ts:150-153`. Orchestrator ruling, 2026-09-14: hosted has two ADMIN founders who must
+keep executive dashboard access, and the project-wide rule going forward is that 002's
+`app.role_permissions` matrix is authoritative for what an RPC gates on — `endpoints.ts`'s role
+lists get reconciled TO 002 by a separate lane, not the other way around, per RPC, here. The
+check has been removed from `034_dashboard_contract_fixes.sql`; both RPCs are gated on
+`app.has_permission('dashboard:executive:read')` alone, exactly as 022 shipped them — M2
+(MYR-only sums) and M3 (trailing-30-day evalScore) are UNCHANGED and still fixed. `tests/
+test_034_dashboard_contract_fixes.sql` T1 now asserts the INVERSE (SALES_MANAGER, FINANCE, MD
+and ADMIN — all four permission holders — succeed, none FORBIDDEN); its preflight and $verify$
+blocks assert the MD-only check is ABSENT rather than present. The migration's own header carries
+the same note. Re-verified: full 001–034 build (023 and 025, merged to `main` during this work,
+included), `test_001`–`test_025`, `test_030`–`test_034` all green; rollback → reapply round-trip
+clean; `npm run lint:sql` 97/97, `check:grants`/`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **034: the two executive-dashboard RPCs are MD-only per the contract, sum MYR rows only, and evalScore is a trailing-30-day median.** *(M1 below is superseded by the correction above — left standing per this file's own convention.)*
+`CREATE OR REPLACE` of `core.get_executive_dashboard(text)` and `core.get_proposals_vs_won(integer)`
+only. M1: both endpoints are `roles:['MD']` in `endpoints.ts:150-153`, narrower than the four
+roles `dashboard:executive:read` grants (002) — a function-local `app.role() IS DISTINCT FROM 'MD'`
+check added after the existing permission gate, which is untouched (nothing else reads it). M2:
+`OPEN_PIPELINE`/`AR_OVERDUE`/`CLAIM_VALUE_AT_RISK`/`agentSpend` summed every row regardless of its
+own `currency` column and labelled the result MYR; now MYR-only, with a `(N non-MYR excluded)`
+note folded into `secondary` when (and only when) a non-MYR row exists — the all-MYR fixture path
+`test_022` pins is byte-identical. `agentSpend` has no `secondary` slot in its contract shape to
+report an exclusion in; recorded as the one gap M2's own fix cannot also close. M3: the
+`agent_eval` CTE gained the same `evaluated_at >= now() - interval '30 days'` window
+`core.v_agent_evals` (020) already uses; the aggregation itself (median via `percentile_cont`) is
+unchanged. M6 (AAL2 on OPP-01 decisions) is explicitly out of scope — a product decision, listed
+open. Pin `tests/test_034_dashboard_contract_fixes.sql`: SALES_MANAGER/FINANCE/ADMIN (hold the
+permission, not MD) FORBIDDEN on both RPCs, MD succeeds; a mixed MYR/USD opportunity pair proves
+OPEN_PIPELINE sums MYR only and notes the exclusion; a 10-day and a 40-day-old eval prove
+evalScore reflects only the recent one; `get_proposals_vs_won()` with no argument returns a
+6-element series; a non-privileged role with a malformed period is refused FORBIDDEN, not
+VALIDATION_FAILED, proving the gate runs before any read. Rollback restores 022's two bodies
+verbatim. `test_001`–`test_022`, `test_030`–`test_033` all still pass on a clean 001–034 build.
+`npm run lint:sql` 86/86, `check:grants`/`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **033: sensitive-table RLS — 28 `core` tables gated on the
+permission the contract already requires at the RPC layer (H1), MY_ACCOUNTS owner-narrowing on
+organisations/opportunities/enquiries role-gated to SALES/SALES_MANAGER (H4), `public.
+user_profiles` narrowed to self-or-ADMIN/MD (M4), `ai_budgets`/`model_tiers` gated on their own
+`ai:*:read` permissions (M5).**
+Every gate is applied via 014's own `app.apply_tenant_policies('core', <table>, '033',
+<permission>)` — the function already refuses a permission held by every role and already refuses
+a two-argument call that would silently strip a gate, so 033 adds no new mechanism, only new
+callers. The table→permission mapping is written out in full in 033's own header. `core.events` is
+the one exception: `audit:read` is held by every non-CLIENT/AGENT role, so `apply_tenant_policies`
+correctly refuses to build a gate from it (decoration, not narrowing) — found by RUNNING the
+migration, not by reading it — and gets a bespoke RESTRICTIVE policy excluding CLIENT by role name
+instead. H4's narrowing is gated on `app.role() IN ('SALES','SALES_MANAGER')` rather than on
+`app.client_scope()` alone: every role's membership defaults to `client_scope = MY_ACCOUNTS`
+(grepped — nothing in 016/019/seeds ever overrides it for OPS/FINANCE/MD/ADMIN), so a
+scope-only predicate would have silently narrowed those roles too, which 002 §11 never marks ○ for
+them. `core.enquiries.assigned_to_user_id` is nullable; an unassigned enquiry stays visible to a
+MY_ACCOUNTS SALES caller rather than disappearing, on the ground that hiding an unclaimed-enquiry
+inbox is a functional regression this migration has no product sign-off to make. `core.quotations`,
+`core.proposals`, `core.contacts`, `core.invoices`, `core.collections_cases` also carry 002's ○
+mark but have no direct owner column — left at permission-level gating only, the join-chain
+narrowing recorded as an open item rather than guessed at and risking either a silent no-op or a
+hidden row a screen needs. `public.user_profiles_select` (002) was blanket tenant-membership;
+grepped `apps/web/src` for a cross-user `user_profiles` read and found none, so it now matches
+`user_profiles_update_self_or_admin`'s existing self-or-ADMIN shape, MD added alongside ADMIN.
+Two amendments landed in this commit: `test_004` T1c (the core-wide restrictive-policy inventory)
+now names 033's four new policies by name, same shape as its own 014 amendment; `test_012` T1d's
+`core.events` policy count is 5→6; `test_014` T1c's 014-time-object identification (by policy
+migration stamp) now also recognises `033` stamps, since `apply_tenant_policies` re-stamps a
+table's policy with the CALLING pack's number even though the table's SELECT grant it is
+identifying was never touched; `test_014` T12l's gated-table count is 9→37, T12m's named-exception
+list gains 033's four policies. Pin `tests/test_033_sensitive_table_rls.sql`: CLIENT reads zero
+rows, direct SELECT, on five tables spanning the gated set, and on `core.events`; two SALES reps
+each owning a different organisation in the same tenant see only their own — OPS/FINANCE/MD/ADMIN
+see both, unnarrowed, despite defaulting to the same `client_scope`; an unassigned enquiry stays
+visible; `public.user_profiles` self-or-ADMIN/MD; tenant B's ADMIN sees zero of tenant A's
+organisations (spot check); `core.v_contact_channel_consents` (security_invoker) still returns a
+permitted SALES caller's own row. Sampled separately against a hosted-shaped `akademi-perdana`
+fixture (real tenant/user ids) across every `rpcClient.ts` `VIEW_READS` view for MD, ADMIN, SALES,
+CLIENT, TRAINER and a tenant-B ADMIN, before vs after 033: every permitted role's row count is
+UNCHANGED; the only delta is a SALES sample principal who owns none of the fixture's seeded
+organisations, whose `v_contacts`/`v_organisation_relations` counts drop from 6 to 0 — the intended
+H4 narrowing, not a regression (v_contacts narrows via its own JOIN to `core.organisations`, a
+side effect this migration did not have to add by hand). Rollback uses 014's own
+`app.ungate_tenant_policy` escape hatch per table (stamped `033`, the pack removing the gate),
+drops the four bespoke policies, and restores `user_profiles_select`'s original predicate; it does
+NOT reopen anything the `app.can_see_owner`/permission MECHANISM itself provides — that is 014's
+code, untouched. `test_001`–`test_022`, `test_030`–`test_032` all still pass on a clean 001–033
+build. `npm run lint:sql` 86/86, `check:grants`/`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **032: `decide_approval` locks the target row before recomputing
+the diff hash (H2), and OPP-01's seed repairs a wrong pre-existing row instead of leaving it
+standing (H3).**
+H2: `app.decide_approval` already locks `core.approval_requests` and `core.action_requests` FOR
+UPDATE, but the diff-hash recompute that decides whether the effects changed since queue time
+called `app.plan_effects`/`app.action_value` without first locking the row those functions
+actually read — the exact TOCTOU shape R18 (021) already closed for `OPPORTUNITY_STAGE_CHANGE` by
+locking the opportunity before re-validating it. New helper `app.lock_action_value_target(type,
+tenant, target_id)` mirrors `action_value`'s own `value_source` CASE and locks FOR UPDATE the
+QUOTATION/INVOICE/HRDC_CLAIM row (or the PROPOSAL_SEND special case); PAYMENT/BUDGET_CAP/NONE are
+no-ops, since those read their amount from the action's own immutable payload, never from a row.
+`decide_approval` gains exactly one new line, immediately before `plan_effects`, resolving the
+target id it never previously kept. `app.bulk_decide` needed no edit — every branch calls
+`app.decide_approval` per item, so the fix is inherited (verified by reading its body, not
+assumed). Proved with two real `psql` sessions, not simulated: session A holds `core.quotations
+... FOR UPDATE` uncommitted; session B's `app.lock_action_value_target` call blocks on the same row
+and hits `statement_timeout` (57014, `while locking tuple ... in relation "quotations"`) after 3s;
+the same experiment against the OLD code path — a bare `app.action_value` read under the identical
+held lock — returns in 0.04s, unblocked (MVCC read of the last-committed value). H3:
+`app.seed_opportunity_stage_policy`'s `INSERT ... ON CONFLICT (tenant_id,id) DO NOTHING` let a
+WRONG pre-existing OPP-01 row (wrong `approver_role`, `active=false`, a non-matching condition)
+silently block the canonical row forever — 021's own verify only checked a row named OPP-01
+existed, never its content. Now `DO UPDATE`, converging every column to canonical on every call;
+032 re-runs it for every existing tenant in the same transaction, repairing any wrong row rather
+than waiting for the next tenant-creation trigger fire (which never touches an existing tenant).
+Confirmed on hosted before authoring: `akademi-perdana`'s OPP-01 is currently correct, so this is
+a closed latent defect, not an active incident. Pin `tests/test_032_approval_target_lock.sql`:
+`lock_action_value_target` takes a real `RowShareLock` (visible in `pg_locks` for the acquiring
+session) for QUOTATION_APPLY and PROPOSAL_SEND, is a silent no-op for PAYMENT/BUDGET_CAP/NONE;
+`decide_approval`'s source calls it strictly before `plan_effects`; an unmodified quotation still
+APPROVEs and `apply_effects` runs; a quotation edited (committed) between queue and decide is still
+refused DIFF_CHANGED; a deliberately wrong OPP-01 row is corrected by
+`seed_opportunity_stage_policy`. Rollback restores 011's `decide_approval` and 021's `seed_
+opportunity_stage_policy` bodies verbatim and drops `lock_action_value_target`; it does NOT revert
+the OPP-01 rows 032's repair pass already converged — undoing a data repair that made a wrong row
+correct would be a second, worse defect stacked on the first. `test_001`–`test_022`, `test_030`–
+`test_031` all still pass on a clean 001–032 build. `npm run lint:sql` 86/86, `check:grants`/
+`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **031: a client-authenticated session can never set or move a
+membership's `actor_kind` to SYSTEM or AGENT, closing C1 — the insider path to unapproved
+execution of any action, money-moving included.**
+002's `memberships_write_admin` RLS policy lets an ADMIN UPDATE any column of another member's row
+— `actor_kind` included, at AAL2 — and `app.principal_claims` copies whatever the row holds
+straight into that member's next session token. `app.actor_kind() = 'SYSTEM'` makes 011's
+`perform_action` skip `has_permission`, skip the AAL2 money-moving gate, skip policy matching
+against `app.action_policies`, and dispatch straight to `EXECUTING` — on any action type. Confirmed
+on hosted before authoring: `public.memberships` currently carries zero SYSTEM rows, so the hole is
+open and unused, not exploited. Fix, two parts: (1) a `BEFORE INSERT OR UPDATE` trigger on
+`public.memberships`, `app.enforce_membership_actor_kind_lock`, refuses a client-authenticated
+INSERT with `actor_kind` SYSTEM/AGENT and refuses ANY client-authenticated UPDATE that changes
+`actor_kind` at all (immutable, not merely "can't become SYSTEM/AGENT" — a client that cannot move
+a row TO SYSTEM also cannot launder one back FROM it). Privilege is checked by ROLE ATTRIBUTE
+(`rolsuper OR rolbypassrls` on `current_user`), not by role NAME — a hardcoded `IN ('postgres',
+'service_role')` check, tried first, broke every fixture that seeds `public.memberships` as the
+migration-owning role, because this repo's own build harness stands hosted `postgres` in with a
+role named `hc_mig`, created NOSUPERUSER BYPASSRLS to match hosted `postgres`'s ATTRIBUTE profile,
+not its name (found by running the existing pin suite, not by reading it). Deliberately NOT
+`SECURITY DEFINER`: a DEFINER trigger runs with `current_user` already switched to the function's
+owner, which would make the privilege check pass on every call regardless of caller. (2)
+`app.principal_claims` (002) fails a SYSTEM row closed to HUMAN in the claims it issues — a
+backstop under the trigger, since this hook only ever runs for a GoTrue-issued (browser) session,
+and there is no such session for a genuine SYSTEM principal. AGENT is untouched throughout — 013/
+002's worker path is unaffected; grepped every RPC in 018–022 and found none writes
+`public.memberships`, so AGENT provisioning (wherever it runs) was already outside the
+authenticated path this migration closes. Pin `tests/test_031_membership_actor_kind_lock.sql`: an
+authenticated ADMIN is refused INSERTing actor_kind SYSTEM/AGENT and refused UPDATEing a colleague's
+row to SYSTEM (the exact C1 path) or away from AGENT; an unrelated column on the same AGENT row
+still updates fine; the privileged (bypassrls) connection this pin itself runs as can still create
+and alter SYSTEM/AGENT rows; `principal_claims` reports HUMAN for a row a privileged write left
+genuinely SYSTEM; `anon`/`authenticated` hold no EXECUTE on the trigger function (harmless, since
+Postgres never checks EXECUTE to fire a trigger — asserted anyway per `test_002` T11a's own
+invariant). Rollback drops the trigger and its function and restores 002's original
+`principal_claims` body verbatim, including nulling the COMMENT 031 added (002 never had one on
+this function — the comment quoted at 002:589 belongs to `custom_access_token_hook`). `test_001`–
+`test_022`, `test_030` all still pass on a clean 001–031 build. `npm run lint:sql` 86/86,
+`check:grants`/`check:rpc` clean.
 
 **Last updated:** 2026-09-14 — **030: `core.me_profile()`'s `session` block never leaks a null required field, closing a defect 022 shipped and hosted's own run of `test_022` caught.**
 One `CREATE OR REPLACE FUNCTION core.me_profile()`, nothing else — no table, no type, no policy, no other function touched. **The defect, found by running 022's own pin against hosted rather than by reading:** 022's header promises `session` answers `null` AS A WHOLE whenever `lastSignInAt` cannot be derived, and 022's `v_has_session` variable exists to keep that promise — but it only flips to `false` inside `EXCEPTION WHEN undefined_column`, the COLUMN-ABSENT case. When `auth.users.last_sign_in_at` EXISTS (true on hosted) but a particular row's VALUE is `NULL` — true for `test_022`'s own INSERT-not-signed-in fixture users, and equally true for any real hosted account GoTrue has not yet stamped a sign-in for — the read succeeds with no exception, `v_has_session` stays at its default `true`, and the function emits exactly the shape its own header forbids: a populated `session` object with `lastSignInAt: null`. `test_022`'s `T1j` (PR #48, commit `05e7360`) asserted the branch the column's PRESENCE implies and failed on hosted — not because the assertion was wrong, but because the function did not keep its own promise. **The fix is one `IF` statement**, immediately after the existing exception handler: `v_has_session` is now also set `false` when the read succeeds but `v_last_sign_in IS NULL`, subsuming the exception path (a harmless no-op re-confirmation there, since `v_last_sign_in` is already `NULL` by its declared default whenever the exception fires) and closing the gap it did not cover. Every other line — permission gates, `moduleCount`, `activeSessions`, `twoFactorEnabled`, the two dashboard RPCs (untouched, not redefined) — is 022's, unchanged. **Nothing changes for a caller who has actually signed in**: GoTrue stamps `last_sign_in_at` on every real sign-in, so a real session continues to get a populated `session` with a real `lastSignInAt`, confirmed against hosted directly before this migration was authored. This migration only changes the answer for a principal GoTrue has not yet stamped one for, closing a leak rather than opening a gap. **`packages/contract/src/domain/shell.ts` and the web reader (`SidebarProfile.tsx`) already document and expect this exact corrected shape** (PRs #49/#50, landed on `origin/main` ahead of this migration) — this migration is what makes the database true of the contract the web lane already built against, not the reverse. Pin `test_030`: three cases, branched STRUCTURALLY on whether `auth.users.last_sign_in_at` exists rather than assuming one environment — column absent (this local shim): `session` null as a whole, unchanged from 022; column present, value null (the closed defect): `session` null as a whole; column present, value set: a full object with exactly the 5 `ProfileSession` keys and a real, non-null `lastSignInAt`. Verified against both the unmodified local shim (only the absent-column case fires) and a locally-extended copy with `auth.users.last_sign_in_at` and `auth.mfa_factors` added (not checked in; both hosted-shaped cases fire and pass). `test_022`'s own `T1j` fixture gained a small addition in the same commit: its T1 principal now gets a real `last_sign_in_at` WHEN the column exists (a no-op `UPDATE` guarded the same structural way, otherwise absent), so `test_022` exercises the "real value" branch it always intended rather than accidentally tripping over 030's own defect — the never-signed-in/null-value case is deliberately left to `test_030` alone rather than duplicated. Rollback restores 022's original (defective) body verbatim. `test_001`–`test_022` all still pass unmodified on a clean 001–030 build (021, 023–029 excluded — the latter are sibling lanes not on this branch). `npm run lint:sql` 74/74, `npm run check:grants`/`npm run check:rpc` clean. Spine untouched: no action type, no handler, no branch in the envelope.
@@ -215,12 +408,18 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 **Last updated:** 2026-09-12 — **001 authored and EXECUTED; nothing applied to any hosted database.** The foundation lands: schemas `app`, `core` and `extensions`, four extensions, and five shared helpers. Two things were found by running it rather than by reading it, and both changed the migration. **(1) The rollback's first execution aborted on `cannot drop extension pgcrypto because other objects depend on it`.** That was correct behaviour exposing an incorrect design: Supabase installs pgcrypto on every project, so 001's `CREATE EXTENSION IF NOT EXISTS pgcrypto` is a no-op on the real target and 001 does not own it. Dropping it would not restore the prior state, it would destroy a piece of it. The rollback now drops only the three extensions 001 genuinely creates (citext, btree_gist, pg_trgm) and says why pgcrypto is absent from the list. **(2) Doc 02 §4.1's baseline line `alter default privileges in schema public revoke all on tables from public` does not do what it says, and neither does the functions equivalent.** Measured on PostgreSQL 17.11: for tables it is vacuous, because PUBLIC holds no default table privilege to revoke; for functions it is not vacuous and still does not take — the statement records no row in `pg_default_acl` and a function created afterwards is still executable by PUBLIC and by `anon`. The same statement in GRANT form records correctly, so the mechanism is live and it is the revoke-from-PUBLIC direction that fails. Both lines are kept as the documented baseline and are explicitly **not** the guard; the guard is per-object `REVOKE` at creation in every migration plus test_014's schema-wide sweep. The pin was rewritten to stop asserting the fiction — it had originally asserted a `pg_default_acl` row and failed, which is how this was found. **Conflict C1 resolved and applied here:** the domain lives in schema `core`, not `public`. Doc 03 §1 states it outright and then uses `core.proposals`, `core.quotations`, `core.invoices`, `core.engagements` and `core.hrdc_packets` across twenty places of its own executable SQL including index DDL it prescribes; doc 02 writes the same tables as `public.*` throughout its RLS catalogue. 03 outranks 02. `core` is therefore added to PostgREST's exposed schemas in `config.toml` — without that line the whole domain is invisible to the API with no error to explain it.
 
+**Last updated:** 2026-09-14 — **026 authored and EXECUTED against the hosted-like shim, including a full end-to-end run of `hosted_demo_finance.sql` against a replica of hosted's real `akademi-perdana` provisioning (`app.provision_tenant` plus the three real MD ids); nothing applied to any hosted database.** Six client RPCs over 010's finance tables; `recordPayment` is deliberately not one of them. **`recordPayment` HELD, NEEDS OPUS raised to main:** the checked-in web hook comment says recording a payment "goes straight to the resource" (not the action envelope), but 011 already implements `PAYMENT_RECORD` as `money_moving = true`, AAL2-gated, with policy FIN-06 queuing an approval whenever the recorded amount does not exactly match the invoice's outstanding balance — and nothing in the contract or fixtures says what a client-facing RPC should return on that queued branch when the client's own type promises `Invoice` always. A new RPC must call `app.perform_action` rather than insert `core.payments` directly to avoid weakening either guarantee; what it hands back when FIN-06 fires is a product decision this lane cannot make alone. **Two real gaps closed, evidenced by grep, not assumed:** `core.aging_buckets`/`core.collection_rules` — 010's header says 016 seeds them per tenant; no migration through 021 ever does, so `core.receivables_aging()` and `core.v_collection_rules` (020, already granted) have been silently empty since 010 landed. §1 backfills the 7/30/45/60/75 ladder for every tenant that exists when 026 applies. `core.outbound_messages.invoice_id` — commented "FK added by 010" (008), never added; §2 adds it. **Also observed, not touched:** `core.quotations.invoice_id` carries the identical dead comment and is equally never written by 001-021 (011's `INVOICE_CREATE` apply never sets it) — `list_commissions` links a deal to its invoice through `engagements.id` instead, which `INVOICE_CREATE`'s payload does populate. **Scope, stated once:** `list_invoices`/`list_commissions`/`get_collections_queue` are single-page by design (matrix §b2 asks for first-load, not 018-grade keyset parity) — `page.next` is always null, and an unsupported filter/sort fails closed rather than being silently dropped (the exact 018 defect 021 exists to fix). `dsoDays` is a plain outstanding-weighted average age of open receivables, not an agreed DSO formula — 010's own comment says one does not exist yet, so this is reported as a decision to confirm, the same posture 021 took on `get_rate_card`'s permission. **`FixtureCommission` has no contract type**, so `client.ts` types `listCommissions` as `Promise<Result<ListResponse<unknown>>>` (E3 allows only contract-sourced return types) and `apiClient.ts` narrows it once, the one place, satisfying E2's no-double-cast rule. **Found by running the seed, not by reading the schema:** `core.invoices.outstanding_sen` is trigger-maintained FROM PAYMENTS ONLY (010's own column comment) — an invoice that never receives a payment stays at its INSERT-time default of 0 even after lines make its total nonzero, and the deferred reconciliation trigger catches exactly that at flush time; the seed sets it explicitly for the one invoice with no payment. **And at wipe time:** 011's state registry has no `PARTIALLY_PAID → VOID` edge, so an invoice that has taken a payment cannot be voided OR deleted (`ON DELETE RESTRICT` from `core.payments`) — the wipe voids the unpaid demo invoice and leaves the paid one exactly as recorded, which is the domain working as built, not a wipe defect.
+
 ## Migration Order
 
 | # | File | Summary |
 |---|------|---------|
+| 024 | `024_training_delivery.sql` | **Training delivery: the seven §8/§6 client methods the gap matrix marks NO-ADAPTER — `listEngagements`, `getEngagement`, `getEngagementParticipants`, `getAttendance`, `captureAttendance`, `exportAttendance`, `putProgramme` (2026-09-14).** Seven new `core` RPCs, no DDL. Depends only on 001–021. Every function copies 018/021's pattern: `SECURITY DEFINER`, `SET search_path = ''`, the permission gate first, reads through `app.err`/writes through `RAISE TRNOS`, list/get pairs on 018's keyset helpers, writers returning through their sibling reader. `list_engagements`/`get_engagement_participants` gate on `engagement:read`/`participant:read`; `get_attendance` on `attendance:read`; `capture_attendance` on `attendance:capture`; `export_attendance` on `attendance:export`; `put_programme` on `programme:write` (ADMIN only per 002 §11). **`v_trainers`/`v_programmes`/`v_programme_deliveries` already existed** (020) — the gap-matrix audit predates that migration; verified by grep before writing, left untouched. **`getProgrammeDeliveries` fixed in the same commit**: its `rpcClient.ts` adapter matched a route REF against the view's uuid `programme_id` column; now resolves through `get_programme`'s id-or-ref lookup first, the same fix `getOrganisationRelations` already carries. `get_engagement` drops (not zeroes) `finance` for a caller without `quotation:read` (018's R7 ruling for `get_proposal`, carried over). `capture_attendance` defaults an unreasoned absence to `OTHER` to satisfy 008's `ae_absent_needs_reason` CHECK, which the fixture client does not enforce. `put_programme` writes the record's own scalar fields only — `programme_pricing_tiers.floor_price_sen` is NOT NULL and the contract's `PricingTier` carries no floor, so the four child arrays are left untouched and flagged as a decision to confirm. Scope-narrowing (○ in 002 §11) is not applied, same posture as 018/021. |
 | 030 | `030_me_profile_session_null.sql` | **`core.me_profile()`'s `session` block never leaks a null required field (2026-09-14).** `CREATE OR REPLACE` of 022's function only — one `IF` added: `v_has_session` now also goes `false` when `auth.users.last_sign_in_at` exists but its VALUE is null (022 only guarded the column-ABSENT case, via `EXCEPTION WHEN undefined_column`), closing a defect where a populated `session` object could carry `lastSignInAt: null` — found by running `test_022`'s own `T1j` against hosted, where it failed. A real, signed-in caller is unaffected (GoTrue always stamps `last_sign_in_at` on a real sign-in). Pin `test_030`: three cases branched structurally on the column's presence — absent (null as a whole, unchanged), present+null (null as a whole, the fix), present+set (full object, exact 5 keys, real value) — verified against both the unmodified shim and a locally-extended hosted-shaped copy. `test_022`'s own fixture gained a matching `UPDATE` so its T1 principal exercises the real-value branch instead of tripping the defect this migration closes. Rollback restores 022's original body verbatim. `test_001`–`test_022` unmodified and still green. `lint:sql` 74/74, `check:grants`/`check:rpc` clean. |
 | 028 | `028_client_portal.sql` | **The client portal behind `/p/:token`, and the only functions `anon` may call (2026-09-14).** Three `SECURITY DEFINER` RPCs in `core`: `get_portal_proposal(p_token)`, `add_portal_comment(p_token, p_body)`, `accept_portal_proposal(p_token, p_body)`, granted to `anon` and `authenticated`. Five ungranted internals in `app`: `portal_token_hash`, `issue_portal_token`, `_resolve_portal_token`, `_portal_proposal`, `_portal_text`. **The token is the only credential.** It is `tk_pt_` + base64url(`gen_random_bytes(32)`), and only its SHA-256 is stored, in 007's globally unique `token_hash`, looked up by index. It resolves only when the PROPOSAL link is unrevoked and unexpired, its tenant is ACTIVE and its proposal is SENT, VIEWED or ACCEPTED. The tenant comes from the token, never the JWT. Every failure is one identical `NOT_FOUND`. The projection is the contract's `PortalProposal` only: no quotation, cost, floor, margin, commission, provenance, review flag or levy balance. Comments are plain text, capped at 200 per proposal. Accept is idempotent by proposal: one CLICKWRAP signature, a PROPOSED engagement, the acceptance, ACCEPTED and one `ProposalAccepted` event with a CLIENT actor. **Accept deliberately does not use `app.perform_action`.** It adds no action type and no CLIENT permission, so 011/021's CLIENT fail-closed is untouched (the header argues it). The edges it walks are 011's ungated ones, still judged by 011's state triggers. `GRANT USAGE ON SCHEMA core TO anon` reverses 014:941; `$verify$` measures that anon executes exactly these three functions and holds no relation privilege in `app`/`core`/`public`. `scripts/check-grants.mjs` gains its first three allowlist entries, and A1 checks them against the granting migration and its pin. No table, no enum, no prior pin amended. |
+| 026 | `026_finance_receivables.sql` | **The finance client RPC surface over 010: invoices, receivables aging, the collections queue and draft, and commissions (2026-09-14).** Six new `core` RPCs (`list_invoices`, `get_invoice`, `get_receivables_aging`, `get_collections_queue`, `get_collection_draft`, `list_commissions`) and two `app` internals (`_invoice_json`, `_receivables_aging_json`); no existing 001-021 object touched. **HELD:** `recordPayment` — 011 already gates `PAYMENT_RECORD` behind AAL2 and a conditional approval (FIN-06) that a new RPC must not weaken, and what it should hand back on the `QUEUED_FOR_APPROVAL` branch (the client type says `Invoice` always) is unsettled in the contract/fixtures; escalated NEEDS OPUS rather than guessed. **Two confirmed gaps closed, evidenced by grep**: `core.aging_buckets`/`core.collection_rules` were never seeded by 001-021 despite 010's own header saying 016 would (§1 backfills the 7/30/45/60/75 ladder for every tenant that exists at apply time), and `core.outbound_messages.invoice_id` carried an "FK added by 010" comment 010 never fulfilled (§2 adds it). **`core.quotations.invoice_id` observed with the same dead comment and NOT touched** — `list_commissions` links an invoice to a deal through `core.invoices.engagement_id` instead, which `INVOICE_CREATE`'s payload does set. `list_invoices`/`list_commissions`/`get_collections_queue` are deliberately single-page (`page.next` always null) — a documented scope reduction, not a silent one. `dsoDays` is an outstanding-weighted average age of open receivables, not an agreed DSO formula (010 says one does not exist yet) — flagged as a decision to confirm, `get_rate_card`-style. `FixtureCommission` has no contract type (matrix §b2); `client.ts` types it `unknown` (E3 only allows contract-sourced return types) and `apiClient.ts` narrows it once, the one place per E2's no-double-cast rule. Web: `client.ts`/`rpcClient.ts`/`apiClient.ts` gain the six adapters; one pre-existing test (`errorDetails.test.tsx`) that used `listInvoices` as its NOT_DEPLOYED example now uses the still-held `recordPayment`. Seed: `hosted_demo_finance.sql` walks two of the base seed's DRAFT quotations (`quo:aurora`, `quo:meridian`) through `QUOTATION_APPLY` → engagement → `INVOICE_CREATE`/`INVOICE_PUSH` → (Aurora only) `PAYMENT_RECORD`, and one collections case for Meridian at `REMINDER_2` — every gated write opened/closed through `app.effect_applier` directly (the same mechanism `app.apply_effects` uses for a real approved action; the base seed's own "Pending approvals" section does the equivalent one level up, by hand, for the same reason: no FINANCE-role member exists to self-authorise through, only three MDs). Executed end-to-end against a shim replica of hosted's real provisioning (`app.provision_tenant` + the three real MD ids) — not merely applied: `list_invoices`/`get_receivables_aging`/`get_collections_queue`/`get_collection_draft`/`list_commissions` all read back correct money and shape as an impersonated real MD. Wipe voids both invoices' analogue where legal (Meridian) and leaves Aurora's alone — `PARTIALLY_PAID → VOID` has no edge in 011's registry once a payment lands, found by running the wipe, not by reading the schema. **⚠ Review-fix pass (2026-09-14, PR #56):** `list_commissions` now honours `p_sort` (asc/desc, decides which rows survive the page LIMIT, not just display order) and `page.total` is a genuinely unbounded count computed before the page LIMIT, not the count of the returned page. Seeded `core.action_requests` rows in `hosted_demo_finance.sql` are now explicitly marked `ref = 'seed:hosted-demo:<type>:<target_id>'` and kept permanently through the wipe (never deleted) as the domain's audit trail, alongside the append-only seeded payment; `demo_act` uses `ON CONFLICT ... DO UPDATE` so a wipe/reseed cycle reopens the same permanent row rather than colliding on the frozen `ref`. `recordPayment` remains HELD/NEEDS OPUS — not attempted in this pass. |
+| 025 | `025_hrdc_compliance.sql` | **The six compliance/HRD Corp RPCs the web calls with no adapter and no SQL: `getComplianceChecks`, `getClaimPacket`, `attachPacketDocument`, `exportClaimPacket`, `createComplianceRule`, `getRuleChangeSet` (2026-09-14).** Six new `core` functions, two `app` provisioning functions with a tenant trigger and one `app.tenant_seed_checks` row, no table, no enum value, no 002 permission added (all six already exist in the matrix). No 001–021 function replaced. **`core.hrdc_document_types` was never seeded**: `core.hrdc_packet_documents.document_type` FK's to it and no migration through 021 ever inserted a row, so `attachPacketDocument` would foreign-key-violate on every call. Provisioned the way 016/017 provision `ref_formats`/`check_keys` — seed function, `AFTER INSERT` trigger on `public.tenants`, registered in `app.tenant_seed_checks`, backfilled. **No compliance rule could ever resolve ACTIVE**: 009:298's `cr_active_needs_verification` and 011's `enforce_state_transition` gate `PROPOSED -> ACTIVE` behind `RULE_CHANGE_APPROVE`, but 011's own `execute_in_database_action` for that action type updates `core.rule_changes` only, never the `compliance_rules` row a change targets — a real gap in 011, out of reach here. Not fixed in SQL (001–021 not edited); the compliance demo seed (`hosted_demo_compliance.sql`) verifies 017's three national rules over the LEGAL `RULE_CHANGE_APPROVE` path instead, the same mechanism `test_009`'s own `pg_temp.activate_rule` fixture helper uses. **Reads are `app.ok`/`app.err`, writes RAISE `TRNOS`** (`attachPacketDocument`, `createComplianceRule`), both with an optional `p_idempotency_key` in `core.put_quotation`'s shape — advisory lock, `app.idempotency_keys`, same-body replay, `IDEMPOTENT_REPLAY` on a different body. **`createComplianceRule` is tenant-scoped, never national** (009's own documented rule: a national write is a `service_role` provisioning act). ⚠ **`compliance:rule:write` is FINANCE/ADMIN only, not MD** — 002's existing matrix, unchanged here since widening it means editing 002; the "Add rule" screen will FORBID an MD tester. ⚠ **Amends one prior pin in place**: `test_009` T6b's own `hrdc_document_types` fixture INSERT is now `ON CONFLICT DO NOTHING`, since 025's provisioning trigger already seeds the row on a 001-021-plus-025 build (passes either way). Pin `test_025`: nine cases including a teeth check (removing MD's `hrdc:read` mid-transaction FORBIDS `getClaimPacket`, restoring it restores access). Seed `hosted_demo_compliance.sql` (+ wipe): verifies three national rules ACTIVE, creates three minimal engagements (no engagements exist in the base demo seed or any lane merged at authoring time), three claim packets across DRAFT/READY/SUBMITTED, four compliance check results with one version-drift row, and one rule-change set. Web: `apiClient.ts`/`rpcClient.ts`/`client.ts`, same commit, plus `conformance.compliance.test.ts` (15 cases, fixture-vs-RPC parity and not-deployed degradation). |
+| 023 | `023_sales_directory.sql` | **The sales directory: organisation search, opportunity and TNA lists, cross-sell suggestions, and reopening a completed TNA (2026-09-14).** Five NEW `core` RPCs — no existing function, view, table or grant touched, so the rollback is five plain drops. `search_organisations`, `list_opportunities` and `list_tnas` project each row through the existing `get_organisation`/`get_opportunity`/`get_tna` (021) rather than a second shape; `list_opportunities`/`list_tnas` copy `list_proposals`' (021) filter/sort/keyset engine byte-for-byte over their own table. `get_organisation_suggestions` reads the `core.organisation_suggestions` table 005 already built (FK closed by 006) and had never been read; `actions` is derived from the contract's one `SuggestionType` value rather than stored, and `provenance` floors to `{origin:"SYSTEM"}` when no row exists, matching `get_tna_recommendations`'s (021) own fallback. `reopen_tna` is a direct write in `patch_enquiry_extraction`'s (021) shape, not routed through the 011 action envelope (flagged in the PR): `002`'s `tna:reopen` permission, `core.tnas.reopened_at` (005, unused before this), and the TNA detail page's own copy ("reopen a completed TNA") agree the legal transition is COMPLETE → REOPENED only; an already-REOPENED row is a no-op success rather than a refusal. **Found by executing, not by reading**: `list_proposals` (021) offers `value` as a sort field over `app._keyset_scope`/`app._next_cursor` (018), whose page-boundary pair is fixed `timestamptz` — sorting by a `bigint` column breaks on the first non-empty page (`date/time field value out of range`, reproduced directly against the shim). `list_opportunities` does not repeat the mistake: `value` stays filterable and is off its sort whitelist. 021 is not touched. Teeth-checked: disabling `reopen_tna`'s gate makes `test_023` fail, confirming the pin actually enforces it. |
 | 022 | `022_profile_and_dashboard.sql` | **`core.me_profile` and the two executive-dashboard RPCs 020 reported NOT BUILT, built from real data (2026-09-14).** Three new `core` functions, nothing replaced, nothing in the spine touched. `core.get_hours_saved` and `ADMIN_HOURS_SAVED` are deliberately not built — no baseline-minutes table exists. `MeProfile.location`/`jobTitle`/`department`/`staffNumber` are `null` (no table carries them); `session` answers `null` AS A WHOLE whenever the REQUIRED `lastSignInAt` (`auth.users.last_sign_in_at`) cannot be derived, never a populated object with a null required field; otherwise a full object with `browser`/`place` null (no user-agent/geoip storage), `activeSessions` real off `auth.sessions`, `twoFactorEnabled` real off `auth.mfa_factors` where present. Every other field, including `moduleCount` (the same nav-permission match `core.navigation()` uses, MD reads 13 of 14) and `email` (from `auth.users`), is real. The four dashboard metrics are each one worked aggregate over `core.opportunities`/`invoices`/`proposals`/`hrdc_packets`, formulas in the migration header; `agentActivity`/`autonomyMix` derive per-run autonomy from `core.action_requests.granted_level`; `agentSpend` sums `core.budget_status` at `scope='AGENT'` (no TENANT scope exists). No `delta` anywhere — no snapshot table exists to compute one honestly. Both dashboard RPCs gate on the already-seeded `dashboard:executive:read` (SALES_MANAGER/FINANCE/MD/ADMIN), narrower than `dashboard:read` and the closer match to the contract's `roles:['MD']`; `me_profile` gates on membership only. Pin `test_022`: 50/50 assertions against a hosted-like shim, hand-computed sums against seeded fixtures walked through `core.state_transitions`' gated edges (not gone around), tenant isolation, permission refusal, anon 42501, and validation on both RPCs. Re-verified against 001–021+022 after merging `origin/main`: `test_021` (10/10), `test_022` (50/50) and the hosted demo seed's own pin (`test_hosted_demo.sql`, ALL PASS) each individually green; a clean 001–021+022 build re-runs every prior pin unmodified, still green. `lint:sql` 71/71, `check:grants`/`check:rpc` clean. **Owed:** the skill's G5 dual adversarial review — a Codex review was dispatched in parallel by the coordinator instead. **No collision with 021**: 021 touches `badge_counts` and 23 other 018 RPCs plus 011's dispatch functions and 019's seed function; none of the three names this migration creates, and 021 does not touch `app.role_permissions` or `core.navigation()`'s permission list. |
 | 021 | `021_golden_path_authz.sql` | **Role authorization on the golden-path RPCs, `OPPORTUNITY_STAGE_CHANGE`, and the 019 seed fix (2026-09-14).** 24 018 functions are replaced (`badge_counts` plus 23 gated), along with three 011 dispatch functions and 019's `app.seed_pipelines`. Each body is its prior text apart from blocks marked `-- 021 ·`. Also adds one action type, one move-check function, one tenant trigger with its seed function and backfill, and one policy. No table, no enum value. **Any principal with a tenant claim could call every read and write**: only `list_quotations` checked a permission. The 23 now check their 002 permission as the first statement, reads through `app.err('FORBIDDEN')` and writes through a TRNOS raise, identically for every argument. `badge_counts` zeroes the HRDC and run counts a role may not read. **The approval audit tab was still empty**: the shipped client sends `get_audit('APPROVAL', ref)` and 020 mapped only `approvals`, so 020's `get_audit` is replaced to map what `aggregateTypeOf` sends (`APPROVAL`, and the misspelt `ENQUIRIE`/`OPPORTUNITIE`). `get_rate_card` has no 002 permission and is gated on `quotation:read` (flagged). **The pipeline board could not move a deal**: 011 never catalogued R18's type. It is now an action type needing `opportunity:stage`, with arms in 011's three per-type dispatch functions. The move is refused if `fromStage` is stale (`STAGE_MOVED`), if the stage is not a step of the tenant's pipeline, or if a terminal step has no reason. It is checked when the target resolves and again under the executor's lock. `OPP-01` routes WON/LOST moves to SALES_MANAGER approval, seeded per tenant and backfilled. **019's seed aborted on a tenant with its own default pipeline** (`pipelines_one_default_uq`), and now steps aside. `app.seeded_pipelines` is FORCED with an owner-only policy. ⚠ **Amends three prior pins** in place: test_011 T1b/T1c and test_012 T1p (22→23 action types), and test_018 T19g/T36 (compliance-rule reads as SALES). |
 | 020 | `020_api_read_surface.sql` | **The API read surface: approvals that can be decided, and views a browser can read (2026-09-14).** It replaces three 018 functions (`core.list_approvals`, `core.get_approval`, `core.get_audit`) whose bodies stay 018's apart from blocks marked `-- 020 ·`. It repairs three 018 views, adds fourteen `security_invoker` views and adds two `core` definer row sources. No table, enum value or policy. **Nobody could approve anything**: 014's `core.decide_approval` requires the diff hash and 011 compares it, but 018's list and detail never sent `diffHash`, so every APPROVE was refused. Both now carry it (contract `ApprovalRequest.diffHash`). The list also accepts the contract's `value.amount` filter. **The audit drawer was always empty**: the client sends the URL segment (`approvals`) and 012 stores UPPER_SNAKE. `get_audit` maps the unambiguous segments and returns an approval's trail by action-request correlation. **Every client view raised or 404'd**: 018's three views called `app` helpers REVOKEd from `authenticated` (42501, shown to the user as signed out), and fourteen `VIEW_READS` names had no view. Money is now inlined, the budget and tier rows come from `core.ai_*_rows()`, and each view's columns are the contract keys, with no rows for a caller who lacks the 002 read permission. `$verify$` V6 asserts off `pg_depend` that no client-readable `core` view calls a function `authenticated` cannot execute. The three reads get the `approval:read` / `audit:read` gate. `decide_approval` keeps 014's uuid signature. **Not built:** `me_profile` (no table carries its required fields) and the dashboard RPCs (nothing to compute them from). Pin `test_020`: every probe runs as `authenticated`, and the build ran as a NOSUPERUSER BYPASSRLS role. |
@@ -422,6 +621,324 @@ all three are platform-provided and none is 001's to drop. Round-tripped: applie
 re-applied, verify green each time.
 
 ---
+
+## Migration Detail — 024 (`024_training_delivery.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+
+### What it does
+
+| Function | Args | Permission | Returns through |
+|---|---|---|---|
+| `core.list_engagements` | `p_filter jsonb, p_sort text, p_page jsonb, p_view text` | `engagement:read` | `app.ok({data,page,appliedFilters})`, each row `core.get_engagement` |
+| `core.get_engagement` | `p_id text` | `engagement:read` | `app.ok(Engagement)`, `finance` dropped without `quotation:read` |
+| `core.get_engagement_participants` | `p_id text, p_page jsonb` | `participant:read` | `app.ok({data,page})` |
+| `core.get_attendance` | `p_id text, p_day integer` | `attendance:read` | `app.ok(AttendanceSheet)` |
+| `core.capture_attendance` | `p_id text, p_day integer, p_body jsonb` | `attendance:capture` | `core.get_attendance(p_id,p_day)` |
+| `core.export_attendance` | `p_id text, p_format text` | `attendance:export` | `app.ok({url,expiresAt})` |
+| `core.put_programme` | `p_id text, p_body jsonb` | `programme:write` (ADMIN only, 002 §11) | `core.get_programme(p_id)` |
+
+**Privilege table for hosted apply.** All seven: `REVOKE ALL FROM PUBLIC, anon, authenticated` then
+`GRANT EXECUTE TO authenticated` only, per-object (001's finding: the default-privileges REVOKE does
+not take for a function created later, so every new function needs its own REVOKE+GRANT). No table,
+view, enum value or grant on an existing object is touched.
+
+**List/get pagination reuses 018's engine.** `list_engagements` and `get_engagement_participants`
+call `app._page_size` / `app._cursor_decode` / `app._keyset_scope` / `app._next_cursor` rather than a
+new one. `list_engagements`' filter allow-list is deliberately small (`status`, `createdAt`,
+`updatedAt`) — the shipped client never sends a filter for this list today
+(`features/engagements/api.ts`'s `useEngagements()` calls `listEngagements()` with no arguments).
+
+**`capture_attendance` answers the lock in the contract's own shape.** The one-way lock is 008's
+trigger, unconditionally; this function pre-checks `attendance_days.status = 'LOCKED'` and raises
+`TRNOS` with `{code:'ATTENDANCE_LOCKED', approvedAt, unlockPath:'/v1/actions',
+unlockActionType:'ATTENDANCE_UNLOCK'}` — the contract's `AttendanceLockedDetails` — rather than
+surfacing the trigger's generic exception text. `008`'s `ae_absent_needs_reason` CHECK requires a
+reason whenever `present = false`; the fixture client leaves it optional, so an absence with no
+caller-supplied reason is written as `OTHER` — the schema's stricter rule, applied rather than
+routed around.
+
+**`put_programme` writes scalar fields only.** `name`, `category`, `days`, `status`, `hrdcScheme`,
+`hrdcClaimable`, `listPrice`, `listPricePax`, `floorPrice`, `floorMarginRate`, `outcomes`. The four
+nested arrays (`modules`, `pricingTiers`, `trainerPool`, `materials`) are left untouched regardless
+of what a caller's `Partial<Programme>` carries for them: `core.programme_pricing_tiers.floor_price_sen`
+is `NOT NULL`, and the contract's `PricingTier` (`{maxPax, price}`) does not carry a floor, so a
+client-supplied tier cannot be inserted without inventing a business number the contract never sent.
+Flagged as a decision to confirm rather than guessed at.
+
+**`getProgrammeDeliveries` fixed in the same commit, web-side only.** `apps/web/src/shared/api/rpcClient.ts`
+matched `v_programme_deliveries.programme_id` (a uuid column, 020) against whatever the caller holds
+— which is always the route's REF (`:programmeRef`), never a uuid — so the panel silently returned
+zero rows. Now resolves through `get_programme`'s own id-or-ref lookup first, the same fix
+`getOrganisationRelations` already carries for the same reason. Not a 024 SQL change; reported here
+because it blocks the same screens this migration exists to serve, and because `check:rpc` would
+otherwise have nothing to say about a view read that "succeeds" with an empty array.
+
+**Scope-narrowing (○ in 002 §11) is not applied**, holding the same line 018/021 already state for
+the rest of the golden path: a TRAINER with `engagement:read` sees every engagement in the tenant
+through these RPCs, not only their own — a SECURITY DEFINER read does not evaluate the caller's RLS
+policies. Reported again rather than fixed as a side effect of an unrelated lane; narrowing by owner
+is a per-table design call for a follow-up migration.
+
+`$verify$`: V1 all seven exist, exactly one overload, granted to `authenticated` only, not to `anon`.
+V2 the permission gate is the first statement and no `FROM core.`/`FROM app.` read precedes it. V3
+every role holding `attendance:capture` or `programme:write` also holds the paired read, read from
+`app.role_permissions` in this database. V4 `programme:write` is held by ADMIN alone.
+
+### The 7-point RPC contract check, worked
+
+1 Envelope: `app.ok`/`app.err` for reads, `RAISE … TRNOS` for writes — shapes 018/021 already return.
+2 Unwrap: list/participants return `{data,page[,appliedFilters]}` (2–3 sibling keys, passed through);
+get/capture/put return a single `data` key (auto-unwrapped); `export_attendance` returns
+`{url,expiresAt}` (2 sibling keys, neither named `data`, so no auto-unwrap collision).
+3 RpcMap: one definition each, `$verify$` V1.
+4 Call sites: `features/engagements/api.ts` (`useEngagements`, `useEngagement`,
+`useEngagementParticipants`, `useAttendance`, `useAttendanceDays`, `useCaptureAttendance`,
+`useExportAttendance`) and `features/programmes/api.ts` (`useEditProgramme`,
+`useEngagementsForProgramme`).
+5 Casts: `client.ts`/`rpcClient.ts`/`apiClient.ts` edited in the same commit, argument names match.
+6 Reload: none of the seven run on shell bootstrap.
+7 Public routes: nothing granted to `anon`; V1 asserts it.
+
+### Pin — `tests/test_024_training_delivery.sql`
+
+T1 ADMIN reads `list_engagements`/`get_engagement`/`get_engagement_participants` and gets the
+contract's keys back, `finance` and the lifecycle (from `pipeline_steps`, `position` order) included.
+T2 OPS reads the same engagement without `finance` — R7, dropped not zeroed. T3 CLIENT is FORBIDDEN
+on all seven, `requiredPermission`/`requiredRole` named, byte-identical for a real id and an invented
+one. T4 `anon` cannot execute any of the seven — 42501 from the grant itself. T5 a tenant-B ADMIN
+reading tenant A's engagement ref gets non-enumerable NOT_FOUND. T6 an OPEN day accepts a present
+mark and a defaulted-reason (`OTHER`) absent mark; a LOCKED day (walked through 011's GOV-07 gate,
+`pg_temp.gate('ATTENDANCE_APPROVE', …)`, same rig as `test_008`'s T3) refuses capture with the
+contract's exact `AttendanceLockedDetails` shape. T7 ADMIN's `put_programme` write lands and reads
+back through `core.get_programme`; OPS is FORBIDDEN naming `requiredRole: 'ADMIN'`.
+
+Executed as a NOSUPERUSER BYPASSRLS role against the hosted-like shim; `test_021` re-run on a fresh
+001–021 build to confirm no regression from 024 (024 edits no prior file). `lint:sql`, `check:grants`,
+`check:rpc`, `typecheck`, `typecheck:strict`, `lint`, the full `npm test -- --run` (128 web test
+files / 1223 tests, plus fixtures / agent-runtime / worker packages), `npm run build` and the
+`VITE_API_MODE=supabase` build all pass.
+
+### Rollback — `rollbacks/024_training_delivery_rollback.sql`
+
+Purely additive migration, so the rollback is seven `DROP FUNCTION IF EXISTS`, verified absent
+afterward. Re-applying 024 after the rollback on the same database is exercised as part of this
+lane's proof and succeeds cleanly.
+
+### Review-fix pass (2026-09-14, PR #55)
+
+Four fixes, each a separate commit: (1) `app.role_permissions` gains `('TRAINER',
+'attendance:export')` via a new §0 section in the migration (002 frozen, not edited); rollback
+gains the matching `DELETE`. (2) `capture_attendance`'s engagement lookup is now scoped for
+TRAINER via `core.engagement_trainers` (008's purpose-built join, kept in sync by trigger from
+`core.sessions.trainer_id`) — folded into the lookup itself so a real engagement they don't own and
+a fabricated id answer identically FORBIDDEN, non-enumerable; OPS/MD/ADMIN unrestricted. (3)
+`export_attendance` now returns `status` (the engagement's latest attendance day) and `snapshotAt`;
+`AttendanceExport` (contract) widened with both fields optional — no runtime schema existed on this
+path to have rejected them. (4) The T8 teeth-check this pin's own header promised but never
+implemented (`grep T8` found only the header line) is now built — renumbered T10, with new T8/T9
+covering fixes (1)/(2) — using `pg_get_functiondef` + a targeted `regexp_replace` to disable and
+restore `core.get_engagement`'s `has_permission` gate live, rather than a hand-copied duplicate of
+the function. Each fix's new probe verified to fail on revert and pass restored. Full pin,
+`lint:sql`, `check:grants`, `check:rpc` clean; `apps/web` `typecheck` and the full `npm test -- --run`
+(128 files / 1230 tests) pass since (3) touched `packages/contract`.
+
+## Migration Detail — 035 (`035_follow_up_draft_trim_fix.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. `CREATE OR REPLACE` of
+`core.get_follow_up_draft(text,text)` only, one token changed.
+
+- **Pin** — `tests/test_035_follow_up_draft_trim_fix.sql`. T1/T2, ends in `ROLLBACK`. T1
+  reproduces the exact reported error against 021's original body / this migration rolled back.
+- **Rollback** — `rollbacks/035_follow_up_draft_trim_fix_rollback.sql`. Restores 021's original
+  body verbatim, including the nonexistent `pg_catalog.trim(text)` call.
+
+---
+
+## Migration Detail — 034 (`034_dashboard_contract_fixes.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. `CREATE OR REPLACE` of
+`core.get_executive_dashboard(text)` and `core.get_proposals_vs_won(integer)` only.
+
+- **Pin** — `tests/test_034_dashboard_contract_fixes.sql`. 14 assertions, ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/034_dashboard_contract_fixes_rollback.sql`. Restores 022's two bodies
+  and comments verbatim; verified the MD-only check and the currency guards are gone after
+  rollback, and (round-tripped) reappear after a re-apply.
+
+---
+
+## Migration Detail — 033 (`033_sensitive_table_rls.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. 28 `app.apply_tenant_policies`
+calls, one bespoke policy on `core.events`, three bespoke MY_ACCOUNTS narrowing policies, one
+`public.user_profiles_select` policy replacement — no table, no type added.
+
+- **Pin** — `tests/test_033_sensitive_table_rls.sql`. 8 test groups (T1–T8), ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/033_sensitive_table_rls_rollback.sql`. `app.ungate_tenant_policy` per
+  table (stamped `033`), drops the four bespoke policies, restores `user_profiles_select`.
+- **Amended in this commit**: `tests/test_004_shell_config_and_ref_allocation.sql` (T1c),
+  `tests/test_012_events_outbox_and_jobs.sql` (T1d), `tests/test_014_rls_policies_and_client_grants.sql`
+  (T1c, T12l, T12m) — each marked ⚠ AMENDED BY 033 in place, reasons in the dated entry above.
+
+---
+
+## Migration Detail — 032 (`032_approval_target_lock.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. One new function
+(`app.lock_action_value_target`), one `CREATE OR REPLACE` of `app.decide_approval` (011), one
+`CREATE OR REPLACE` of `app.seed_opportunity_stage_policy` (021) plus its tenant repair pass.
+
+- **Pin** — `tests/test_032_approval_target_lock.sql`. T1–T6, ends in `ROLLBACK`. The genuine
+  two-session TOCTOU proof (session A holds the lock uncommitted, session B blocks and times out)
+  is NOT embedded in the pin — this shim's `pg_hba.conf` uses trust auth, and `dblink` refuses a
+  non-superuser caller regardless of password, so a checked-in single-file pin cannot open the
+  second connection. Run instead with two real `psql` processes as part of this migration's
+  verification; transcript in the PR body.
+- **Rollback** — `rollbacks/032_approval_target_lock_rollback.sql`. Restores 011's and 021's
+  bodies verbatim, drops `lock_action_value_target`; does not revert OPP-01 rows 032 repaired.
+
+---
+
+## Migration Detail — 031 (`031_membership_actor_kind_lock.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. One trigger function, one
+trigger on `public.memberships`, one `CREATE OR REPLACE` of `app.principal_claims` (002).
+
+- **Pin** — `tests/test_031_membership_actor_kind_lock.sql`. T1–T7, ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/031_membership_actor_kind_lock_rollback.sql`. Drops the trigger and
+  function, restores `app.principal_claims`'s 002 body verbatim (including nulling the COMMENT
+  031 added — 002 never had one on this function).
+
+---
+
+## Migration Detail — 027 (`027_ops_knowledge_settings.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+Depends only on 001–021; no other 02x lane's objects are touched.
+
+### What it does
+
+| § | Object | Change |
+|---|---|---|
+| 1 | `app.role_permissions` | two new permissions, `library:read` and `tenant:read`, granted to the six staff roles (SALES, SALES_MANAGER, OPS, FINANCE, MD, ADMIN) — 002 has neither, and both endpoints are fixture-only (no contract type) |
+| 2 | `core.library_assets` | new table, forced RLS / zero policies, mirrors `FixtureLibraryAsset` (fixtures `data/library.ts`) — the Library corpus has no table anywhere in 001–021 |
+| 3 | `core.list_agents`, `core.pause_agent` | contract 10 `AgentRegistryResponse`/`Agent`; `pause_agent` writes `core.agents` directly (011's pre-013 `AGENT_PAUSE` handler only touches `core.autonomy_grants` — see the migration header) |
+| 3 | `core.list_runs`, `core.get_run`, `core.retry_run`, `core.dead_letter_run` | contract 10 `AutomationRun`; `nodes`/`events`/`stateCard`/`steps` all omitted (optional in the contract, not independently verified against `TraceNode`/`RunEvent`/`RunStateCard`'s exact shapes — flagged as follow-up); `retry_run`/`dead_letter_run` are direct writes, ADMIN-gated, no job/worker involvement |
+| 4 | `core.create_knowledge_source`, `core.check_knowledge_source`, `core.reingest_knowledge_source` | contract 17 `KnowledgeSource`/`KnowledgeSourceCheckResponse`/`KnowledgeSourceReingestResponse` over the existing `core.knowledge_sources` (009); reingest reports the honestly-queued state (`embeddingStatus: PENDING`, no `runId`) — no worker handler exists to claim a reingest job |
+| 4 | `core.list_library_assets` | new, gated on `library:read` |
+| 5 | `core.get_ai_routing`, `core.put_ai_routing` | contract 17 `RoutingResponse`/`RoutingEntry` over `core.routing_entries`/`core.routing_matrix_versions` (013); `staged`/`unsavedChanges` always empty/0 — no staged-edit ledger exists in 001–021 |
+| 5 | `core.list_providers` | READ ONLY. `createProvider`/`testProvider`/`revealProvider` are NOT in this migration — see "BYOK gap" below |
+| 5 | `core.get_usage`, `core.put_budget` | contract 17 `UsageResponse`/`Budget` over `app.usage_rollup`/`core.ai_budgets` (013); `put_budget` is a direct write, MD-gated on a cap raise — see "Budget raise" below |
+| 5 | `core.get_tenant` | new, gated on `tenant:read`, over `public.tenants` |
+
+Permission per RPC: `list_agents`/`pause_agent` agent:read/agent:pause · `list_runs`/`get_run`
+run:read · `retry_run` run:retry (ADMIN-only, 002's own invariant) · `dead_letter_run`
+run:dead_letter (ADMIN-only) · `create_knowledge_source`/`check_knowledge_source`
+knowledge:source:write · `reingest_knowledge_source` knowledge:source:reingest ·
+`list_library_assets` library:read (new) · `get_ai_routing` ai:routing:read · `put_ai_routing`
+ai:routing:write · `list_providers` ai:provider:read · `get_usage` ai:usage:read · `put_budget`
+ai:budget:raise (raise) / ai:budget:write (otherwise) · `get_tenant` tenant:read (new).
+
+`$verify$`: V1 one definition, correct posture (SECURITY DEFINER, `search_path=''`,
+`statement_timeout=10s`, authenticated-only) for all sixteen. V2 every gate is the first
+permission-relevant statement, no read before it. V3 the two new permissions are granted to
+exactly the six staff roles. V4 `core.library_assets` is forced RLS with zero policies. V5/V6
+`run:retry`/`run:dead_letter`/`ai:budget:raise` stay at their 002 role restriction.
+
+### ⚠ The BYOK gap: createProvider / testProvider / revealProvider
+
+013 already ships the client-facing SQL for all five provider-key writes
+(`public.ai_provider_key_set/_test/_rotate/_delete/_reveal`, 013:2375–2758) — applied to hosted
+already. By design they never let the raw key transit Postgres: `_set`/`_rotate` take an
+already-computed mask + fingerprint + vault locator, `_test` only records a status an Edge
+Function already produced by probing the provider with the decrypted key, and `_reveal` returns
+the opaque locator, never the key. `supabase/functions/` in this repo holds only a README — there
+is no Edge Function anywhere to derive the mask/fingerprint, run the probe, or perform the
+decrypt. Building one is a worker/edge change (out of this lane's scope per its brief), and
+inventing a path that lets the raw key transit Postgres would contradict 013's own stated design.
+Escalated to the orchestrator (NEEDS OPUS) before writing anything in this area; `list_providers`
+(read, masked rows only) ships, the three writes do not.
+
+### ⚠ The `put_budget` design decision
+
+013's own comment on `core.ai_budgets` states "Raising cap_sen is BUDGET_CAP_RAISE through 011's
+envelope, MD-gated." 011 does carry that action type (`ai:budget:raise`, MD-only) and policy FIN-07
+("Budget cap raise always needs MD approval" — `ALL` combinator, no conditions), but 011's own
+`app.execute_in_database_action` has only a stub for it (`WHEN 'BUDGET_CAP_RAISE' THEN NULL`), and
+FIN-07's unconditional approval requirement means a raise could never complete synchronously even
+for the MD who requested it — which conflicts with the contract's `PUT /v1/ai/budgets/{scope}/{key}`
+returning a `Budget` directly and with the fixture's synchronous behaviour (FC:2005: MD-gated only
+on a raise, not queued). Implemented here as a direct write, MD-gated on a raise, matching the
+contract's synchronous shape and the fixture — not wired through the always-escalating action
+envelope. Flagged as a product decision to confirm.
+
+### The 7-point RPC contract check, worked
+
+1 IDENTITY. `p_id`/`p_body`/`p_page` etc., matching the SQL exactly. 2 UNWRAP. Every function
+returns through `app.ok()`/`app.err()`, or raises TRNOS. 3 RpcMap. `apps/web/src/shared/api/rpcClient.ts`
+`RPC_NAMES.newSql` gained the sixteen names. 4 CALL SITES. `apps/web/src/shared/api/apiClient.ts`
+`adapters()` maps each `FixtureClient` method name to the matching `TrainOsClient` call; two methods
+(`listLibraryAssets`, `getTenant`) have no contract type, so the RPC layer returns `unknown` and
+`apiClient.ts` casts back to the fixture's shape behind a runtime guard (not a double cast — `check:rpc`
+E2 forbids that). 5 CASTS. Zero `as unknown as` in `apps/web/src/shared/api` (`check:rpc` E2 passes).
+6 RELOAD. Nothing here is on the shell bootstrap path. 7 PUBLIC ROUTES. Nothing granted to anon.
+
+### Pin — `tests/test_027_ops_knowledge_settings.sql`
+
+Self-contained (provisions its own tenant and users; no psql meta-commands — `lint:sql` only
+tolerates those in seeds). T1 MD succeeds on every MD-permitted read/write with the contract's
+top-level keys present, including raising a budget cap. T2 ADMIN-only paths (retry, dead-letter,
+knowledge writes, provider list, routing write) succeed for ADMIN and are FORBIDDEN with the right
+`requiredPermission` for MD. T3 SALES is FORBIDDEN on agent/run/knowledge/provider/routing but
+succeeds on the two new permissions. T4 CLIENT is FORBIDDEN everywhere, byte-identical for a real
+and an invented id. T5 anon gets 42501. T6 cross-tenant isolation: a second tenant's MD sees zero
+rows and `NOT_FOUND` on tenant 1's run. T7 `listProviders` never returns a `key` field and every
+non-empty `maskedKey` carries the mask character. T8 teeth-check, in `pg_temp` only (`check:grants`
+T1/T2 forbid a test from defining a real SECURITY DEFINER function or granting `authenticated`): a
+`pg_temp` copy of `get_tenant` with the gate deleted lets CLIENT through, proving the assertion is
+live, then the real, untouched `core.get_tenant` is called as the same CLIENT and still refuses.
+
+Executed against 001–021+027 on the shim: `lint:sql` 71/71, `check:grants` clean, `check:rpc` 4/4
+pass. Functional probes (`scratchpad/api-027-ops/{probe_seed,md_probe,admin_probe}.sql`) confirmed
+every one of the sixteen functions against seeded `core.agents`/`core.runs`/`core.ai_budgets`/
+`core.ai_provider_keys`/`core.routing_entries` rows, as MD and ADMIN, plus SALES/anon negative paths.
+
+### Rollback — `rollbacks/027_ops_knowledge_settings_rollback.sql`
+
+Purely additive migration, so a straight teardown: refuses if `core.library_assets` holds rows,
+otherwise drops the sixteen functions and two private helpers (`app._run_row`,
+`app._knowledge_source_row`), drops `core.library_assets`, deletes the two new
+`app.role_permissions` rows. Measured: `pg_proc`/`pg_class` catalog and `app.role_permissions`
+are byte-identical (sorted) to a fresh 001–021 build after 027 applies then rolls back.
+
+### ⚠ Carried risk and standing conditions
+
+- **createProvider/testProvider/revealProvider are not built** — see above. `listProviders` (read)
+  ships. Its row shape was aligned with lane 029 (which owns those three writes in a separate
+  migration): `addedBy` projects the contract's `EditedBy` {id, name, at} rather than the raw
+  `added_by` actor jsonb, `activeFallbackTier` is included when set, and rows whose `key_ref` is
+  tombstoned (`retired:%`, 029's delete convention for a key `app.key_access_audit` still
+  references) are excluded.
+- **`put_budget`'s cap-raise path bypasses 011's `BUDGET_CAP_RAISE` action envelope** — see above,
+  a product decision to confirm.
+- **`AutomationRun.nodes/events/stateCard/steps` are not populated** — all optional in the
+  contract; omitted rather than guessed at, since this pass did not independently verify
+  `TraceNode`/`RunEvent`/`RunStateCard`'s exact key shapes against their contract types.
+- **`AgentRegistrySummary.approvalsRaised`/`autoApproved`/`incidents30d`** are computed
+  best-effort (no unambiguous source table in 001–021 for what counts as "raised by an agent" or
+  an "incident") — flagged for confirmation, not silently guessed.
+- **013's claim that "016 provisions tier_keys per tenant" is incorrect** — checked: 016 seeds no
+  `core.tier_keys` rows anywhere. The functional probes and the pin both seed their own; the
+  seed for this migration does the same and reports the gap.
+- `reingestKnowledgeSource` reports its gap explicitly (no worker handler exists, not even in
+  `UNIMPLEMENTED_012_JOB_TYPES`) rather than enqueuing a job nothing will ever claim.
 
 ## Migration Detail — 030 (`030_me_profile_session_null.sql`)
 
@@ -635,6 +1152,201 @@ queues under APV-01. MD Khu Code approves it with the diff hash, and it mints on
 - **No staff RPC issues or revokes a link.** `portal:token:issue`/`revoke` exist in 002, but nothing calls
   `app.issue_portal_token` except the seed.
 - `vendorContact.email` shows the opportunity owner's profile email to anyone holding the link.
+
+---
+
+## Migration Detail — 023 (`023_sales_directory.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+
+### What it does
+
+| § | Object | Change |
+|---|---|---|
+| 1 | `core.search_organisations(p_query text)` | `organisation:read`. Ranks an exact `ref` match first, then a name-fragment position, then name; capped at 50; each row projected through `core.get_organisation` (021) |
+| 2 | `core.list_opportunities(p_filter, p_sort, p_page, p_view)` | `opportunity:read`. `list_proposals`' (021) engine over `core.opportunities`; filterable `organisation`/`stage`/`owner`/`value`/`createdAt`/`updatedAt`; sortable `createdAt`/`updatedAt` only (see the found-by-executing note below); projected through `core.get_opportunity` (021) |
+| 3 | `core.get_organisation_suggestions(p_id text)` | `organisation:suggestions:read` (SALES, SALES_MANAGER, MD, ADMIN — not OPS/FINANCE). Reads `core.organisation_suggestions` (005/006), `status = 'OPEN'` only; `actions` derived per `suggestion_type`, `provenance` floors to `{origin:"SYSTEM"}` |
+| 4 | `core.list_tnas(p_filter, p_sort, p_page, p_view)` | `tna:read`. Same engine as §2, over `core.tnas`; filterable `opportunity`/`status`/`createdAt`/`updatedAt`; sortable `createdAt`/`updatedAt`; projected through `core.get_tna` (021). §13 never published this collection; the fixture oracle does, and the nav tree's `Sales › TNA` leaf needs it |
+| 5 | `core.reopen_tna(p_id text)` | `tna:reopen` (SALES, SALES_MANAGER, MD, ADMIN). Direct write, `patch_enquiry_extraction`-shaped. `COMPLETE -> REOPENED` sets `reopened_at`; `DRAFT`/`SENT` refuse `VALIDATION_FAILED NOT_COMPLETE`; already-`REOPENED` is a no-op success. Returns through `core.get_tna` |
+
+`$verify_023$`: V1 one definition and the 018/020/021 posture (`SECURITY DEFINER`, `search_path=''`,
+10s timeout, `authenticated`-only) for all five. V2 the permission gate is the first statement of
+every body (021's `app.has_permission(` / `FROM core.`+`FROM app.` ordering check, reused). V3 every
+holder of `tna:reopen` holds `tna:read`, and every holder of `organisation:suggestions:read` holds
+`organisation:read` — read from `app.role_permissions` as it stands in the database. V4
+`core.reopen_tna`'s body names `reopened_at`.
+
+**Found by executing, not by reading.** `list_proposals` (021) offers `value` (`value_sen`, bigint)
+as a sort field over `app._keyset_scope`/`app._next_cursor` (018). Those helpers carry the page
+boundary through a fixed `timestamptz` pair, and `p_date_sort` only disambiguates DATE from
+TIMESTAMPTZ — there is no numeric keyset path. Reproduced directly: `EXECUTE 'SELECT 3000000::bigint,
+...' INTO v_last_at, v_last_id` (`v_last_at timestamptz`) raises `date/time field value out of range`,
+because PL/pgSQL's dynamic-SQL `INTO` coerces through TEXT when the source and target types differ.
+`list_opportunities` does not repeat it: `value` stays filterable (filtering never touches
+`v_last_at`) and is off the sort whitelist. **021 is not edited** — this is reported, not fixed, and
+would affect `list_proposals`'s own `sort=-value` the same way if a caller ever sent it.
+
+**⚠ `reopen_tna` is NOT routed through the 011 action envelope**, flagged for confirmation rather
+than assumed. `app.action_types` has no `TNA_REOPEN` entry and the fixture oracle's own
+`reopenTna` is a plain `#write()`, not a `performAction` call. Three independent signals agree on
+the legal transition without it: `002`'s `tna:reopen` permission (SALES/SALES_MANAGER/MD/ADMIN,
+already a strict subset of `tna:read`'s holders), `core.tnas.reopened_at` (005 — a column that
+existed and was unused before this migration), and `TnaDetailPage.tsx`'s own comment naming the
+action "reopen a **completed** TNA". Direct-RPC writes with their own gate and their own
+legal-transition check are an established 018/021 pattern (`patch_enquiry_extraction`,
+`add_proposal_section`, `put_proposal_section`, `put_quotation`); the envelope is for writes that
+need its policy-approval routing, its diff hash or its idempotency ledger, none of which a status
+flip needs here.
+
+### The 7-point RPC contract check, worked
+
+1 ENVELOPE: reads through `app.ok`/`app.err`; the one write raises `TRNOS` with a `{code, ...}`
+DETAIL bag, 021's own shape. 2 UNWRAP: no top-level key beside `data`; `search_organisations`
+returns a bare `data` array with no page envelope, matching the contract's `Organisation[]`. 3
+RpcMap: `apps/web/src/shared/api/client.ts`'s `TrainOsClient` gained five signatures
+(`searchOrganisations`, `getOrganisationSuggestions`, `listOpportunities`, `listTnas`,
+`reopenTna`), `rpcClient.ts` implements each as one `this.call(...)`, `RPC_NAMES.newSql` gained the
+five RPC names. `check-rpc-contract.mjs` E1-E3 pass. 4 CALL SITES:
+`shared/api/useOrganisationDirectory.ts` (13 screens), `leads/api.ts`, `pipeline/api.ts`,
+`organisations/api.ts`, `relationships/api.ts`, `tna/api.ts`. 5 CONFORMANCE:
+`apps/web/src/shared/api/__tests__/conformance.sales-directory.test.ts`, the oracle-backed suite —
+11 cases, both clients answer identically, and an undeployed environment classifies all five as
+NOT_DEPLOYED. 6 FIXTURES UNCHANGED: no fixture file touched; the RPC adapter matches the oracle's
+existing behaviour. 7 TYPES: `npm run typecheck && typecheck:strict && lint && test -- --run &&
+build && check:barrels`, plus the `VITE_API_MODE=supabase` build, all green.
+
+### Pin — `tests/test_023_sales_directory.sql`
+
+Own tenant (`a0230000-…`, disjoint from every other pin's fixtures), four users (SALES/OPS/FINANCE/
+CLIENT). T1: CLIENT is FORBIDDEN on all five, `requiredPermission` named, byte-identical for a real
+argument and a fake one. T2: OPS reads organisations/opportunities/TNAs but not suggestions or
+reopen; FINANCE reads organisations/opportunities only. T3: `search_organisations` ranking (exact
+ref beats substring) and the `get_organisation` shape on each row. T4: `list_opportunities` filter,
+`appliedFilters` echo, and both sort directions. T5: `get_organisation_suggestions` renders only the
+OPEN row, carries two `actions`, and floors an absent provenance row to `SYSTEM`. T6:
+`list_tnas` unfiltered and status-filtered. T7: `reopen_tna`'s three paths — COMPLETE succeeds and
+stamps `reopened_at`, DRAFT refuses `VALIDATION_FAILED`, an already-REOPENED row is a silent no-op
+with its timestamp unmoved. **Teeth-checked**: `reopen_tna`'s gate was disabled by hand
+(`IF false AND NOT app.has_permission(...)`), rebuilt, and T1 failed exactly where expected before
+the gate was restored — recorded here because an authored pin that cannot fail is not a pin.
+
+### Rollback — `rollbacks/023_sales_directory_rollback.sql`
+
+Five plain `DROP FUNCTION IF EXISTS`, reverse of the forward order. Diff-checked directly: the
+`core`/`app` function catalog (name + arg count) of a 001-023-then-rolled-back database is byte-
+identical to a fresh 001-021 build.
+
+### Seed — `seeds/hosted_demo_sales_directory.sql` (+ `_wipe.sql`, pin `test_hosted_demo_sales_directory.sql`)
+
+Additive to `hosted_demo_akademi_perdana.sql`, its own id namespace
+(`akademi-perdana:hosted-demo:sales-directory:`) so the two wipes can never collide, targets
+resolved by organisation/programme NAME rather than the base seed's session-local `pg_temp.demo_id`.
+Closes the base seed's only real gap for this domain: **zero `core.organisation_suggestions` rows**
+existed anywhere, so the cross-sell panel and both `/relationships` screens had nothing to read even
+once the RPC existed. Adds three OPEN suggestions (Aurora/Kenanga/Meridian, one real seeded
+programme each) and one fresh `NEW`-stage opportunity with its contact for the one PROSPECT
+organisation (`Aurora Precision Tooling Sdn Bhd`) the base seed creates but never gives a deal —
+`NULL -> NEW` is 011's one ungated opportunity edge, and every edge past it into `PROPOSAL_SENT` or
+`WON` is gated on a real `PROPOSAL_SEND`/`OPPORTUNITY_CONVERT` action, which this file does not
+fabricate (the base seed's own stated constraint, extended rather than worked around). Apply order:
+
+```
+psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/hosted_demo_akademi_perdana.sql
+psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/hosted_demo_sales_directory.sql
+```
+
+Pin T0-T5 (own transaction, `\ir`s both seed files and this file's wipe, ends `ROLLBACK`): tenant
+precondition, exact row counts (1 contact, 1 opportunity, 3 suggestions), legal states only, the
+three new RPCs reading the seeded rows back **as an MD with real `request.jwt.claims`**, a second
+seed run inserting nothing, and the wipe leaving zero seed rows while every base-seed organisation
+stays untouched. Executed against the shim durably (`psql -1`, no pin) end to end: seed, a second
+seed (no-op), wipe, confirmed clean.
+
+### Spine
+
+Untouched. No action type, no branch in the 011 envelope — `reopen_tna` is a direct write for the
+reasons stated above, flagged rather than assumed. Pipeline spine untouched: no stage list is
+inlined, `get_pipeline_config` is not touched.
+
+## Migration Detail — 025 (`025_hrdc_compliance.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+
+### What it does
+
+| § | Object | Change |
+|---|--------|--------|
+| 1 | `app.seed_hrdc_document_types(uuid)`, `app.seed_hrdc_document_types_on_tenant()`, `trg_tenants_seed_hrdc_document_types` | New. Provisions the contract's five `HRDC_DOCUMENT_TYPES` per tenant, backfilled for tenants that already exist. |
+| 2 | `core.get_claim_packet(text)` | New. `GET /v1/hrdc/packets/{engagementRef}`, `hrdc:read`. |
+| 3 | `core.get_compliance_checks(text)` | New. `GET /v1/compliance/checks?engagementRef=`, `compliance:check:read`. |
+| 4 | `core.attach_packet_document(text, jsonb, text)` | New. `POST /v1/hrdc/packets/{id}/documents`, `hrdc:document:write`, optional idempotency key. |
+| 5 | `core.export_claim_packet(text)` | New. `GET /v1/hrdc/packets/{id}/export`, `hrdc:export`. Placeholder URL: no export job exists in 001–021. |
+| 6 | `core.create_compliance_rule(jsonb, text)` | New. `POST /v1/compliance/rules`, `compliance:rule:write`, tenant-scoped, optional idempotency key. |
+| 7 | `core.get_rule_change_set(text)` | New. `GET /v1/compliance/rule-changes/{documentId}`, `compliance:rule:read`. |
+
+No table, enum value, permission row, or 001–021 function is changed.
+
+### The 7-point RPC contract check, worked
+
+1. ENVELOPE. `app.ok`/`app.err` for the four reads; `RAISE … ERRCODE TRNOS` for the two writes
+   (`attachPacketDocument`, `createComplianceRule`), matching 021's `put_quotation`/`create_proposal`.
+2. UNWRAP. No top-level key beside `data`.
+3. RpcMap. Six new functions, `$verify$` asserts an overload count of 1 for each and
+   `SECURITY DEFINER` + `SET search_path = ''` on all six.
+4. CALL SITES. `hrdc/api.ts` (packet, checks, attach, export, create rule, rule change set),
+   `compliance/api.ts` (packet), `RulesRegistryScreen.tsx` (create rule).
+5. CASTS. `client.ts`/`apiClient.ts`/`rpcClient.ts`, one method each, same commit, no double cast.
+6. RELOAD. The two writes replay via `core.get_claim_packet` / `core.get_compliance_rule` (018) on
+   a repeated idempotency key.
+7. PUBLIC ROUTES. Nothing granted to anon; `$verify$` V3 asserts it structurally.
+
+### Pin — `tests/test_025_hrdc_compliance.sql`
+
+Self-contained fixture tenant (`a0250000-…`), independent of the demo seed. T1 proves a rule cannot
+go ACTIVE without the legal `RULE_CHANGE_APPROVE` gate. T2–T6 exercise the six RPCs' shapes and
+refusals (`VALIDATION_FAILED`, `NOT_FOUND`, `FORBIDDEN`). T7 cross-tenant NOT_FOUND. T8 anon 42501 on
+all six. T9 is a **teeth check**: MD's `hrdc:read` permission row is deleted mid-transaction,
+`getClaimPacket` is proved to FORBID where it succeeded a moment before, then the row is restored and
+access is proved to return — so the authz-first check is shown to be load-bearing, not vacuously true.
+Ends in ROLLBACK. Run against 001–021 plus 025:
+`psql "<db>" -v ON_ERROR_STOP=1 -f supabase/tests/test_025_hrdc_compliance.sql`.
+
+⚠ **Amends one prior pin in place**: `tests/test_009_compliance_rules_checks_hrdc.sql` T6b's
+`INSERT INTO core.hrdc_document_types` is now `... ON CONFLICT (tenant_id, document_type) DO NOTHING`
+— on a 001–021 build the row does not exist yet and this still inserts it; on a 001–021-plus-025
+build 025's own provisioning trigger already seeded it and the bare INSERT collided on the unique
+index. Passes either way, the same way 021 amended three pins ahead of it.
+
+### Rollback — `rollbacks/025_hrdc_compliance_rollback.sql`
+
+Drops the six functions, the two provisioning functions, the tenant trigger, and the
+`app.tenant_seed_checks` row; deletes the backfilled `core.hrdc_document_types` rows. Refuses if any
+`core.hrdc_packet_documents` row still references one of the five document types it is about to
+delete (run `hosted_demo_compliance_wipe.sql` first). `$verify$` confirms all six functions are gone,
+the table is empty, and the trigger no longer exists.
+
+### ⚠ Carried risk and standing conditions
+
+- `exportClaimPacket`'s URL is a deterministic placeholder path with a 15-minute `expiresAt`: no
+  export job assembles an actual eTRIS bundle anywhere in 001–021, and this migration does not add
+  one (non-goal: no worker changes). Listed as "could not verify."
+- `compliance:rule:write` is FINANCE/ADMIN only in 002's existing matrix — not MD. The three seeded
+  demo MD founders cannot use "Add rule" on `RulesRegistryScreen.tsx`; FINANCE or ADMIN can. Not
+  changed here, since it would mean editing 002.
+- `RulesRegistryScreen.tsx`'s "Add rule" drawer never collects `side`, `familyKey`, `checkKey` or
+  `deliveryMode`. `core.create_compliance_rule` defaults `side` to `GRANT` and synthesises
+  `family_key`/`check_key` from the caller's own rule code so the row cannot collide with an HRD
+  family it was not meant to compete with — a UI gap the screen will need a field for, not a defect
+  in this migration's data model.
+- 011's `execute_in_database_action` for `RULE_CHANGE_APPROVE` updates `core.rule_changes` only,
+  never the `compliance_rules` row a change targets — a real gap in 011 that this migration cannot
+  close (001–021 not edited). The demo seed works around it by verifying rules directly over the
+  same legal gate; a production "Approve" button on M12-S08 would need 011 amended to finish the job.
+- `ClaimPacket.submissionLog` is derived from `core.audit_entries` (012), since 009 has no dedicated
+  submission-log table; empty for a packet nothing has happened to yet, which is correct but is a
+  narrower source of truth than a dedicated log would be.
 
 ---
 

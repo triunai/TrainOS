@@ -427,8 +427,17 @@ BEGIN
   -- a document marked PRESENT with nothing behind it is how a packet reaches
   -- completeness 1.0 empty
   BEGIN
+    -- ⚠ 025 · `ON CONFLICT DO NOTHING`, not a bare INSERT. 025 provisions
+    -- `core.hrdc_document_types` per tenant (an AFTER INSERT trigger on
+    -- `public.tenants`, backfilled for tenants that already exist), so on a
+    -- 001-021-plus-025 build this tenant already carries a TAX_INVOICE row by
+    -- the time this pin runs. Against a clean 001-021 build with no 025 the
+    -- row still does not exist and this still inserts it, so the pin passes
+    -- either way — amended in place, the same way 021 amended three pins
+    -- ahead of it (test_011 T1b/T1c, test_012 T1p, test_018 T19g/T36).
     INSERT INTO core.hrdc_document_types (tenant_id, document_type, label)
-    VALUES ('00000009-1111-1111-1111-111111111111','TAX_INVOICE','Tax invoice');
+    VALUES ('00000009-1111-1111-1111-111111111111','TAX_INVOICE','Tax invoice')
+    ON CONFLICT (tenant_id, document_type) DO NOTHING;
     INSERT INTO core.hrdc_packet_documents (tenant_id, hrdc_packet_id, document_type, status)
     VALUES ('00000009-1111-1111-1111-111111111111', v_pkt,'TAX_INVOICE','PRESENT');
     RAISE EXCEPTION 'T6b FAIL: a document was marked PRESENT with nothing behind it';

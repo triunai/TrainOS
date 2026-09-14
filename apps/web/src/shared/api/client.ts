@@ -1,27 +1,46 @@
 import type {
   ActionRequest,
   ActionResponse,
+  Agent,
   AgentEval,
+  AgentPauseRequest,
+  AgentRegistryResponse,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
   ApprovalDecideResponse,
   ApprovalBulkDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
+  AttendanceCaptureRequest,
+  AttendanceExport,
+  AttendanceSheet,
   AuditEntry,
+  AutomationRun,
   BadgeCounts,
   Budget,
+  BudgetScope,
+  BudgetWrite,
   ChannelConsent,
+  ClaimPacket,
   CollectionRule,
+  CollectionsQueueResponse,
+  ComplianceChecksResponse,
   ComplianceRule,
   Contact,
+  Engagement,
   Enquiry,
   ExecutiveDashboard,
   EnquiryDetail,
   EnquiryExtractionPatch,
   FollowUp,
   HrdcDeadline,
+  HrdcDocumentAttachRequest,
+  HrdcPacketExport,
+  Invoice,
   KnowledgeSource,
+  KnowledgeSourceCheckResponse,
+  KnowledgeSourceCreateRequest,
+  KnowledgeSourceReingestResponse,
   ListResponse,
   MessageChannel,
   MessageDraft,
@@ -32,7 +51,9 @@ import type {
   Opportunity,
   Organisation,
   OrganisationRelations,
+  OrganisationSuggestion,
   PageRequest,
+  Participant,
   PipelineConfig,
   PipelineObject,
   Policy,
@@ -47,17 +68,24 @@ import type {
   ProposalSectionRegenerateResponse,
   ProposalSectionWrite,
   ProposalsVsWonReport,
+  ProviderKey,
   Quotation,
   QuotationWrite,
   RateCard,
+  ReceivablesAging,
+  RoutingEntry,
+  RoutingResponse,
   RuleChangeSet,
+  RunDeadLetterRequest,
   SavedView,
   Template,
   TemplateType,
   Tna,
   TnaRecommendationsResponse,
   Trainer,
+  UsageResponse,
 } from "@trainos/contract";
+import type { FixtureCommission } from "@trainos/fixtures";
 
 import type { Result } from "./errors";
 
@@ -129,6 +157,15 @@ export type SectionInput = Idempotent<{ title: string; body?: string }>;
 /** `PUT /v1/proposals/{id}/sections/{n}`. */
 export type SectionWriteInput = Idempotent<ProposalSectionWrite>;
 
+/** `GET /v1/ai/usage?groupBy=`. Kept local so the signature fits one line (027). */
+export type UsageGroupBy = "TIER" | "AGENT" | "ACTION_TYPE";
+
+/** `POST /v1/hrdc/packets/{id}/documents`. */
+export type HrdcDocumentAttachInput = Idempotent<HrdcDocumentAttachRequest>;
+
+/** `POST /v1/compliance/rules`. */
+export type ComplianceRuleCreateInput = Idempotent<Omit<ComplianceRule, "status">>;
+
 /**
  * The methods, grouped by golden-path order then by the §8 view reads.
  *
@@ -152,9 +189,27 @@ export interface TrainOsClient {
   getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>>;
   getOrganisation(id: string): Promise<Result<Organisation>>;
   getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>>;
+  searchOrganisations(query: string): Promise<Result<Organisation[]>>;
+  getOrganisationSuggestions(id: string): Promise<Result<ListResponse<OrganisationSuggestion>>>;
   getOpportunity(id: string): Promise<Result<Opportunity>>;
+  listOpportunities(query: PageRequest): Promise<Result<ListResponse<Opportunity>>>;
   getTna(id: string): Promise<Result<Tna>>;
+  listTnas(query: PageRequest): Promise<Result<ListResponse<Tna>>>;
+  reopenTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
+  listEngagements(query: PageRequest): Promise<Result<ListResponse<Engagement>>>;
+  getEngagement(id: string): Promise<Result<Engagement>>;
+  getEngagementParticipants(
+    id: string,
+    query: PageRequest,
+  ): Promise<Result<ListResponse<Participant>>>;
+  getAttendance(id: string, day: number): Promise<Result<AttendanceSheet>>;
+  captureAttendance(
+    id: string,
+    day: number,
+    body: AttendanceCaptureRequest,
+  ): Promise<Result<AttendanceSheet>>;
+  exportAttendance(id: string, format: string): Promise<Result<AttendanceExport>>;
   createProposal(input: ProposalInput): Promise<Result<Proposal>>;
   listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>>;
   getProposal(id: string): Promise<Result<Proposal>>;
@@ -183,11 +238,34 @@ export interface TrainOsClient {
   listProgrammes(): Promise<Result<ListResponse<Programme>>>;
   getProgramme(id: string): Promise<Result<Programme>>;
   getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>>;
+  putProgramme(id: string, body: Partial<Programme>): Promise<Result<Programme>>;
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>>;
+  getClaimPacket(id: string): Promise<Result<ClaimPacket>>;
+  attachPacketDocument(id: string, input: HrdcDocumentAttachInput): Promise<Result<ClaimPacket>>;
+  exportClaimPacket(id: string): Promise<Result<HrdcPacketExport>>;
+  getComplianceChecks(engagementRef: string): Promise<Result<ComplianceChecksResponse>>;
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>>;
+  listInvoices(query: PageRequest): Promise<Result<ListResponse<Invoice>>>;
+  getInvoice(id: string): Promise<Result<Invoice>>;
+  getReceivablesAging(): Promise<Result<ReceivablesAging>>;
+  getCollectionsQueue(query: PageRequest): Promise<Result<CollectionsQueueResponse>>;
+  getCollectionDraft(invoiceRef: string): Promise<Result<MessageDraft>>;
+  /**
+   * Finance › Commissions. `FixtureCommission` (packages/fixtures/src/data/
+   * commissions.ts:68) is not a contract type — the contract puts commission
+   * fields ON a quotation and a rate table on the rate card, and never
+   * declares a commissions collection (matrix §b2). E3 only allows a return
+   * type built from `@trainos/contract`, so this is typed `unknown` here and
+   * narrowed once, honestly, at the one adapter in apiClient.ts that knows
+   * the real shape (`SupabaseRpcClient` implements the narrower type; no
+   * double cast through `unknown` anywhere in this folder, per E2).
+   */
+  listCommissions(query: PageRequest): Promise<Result<ListResponse<unknown>>>;
   listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>>;
   getComplianceRule(id: string): Promise<Result<ComplianceRule>>;
+  createComplianceRule(input: ComplianceRuleCreateInput): Promise<Result<ComplianceRule>>;
   listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>>;
+  getRuleChangeSet(documentId: string): Promise<Result<RuleChangeSet>>;
   listEvals(): Promise<Result<ListResponse<AgentEval>>>;
   listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>>;
   listAiTiers(): Promise<Result<ListResponse<ModelTier>>>;
@@ -195,4 +273,30 @@ export interface TrainOsClient {
   getPortalProposal(token: string): Promise<Result<PortalProposal>>;
   addPortalComment(token: string, body: PortalCommentRequest): Promise<Result<PortalProposal>>;
   acceptPortal(token: string, body: PortalAcceptRequest): Promise<Result<PortalAcceptResponse>>;
+
+  /* §10 automation: agents and runs (027). */
+  listAgents(): Promise<Result<AgentRegistryResponse>>;
+  pauseAgent(id: string, body: AgentPauseRequest): Promise<Result<Agent>>;
+  listRuns(query: PageRequest): Promise<Result<ListResponse<AutomationRun>>>;
+  getRun(id: string): Promise<Result<AutomationRun>>;
+  retryRun(id: string, from?: "checkpoint"): Promise<Result<AutomationRun>>;
+  deadLetterRun(id: string, body: RunDeadLetterRequest): Promise<Result<AutomationRun>>;
+
+  /* §17 knowledge (027). */
+  createKnowledgeSource(body: KnowledgeSourceCreateRequest): Promise<Result<KnowledgeSource>>;
+  checkKnowledgeSource(id: string): Promise<Result<KnowledgeSourceCheckResponse>>;
+  reingestKnowledgeSource(id: string): Promise<Result<KnowledgeSourceReingestResponse>>;
+  /* Fixture-only (data/library.ts) — no contract type, so this is untyped
+     past ListResponse. See 027's PR body. */
+  listLibraryAssets(query: PageRequest): Promise<Result<ListResponse<unknown>>>;
+
+  /* §17 AI settings: routing, providers (read), usage, budgets, tenant (027). */
+  getAiRouting(): Promise<Result<RoutingResponse>>;
+  putAiRouting(entries: RoutingEntry[]): Promise<Result<RoutingResponse>>;
+  listProviders(): Promise<Result<ListResponse<ProviderKey>>>;
+  getUsage(period?: string, groupBy?: UsageGroupBy): Promise<Result<UsageResponse>>;
+  putBudget(scope: BudgetScope, key: string, body: BudgetWrite): Promise<Result<Budget>>;
+  /* Fixture-only (data/tenant.ts) — §1 keeps tenancy out of the API surface,
+     so there is no contract type. See 027's PR body. */
+  getTenant(): Promise<Result<unknown>>;
 }
