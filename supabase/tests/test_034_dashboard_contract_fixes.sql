@@ -5,10 +5,13 @@
 -- Run against 001-034 (or later). Ends in ROLLBACK and writes nothing durable.
 --   psql "<db>" -v ON_ERROR_STOP=1 -f supabase/tests/test_034_dashboard_contract_fixes.sql
 --
--- T1  M1: SALES_MANAGER, FINANCE and ADMIN — all three hold dashboard:
---     executive:read (002) — are FORBIDDEN from both get_executive_dashboard
---     and get_proposals_vs_won; MD succeeds on both. The contract
---     (endpoints.ts:150-153) is roles:['MD'] on both endpoints.
+-- M1 DROPPED per ruling (2026-09-14): 002's role_permissions matrix is
+-- authoritative for RPC gates, not endpoints.ts's narrower roles:['MD'] note
+-- — hosted has two ADMIN founders who must keep executive dashboard access.
+-- T1  regression guard for the dropped M1: SALES_MANAGER, FINANCE, MD and
+--     ADMIN — all four hold dashboard:executive:read (002) — ALL succeed on
+--     both get_executive_dashboard and get_proposals_vs_won (no role beyond
+--     the permission itself is checked).
 -- T2  M2: two open-pipeline opportunities, one MYR one USD. OPEN_PIPELINE's
 --     value sums the MYR one only, and secondary notes the excluded row.
 -- T3  M3: two evals for the same agent, one 10 days old (in the trailing-30
@@ -16,9 +19,9 @@
 --     recent one.
 -- T4  default months=6: get_proposals_vs_won called with NO argument
 --     produces a 6-element series.
--- T5  gate-before-read: a role with neither the permission nor MD, given an
---     INVALID period, is refused FORBIDDEN — not VALIDATION_FAILED — proving
---     the permission/role gate still runs before any input validation.
+-- T5  gate-before-read: a role with NEITHER the permission is given an
+--     INVALID period, and is still refused FORBIDDEN — not VALIDATION_FAILED
+--     — proving the permission gate runs before any input validation.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -45,8 +48,11 @@ DO $preflight$
 DECLARE v_body text;
 BEGIN
   v_body := app._body_sql('core.get_executive_dashboard(text)'::regprocedure);
-  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') = 0 THEN
-    RAISE EXCEPTION '034 preflight: get_executive_dashboard has no MD-only check; 034 has not been applied';
+  IF pg_catalog.strpos(v_body, 'currency = ''MYR''') = 0 THEN
+    RAISE EXCEPTION '034 preflight: get_executive_dashboard has no currency = ''MYR'' guard; 034 has not been applied';
+  END IF;
+  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') > 0 THEN
+    RAISE EXCEPTION '034 preflight: get_executive_dashboard still carries the dropped M1 MD-only check';
   END IF;
 END;
 $preflight$;
@@ -111,33 +117,27 @@ INSERT INTO core.evals (tenant_id,agent_id,kind,golden_set_version,score,evaluat
   ('a0340000-1111-4000-8000-000000000001','agent_a34','GOLDEN_SET','v1',0.900,pg_catalog.now() - interval '10 days'),
   ('a0340000-1111-4000-8000-000000000001','agent_a34','GOLDEN_SET','v1',0.100,pg_catalog.now() - interval '40 days');
 
--- ════════ T1 · M1: MD-only, not the broader dashboard:executive:read set ══
+-- ════════ T1 · M1 dropped: all four dashboard:executive:read holders succeed
 
 DO $t1$
 DECLARE v_result jsonb; v_role text; v_user uuid;
 BEGIN
-  FOREACH v_role IN ARRAY ARRAY['SALES_MANAGER','FINANCE','ADMIN'] LOOP
+  FOREACH v_role IN ARRAY ARRAY['SALES_MANAGER','FINANCE','MD','ADMIN'] LOOP
     v_user := CASE v_role WHEN 'SALES_MANAGER' THEN 'a0340000-0000-4000-8000-000000000002'::uuid
                           WHEN 'FINANCE' THEN 'a0340000-0000-4000-8000-000000000003'::uuid
+                          WHEN 'MD' THEN 'a0340000-0000-4000-8000-000000000001'::uuid
                           ELSE 'a0340000-0000-4000-8000-000000000004'::uuid END;
     PERFORM pg_catalog.set_config('request.jwt.claims',
       pg_temp.claims(v_user,'a0340000-1111-4000-8000-000000000001', v_role), true);
     SET LOCAL ROLE authenticated;
     v_result := core.get_executive_dashboard('2026-09');
-    PERFORM pg_temp.assert(v_result -> 'error' ->> 'code' = 'FORBIDDEN',
-      pg_catalog.format('T1 %s (holds dashboard:executive:read but is not MD) is FORBIDDEN from get_executive_dashboard, got %s', v_role, v_result));
+    PERFORM pg_temp.assert((v_result ->> 'success')::boolean,
+      pg_catalog.format('T1 %s (holds dashboard:executive:read) succeeds on get_executive_dashboard — M1 dropped, got %s', v_role, v_result));
     v_result := core.get_proposals_vs_won(6);
-    PERFORM pg_temp.assert(v_result -> 'error' ->> 'code' = 'FORBIDDEN',
-      pg_catalog.format('T1 %s is FORBIDDEN from get_proposals_vs_won, got %s', v_role, v_result));
+    PERFORM pg_temp.assert((v_result ->> 'success')::boolean,
+      pg_catalog.format('T1 %s succeeds on get_proposals_vs_won — M1 dropped, got %s', v_role, v_result));
     RESET ROLE;
   END LOOP;
-
-  PERFORM pg_catalog.set_config('request.jwt.claims',
-    pg_temp.claims('a0340000-0000-4000-8000-000000000001'::uuid,'a0340000-1111-4000-8000-000000000001','MD'), true);
-  SET LOCAL ROLE authenticated;
-  v_result := core.get_executive_dashboard('2026-09');
-  PERFORM pg_temp.assert((v_result ->> 'success')::boolean, 'T1 MD succeeds on get_executive_dashboard');
-  RESET ROLE;
 END;
 $t1$;
 
@@ -202,7 +202,7 @@ BEGIN
   SET LOCAL ROLE authenticated;
   v_result := core.get_executive_dashboard('not-a-period');
   PERFORM pg_temp.assert(v_result -> 'error' ->> 'code' = 'FORBIDDEN',
-    pg_catalog.format('T5 SALES (holds neither the permission nor MD) with a malformed period is refused FORBIDDEN before validation runs, got %s', v_result));
+    pg_catalog.format('T5 SALES (holds neither the permission) with a malformed period is refused FORBIDDEN before validation runs, got %s', v_result));
   RESET ROLE;
 END;
 $t5$;

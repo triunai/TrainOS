@@ -2,20 +2,18 @@
 -- 034 · Executive dashboard contract fixes (M1, M2, M3)
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- M1. `core.get_executive_dashboard` and `core.get_proposals_vs_won` (022)
--- gate on `dashboard:executive:read`, which 002 seeds for SALES_MANAGER,
--- FINANCE, MD and ADMIN (002:895,1002,1065,1161). `packages/contract/src/
--- endpoints.ts:150-153` restricts BOTH `GET /v1/dashboards/executive` and
--- `GET /v1/reports/proposals-vs-won` to `roles: ['MD']` — ADMIN included.
--- Neither RPC's own permission grant is touched here (`dashboard:executive:
--- read` gates nothing else, grepped, so there is nothing else to break by
--- narrowing it — but the fix narrows the RPC, not the permission, on
--- purpose: `app.has_permission` stays the FIRST gate, decided before any
--- read, exactly as 022's header requires, and a second, function-local role
--- check enforces the contract's narrower `roles: ['MD']` on top of it. A
--- future screen that legitimately wants `dashboard:executive:read` for
--- SALES_MANAGER/FINANCE/ADMIN — there is none today — would not be affected,
--- because the permission itself is unchanged).
+-- M1. NOT applied in this migration — orchestrator ruling, 2026-09-14: 002's
+-- `app.role_permissions` is authoritative over `endpoints.ts:150-153`'s
+-- narrower `roles: ['MD']` note. `dashboard:executive:read` is deliberately
+-- held by SALES_MANAGER, FINANCE, MD and ADMIN (002:895,1002,1065,1161), and
+-- hosted has two ADMIN founders who must keep the executive dashboard. A
+-- previous version of this migration added a function-local
+-- `app.role() IS DISTINCT FROM 'MD'` check after the permission gate; it has
+-- been removed. `core.get_executive_dashboard` and `core.get_proposals_vs_won`
+-- stay gated on `app.has_permission('dashboard:executive:read')` alone, as
+-- 022 shipped them. Left as an explicitly open item, not silently dropped:
+-- if product later wants the contract's narrower MD-only reading enforced,
+-- that is a decision for 002's role matrix, not a per-RPC carve-out here.
 --
 -- M2. Three of the four dashboard metrics and `agentSpend` sum a `_sen`
 -- column without grouping by the row's own `currency`: `OPEN_PIPELINE`
@@ -68,6 +66,16 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM app.role_permissions WHERE permission = 'dashboard:executive:read' AND role = 'MD') THEN
     RAISE EXCEPTION '034 preflight: MD does not hold dashboard:executive:read; 002 has changed shape';
   END IF;
+  -- M1 not applied here (see header): dashboard:executive:read stays a
+  -- four-role permission. Assert the other three still hold it, so a future
+  -- 002 change that narrows the matrix is caught here rather than silently
+  -- changing this migration's meaning.
+  IF NOT EXISTS (SELECT 1 FROM app.role_permissions WHERE permission = 'dashboard:executive:read' AND role = 'SALES_MANAGER')
+     OR NOT EXISTS (SELECT 1 FROM app.role_permissions WHERE permission = 'dashboard:executive:read' AND role = 'FINANCE')
+     OR NOT EXISTS (SELECT 1 FROM app.role_permissions WHERE permission = 'dashboard:executive:read' AND role = 'ADMIN')
+  THEN
+    RAISE EXCEPTION '034 preflight: dashboard:executive:read is no longer held by SALES_MANAGER/FINANCE/ADMIN; 002 has changed shape, M1 ruling needs revisiting';
+  END IF;
 END;
 $preflight$;
 
@@ -115,17 +123,13 @@ BEGIN
                                     'permission', 'dashboard:executive:read'));
   END IF;
 
-  -- 034 (M1). The contract restricts this endpoint to MD alone
-  -- (endpoints.ts:150-153), narrower than the four roles that hold
-  -- dashboard:executive:read for other reasons. Same DETAIL shape as the
-  -- permission refusal above, so a caller cannot distinguish "lacks the
-  -- permission" from "holds it but is the wrong role" — which is the point:
-  -- SALES_MANAGER/FINANCE/ADMIN learn nothing about why MD-only.
-  IF app.role() IS DISTINCT FROM 'MD' THEN
-    RETURN app.err('FORBIDDEN',
-      pg_catalog.jsonb_build_object('reason', 'MISSING_PERMISSION',
-                                    'permission', 'dashboard:executive:read'));
-  END IF;
+  -- M1 DROPPED per ruling (2026-09-14): 002's role_permissions matrix is
+  -- authoritative for RPC gates, not endpoints.ts's role list — hosted has
+  -- two ADMIN founders who must keep executive dashboard access, and
+  -- narrowing this RPC to MD alone would have broken that. The permission
+  -- gate above (dashboard:executive:read, held by SALES_MANAGER, FINANCE, MD
+  -- and ADMIN per 002) is unchanged from 022. endpoints.ts's role list gets
+  -- reconciled to 002 separately.
 
   IF p_period IS NULL OR p_period !~ '^\d{4}-(0[1-9]|1[0-2])$' THEN
     RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
@@ -368,10 +372,10 @@ END;
 $fn$;
 
 COMMENT ON FUNCTION core.get_executive_dashboard(text) IS
-  '022, amended by 034 (M1/M2/M3). GET /v1/dashboards/executive?period=. '
-  'Gated on dashboard:executive:read AND app.role() = MD (034: the contract '
-  'restricts this endpoint to MD, narrower than the permission''s four '
-  'holders). OPEN_PIPELINE/AR_OVERDUE/CLAIM_VALUE_AT_RISK/agentSpend sum MYR '
+  '022, amended by 034 (M2/M3; M1 ruled out — see this migration''s header). '
+  'GET /v1/dashboards/executive?period=. Gated on dashboard:executive:read '
+  'alone, as 022 shipped it (SALES_MANAGER/FINANCE/MD/ADMIN per 002). '
+  'OPEN_PIPELINE/AR_OVERDUE/CLAIM_VALUE_AT_RISK/agentSpend sum MYR '
   'rows only (034: mixed-currency correctness); evalScore is a trailing-30-'
   'day median, matching core.v_agent_evals (034).';
 
@@ -394,12 +398,7 @@ BEGIN
                                     'permission', 'dashboard:executive:read'));
   END IF;
 
-  -- 034 (M1). See get_executive_dashboard's identical addition above.
-  IF app.role() IS DISTINCT FROM 'MD' THEN
-    RETURN app.err('FORBIDDEN',
-      pg_catalog.jsonb_build_object('reason', 'MISSING_PERMISSION',
-                                    'permission', 'dashboard:executive:read'));
-  END IF;
+  -- M1 DROPPED per ruling — see get_executive_dashboard's identical note above.
 
   IF p_months IS NULL OR p_months < 1 OR p_months > 24 THEN
     RETURN app.err('VALIDATION_FAILED', pg_catalog.jsonb_build_object(
@@ -434,10 +433,10 @@ END;
 $fn$;
 
 COMMENT ON FUNCTION core.get_proposals_vs_won(integer) IS
-  '022, amended by 034 (M1). GET /v1/reports/proposals-vs-won?months=. '
-  'Gated on dashboard:executive:read AND app.role() = MD (034: the contract '
-  'restricts this endpoint to MD). sent/won are independent monthly counts, '
-  'not a cohort conversion - see 022''s header. No sum here, so M2 does not apply.';
+  '022, unchanged by 034 (M1 ruled out — see this migration''s header; M2 '
+  'does not apply, no sum here). GET /v1/reports/proposals-vs-won?months=. '
+  'Gated on dashboard:executive:read alone, as 022 shipped it. sent/won are '
+  'independent monthly counts, not a cohort conversion - see 022''s header.';
 
 -- Grants unchanged: 022:757-761 already grants both to authenticated only,
 -- and CREATE OR REPLACE on an unchanged signature does not reset them.
@@ -447,26 +446,22 @@ COMMENT ON FUNCTION core.get_proposals_vs_won(integer) IS
 DO $verify$
 DECLARE v_body text;
 BEGIN
-  -- V1 · M1: both RPCs now check app.role() = 'MD' before touching a row,
-  -- after the permission check.
+  -- V1 · M1 dropped per ruling: neither RPC narrows to MD; the permission
+  -- gate alone (dashboard:executive:read) still governs, and all four roles
+  -- 022 originally gated it for still hold that permission.
   v_body := app._body_sql('core.get_executive_dashboard(text)'::regprocedure);
-  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') = 0 THEN
-    RAISE EXCEPTION '034 verify V1a: get_executive_dashboard has no MD-only check';
+  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') > 0 THEN
+    RAISE EXCEPTION '034 verify V1a: get_executive_dashboard still carries the dropped MD-only check';
   END IF;
-  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''')
-       < pg_catalog.strpos(v_body, 'has_permission(''dashboard:executive:read'')')
-  THEN
-    RAISE EXCEPTION '034 verify V1b: get_executive_dashboard checks role before permission';
-  END IF;
-  IF pg_catalog.strpos(v_body, 'v_open_pipeline_sen, v_open_pipeline_n')
-       > pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') + 400
-  THEN
-    NULL; -- ordering sanity only, not a hard requirement beyond V1b above
-  END IF;
-
   v_body := app._body_sql('core.get_proposals_vs_won(integer)'::regprocedure);
-  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') = 0 THEN
-    RAISE EXCEPTION '034 verify V1c: get_proposals_vs_won has no MD-only check';
+  IF pg_catalog.strpos(v_body, 'app.role() IS DISTINCT FROM ''MD''') > 0 THEN
+    RAISE EXCEPTION '034 verify V1c: get_proposals_vs_won still carries the dropped MD-only check';
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM app.role_permissions
+       WHERE permission = 'dashboard:executive:read'
+         AND role IN ('SALES_MANAGER','FINANCE','MD','ADMIN')) <> 4
+  THEN
+    RAISE EXCEPTION '034 verify V1d: dashboard:executive:read is not held by all four of SALES_MANAGER/FINANCE/MD/ADMIN';
   END IF;
 
   -- V2 · M2: every mixed-currency sum site now filters currency = 'MYR'.

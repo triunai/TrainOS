@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 29 (numbered up to 034; 024, 026–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 023, 025, 030, 031, 032, 033, 034
+**Migrations:** 29 (numbered up to 034; 024, 026–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022, 023, 025 · **Authored, not applied:** 020, 030, 031, 032, 033, 034
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -14,7 +14,24 @@
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
 
-**Last updated:** 2026-09-14 — **034: the two executive-dashboard RPCs are MD-only per the contract, sum MYR rows only, and evalScore is a trailing-30-day median.**
+**Last updated:** 2026-09-14 — **Correction to 034's M1: dropped, not fixed. 002's `app.role_permissions` is ruled authoritative over `endpoints.ts`'s narrower role list for RPC gates.**
+The entry below (and 034's own migration/rollback/pin) originally added a function-local
+`app.role() IS DISTINCT FROM 'MD'` check to both dashboard RPCs, narrowing them to MD alone per
+`endpoints.ts:150-153`. Orchestrator ruling, 2026-09-14: hosted has two ADMIN founders who must
+keep executive dashboard access, and the project-wide rule going forward is that 002's
+`app.role_permissions` matrix is authoritative for what an RPC gates on — `endpoints.ts`'s role
+lists get reconciled TO 002 by a separate lane, not the other way around, per RPC, here. The
+check has been removed from `034_dashboard_contract_fixes.sql`; both RPCs are gated on
+`app.has_permission('dashboard:executive:read')` alone, exactly as 022 shipped them — M2
+(MYR-only sums) and M3 (trailing-30-day evalScore) are UNCHANGED and still fixed. `tests/
+test_034_dashboard_contract_fixes.sql` T1 now asserts the INVERSE (SALES_MANAGER, FINANCE, MD
+and ADMIN — all four permission holders — succeed, none FORBIDDEN); its preflight and $verify$
+blocks assert the MD-only check is ABSENT rather than present. The migration's own header carries
+the same note. Re-verified: full 001–034 build (023 and 025, merged to `main` during this work,
+included), `test_001`–`test_025`, `test_030`–`test_034` all green; rollback → reapply round-trip
+clean; `npm run lint:sql` 97/97, `check:grants`/`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **034: the two executive-dashboard RPCs are MD-only per the contract, sum MYR rows only, and evalScore is a trailing-30-day median.** *(M1 below is superseded by the correction above — left standing per this file's own convention.)*
 `CREATE OR REPLACE` of `core.get_executive_dashboard(text)` and `core.get_proposals_vs_won(integer)`
 only. M1: both endpoints are `roles:['MD']` in `endpoints.ts:150-153`, narrower than the four
 roles `dashboard:executive:read` grants (002) — a function-local `app.role() IS DISTINCT FROM 'MD'`
