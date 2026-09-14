@@ -42,3 +42,22 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/seeds/test_hosted_demo.sql  
 
 The wipe removes only the seed's id range and refuses if a real row references demo data.
 It leaves `core.ref_sequences` advanced: refs are never reused.
+
+## Hosted demo client-portal link — `hosted_demo_portal.sql`
+
+One working `/p/<token>` link for `akademi-perdana`. It needs migration 028 and must run after
+`hosted_demo_akademi_perdana.sql`. It adds a first proposal for Aurora Precision Tooling, then sends it
+through the real envelope: `PROPOSAL_SEND` by one MD, queued under APV-01, and APPROVED by a
+different MD. It then mints a 30-day link with `app.issue_portal_token`. The link path is printed
+**once**, as the `portal_link` result row. Only its SHA-256 is stored, so a lost link is revoked and
+re-minted, never recovered. A re-run writes nothing and prints nothing.
+
+```
+psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/hosted_demo_portal.sql        # seed, prints portal_link
+psql "$DATABASE_URL" -1 -v ON_ERROR_STOP=1 -f supabase/seeds/hosted_demo_portal_wipe.sql   # remove (before hosted_demo_wipe.sql)
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/seeds/test_hosted_demo_portal.sql      # pin, ROLLBACK
+```
+
+The wipe also removes what the send and a client's accept wrote: the action request, the approval,
+the token, comments, the acceptance, the signature and the engagement. It keeps `core.events`, which is
+append-only.
