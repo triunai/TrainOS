@@ -22,14 +22,16 @@
 -- sections and a priced quotation — then SENDS it through the real envelope and
 -- mints the link:
 --
---   1. PROPOSAL_SEND via core.perform_action as Code Shern (the account owner).
+--   1. PROPOSAL_SEND via core.perform_action as codeshern (the account owner;
+--      ADMIN on hosted, whose role holds proposal:send).
 --      Policy APV-01 queues it on BOTH of its conditions: RM 26,400 is above
 --      its RM 15,000 threshold, and it is the first proposal to the
 --      organisation. The value alone guarantees the queue, so a proposal
 --      someone else already sent this prospect cannot turn the send into an
 --      immediate one that skips the approval.
---   2. APPROVE via core.decide_approval as Khu Code — a DIFFERENT MD, because
---      011 GOV-03 refuses self-approval — with the approval's own diff hash.
+--   2. APPROVE via core.decide_approval as khumeren — the MD, and a different
+--      person, because 011 GOV-03 refuses self-approval — with the approval's
+--      own diff hash.
 --      011 executes the effect: DRAFT -> SENT, under the running action.
 --   3. app.issue_portal_token (028) for that SENT proposal.
 --
@@ -42,7 +44,7 @@
 --
 -- HOSTED-SAFE, as hosted_demo_akademi_perdana.sql is:
 --   * the tenant is taken by slug; never provisions, never writes auth.users,
---     memberships or profiles; every user reference is one of the three MDs;
+--     memberships or profiles; every user reference is a founder member;
 --   * no trigger is disabled. Rows are inserted in initial states and walked
 --     over ungated edges (opportunity NEW -> QUALIFYING); the gated edge
 --     (proposal DRAFT -> SENT) is walked only by 011 executing an approved
@@ -83,7 +85,7 @@ AS $fn$
     FROM (SELECT md5('akademi-perdana:hosted-demo-portal:' || p_key) AS h) AS k;
 $fn$;
 
--- The claims app.custom_access_token_hook would issue for this MD IN THIS
+-- The claims app.custom_access_token_hook would issue for this member IN THIS
 -- TENANT, built from the membership row rather than from principal_claims(),
 -- which picks the user's default membership and could name another tenant.
 CREATE OR REPLACE FUNCTION pg_temp.portal_claims(p_tenant uuid, p_user uuid)
@@ -99,7 +101,7 @@ AS $fn$
            'mfa_required', m.mfa_required)::text
     FROM public.memberships m
    WHERE m.tenant_id = p_tenant AND m.user_id = p_user
-     AND m.role = 'MD' AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
+     AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
 $fn$;
 
 DROP TABLE IF EXISTS pg_temp.portal_ctx;
@@ -126,12 +128,17 @@ BEGIN
     RAISE EXCEPTION 'portal demo seed: tenant akademi-perdana not found; this seed never provisions';
   END IF;
   SELECT * INTO v_ctx FROM portal_ctx;
+  -- Requester: codeshern, any active member whose role holds proposal:send
+  -- (ADMIN on hosted). Approver: khumeren, who must be MD (011 lets MD decide
+  -- an approval routed to any role). Roles are read, never assumed.
   SELECT count(*) INTO v_md
     FROM public.memberships m
-   WHERE m.tenant_id = v_ctx.t AND m.user_id IN (v_ctx.u1, v_ctx.u2, v_ctx.u3)
-     AND m.role = 'MD' AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE';
-  IF v_md <> 3 OR v_ctx.u3n IS NULL THEN
-    RAISE EXCEPTION 'portal demo seed: expected all three MD users as ACTIVE members with profiles, found %', v_md;
+   WHERE m.tenant_id = v_ctx.t AND m.actor_kind = 'HUMAN' AND m.status = 'ACTIVE'
+     AND ((m.user_id = v_ctx.u3 AND EXISTS (SELECT 1 FROM app.role_permissions rp
+                                            WHERE rp.role = m.role AND rp.permission = 'proposal:send'))
+       OR (m.user_id = v_ctx.u2 AND m.role = 'MD'));
+  IF v_md <> 2 OR v_ctx.u3n IS NULL THEN
+    RAISE EXCEPTION 'portal demo seed: expected codeshern as an ACTIVE member who may send proposals (with a profile) and khumeren as ACTIVE MD, found % of 2', v_md;
   END IF;
   IF to_regprocedure('core.accept_portal_proposal(text,jsonb)') IS NULL
      OR to_regprocedure('app.issue_portal_token(uuid,uuid,interval)') IS NULL THEN
@@ -252,10 +259,10 @@ BEGIN
    WHERE a.tenant_id = v_ctx.t AND r.action_type = 'PROPOSAL_SEND'
      AND r.target_id = v_proposal.id AND a.status = 'PENDING';
   IF FOUND THEN
-    IF v_approval.requested_by_id = v_ctx.u1::text THEN
+    IF v_approval.requested_by_id = v_ctx.u2::text THEN
       RAISE EXCEPTION 'portal demo seed: the pending send was requested by the approving MD';
     END IF;
-    PERFORM set_config('request.jwt.claims', pg_temp.portal_claims(v_ctx.t, v_ctx.u1), true);
+    PERFORM set_config('request.jwt.claims', pg_temp.portal_claims(v_ctx.t, v_ctx.u2), true);
     v_result := core.decide_approval(
       v_approval.id, 'APPROVE', 'Approved for the client portal demo.', v_approval.diff_hash,
       'hosted-demo-portal:decide:' || v_approval.id::text);

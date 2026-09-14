@@ -1,9 +1,8 @@
 -- Pin for hosted_demo_portal.sql and hosted_demo_portal_wipe.sql. Ends in ROLLBACK.
 --
 -- Run from the repo root against a database with migrations through 028 where
--- tenant `akademi-perdana` is provisioned with its three MD members (the hosted
--- post-provision state). It applies hosted_demo_akademi_perdana.sql first, which
--- is a no-op where that seed already ran:
+-- tenant `akademi-perdana` is provisioned and hosted_demo_akademi_perdana.sql has
+-- already run (the seed's own precondition refuses otherwise):
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/seeds/test_hosted_demo_portal.sql
 --
 -- T0  preconditions; a row-count snapshot of every tenant-scoped table
@@ -17,7 +16,7 @@
 --     at T0 except the append-only event log
 -- T6  hosted_demo_wipe.sql then completes (the documented wipe order)
 --
--- \ir is needed: the pin runs the two seed files and the wipe inside its own
+-- \ir is needed: the pin runs the seed, its wipe and the demo wipe inside its own
 -- transaction, which is the only way to prove them and still ROLLBACK.
 
 \set ON_ERROR_STOP on
@@ -56,8 +55,6 @@ AS $fn$
     FROM pin_portal_counts a JOIN pin_portal_counts b ON b.tbl = a.tbl AND b.phase = p_to
    WHERE a.phase = p_from AND a.n <> b.n;
 $fn$;
-
-\ir hosted_demo_akademi_perdana.sql
 
 DO $t0$
 BEGIN
@@ -126,8 +123,8 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM core.approval_decisions d
        WHERE d.tenant_id = v_t AND d.approval_request_id = v_apv.id
-         AND d.decision = 'APPROVE' AND d.decided_by_id = 'd1449fad-b732-4ee2-93c9-37f338e01358') IS DISTINCT FROM 1 THEN
-    RAISE EXCEPTION 'T1e: the approval was not decided APPROVE by the second MD';
+         AND d.decision = 'APPROVE' AND d.decided_by_id = 'ad615910-2d87-42a4-9855-58f52409ec6d') IS DISTINCT FROM 1 THEN
+    RAISE EXCEPTION 'T1e: the approval was not decided APPROVE by MD khumeren';
   END IF;
 
   IF v_link IS NULL OR v_link !~ '^/p/tk_pt_[A-Za-z0-9_-]{43}$' THEN
@@ -150,7 +147,7 @@ BEGIN
   END IF;
 
   PERFORM set_config('pin.token', v_token, true);
-  RAISE NOTICE 'T1 PASS: % SENT via PROPOSAL_SEND (MD Code Shern) approved under APV-01 by MD Khu Code; one live link stored as SHA-256; moved: %',
+  RAISE NOTICE 'T1 PASS: % SENT via PROPOSAL_SEND (codeshern) approved under APV-01 by MD khumeren; one live link stored as SHA-256; moved: %',
     v_pro.ref, v_moved;
 END
 $t1$;
