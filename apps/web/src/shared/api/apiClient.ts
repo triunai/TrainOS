@@ -2,7 +2,9 @@ import type {
   ActionRequest,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
+  ComplianceRule,
   EnquiryExtractionPatch,
+  HrdcDocumentAttachRequest,
   MessageChannel,
   PageRequest,
   ProposalCreateRequest,
@@ -236,12 +238,36 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
     getProgrammeDeliveries: async (id: string) => must(await rpc.getProgrammeDeliveries(id)),
     listHrdcDeadlines: async (page?: PageRequest) =>
       paginate(must(await rpc.listHrdcDeadlines()).data, page),
+    getClaimPacket: async (engagementRef: string) => must(await rpc.getClaimPacket(engagementRef)),
+    /* No options bag on the fixture signature, so the key is derived here —
+       the same derivation the hooks use, not a second one. */
+    attachPacketDocument: async (engagementRef: string, body: HrdcDocumentAttachRequest) =>
+      must(
+        await rpc.attachPacketDocument(engagementRef, {
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("hrdc-packet-attach", engagementRef, body),
+        }),
+      ),
+    exportClaimPacket: async (engagementRef: string) =>
+      must(await rpc.exportClaimPacket(engagementRef)),
+    getComplianceChecks: async (engagementRef: string) =>
+      must(await rpc.getComplianceChecks(engagementRef)),
     getCollectionRules: async () => must(await rpc.listCollectionRules()),
     listComplianceRules: async (page?: PageRequest) =>
       paginate(must(await rpc.listComplianceRules()).data, page),
     getComplianceRule: async (id: string) => must(await rpc.getComplianceRule(id)),
+    /* No options bag on the fixture signature, so the key is derived here —
+       the same derivation the hooks use, not a second one. */
+    createComplianceRule: async (body: Omit<ComplianceRule, "status">) =>
+      must(
+        await rpc.createComplianceRule({
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("compliance-rule-create", body.id, body),
+        }),
+      ),
     listRuleChanges: async (page?: PageRequest) =>
       paginate(must(await rpc.listRuleChanges()).data, page),
+    getRuleChangeSet: async (documentId: string) => must(await rpc.getRuleChangeSet(documentId)),
     listEvals: async (agentId?: string) => {
       const rows = must(await rpc.listEvals()).data;
       return paginate(agentId === undefined ? rows : rows.filter((e) => e.agentId === agentId));
