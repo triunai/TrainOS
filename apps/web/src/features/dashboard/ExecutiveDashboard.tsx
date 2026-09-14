@@ -40,15 +40,53 @@ import {
   type PartialRead,
 } from "@/shared/components/kit";
 import { useBreadcrumb } from "@/shared/components/layout";
-import { isNotDeployed, toApiError } from "@/shared/api";
+import { apiMode, isNotDeployed, toApiError } from "@/shared/api";
 import { navPath } from "@/shared/config/nav";
+import { useMe } from "@/shared/hooks/useMe";
 import { APPROVALS_PATH } from "@/features/approvals";
 import { useExecutiveDashboard, usePendingApprovals, useProposalsVsWon } from "./api";
 
-/** The period the demo story runs in. */
-const PERIOD = "2026-11";
-const PERIOD_LABEL = "November 2026";
+/** The demo story is fixed to this month; fixtures mode always reads it. */
+const FIXTURE_PERIOD = "2026-11";
 const CHART_MONTHS = 6;
+
+/**
+ * `YYYY-MM` for "right now", in `timeZone` rather than the browser's — the
+ * same holder-timezone convention `SidebarProfile.tsx`'s `formatSignIn` uses,
+ * and for the same reason: a dashboard's "this month" has to be the business's
+ * month, not whichever side of midnight the reader's own clock happens to sit
+ * on relative to it.
+ */
+function currentPeriod(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const at = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${at("year")}-${at("month")}`;
+}
+
+/**
+ * `"2026-11"` → `"November 2026"`, the page's own `<h1>`. `formatPeriod` in
+ * the kit answers a different question ("Oct", the MetricStrip delta's short
+ * form) — this label is this screen's only caller, so it stays local rather
+ * than growing the kit a second "format a period" export for one heading.
+ */
+function periodLabel(period: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(period);
+  if (!match) return period;
+  const [, year, month] = match;
+  // UTC: the label only needs the calendar month `period` already names, not
+  // a second timezone conversion on top of `currentPeriod`'s.
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
 
 /**
  * The chart's two series, in artboard order: the quiet one behind, the ink one
@@ -110,12 +148,20 @@ function Section({
 
 export function ExecutiveDashboard() {
   const navigate = useNavigate();
+  const { me } = useMe();
 
   /* The period is the page's own <h1>. A third crumb repeating it is the same
      duplication CLAUDE.md forbids between a breadcrumb and a RecordHeader. */
   useBreadcrumb([{ label: "Home", href: "/" }, { label: "Dashboard" }]);
 
-  const dashboard = useExecutiveDashboard(PERIOD);
+  /* Fixtures mode is the fixed demo story (DECISIONS §4's illustrative data
+     is dated to it), so it keeps reading FIXTURE_PERIOD regardless of when the
+     demo is run. Supabase mode has no fixed story — a real tenant's dashboard
+     is always "this month" — so it asks `core.get_executive_dashboard` for
+     the holder's own current month instead. */
+  const period = apiMode() === "fixtures" ? FIXTURE_PERIOD : currentPeriod(me.timezone);
+
+  const dashboard = useExecutiveDashboard(period);
   const chart = useProposalsVsWon(CHART_MONTHS);
 
   /* An environment that does not serve the dashboard read yet still gets a
@@ -223,7 +269,7 @@ export function ExecutiveDashboard() {
   const header = (
     <>
       <div className="flex min-h-9 flex-wrap items-center gap-2.5 px-5 pb-3.5 pt-5">
-        <h1 className="text-[22px] font-semibold tracking-[-0.015em]">{PERIOD_LABEL}</h1>
+        <h1 className="text-[22px] font-semibold tracking-[-0.015em]">{periodLabel(period)}</h1>
         <StatusChip tone="info">Company-wide</StatusChip>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <SecondaryButton onClick={() => navigate(navPath("Reports"))}>
