@@ -240,6 +240,21 @@
 --     row is deleted as soon as it is classified; its body is never read.
 --     If this is unacceptable the alternative is a worker-side probe (the worker
 --     already holds the accessor), which is a worker change and not this lane's.
+--     MEASURED ON HOSTED by main (read-only, 14 Sep): anon AND authenticated
+--     hold USAGE on `net` and SELECT on net.http_request_queue and
+--     net._http_response; the tables are owned by supabase_admin, so postgres
+--     cannot revoke; `net` is not in the Data API's exposed schemas and
+--     pg_graphql is not installed. The exposure is SQL-only TODAY, and it stays
+--     that way only while the next rule holds.
+--
+-- ⚠ `net` MUST NEVER BE ADDED TO THE DATA API'S EXPOSED SCHEMAS (nor pg_graphql
+--     installed over it). Exposing it would let any signed-in browser — any
+--     tenant — `GET /rest/v1/http_request_queue` and read another tenant's key
+--     from a queued probe's headers. $verify$ V9 refuses to apply while a
+--     readable `pgrst.db_schemas` setting (role or database level) names `net`;
+--     where the platform keeps the list outside the catalog (the Supabase
+--     dashboard), V9 cannot see it and the rule is this paragraph and the
+--     catalog entry.
 --
 -- ═══ THE 7-POINT RPC CONTRACT CHECK ═══════════════════════════════════════
 --  1 ENVELOPE. Every jsonb return is app.ok(...). Refusals RAISE TRNOS with a
@@ -1614,6 +1629,18 @@ BEGIN
      AND NOT (procedure.proconfig @> ARRAY['statement_timeout=5s', 'lock_timeout=2s']);
   IF v_offender IS NOT NULL THEN
     RAISE EXCEPTION '029 verify V8: missing statement_timeout=5s / lock_timeout=2s on %', v_offender;
+  END IF;
+
+  -- V9 `net` is not exposed through PostgREST, where the setting is readable.
+  SELECT pg_catalog.string_agg(setting.value, '; ') INTO v_offender
+    FROM pg_catalog.pg_db_role_setting AS role_setting
+    CROSS JOIN LATERAL pg_catalog.unnest(role_setting.setconfig) AS setting(value)
+   WHERE setting.value ~* '^pgrst\.db_schemas='
+     AND 'net' = ANY (pg_catalog.string_to_array(
+           pg_catalog.replace(pg_catalog.lower(pg_catalog.split_part(setting.value, '=', 2)), ' ', ''), ','));
+  IF v_offender IS NOT NULL THEN
+    RAISE EXCEPTION '029 verify V9: the net schema is exposed to PostgREST (%). Queued pg_net '
+      'probes carry provider keys in their headers; remove net from db_schemas first.', v_offender;
   END IF;
 END
 $verify$;
