@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- 021 · Role authorization and OPPORTUNITY_STAGE_CHANGE
+-- 021 · Role authorization, OPPORTUNITY_STAGE_CHANGE, and the 019 seed fix
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- 001–020 ARE NOT EDITED. Every 018 function this file replaces keeps 018's
@@ -68,6 +68,10 @@
 --   §2  OPPORTUNITY_STAGE_CHANGE (ruling R18): the action type, its three
 --       dispatch arms in 011's functions, its move rules, and OPP-01 seeded per
 --       tenant with a backfill.
+--   §3  019's `app.seed_pipelines` no longer aborts on a tenant's own default
+--       pipeline.
+--   §4  `app.seeded_pipelines` FORCE ROW LEVEL SECURITY with an owner-only
+--       policy (PR #6 re-review backlog).
 --
 -- ⚠ PRIOR PINS THIS FILE AMENDS, each marked `⚠ AMENDED BY 021` in place:
 -- test_011 T1b/T1c and test_012 T1p count `app.action_types` (and the fixture
@@ -3854,6 +3858,182 @@ COMMENT ON FUNCTION app.check_opportunity_stage_move(uuid,uuid,jsonb) IS
   'stage that is not a step of the tenant''s OPPORTUNITY pipeline, and a terminal move '
   'with no reason. Called at target resolution and again under the executor''s lock. 021.';
 
+-- ═══ 3 · The 019 seed no longer aborts on a tenant's own default pipeline ══
+--
+-- DEFECT. `app.seed_pipelines` inserts each object's default pipeline under a
+-- derived id with `ON CONFLICT (id) DO NOTHING`. A tenant that already has a
+-- default pipeline for that object under ANY OTHER id hits
+-- `pipelines_one_default_uq` (004:633) instead: unique_violation, which
+-- `app.seed_pipelines_all` does not catch. So 019's backfill aborts the
+-- migration on such a database. 019's own comment promised the opposite ("a
+-- tenant that already configured its own pipelines keeps them").
+--
+-- WHAT 021 CAN AND CANNOT FIX. It cannot change a 019 that has already
+-- aborted; hosted applied 019 cleanly, because no hosted tenant had a default
+-- pipeline. It fixes the function for every later caller: the tenant trigger,
+-- a re-run of `seed_pipelines_all`, and any environment built from 001–021.
+--
+-- CHANGE. Two predicates, marked `-- 021 ·`. The pipeline insert skips an object
+-- whose tenant already has a default under a different id. The steps insert
+-- writes only under a derived pipeline that exists, so a skipped object gets no
+-- orphan steps and no misreported "no PIP ref_format". The ledger is unchanged:
+-- a skipped row is never inserted, so it is never recorded and never unseeded.
+
+CREATE OR REPLACE FUNCTION app.seed_pipelines(p_tenant_id uuid)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE v_rows integer := 0; v_steps integer := 0;
+BEGIN
+  IF p_tenant_id IS NULL THEN
+    RAISE EXCEPTION 'seed_pipelines: p_tenant_id is required'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- `core.pipelines` carries `trg_pipelines_ref` -> `core.assign_ref('PIP')`,
+  -- which RAISES if the tenant has no `PIP` row in `core.ref_formats`. 016
+  -- seeds those from its own AFTER INSERT trigger, and per-row AFTER INSERT
+  -- triggers fire in ALPHABETICAL ORDER BY TRIGGER NAME — so this pack's
+  -- trigger is named to sort after `trg_tenants_seed_ref_formats`. Asserted
+  -- here as well, because a name-ordering dependency that is only a comment is
+  -- a dependency waiting to be renamed.
+  IF NOT EXISTS (SELECT 1 FROM core.ref_formats AS format
+                  WHERE format.tenant_id = p_tenant_id AND format.prefix = 'PIP') THEN
+    RAISE EXCEPTION
+      'seed_pipelines: tenant % has no PIP ref_format yet. 016 seeds it from '
+      'trg_tenants_seed_ref_formats, and AFTER INSERT triggers fire in '
+      'alphabetical order by name — this seed must sort after it.', p_tenant_id
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  -- RECORDED AS IT IS INSERTED. `RETURNING` under `ON CONFLICT DO NOTHING`
+  -- yields ONLY the rows this statement actually wrote, which is precisely the
+  -- set the rollback is entitled to delete.
+  WITH inserted AS (
+  INSERT INTO core.pipelines
+    (id, tenant_id, object, name, is_default, version, status,
+     created_by_kind, created_by_id)
+  SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid,
+         p_tenant_id, spec.object, spec.name, true, 1, 'ACTIVE', 'SYSTEM', 'migration:019'
+    FROM (VALUES
+            -- Doc 01 §3.6: two lifecycles, two rows. The nine-step delivery
+            -- lifecycle is API_CONTRACT.md's `GET /v1/engagements/{id}`
+            -- example and the contract's ENGAGEMENT_STAGE_KEYS.
+            ('ENGAGEMENT',  'Delivery lifecycle'),
+            -- The seven opportunity stages are doc 01 §5.3's own
+            -- `opportunities.stage` edge set and the contract's
+            -- OPPORTUNITY_STAGES, in that order.
+            ('OPPORTUNITY', 'Deal board')
+          ) AS spec(object, name)
+   -- 021 · a tenant's own default for this object wins; the seed steps aside
+   -- rather than colliding with pipelines_one_default_uq.
+   WHERE NOT EXISTS (
+     SELECT 1 FROM core.pipelines AS existing
+      WHERE existing.tenant_id = p_tenant_id
+        AND existing.object = spec.object
+        AND existing.is_default
+        AND existing.id <> pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid)
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
+  ), recorded AS (
+  INSERT INTO app.seeded_pipelines (row_kind, tenant_id, row_id)
+  SELECT 'PIPELINE', p_tenant_id, inserted.id FROM inserted
+  ON CONFLICT (row_kind, row_id) DO NOTHING
+  RETURNING 1)
+  -- COUNTED OFF `inserted`, NOT off ROW_COUNT. ROW_COUNT would now report the
+  -- LEDGER's insert, and a stale ledger row from a pipeline deleted outside
+  -- `app.unseed_pipelines` would make a real seed report zero — which is how
+  -- `app.seed_pipelines_all()` would start believing it had nothing to do.
+  SELECT pg_catalog.count(*)::integer INTO v_rows FROM inserted;
+
+  WITH inserted AS (
+  INSERT INTO core.pipeline_steps
+    (id, tenant_id, pipeline_id, step_key, label, position, terminal, blocking_check_keys)
+  SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object || ':' || spec.step_key)::uuid,
+         p_tenant_id,
+         pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid,
+         spec.step_key, spec.label, spec.position, spec.terminal,
+         -- `blocking_check_keys` stays empty: §17 sets HRDC_CLAIM to BLOCKED
+         -- from a FAILING CHECK RESULT, not from a named key list, and 017
+         -- seeds the three check keys per tenant. Anything else here would be
+         -- configuration with no citation behind it.
+         ARRAY[]::text[]
+    FROM (VALUES
+            -- ENGAGEMENT — API_CONTRACT.md:549-553, contract ENGAGEMENT_STAGE_KEYS,
+            -- doc 01 §5.3 per row (engagements.status, trainer_bookings.state,
+            -- attendance_days.status, hrdc_packets.status, invoices.status).
+            ('ENGAGEMENT','WON',              'Won',               1::smallint, false),
+            ('ENGAGEMENT','TRAINER_CONFIRMED','Trainer confirmed', 2::smallint, false),
+            ('ENGAGEMENT','SCHEDULED',        'Scheduled',         3::smallint, false),
+            ('ENGAGEMENT','REGISTERED',       'Registered',        4::smallint, false),
+            ('ENGAGEMENT','DELIVERED',        'Delivered',         5::smallint, false),
+            ('ENGAGEMENT','ATTENDANCE_LOCKED','Attendance locked', 6::smallint, false),
+            ('ENGAGEMENT','HRDC_CLAIM',       'HRDC claim',        7::smallint, false),
+            ('ENGAGEMENT','INVOICED',         'Invoiced',          8::smallint, false),
+            ('ENGAGEMENT','PAID',             'Paid',              9::smallint, true),
+            -- OPPORTUNITY — doc 01 §5.3 `opportunities.stage`, contract
+            -- OPPORTUNITY_STAGES. WON and LOST are terminal and sit BESIDE each
+            -- other, which is ruling R16's whole point: a screen that inferred
+            -- an ending from the highest position would put LOST after WON.
+            ('OPPORTUNITY','NEW',           'New',           1::smallint, false),
+            ('OPPORTUNITY','QUALIFYING',    'Qualifying',    2::smallint, false),
+            ('OPPORTUNITY','TNA_SENT',      'TNA sent',      3::smallint, false),
+            ('OPPORTUNITY','PROPOSAL_SENT', 'Proposal sent', 4::smallint, false),
+            ('OPPORTUNITY','NEGOTIATION',   'Negotiation',   5::smallint, false),
+            ('OPPORTUNITY','WON',           'Won',           6::smallint, true),
+            ('OPPORTUNITY','LOST',          'Lost',          7::smallint, true)
+          ) AS spec(object, step_key, label, position, terminal)
+   -- 021 · steps only under a seeded pipeline that exists.
+   WHERE EXISTS (
+     SELECT 1 FROM core.pipelines AS own
+      WHERE own.tenant_id = p_tenant_id
+        AND own.id = pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid)
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
+  ), recorded AS (
+  INSERT INTO app.seeded_pipelines (row_kind, tenant_id, row_id)
+  SELECT 'STEP', p_tenant_id, inserted.id FROM inserted
+  ON CONFLICT (row_kind, row_id) DO NOTHING
+  RETURNING 1)
+  SELECT pg_catalog.count(*)::integer INTO v_steps FROM inserted;
+
+  RETURN v_rows + v_steps;
+END;
+$fn$;
+
+
+-- ═══ 4 · app.seeded_pipelines is FORCED like every other app table ═════════
+--
+-- From the PR #6 re-review. `app.seeded_pipelines` (019) was the only table in
+-- `public`, `app` or `core` with RLS enabled but not FORCED (measured off
+-- pg_class on the 001–020 shim). FORCE removes the owner's exemption, so
+-- 019's three definer functions, which INSERT, SELECT and DELETE here, need a
+-- policy that admits their owner, or they silently read nothing and write
+-- nothing on a project whose owner is not BYPASSRLS (supabase/CLAUDE.md rule 2).
+-- Hosted `postgres` is BYPASSRLS today, so the policy is what keeps that true
+-- either way.
+--
+-- The policy names the table OWNER, not PUBLIC: it admits exactly the role the
+-- definers run as. The grant layer is unchanged, and no client role holds any
+-- privilege on the table (019 V4c).
+
+DO $force$
+DECLARE v_owner text;
+BEGIN
+  SELECT c.relowner::regrole::text INTO v_owner
+    FROM pg_catalog.pg_class AS c WHERE c.oid = 'app.seeded_pipelines'::regclass;
+  EXECUTE 'DROP POLICY IF EXISTS seeded_pipelines_owner_all ON app.seeded_pipelines';
+  EXECUTE pg_catalog.format(
+    'CREATE POLICY seeded_pipelines_owner_all ON app.seeded_pipelines '
+    'AS PERMISSIVE FOR ALL TO %s USING (true) WITH CHECK (true)', v_owner);
+END
+$force$;
+
+ALTER TABLE app.seeded_pipelines FORCE ROW LEVEL SECURITY;
+
+
 -- ═══ 9 · Grants, restated ══════════════════════════════════════════════════
 --
 -- CREATE OR REPLACE keeps each function's ACL. Restated by name so the end
@@ -3991,5 +4171,17 @@ BEGIN
   END IF;
 END
 $verify_r18$;
+
+DO $verify_seed$
+BEGIN
+  -- V5 · app.seeded_pipelines is forced, and admits exactly its owner.
+  IF NOT (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c
+           WHERE c.oid = 'app.seeded_pipelines'::regclass)
+     OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policies
+          WHERE schemaname = 'app' AND tablename = 'seeded_pipelines') <> 1 THEN
+    RAISE EXCEPTION '021 verify V5: app.seeded_pipelines is not forced with its one owner policy';
+  END IF;
+END
+$verify_seed$;
 
 COMMIT;

@@ -24,6 +24,11 @@ BEGIN;
 
 SET LOCAL client_min_messages = warning;
 
+-- ═══ 1 · app.seeded_pipelines back to 019's posture ════════════════════════
+
+ALTER TABLE app.seeded_pipelines NO FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS seeded_pipelines_owner_all ON app.seeded_pipelines;
+
 -- ═══ 2 · OPPORTUNITY_STAGE_CHANGE out of the envelope ══════════════════════
 
 DO $refuse$
@@ -401,6 +406,119 @@ END;
 $fn$;
 
 DROP FUNCTION IF EXISTS app.check_opportunity_stage_move(uuid, uuid, jsonb);
+
+-- ═══ 3 · 019's app.seed_pipelines ═════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION app.seed_pipelines(p_tenant_id uuid)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE v_rows integer := 0; v_steps integer := 0;
+BEGIN
+  IF p_tenant_id IS NULL THEN
+    RAISE EXCEPTION 'seed_pipelines: p_tenant_id is required'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- `core.pipelines` carries `trg_pipelines_ref` -> `core.assign_ref('PIP')`,
+  -- which RAISES if the tenant has no `PIP` row in `core.ref_formats`. 016
+  -- seeds those from its own AFTER INSERT trigger, and per-row AFTER INSERT
+  -- triggers fire in ALPHABETICAL ORDER BY TRIGGER NAME — so this pack's
+  -- trigger is named to sort after `trg_tenants_seed_ref_formats`. Asserted
+  -- here as well, because a name-ordering dependency that is only a comment is
+  -- a dependency waiting to be renamed.
+  IF NOT EXISTS (SELECT 1 FROM core.ref_formats AS format
+                  WHERE format.tenant_id = p_tenant_id AND format.prefix = 'PIP') THEN
+    RAISE EXCEPTION
+      'seed_pipelines: tenant % has no PIP ref_format yet. 016 seeds it from '
+      'trg_tenants_seed_ref_formats, and AFTER INSERT triggers fire in '
+      'alphabetical order by name — this seed must sort after it.', p_tenant_id
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  -- RECORDED AS IT IS INSERTED. `RETURNING` under `ON CONFLICT DO NOTHING`
+  -- yields ONLY the rows this statement actually wrote, which is precisely the
+  -- set the rollback is entitled to delete.
+  WITH inserted AS (
+  INSERT INTO core.pipelines
+    (id, tenant_id, object, name, is_default, version, status,
+     created_by_kind, created_by_id)
+  SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid,
+         p_tenant_id, spec.object, spec.name, true, 1, 'ACTIVE', 'SYSTEM', 'migration:019'
+    FROM (VALUES
+            -- Doc 01 §3.6: two lifecycles, two rows. The nine-step delivery
+            -- lifecycle is API_CONTRACT.md's `GET /v1/engagements/{id}`
+            -- example and the contract's ENGAGEMENT_STAGE_KEYS.
+            ('ENGAGEMENT',  'Delivery lifecycle'),
+            -- The seven opportunity stages are doc 01 §5.3's own
+            -- `opportunities.stage` edge set and the contract's
+            -- OPPORTUNITY_STAGES, in that order.
+            ('OPPORTUNITY', 'Deal board')
+          ) AS spec(object, name)
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
+  ), recorded AS (
+  INSERT INTO app.seeded_pipelines (row_kind, tenant_id, row_id)
+  SELECT 'PIPELINE', p_tenant_id, inserted.id FROM inserted
+  ON CONFLICT (row_kind, row_id) DO NOTHING
+  RETURNING 1)
+  -- COUNTED OFF `inserted`, NOT off ROW_COUNT. ROW_COUNT would now report the
+  -- LEDGER's insert, and a stale ledger row from a pipeline deleted outside
+  -- `app.unseed_pipelines` would make a real seed report zero — which is how
+  -- `app.seed_pipelines_all()` would start believing it had nothing to do.
+  SELECT pg_catalog.count(*)::integer INTO v_rows FROM inserted;
+
+  WITH inserted AS (
+  INSERT INTO core.pipeline_steps
+    (id, tenant_id, pipeline_id, step_key, label, position, terminal, blocking_check_keys)
+  SELECT pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object || ':' || spec.step_key)::uuid,
+         p_tenant_id,
+         pg_catalog.md5(p_tenant_id::text || 'pipeline:' || spec.object)::uuid,
+         spec.step_key, spec.label, spec.position, spec.terminal,
+         -- `blocking_check_keys` stays empty: §17 sets HRDC_CLAIM to BLOCKED
+         -- from a FAILING CHECK RESULT, not from a named key list, and 017
+         -- seeds the three check keys per tenant. Anything else here would be
+         -- configuration with no citation behind it.
+         ARRAY[]::text[]
+    FROM (VALUES
+            -- ENGAGEMENT — API_CONTRACT.md:549-553, contract ENGAGEMENT_STAGE_KEYS,
+            -- doc 01 §5.3 per row (engagements.status, trainer_bookings.state,
+            -- attendance_days.status, hrdc_packets.status, invoices.status).
+            ('ENGAGEMENT','WON',              'Won',               1::smallint, false),
+            ('ENGAGEMENT','TRAINER_CONFIRMED','Trainer confirmed', 2::smallint, false),
+            ('ENGAGEMENT','SCHEDULED',        'Scheduled',         3::smallint, false),
+            ('ENGAGEMENT','REGISTERED',       'Registered',        4::smallint, false),
+            ('ENGAGEMENT','DELIVERED',        'Delivered',         5::smallint, false),
+            ('ENGAGEMENT','ATTENDANCE_LOCKED','Attendance locked', 6::smallint, false),
+            ('ENGAGEMENT','HRDC_CLAIM',       'HRDC claim',        7::smallint, false),
+            ('ENGAGEMENT','INVOICED',         'Invoiced',          8::smallint, false),
+            ('ENGAGEMENT','PAID',             'Paid',              9::smallint, true),
+            -- OPPORTUNITY — doc 01 §5.3 `opportunities.stage`, contract
+            -- OPPORTUNITY_STAGES. WON and LOST are terminal and sit BESIDE each
+            -- other, which is ruling R16's whole point: a screen that inferred
+            -- an ending from the highest position would put LOST after WON.
+            ('OPPORTUNITY','NEW',           'New',           1::smallint, false),
+            ('OPPORTUNITY','QUALIFYING',    'Qualifying',    2::smallint, false),
+            ('OPPORTUNITY','TNA_SENT',      'TNA sent',      3::smallint, false),
+            ('OPPORTUNITY','PROPOSAL_SENT', 'Proposal sent', 4::smallint, false),
+            ('OPPORTUNITY','NEGOTIATION',   'Negotiation',   5::smallint, false),
+            ('OPPORTUNITY','WON',           'Won',           6::smallint, true),
+            ('OPPORTUNITY','LOST',          'Lost',          7::smallint, true)
+          ) AS spec(object, step_key, label, position, terminal)
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
+  ), recorded AS (
+  INSERT INTO app.seeded_pipelines (row_kind, tenant_id, row_id)
+  SELECT 'STEP', p_tenant_id, inserted.id FROM inserted
+  ON CONFLICT (row_kind, row_id) DO NOTHING
+  RETURNING 1)
+  SELECT pg_catalog.count(*)::integer INTO v_steps FROM inserted;
+
+  RETURN v_rows + v_steps;
+END;
+$fn$;
 
 -- ═══ 4 · 020's get_audit, and the 018 bodies ═══════════════════════════════
 

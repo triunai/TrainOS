@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- test_021 · Role authorization and OPPORTUNITY_STAGE_CHANGE
+-- test_021 · Role authorization, OPPORTUNITY_STAGE_CHANGE, the 019 seed fix
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Run against 001–021. Ends in ROLLBACK and writes nothing durable.
@@ -37,6 +37,12 @@
 --     STAGE_MOVED and the decision rolls back.
 -- T4b A tenant with ONLY MD users (akademi-perdana's shape): OPP-01 routes to
 --     the other MD, the requester cannot self-approve, the other MD approves.
+-- T5  019's seed steps aside for a tenant's own default pipeline instead of
+--     raising unique_violation, and `seed_pipelines_all` completes.
+-- T6  Re-review backlog: app.seeded_pipelines is FORCED with an owner-only
+--     policy; a CLIENT principal at aal1 deciding a money-moving approval is
+--     refused AAL2_REQUIRED (and at aal2 is not); the REVEAL audit guard
+--     raises SQLSTATE TRNOS with its code, not 42501.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -657,5 +663,137 @@ BEGIN
   RAISE NOTICE 'T4b PASS: with only MDs, OPP-01 routes to the other MD, the requester cannot self-approve, and the other MD approves.';
 END
 $t4c$;
+
+-- ════════ T5 · 019's seed steps aside for a tenant's own default pipeline ════════
+
+DO $t5$
+DECLARE
+  v_tenant uuid := 'a0210000-1111-4000-8000-000000000001';
+  v_seeded integer;
+BEGIN
+  -- Replace the seeded OPPORTUNITY default with the tenant's own, under another
+  -- id: exactly the database 019's backfill aborted on.
+  DELETE FROM core.pipeline_steps
+   WHERE tenant_id = v_tenant
+     AND pipeline_id = pg_catalog.md5(v_tenant::text || 'pipeline:OPPORTUNITY')::uuid;
+  DELETE FROM core.pipelines
+   WHERE tenant_id = v_tenant AND id = pg_catalog.md5(v_tenant::text || 'pipeline:OPPORTUNITY')::uuid;
+  INSERT INTO core.pipelines (id, tenant_id, object, name, is_default, version, status, created_by_kind, created_by_id)
+  VALUES ('a0210000-9999-4000-8000-00000000000f', v_tenant, 'OPPORTUNITY', 'Our own board', true, 1, 'ACTIVE',
+          'HUMAN', 'a0210000-0000-4000-8000-0000000000a3');
+
+  BEGIN
+    v_seeded := app.seed_pipelines(v_tenant);
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'T5a: seed_pipelines still collides with a tenant''s own default: %', SQLERRM;
+  END;
+  IF v_seeded <> 0 THEN
+    RAISE EXCEPTION 'T5b: the seed wrote % row(s) beside the tenant''s own default', v_seeded;
+  END IF;
+  IF EXISTS (SELECT 1 FROM core.pipelines
+              WHERE tenant_id = v_tenant AND object = 'OPPORTUNITY'
+                AND id = pg_catalog.md5(v_tenant::text || 'pipeline:OPPORTUNITY')::uuid) THEN
+    RAISE EXCEPTION 'T5c: the seed re-created its own default beside the tenant''s';
+  END IF;
+  PERFORM app.seed_pipelines_all();
+  RAISE NOTICE 'T5 PASS: seed_pipelines and seed_pipelines_all complete over a tenant''s own default pipeline.';
+END
+$t5$;
+
+-- ════════ T6 · Re-review backlog ════════
+
+DO $t6a$
+BEGIN
+  IF NOT (SELECT relforcerowsecurity FROM pg_catalog.pg_class WHERE oid = 'app.seeded_pipelines'::regclass) THEN
+    RAISE EXCEPTION 'T6a: app.seeded_pipelines is not FORCE ROW LEVEL SECURITY';
+  END IF;
+  IF (SELECT pg_catalog.array_agg(r::text) FROM pg_catalog.pg_policies AS p, pg_catalog.unnest(p.roles) AS r
+       WHERE p.schemaname = 'app' AND p.tablename = 'seeded_pipelines')
+     <> ARRAY[(SELECT relowner::regrole::text FROM pg_catalog.pg_class WHERE oid = 'app.seeded_pipelines'::regclass)] THEN
+    RAISE EXCEPTION 'T6b: app.seeded_pipelines'' policy does not admit exactly the table owner';
+  END IF;
+  RAISE NOTICE 'T6a PASS: app.seeded_pipelines is FORCED with one owner-only policy.';
+END
+$t6a$;
+
+-- A money-moving approval assigned to MD, raised by somebody else.
+INSERT INTO core.action_requests (id,tenant_id,action_type,requested_by_kind,requested_by_id,status)
+VALUES ('a0210000-ac00-4000-8000-000000000001','a0210000-1111-4000-8000-000000000001',
+        'DISCOUNT_APPROVE','HUMAN','a0210000-0000-4000-8000-0000000000a1','QUEUED_FOR_APPROVAL');
+INSERT INTO core.approval_requests
+  (id,tenant_id,action_request_id,policy_id,action_type,subject,requested_by_kind,requested_by_id,
+   reason,diff,diff_hash,approver_role,sla_due_at,expires_at,bulk_approvable)
+VALUES ('a0210000-a99a-4000-8000-000000000001','a0210000-1111-4000-8000-000000000001',
+        'a0210000-ac00-4000-8000-000000000001','APV-03','DISCOUNT_APPROVE','discount','HUMAN',
+        'a0210000-0000-4000-8000-0000000000a1','T021 AAL2 probe','[]'::jsonb,pg_catalog.repeat('c',64),'MD',
+        pg_catalog.now() + interval '1 day', pg_catalog.now() + interval '7 days', false);
+
+-- A CLIENT principal whose role would otherwise authorise the decision, at aal1.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a6','a0210000-1111-4000-8000-000000000001','MD','CLIENT'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.client_aal1', pg_temp.try($$SELECT core.decide_approval(
+  'a0210000-a99a-4000-8000-000000000001'::uuid, 'APPROVE', NULL, repeat('c',64), NULL)$$)::text, true);
+RESET ROLE;
+
+-- The same principal with a real aal2 session.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a6','a0210000-1111-4000-8000-000000000001','MD','CLIENT',
+                 'a0210000-5e55-4000-8000-0000000000a6'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.client_aal2', pg_temp.try($$SELECT core.decide_approval(
+  'a0210000-a99a-4000-8000-000000000001'::uuid, 'APPROVE', NULL, repeat('c',64), NULL)$$)::text, true);
+RESET ROLE;
+
+DO $t6b$
+BEGIN
+  IF (pg_temp.got('client_aal1') ->> 'detail')::jsonb ->> 'reason' IS DISTINCT FROM 'AAL2_REQUIRED' THEN
+    RAISE EXCEPTION 'T6c: a CLIENT at aal1 was not refused AAL2_REQUIRED on a money-moving decision: %',
+      pg_temp.got('client_aal1');
+  END IF;
+  IF (pg_temp.got('client_aal2') ->> 'detail')::jsonb ->> 'reason' IS NOT DISTINCT FROM 'AAL2_REQUIRED' THEN
+    RAISE EXCEPTION 'T6d: the AAL2 refusal does not discriminate on the session: %', pg_temp.got('client_aal2');
+  END IF;
+  RAISE NOTICE 'T6b PASS: decide_approval holds a CLIENT principal to AAL2 on money-moving actions (011:2960).';
+END
+$t6b$;
+
+INSERT INTO core.ai_provider_keys
+  (id, tenant_id, provider_ref, provider, label, masked_key, key_fingerprint, key_ref, region, added_by)
+VALUES ('a0210000-0bbb-4000-8000-000000000001','a0210000-1111-4000-8000-000000000001','prv_a21','ANTHROPIC',
+        'A21', 'sk-ant-'||pg_catalog.repeat('*',12)||'a21x', pg_catalog.sha256('a21'::bytea), 'vault:a21', 'US',
+        '{"kind":"HUMAN","id":"a0210000-0000-4000-8000-0000000000a3","name":"MD"}'::jsonb);
+
+DO $t6c$
+DECLARE v_state text; v_detail text;
+BEGIN
+  -- No audit row named at all.
+  BEGIN
+    PERFORM pg_catalog.set_config('app.key_reveal_audit', '', true);
+    UPDATE core.ai_provider_keys SET last_revealed_at = pg_catalog.now() - interval '48 hours'
+     WHERE id = 'a0210000-0bbb-4000-8000-000000000001';
+    RAISE EXCEPTION 'T6e: an unaudited reveal stamp was written';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_detail = PG_EXCEPTION_DETAIL;
+    IF v_state <> 'TRNOS' OR v_detail::jsonb ->> 'code' <> 'REVEAL_AUDIT_REQUIRED' THEN
+      RAISE EXCEPTION 'T6e: expected TRNOS REVEAL_AUDIT_REQUIRED, got % % (%)', v_state, v_detail, SQLERRM;
+    END IF;
+  END;
+  -- An audit id that is not a REVEAL of this key.
+  BEGIN
+    PERFORM pg_catalog.set_config('app.key_reveal_audit', pg_catalog.gen_random_uuid()::text, true);
+    UPDATE core.ai_provider_keys SET last_revealed_at = pg_catalog.now() - interval '48 hours'
+     WHERE id = 'a0210000-0bbb-4000-8000-000000000001';
+    RAISE EXCEPTION 'T6f: a reveal stamp with a foreign audit id was written';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_detail = PG_EXCEPTION_DETAIL;
+    IF v_state <> 'TRNOS' OR v_detail::jsonb ->> 'code' <> 'REVEAL_AUDIT_MISMATCH' THEN
+      RAISE EXCEPTION 'T6f: expected TRNOS REVEAL_AUDIT_MISMATCH, got % % (%)', v_state, v_detail, SQLERRM;
+    END IF;
+  END;
+  PERFORM pg_catalog.set_config('app.key_reveal_audit', '', true);
+  RAISE NOTICE 'T6c PASS: the reveal audit guard raises SQLSTATE TRNOS with REVEAL_AUDIT_REQUIRED / _MISMATCH, never 42501.';
+END
+$t6c$;
 
 ROLLBACK;
