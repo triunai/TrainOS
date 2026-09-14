@@ -387,15 +387,34 @@ SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'staffNumber') = 'nul
 -- `session` answers `null` AS A WHOLE, matching the contract's own ruling
 -- for `core.me_profile()` and the merged web reader
 -- (`SidebarProfile.tsx`, gated on `details.session` before anything
--- inside it): `lastSignInAt` is a REQUIRED `ProfileSession` field, this
--- shim's `auth.users` has no `last_sign_in_at` column at all, and a
+-- inside it): `lastSignInAt` is a REQUIRED `ProfileSession` field, and a
 -- populated object with a null required field would violate the type this
--- pin exists to hold the RPC to. The real-derivation path (a full object
--- with `activeSessions`/`twoFactorEnabled` real and `browser`/`place`
--- null) was verified ad hoc against a locally-extended copy of this
--- schema, not checked in here, since adding hosted-only GoTrue
--- columns/tables to the shared shim is not this pin's fixture to make.
-SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session') = 'null'::jsonb, 'T1j session null as a whole (no last_sign_in_at column in this shim)');
+-- pin exists to hold the RPC to. WHICH branch fires depends on whether
+-- `auth.users.last_sign_in_at` exists in the environment the pin actually
+-- runs against - absent on this local shim, present on hosted (confirmed:
+-- hosted returns a real `session` with `lastSignInAt`, `activeSessions`
+-- and `twoFactorEnabled` populated) - so the assertion checks the column
+-- STRUCTURALLY rather than hardcoding either shape, and is correct in
+-- both environments.
+SELECT pg_temp.assert(
+  CASE WHEN EXISTS (
+         SELECT 1 FROM pg_catalog.pg_attribute AS a
+          WHERE a.attrelid = 'auth.users'::regclass
+            AND a.attname = 'last_sign_in_at'
+            AND NOT a.attisdropped)
+       THEN
+         -- Populated: exactly the 5 ProfileSession keys, and the required
+         -- field is actually non-null (a real timestamp, not the JSON null
+         -- a populated-but-empty object would slip through as).
+         (SELECT pg_catalog.array_agg(k ORDER BY k)
+            FROM pg_catalog.jsonb_object_keys(pg_temp.got('t1')->'value'->'data'->'session') AS k)
+           = ARRAY['activeSessions','browser','lastSignInAt','place','twoFactorEnabled']
+         AND (pg_temp.got('t1')->'value'->'data'->'session'->'lastSignInAt') <> 'null'::jsonb
+       ELSE
+         -- Absent: the whole block is null, not a half-built object.
+         (pg_temp.got('t1')->'value'->'data'->'session') = 'null'::jsonb
+  END,
+  'T1j session: null as a whole when auth.users.last_sign_in_at is absent, else the exact ProfileSession keys with a real lastSignInAt');
 -- MD holds 13 of the 14 nav permissions (lacks the bare 'compliance:read').
 SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->>'moduleCount')::int = 13, 'T1k moduleCount = 13');
 
