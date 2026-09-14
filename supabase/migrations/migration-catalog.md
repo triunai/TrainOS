@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 20 · **Applied (hosted):** 001–019 · **Authored, not applied:** 020
+**Migrations:** 21 · **Applied (hosted):** 001–019 · **Authored, not applied:** 020, 021
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -213,6 +213,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 021 | `021_golden_path_authz.sql` | **Role authorization on the golden-path RPCs (2026-09-14).** Replaces 24 018 functions (`badge_counts` plus the 23 that checked nothing); each body is 018's plus one `-- 021 ·` gate. No table, enum value or policy. **Any principal with a tenant claim could call every read and write**, because only `list_quotations` checked a permission. The 23 now check their 002 permission as the first statement: reads refuse through `app.err('FORBIDDEN')`, writes through a TRNOS raise, identically for every argument. `badge_counts` zeroes the HRDC and run counts a role may not read. **The approval audit tab was still empty**: the shipped client sends `get_audit('APPROVAL', ref)` and 020 mapped only `approvals`, so 020's `get_audit` is replaced to map what `aggregateTypeOf` sends (`APPROVAL`, and the misspelt `ENQUIRIE`/`OPPORTUNITIE`). `get_rate_card` has no 002 permission and is gated on `quotation:read` (flagged). `$verify$` V3 asserts from `app.role_permissions` that every writer's holders can pass the reader it returns through. ⚠ **Amends test_018** T19g/T36 in place: SALES read compliance rules, which 002 §11 does not permit. |
 | 020 | `020_api_read_surface.sql` | **The API read surface: approvals that can be decided, and views a browser can read (2026-09-14).** It replaces three 018 functions (`core.list_approvals`, `core.get_approval`, `core.get_audit`) whose bodies stay 018's apart from blocks marked `-- 020 ·`. It repairs three 018 views, adds fourteen `security_invoker` views and adds two `core` definer row sources. No table, enum value or policy. **Nobody could approve anything**: 014's `core.decide_approval` requires the diff hash and 011 compares it, but 018's list and detail never sent `diffHash`, so every APPROVE was refused. Both now carry it (contract `ApprovalRequest.diffHash`). The list also accepts the contract's `value.amount` filter. **The audit drawer was always empty**: the client sends the URL segment (`approvals`) and 012 stores UPPER_SNAKE. `get_audit` maps the unambiguous segments and returns an approval's trail by action-request correlation. **Every client view raised or 404'd**: 018's three views called `app` helpers REVOKEd from `authenticated` (42501, shown to the user as signed out), and fourteen `VIEW_READS` names had no view. Money is now inlined, the budget and tier rows come from `core.ai_*_rows()`, and each view's columns are the contract keys, with no rows for a caller who lacks the 002 read permission. `$verify$` V6 asserts off `pg_depend` that no client-readable `core` view calls a function `authenticated` cannot execute. The three reads get the `approval:read` / `audit:read` gate. `decide_approval` keeps 014's uuid signature. **Not built:** `me_profile` (no table carries its required fields) and the dashboard RPCs (nothing to compute them from). Pin `test_020`: every probe runs as `authenticated`, and the build ran as a NOSUPERUSER BYPASSRLS role. |
 | 019 | `019_pipeline_provisioning.sql` | **Per-tenant pipeline provisioning: the dedicated seed pack 016 asked for, split out of 018 (2026-09-13).** One table (`app.seeded_pipelines`), four `app` functions, one trigger on `public.tenants`, two rows in 016's `app.tenant_seed_checks`, and a backfill. No enum value; no existing function, view, policy or grant modified. **A tenant had no lifecycle**: `core.pipelines` and `core.pipeline_steps` exist from 004 and nothing in 001–018 put a row in either, so `core.navigation` and `core.get_pipeline_config` returned an empty stage list for every tenant. 016 named the owner — *"it belongs in a pack that can cite `docs/architecture/01` §5.3 per row. **Owner: 018 or a dedicated seed pack.**"* — 018 took it and should not have. **The trigger name is load-bearing**: per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER, and `core.pipelines` carries `trg_pipelines_ref` → `core.assign_ref('PIP')`, which raises without 016's ref format, so `trg_tenants_z_seed_pipelines` must sort after `trg_tenants_seed_ref_formats`; the `z` is not decoration and V1b asserts it. **The backfill RAISES naming every tenant it could not seed** rather than warning — it used to swallow a foreign-key violation and finish green, leaving a tenant whose shell opened on an empty stage list that read as configuration. **And the seed is REVERSIBLE**, which is the whole reason it is a pack of its own: `app.seeded_pipelines` records every row the seed actually inserted (a row that already existed under the same derived id was never inserted and is never recorded), `app.unseed_pipelines()` deletes exactly those and refuses with a count and the blocking constraint names when live data references any of them, and the rollback calls it before dropping the mechanism. Without that, rolling back left `pipelines_one_default_uq` rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. Registered in `app.tenant_seed_checks` so `app.provision_tenant` refuses a tenant whose lifecycle did not land. ⚠ **Forces a fixture amendment in every pin that inserted its own default `ENGAGEMENT` pipeline** — test_008 and test_009 are amended in this pack's commit; test_016 and test_017 on `cloud/migrations` are owed at rebase. |
 | 018 | `018_golden_path_rpcs.sql` | **The golden-path RPC pack: 30 `SECURITY DEFINER` read/write RPCs in `core`, three `security_invoker` views, fourteen internal `app._*` helpers, and the per-tenant pipeline seed (2026-09-13).** No table, no enum value, no policy; no existing function, view or grant modified. **The envelope is the contract**: every body returns through `app.ok`/`app.err` or refuses through a `TRNOS` raise, `data` stays the sole non-`success` key so the client's auto-unwrap does not flip to pass-through, and `list_approvals` puts `groups` BESIDE `data` one level down rather than beside the envelope. **Reads refuse with `app.err`, writes with `RAISE … TRNOS`** — six functions write, and a committed refusal after a write is the defect that rule exists to prevent. **One keyset engine, not five**: `app._keyset_scope` counts off the filter-only predicate and returns the keyset-extended one, `app._next_cursor` asks the table whether a row exists past the page, and the five list RPCs call both — which is what makes "count before keyset" and "null at the end" unavailable to a caller rather than repeated correctly in five places. **One saved-view resolver**: `app._view_filters` gates on `core.saved_view_object`, so the three lists whose object has no enum value REFUSE `p_view` with `UNSUPPORTED_VIEW_OBJECT` instead of dropping it. **`regenerate_proposal_section` enqueues through 012**: `app.emit_event` carries the run id into `app.outbox` via one global `app.event_subscriptions` row (routing is data, 012's own rule), and the RPC refuses `REGENERATE_NOT_ROUTED` rather than returning 200 with nothing queued. **The pipeline seed** is a ⚠ **The per-tenant pipeline seed is NOT in this pack** — it was, and the review was right that it did not belong. A trigger on `public.tenants` plus a cross-tenant backfill is a repo-wide semantic change, and shipping it as a subsection of a file whose stated subject is read and write RPCs put its irreversibility in a footnote instead of under review; the cost was measurable, four earlier packs' pins. It is now **019**. What remains here is the DEPENDENCY: `core.navigation` and `core.get_pipeline_config` render stages FROM `core.pipeline_steps` and inline no stage list, so without 019 both return an empty stage list and `test_018` is run against 001–019. **014 yields three wrappers to 018 and 018 yields them back**: `perform_action`, `decide_approval` and `bulk_decide_approvals` are 014's, asserted here and not redefined. Stage names and order render from `core.pipelines`/`core.pipeline_steps` in both `navigation` and `get_pipeline_config`; no stage list is inlined. ⚠ **Adds three `core` view grants.** They are asserted by `test_018` T38, and `test_014`'s exact count stays at **121** by excluding 018's three views by name — 014's pin must pass at 014, and a count a later pack bumps is a running total of the schema rather than 014's own pin. That condition is three migrations old rather than 018's invention: the same file's T1a already read "116 tables, 113 from 014 + 3 from 017" before this pack existed. 018 stops extending the pattern. |
@@ -412,6 +413,69 @@ all three are platform-provided and none is 001's to drop. Round-tripped: applie
 re-applied, verify green each time.
 
 ---
+
+## Migration Detail — 021 (`021_golden_path_authz.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+
+### What it does
+
+| § | Object | Change |
+|---|---|---|
+| 1 | 23 `core` RPCs | `app.has_permission('<002 permission>')` as the first statement. Reads refuse `app.err('FORBIDDEN', {requiredPermission})`, writes raise TRNOS `{code: FORBIDDEN, requiredPermission}` |
+| 1b | `core.get_audit` (020) | maps what `aggregateTypeOf` in rpcClient.ts sends: `APPROVAL`→the approval branch (correlated trail), `ENQUIRIE`→`ENQUIRY`, `OPPORTUNITIE`→`OPPORTUNITY` |
+| 1 | `core.badge_counts` | HRDC count requires `hrdc:read`, agent-failure count requires `run:read`, otherwise 0 |
+
+Permission per RPC: `list_enquiries`/`get_enquiry` enquiry:read · `patch_enquiry_extraction`
+enquiry:edit_extraction · `list_follow_ups`/`get_follow_up_draft` followup:read · `get_organisation`
+organisation:read · `get_opportunity` opportunity:read · `get_contact` contact:read ·
+`get_tna`/`get_tna_recommendations` tna:read · `create_proposal`/`add_proposal_section`/`put_proposal_section`
+proposal:write · `regenerate_proposal_section` proposal:regenerate · `list_proposals`/`get_proposal`
+proposal:read · `get_quotation` quotation:read · `put_quotation` quotation:write · `get_rate_card`
+quotation:read (no 002 permission exists; flagged) · `get_policy` policy:read · `get_pipeline_config`
+pipeline:read · `get_programme` programme:read · `get_compliance_rule` compliance:rule:read.
+
+`$verify$`: V1 one definition and the 018 posture each. V2b `get_audit` maps `APPROVAL`. V2 every gated body has its gate before
+any `FROM core.`/`FROM app.` read, for all 27 including 018's `list_quotations` and 020's three. V3
+every holder of a write permission holds the read its writer returns through, from
+`app.role_permissions`.
+
+### The 7-point RPC contract check, worked
+
+In the forward header. The only new refusal shapes are ones 018 already returns. No new top-level
+key, no signature change, no TypeScript.
+
+### Pin — `tests/test_021_golden_path_authz.sql`
+
+T1: a CLIENT principal is FORBIDDEN on all 23, naming the permission, on the right channel, with
+byte-identical answers for real, invented and malformed arguments. T2: an OPS/SALES/FINANCE matrix
+of 18 cells, each against 002. T3: `badge_counts` answers SALES with an HRDC count of 0 and OPS with
+≥1. T3b: `get_audit` called exactly as rpcClient.ts calls it: `APPROVAL` returns the approval's correlated trail (the same rows as `approvals`), and `ENQUIRIE`/`OPPORTUNITIE` return their records' trails. **Mutation-tested**: removing one RPC's gate turns T1a red; restoring 020's `get_audit` turns T3b red.
+
+### ⚠ Prior pin amended
+
+| Pin | Change | Why |
+|---|---|---|
+| `test_018` T19g, T36s–w | T19g also accepts FORBIDDEN; T36's compliance-rule reads run as the MD | SALES lacks `compliance:rule:read` in 002 §11 |
+
+With it, every pin passes on 001–021 (two situational pins still refuse by design at SETUP, as
+on the baseline).
+
+### Rollback — `rollbacks/021_golden_path_authz_rollback.sql`
+
+Re-creates 020's `get_audit` and the 24 018 bodies in full and restates their grants, all in one transaction.
+Measured: the catalog snapshot is identical to 001–020.
+
+### ⚠ Carried risk and standing conditions
+
+- **Data scope (○) is not applied.** A SALES caller with `client_scope` MINE still reads every row
+  through these definer RPCs, as before 021. Narrowing is a per-table owner-column decision.
+- **An RPC gate is not a data boundary.** 014 §4's tenant-only SELECT grants on `core` tables stand.
+- `regenerate_proposal_section` still refuses with `SERVER_ERROR` (018:4434), which is not a
+  contract `ErrorCode`. It is unreachable while 018's routing row exists, and not changed here.
+- The worker has no `AI_DRAFT_PROPOSAL_SECTION` handler (`apps/worker/src/handlers/index.ts`), so
+  a regenerate enqueues a job nothing claims. Not SQL.
 
 ## Migration Detail — 020 (`020_api_read_surface.sql`)
 
