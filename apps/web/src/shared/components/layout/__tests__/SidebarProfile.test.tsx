@@ -179,7 +179,16 @@ describe("SidebarProfile", () => {
    * client against a hand-built envelope to prove the null case, the way
    * `notDeployed.render.test.tsx` drives it against a hand-built refusal.
    */
-  it("shows an em dash for a profile field no table stores, and drops a missing location rather than printing it", async () => {
+  /**
+   * `core.me_profile()`'s FINAL shape (022, PR #46 2551359, sql-022):
+   * `location`/`jobTitle`/`department`/`staffNumber` are `null` (no table
+   * stores them), and WITHIN a present `session`, `browser`/`place` are
+   * always `null` and `twoFactorEnabled` can be `null` (guarded against
+   * hosted GoTrue the SQL lane could not confirm). `lastSignInAt` and
+   * `activeSessions` are real whenever `session` is present at all — see the
+   * next test for the case where `session` itself is `null`.
+   */
+  it("shows an em dash for a profile field no table stores, and drops twoFactorEnabled/browser/place the SQL lane could not confirm or has no source for", async () => {
     const user = userEvent.setup();
 
     const transport = {
@@ -199,7 +208,7 @@ describe("SidebarProfile", () => {
                   lastSignInAt: "2026-09-11T08:04:22+08:00",
                   browser: null,
                   place: null,
-                  activeSessions: null,
+                  activeSessions: 3,
                   twoFactorEnabled: null,
                 },
               }),
@@ -249,26 +258,35 @@ describe("SidebarProfile", () => {
     expect(panel().queryByText(/undefined/i)).not.toBeInTheDocument();
     expect(panel().queryByText(/null/i)).not.toBeInTheDocument();
 
-    /* `browser`, `place`, `activeSessions` and `twoFactorEnabled` are all
-       optional too, pending 022 confirming which of them `core.me_profile()`
-       actually populates. With none of them sent, the session line falls back
-       to just the timezone's own GMT offset, and the 2FA / active-sessions
-       chips — which would otherwise assert a false "off" / a count that is
-       not there — are dropped rather than drawn wrong. `moduleCount` has a
-       real source and still renders. */
+    /* `lastSignInAt` is real whenever `session` is present — the line
+       renders, not omitted and not "01-01-1970" (`new Date(null)`'s silent
+       epoch date, which is what a bug reintroducing a per-field null check
+       for this field would produce against the real shape). */
+    expect(panel().getByText(/Last sign in 11-09-2026/)).toBeInTheDocument();
+
+    /* `browser`/`place` null (always, not just here): the session line falls
+       back to just the timezone's own GMT offset rather than joining in
+       "undefined". */
     expect(panel().getByText("GMT+8")).toBeInTheDocument();
+
+    /* `twoFactorEnabled` null: the chip that would otherwise assert a false
+       "2FA off" is dropped rather than drawn wrong. */
     expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
-    expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
+
+    /* `activeSessions` is real whenever `session` is present — unlike
+       `twoFactorEnabled`, it still renders. */
+    expect(panel().getByText("3 active sessions")).toBeInTheDocument();
     expect(panel().getByText("7 modules")).toBeInTheDocument();
   });
 
   /**
-   * `core.me_profile()` answers `session: null` as a WHOLE when it has
-   * nothing to report, not an object with every field null — sql-022
-   * confirmed this is the actual RPC shape. That is coarser than the
-   * per-field nulls above: nothing inside `session` can be read at all, so
-   * the "Last sign in" line, the "browser · place, GMT+8" line and both
-   * session chips have to be gone together, not fall back to a GMT-only line.
+   * `core.me_profile()`'s FINAL shape: `session` is `null` AS A WHOLE
+   * precisely when `lastSignInAt` cannot be derived — the guard withholds
+   * the whole block rather than leaving it partial. Nothing inside `session`
+   * can be read at all in that case, so the "Last sign in" line, the
+   * "browser · place, GMT+8" line and both session chips have to be gone
+   * together, not fall back to a GMT-only line the way the per-field-null
+   * case above does.
    */
   it("omits the whole session block when the server sends session: null, rather than reading into it", async () => {
     const user = userEvent.setup();

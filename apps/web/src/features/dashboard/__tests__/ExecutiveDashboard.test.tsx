@@ -293,3 +293,72 @@ describe("a dashboard metric with no data source", () => {
     expect(screen.queryByText("0")).not.toBeInTheDocument();
   });
 });
+
+/**
+ * `core.get_executive_dashboard(p_period text)` (022) rejects anything that
+ * is not exactly `YYYY-MM` — `p_period !~ '^\d{4}-(0[1-9]|1[0-2])$'` is
+ * `VALIDATION_FAILED`/`MUST_BE_YYYY_MM` — confirmed against hosted, where a
+ * non-conforming value (a bare `"MONTH"`, tried by hand outside this app) was
+ * refused. `ExecutiveDashboard.tsx`'s own `PERIOD` constant already conforms;
+ * this pins that on the wire, against the real Supabase-backed client, so a
+ * future edit to `PERIOD` or to how it is passed cannot drift from the
+ * server's regex without the recorded arg failing the same check.
+ */
+describe("the period the dashboard sends", () => {
+  afterEach(() => {
+    __setTransportForTests(null);
+  });
+
+  it("is YYYY-MM, matching core.get_executive_dashboard's own validation", async () => {
+    const recorded: { name: string; args: Record<string, unknown> }[] = [];
+    const empty = okEnvelope({
+      metrics: [],
+      approvalsPending: [],
+      agentActivity: [],
+      autonomyMix: [],
+      agentSpend: {
+        spent: { amount: 0, currency: "MYR" },
+        budget: { amount: 0, currency: "MYR" },
+      },
+    });
+
+    const transport = {
+      rpc: (name: string, args: Record<string, unknown>) => {
+        recorded.push({ name, args });
+        if (name === "get_executive_dashboard") return Promise.resolve(empty);
+        if (name === "get_proposals_vs_won") return Promise.resolve(okEnvelope({ series: [] }));
+        return Promise.reject(new Error(`unexpected rpc: ${name}`));
+      },
+      from: () => {
+        throw new Error("ExecutiveDashboard does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
+          <ApiProvider client={createRpcApiClient()}>
+            <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
+              <Routes>
+                <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
+              </Routes>
+            </MemoryRouter>
+          </ApiProvider>
+        </MeContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText(/Proposals sent vs won/);
+
+    const call = recorded.find((entry) => entry.name === "get_executive_dashboard");
+    expect(call).toBeDefined();
+    // Same regex 022's `core.get_executive_dashboard` validates `p_period`
+    // against — a value this fails is `VALIDATION_FAILED` on hosted.
+    expect(call?.args.p_period).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);
+  });
+});
