@@ -117,6 +117,25 @@ INSERT INTO auth.users (id, email) VALUES
   -- 013's "one inert auth.users row per agent per tenant" (core.agents.principal_user_id).
   ('a0220000-0000-4000-8000-0000000000a9','agent1@a22.test');
 
+-- Give the T1 principal a real sign-in WHEN the column exists (hosted), so
+-- T1j exercises the "populated session, real lastSignInAt" branch rather
+-- than the never-signed-in/NULL-value case - that case is 030's own defect
+-- and 030's dedicated pin (`test_030_me_profile_session_null.sql`) covers
+-- it, on purpose, rather than duplicating it here. A harmless no-op when
+-- the column is absent (this local shim): the `UPDATE` never runs.
+DO $fixture$
+BEGIN
+  IF EXISTS (
+       SELECT 1 FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = 'auth.users'::regclass
+          AND a.attname = 'last_sign_in_at'
+          AND NOT a.attisdropped) THEN
+    EXECUTE 'UPDATE auth.users SET last_sign_in_at = pg_catalog.now() - interval ''1 hour''
+              WHERE id = ''a0220000-0000-4000-8000-0000000000a1''';
+  END IF;
+END
+$fixture$;
+
 INSERT INTO public.tenants (id, slug, name, status, timezone, locale) VALUES
   ('a0220000-1111-4000-8000-000000000001','a22-akademi','Akademi Perdana A22','ACTIVE','Asia/Kuala_Lumpur','en-MY'),
   ('a0220000-1111-4000-8000-000000000002','a22-other','Other Tenant A22','ACTIVE','Asia/Kuala_Lumpur','en-MY');
@@ -387,15 +406,36 @@ SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'staffNumber') = 'nul
 -- `session` answers `null` AS A WHOLE, matching the contract's own ruling
 -- for `core.me_profile()` and the merged web reader
 -- (`SidebarProfile.tsx`, gated on `details.session` before anything
--- inside it): `lastSignInAt` is a REQUIRED `ProfileSession` field, this
--- shim's `auth.users` has no `last_sign_in_at` column at all, and a
+-- inside it): `lastSignInAt` is a REQUIRED `ProfileSession` field, and a
 -- populated object with a null required field would violate the type this
--- pin exists to hold the RPC to. The real-derivation path (a full object
--- with `activeSessions`/`twoFactorEnabled` real and `browser`/`place`
--- null) was verified ad hoc against a locally-extended copy of this
--- schema, not checked in here, since adding hosted-only GoTrue
--- columns/tables to the shared shim is not this pin's fixture to make.
-SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->'session') = 'null'::jsonb, 'T1j session null as a whole (no last_sign_in_at column in this shim)');
+-- pin exists to hold the RPC to. WHICH branch fires depends on whether
+-- `auth.users.last_sign_in_at` exists in the environment the pin actually
+-- runs against - absent on this local shim, present on hosted, where the T1
+-- fixture's own `UPDATE` above gives it a real value - so the assertion
+-- checks the column STRUCTURALLY rather than hardcoding either shape, and
+-- is correct in both environments. The THIRD case - column present but the
+-- VALUE null (022's own defect, closed by 030) - is deliberately not probed
+-- here: `test_030_me_profile_session_null.sql` owns it, with a fixture user
+-- that has no `UPDATE` at all.
+SELECT pg_temp.assert(
+  CASE WHEN EXISTS (
+         SELECT 1 FROM pg_catalog.pg_attribute AS a
+          WHERE a.attrelid = 'auth.users'::regclass
+            AND a.attname = 'last_sign_in_at'
+            AND NOT a.attisdropped)
+       THEN
+         -- Populated: exactly the 5 ProfileSession keys, and the required
+         -- field is actually non-null (a real timestamp, not the JSON null
+         -- a populated-but-empty object would slip through as).
+         (SELECT pg_catalog.array_agg(k ORDER BY k)
+            FROM pg_catalog.jsonb_object_keys(pg_temp.got('t1')->'value'->'data'->'session') AS k)
+           = ARRAY['activeSessions','browser','lastSignInAt','place','twoFactorEnabled']
+         AND (pg_temp.got('t1')->'value'->'data'->'session'->'lastSignInAt') <> 'null'::jsonb
+       ELSE
+         -- Absent: the whole block is null, not a half-built object.
+         (pg_temp.got('t1')->'value'->'data'->'session') = 'null'::jsonb
+  END,
+  'T1j session: null as a whole when auth.users.last_sign_in_at is absent, else the exact ProfileSession keys with a real lastSignInAt');
 -- MD holds 13 of the 14 nav permissions (lacks the bare 'compliance:read').
 SELECT pg_temp.assert((pg_temp.got('t1')->'value'->'data'->>'moduleCount')::int = 13, 'T1k moduleCount = 13');
 
