@@ -1567,7 +1567,11 @@ BEGIN
      -- recalc helpers 005-010 own are definers too and are reachable only from
      -- a trigger, where a request timeout has no meaning.
      AND pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
-     AND NOT p.proconfig @> ARRAY['statement_timeout=10s'];
+     -- ⚠ AMENDED BY 029: any statement_timeout, not exactly 10s. 029's four
+     -- key-carrying RPCs deliberately store 5s (029 R7, under hosted
+     -- auto_explain's 10s threshold); the invariant is "has a timeout".
+     AND NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(COALESCE(p.proconfig, ARRAY[]::text[])) AS c(setting)
+                      WHERE c.setting LIKE 'statement\_timeout=%');
   IF v_keys IS NOT NULL THEN
     RAISE EXCEPTION 'T20e: a client-callable definer in core has no '
                     'statement_timeout: %',

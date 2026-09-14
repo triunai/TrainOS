@@ -65,6 +65,9 @@ import type {
   ProposalSectionWrite,
   ProposalsVsWonReport,
   ProviderKey,
+  ProviderKeyCreateRequest,
+  ProviderKeyRevealResponse,
+  ProviderKeyTestResponse,
   Quotation,
   QuotationWrite,
   RateCard,
@@ -292,4 +295,9 @@ export interface TrainOsClient {
   /* Fixture-only (data/tenant.ts) — §1 keeps tenancy out of the API surface,
      so there is no contract type. See 027's PR body. */
   getTenant(): Promise<Result<unknown>>;
+  createProvider(body: ProviderKeyCreateRequest): Promise<Result<ProviderKey>>;
+  testProvider(id: string): Promise<Result<ProviderKeyTestResponse>>;
+  rotateProvider(id: string, key: string): Promise<Result<ProviderKey>>;
+  revealProvider(id: string): Promise<Result<ProviderKeyRevealResponse>>;
+  deleteProvider(id: string): Promise<Result<void>>;
 }
