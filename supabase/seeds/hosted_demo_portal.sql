@@ -161,7 +161,9 @@ $pre$;
 
 INSERT INTO core.contacts (id, tenant_id, organisation_id, name, job_title, email, phone, is_primary, created_at, created_by_kind, created_by_id, created_by_name)
 SELECT pg_temp.portal_id('con:hana'), c.t, pg_temp.demo_id('org:auroratl'), 'Hana Rahman', 'Head of People',
-       'hana.rahman@auroratooling.example', NULL, true, c.at - interval '20 days', 'HUMAN', c.u3::text, c.u3n
+       'hana.rahman@auroratooling.example', NULL,
+       NOT EXISTS (SELECT 1 FROM core.contacts p WHERE p.tenant_id = c.t AND p.organisation_id = pg_temp.demo_id('org:auroratl') AND p.is_primary),
+       c.at - interval '20 days', 'HUMAN', c.u3::text, c.u3n
   FROM portal_ctx c
  WHERE NOT EXISTS (SELECT 1 FROM core.contacts x WHERE x.id = pg_temp.portal_id('con:hana'));
 
