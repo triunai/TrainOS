@@ -1,14 +1,20 @@
 import type {
   ActionResponse,
+  Agent,
   AgentEval,
+  AgentPauseRequest,
+  AgentRegistryResponse,
   ApprovalBulkDecideResponse,
   ApprovalDecideResponse,
   ApprovalDetail,
   ApprovalListResponse,
   AuditEntry,
   ApprovalRequestRef,
+  AutomationRun,
   BadgeCounts,
   Budget,
+  BudgetScope,
+  BudgetWrite,
   ChannelConsent,
   ClaimPacket,
   CollectionRule,
@@ -25,6 +31,9 @@ import type {
   HrdcDeadline,
   HrdcPacketExport,
   KnowledgeSource,
+  KnowledgeSourceCheckResponse,
+  KnowledgeSourceCreateRequest,
+  KnowledgeSourceReingestResponse,
   ListResponse,
   MessageChannel,
   MessageDraft,
@@ -45,15 +54,20 @@ import type {
   Proposal,
   ProposalSectionRegenerateResponse,
   ProposalsVsWonReport,
+  ProviderKey,
   Quotation,
   RateCard,
+  RoutingEntry,
+  RoutingResponse,
   RuleChangeSet,
+  RunDeadLetterRequest,
   SavedView,
   Template,
   TemplateType,
   Tna,
   TnaRecommendationsResponse,
   Trainer,
+  UsageResponse,
 } from "@trainos/contract";
 import { ERROR_STATUS } from "@trainos/contract";
 
@@ -68,6 +82,7 @@ import type {
   SectionInput,
   SectionWriteInput,
   TrainOsClient,
+  UsageGroupBy,
 } from "./client";
 import {
   fail,
@@ -456,6 +471,23 @@ export const RPC_NAMES = {
     "get_contact",
     "get_programme",
     "get_compliance_rule",
+    /* 027: automation, knowledge, AI settings. */
+    "list_agents",
+    "pause_agent",
+    "list_runs",
+    "get_run",
+    "retry_run",
+    "dead_letter_run",
+    "create_knowledge_source",
+    "check_knowledge_source",
+    "reingest_knowledge_source",
+    "list_library_assets",
+    "get_ai_routing",
+    "put_ai_routing",
+    "list_providers",
+    "get_usage",
+    "put_budget",
+    "get_tenant",
     "get_claim_packet",
     "get_compliance_checks",
     "attach_packet_document",
@@ -957,6 +989,93 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   listBudgets(): Promise<Result<ListResponse<Budget>>> {
     return this.view<Budget>(VIEW_READS.aiBudgets);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * §10 automation: agents and runs (027)
+   * ---------------------------------------------------------------- */
+
+  listAgents(): Promise<Result<AgentRegistryResponse>> {
+    return this.call<AgentRegistryResponse>("list_agents");
+  }
+
+  pauseAgent(id: string, body: AgentPauseRequest): Promise<Result<Agent>> {
+    return this.call<Agent>("pause_agent", { p_id: id, p_body: body });
+  }
+
+  listRuns(query: PageRequest): Promise<Result<ListResponse<AutomationRun>>> {
+    return this.call<ListResponse<AutomationRun>>("list_runs", {
+      p_page: { size: query.page?.size ?? 50, cursor: query.page?.cursor ?? null },
+    });
+  }
+
+  getRun(id: string): Promise<Result<AutomationRun>> {
+    return this.call<AutomationRun>("get_run", { p_id: id });
+  }
+
+  retryRun(id: string, from?: "checkpoint"): Promise<Result<AutomationRun>> {
+    return this.call<AutomationRun>("retry_run", { p_id: id, p_from: from ?? null });
+  }
+
+  deadLetterRun(id: string, body: RunDeadLetterRequest): Promise<Result<AutomationRun>> {
+    return this.call<AutomationRun>("dead_letter_run", { p_id: id, p_body: body });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * §17 knowledge (027)
+   * ---------------------------------------------------------------- */
+
+  createKnowledgeSource(body: KnowledgeSourceCreateRequest): Promise<Result<KnowledgeSource>> {
+    return this.call<KnowledgeSource>("create_knowledge_source", { p_body: body });
+  }
+
+  checkKnowledgeSource(id: string): Promise<Result<KnowledgeSourceCheckResponse>> {
+    return this.call<KnowledgeSourceCheckResponse>("check_knowledge_source", { p_id: id });
+  }
+
+  reingestKnowledgeSource(id: string): Promise<Result<KnowledgeSourceReingestResponse>> {
+    return this.call<KnowledgeSourceReingestResponse>("reingest_knowledge_source", { p_id: id });
+  }
+
+  /* Fixture-only shape (data/library.ts) — no contract type, see client.ts. */
+  listLibraryAssets(query: PageRequest): Promise<Result<ListResponse<unknown>>> {
+    return this.call<ListResponse<unknown>>("list_library_assets", {
+      p_page: { size: query.page?.size ?? 50, cursor: query.page?.cursor ?? null },
+    });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * §17 AI settings: routing, providers (read), usage, budgets, tenant (027)
+   * ---------------------------------------------------------------- */
+
+  getAiRouting(): Promise<Result<RoutingResponse>> {
+    return this.call<RoutingResponse>("get_ai_routing");
+  }
+
+  putAiRouting(entries: RoutingEntry[]): Promise<Result<RoutingResponse>> {
+    return this.call<RoutingResponse>("put_ai_routing", { p_entries: entries });
+  }
+
+  /* Read only. createProvider/testProvider/revealProvider need an Edge
+     Function this lane does not build — see 027's PR body. */
+  listProviders(): Promise<Result<ListResponse<ProviderKey>>> {
+    return this.call<ListResponse<ProviderKey>>("list_providers");
+  }
+
+  getUsage(period?: string, groupBy?: UsageGroupBy): Promise<Result<UsageResponse>> {
+    return this.call<UsageResponse>("get_usage", {
+      p_period: period ?? null,
+      p_group_by: groupBy ?? "TIER",
+    });
+  }
+
+  putBudget(scope: BudgetScope, key: string, body: BudgetWrite): Promise<Result<Budget>> {
+    return this.call<Budget>("put_budget", { p_scope: scope, p_key: key, p_body: body });
+  }
+
+  /* Fixture-only shape (data/tenant.ts) — no contract type, see client.ts. */
+  getTenant(): Promise<Result<unknown>> {
+    return this.call<unknown>("get_tenant");
   }
 }
 
