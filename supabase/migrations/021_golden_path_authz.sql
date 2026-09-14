@@ -169,7 +169,10 @@ $fn$;
 -- CHANGE. Three VALUES rows, marked `-- 021 ·`. `APPROVAL` takes the same branch
 -- as `approvals` (the approval resolved by id or ref in the tenant, plus its
 -- correlated trail). ENQUIRIE and OPPORTUNITIE map to ENQUIRY and OPPORTUNITY.
--- The rest is 020's body, which already carries the `audit:read` gate.
+-- And (review-020 F2) the approvals branch also requires `approval:read`: TRAINER
+-- holds `audit:read` but not `approval:read`, so 020 showed a trail for an
+-- approval whose detail it refused. The rest is 020's body, which already
+-- carries the `audit:read` gate.
 
 CREATE OR REPLACE FUNCTION core.get_audit(p_resource_type text, p_id text)
 RETURNS jsonb
@@ -220,6 +223,13 @@ BEGIN
   v_subject := COALESCE(v_subject, p_resource_type);
 
   IF v_subject = 'APPROVAL_REQUEST' THEN
+    -- 021 · an approval's trail is an approval read (review-020 F2): TRAINER
+    -- holds audit:read without approval:read, and the drawer must not show a
+    -- trail for an approval its detail refuses. Decided before the lookup.
+    IF NOT app.has_permission('approval:read') THEN
+      RETURN app.err('FORBIDDEN', pg_catalog.jsonb_build_object(
+        'requiredPermission','approval:read'));
+    END IF;
     SELECT approval.action_request_id INTO v_request
       FROM core.approval_requests AS approval
      WHERE approval.tenant_id = v_tenant

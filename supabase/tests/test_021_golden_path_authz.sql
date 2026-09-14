@@ -27,7 +27,8 @@
 --     role without hrdc:read while an at-risk packet exists.
 -- T3b get_audit exactly as rpcClient.ts calls it, `aggregateTypeOf(segment)`:
 --     APPROVAL returns the approval's correlated trail (the same rows as
---     `approvals`); ENQUIRIE and OPPORTUNITIE return their records' trails.
+--     `approvals`), and FORBIDDEN without approval:read; ENQUIRIE and
+--     OPPORTUNITIE return their records' trails.
 -- T4  OPPORTUNITY_STAGE_CHANGE: a legal non-terminal move EXECUTES; a stale
 --     fromStage is STAGE_MOVED with currentStage; an unknown stage and a
 --     terminal move with no reason are VALIDATION_FAILED; an edge the registry
@@ -381,6 +382,14 @@ SELECT pg_catalog.set_config('a21.audit_opportunitie', pg_temp.try(
   $$SELECT core.get_audit('OPPORTUNITIE', 'OPP-A21-0001')$$)::text, true);
 RESET ROLE;
 
+-- review-020 F2: TRAINER holds audit:read but not approval:read.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a6','a0210000-1111-4000-8000-000000000001','TRAINER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.audit_trainer', pg_temp.try(pg_catalog.format(
+  $$SELECT core.get_audit('APPROVAL', %L)$$, pg_catalog.current_setting('a21.send_ref')))::text, true);
+RESET ROLE;
+
 DO $t3b$
 BEGIN
   IF pg_temp.got('send') #>> '{value,data,status}' IS DISTINCT FROM 'QUEUED_FOR_APPROVAL' THEN
@@ -400,7 +409,10 @@ BEGIN
   IF pg_temp.got('audit_opportunitie') #>> '{value,data,data,0,event}' IS DISTINCT FROM 'OpportunityCreated' THEN
     RAISE EXCEPTION 'T3b: get_audit(OPPORTUNITIE, ref) did not reach the OPPORTUNITY trail: %', pg_temp.got('audit_opportunitie');
   END IF;
-  RAISE NOTICE 'T3b PASS: get_audit answers what rpcClient.ts sends: APPROVAL (correlated trail, as approvals), ENQUIRIE and OPPORTUNITIE.';
+  IF pg_temp.got('audit_trainer') #>> '{value,error,details,requiredPermission}' IS DISTINCT FROM 'approval:read' THEN
+    RAISE EXCEPTION 'T3b: TRAINER (audit:read, no approval:read) read an approval trail: %', pg_temp.got('audit_trainer');
+  END IF;
+  RAISE NOTICE 'T3b PASS: get_audit answers what rpcClient.ts sends: APPROVAL (correlated trail, as approvals, and only with approval:read), ENQUIRIE and OPPORTUNITIE.';
 END
 $t3b$;
 

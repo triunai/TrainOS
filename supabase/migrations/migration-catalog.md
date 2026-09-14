@@ -424,7 +424,7 @@ migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hoste
 | § | Object | Change |
 |---|---|---|
 | 1 | 23 `core` RPCs | `app.has_permission('<002 permission>')` as the first statement. Reads refuse `app.err('FORBIDDEN', {requiredPermission})`, writes raise TRNOS `{code: FORBIDDEN, requiredPermission}` |
-| 1b | `core.get_audit` (020) | maps what `aggregateTypeOf` in rpcClient.ts sends: `APPROVAL`→the approval branch (correlated trail), `ENQUIRIE`→`ENQUIRY`, `OPPORTUNITIE`→`OPPORTUNITY` |
+| 1b | `core.get_audit` (020) | maps what `aggregateTypeOf` in rpcClient.ts sends: `APPROVAL`→the approval branch (correlated trail), `ENQUIRIE`→`ENQUIRY`, `OPPORTUNITIE`→`OPPORTUNITY`; the approvals branch also requires `approval:read` (review-020 F2) |
 | 1 | `core.badge_counts` | HRDC count requires `hrdc:read`, agent-failure count requires `run:read`, otherwise 0 |
 | 2 | `app.action_types` | `OPPORTUNITY_STAGE_CHANGE`: `required_permission` `opportunity:stage`, payload requires `stage`, `fromStage` |
 | 2 | `app.resolve_action_target_id`, `app.plan_effects`, `app.execute_in_database_action` | one `OPPORTUNITY_STAGE_CHANGE` arm each (011's bodies otherwise) |
@@ -459,7 +459,7 @@ through `perform_action`.
 T1: a CLIENT principal is FORBIDDEN on all 23, naming the permission, on the right channel, with
 byte-identical answers for real, invented and malformed arguments. T2: an OPS/SALES/FINANCE matrix
 of 18 cells, each against 002. T3: `badge_counts` answers SALES with an HRDC count of 0 and OPS with
-≥1. T3b: `get_audit` called exactly as rpcClient.ts calls it: `APPROVAL` returns the approval's correlated trail (the same rows as `approvals`), and `ENQUIRIE`/`OPPORTUNITIE` return their records' trails. T4: R18 end to end: a legal move EXECUTES; stale, unknown, reasonless, illegal-edge and
+≥1. T3b: `get_audit` called exactly as rpcClient.ts calls it: `APPROVAL` returns the approval's correlated trail (the same rows as `approvals`), FORBIDDEN for TRAINER (no `approval:read`), and `ENQUIRIE`/`OPPORTUNITIE` return their records' trails. T4: R18 end to end: a legal move EXECUTES; stale, unknown, reasonless, illegal-edge and
 unpermitted moves are refused with their codes; WON/LOST queues under OPP-01 and the manager's
 APPROVE moves the deal; a deal that moved while queued is refused at decide and again by the
 executor itself. T4b: in a tenant with only MD users (akademi-perdana's shape), OPP-01 routes to the other MD, the requester is refused GOV-03, and the other MD approves. T5: `seed_pipelines`/`seed_pipelines_all` complete over a tenant's own default.
