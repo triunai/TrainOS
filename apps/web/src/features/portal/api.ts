@@ -44,6 +44,11 @@ export function useAddPortalComment(token: string) {
   const queryClient = useQueryClient();
   return useMutation<PortalProposal, unknown, PortalCommentRequest>({
     mutationFn: (body) => api.addPortalComment(token, body),
+    /* The refusal is already shown inline (`ClientProposalPage` passes
+       `comment.error` to the panel unconditionally), which the success half
+       had no equivalent of — the comment simply appeared lower in a thread the
+       client may not be looking at. */
+    meta: { toastOnSuccess: "Comment posted" },
     onSuccess: (proposal) => {
       queryClient.setQueryData(portalKeys.proposal(token), proposal);
     },
@@ -61,6 +66,9 @@ export function useAcceptPortalProposal(token: string) {
   const queryClient = useQueryClient();
   return useMutation<PortalAcceptResponse, unknown, PortalAcceptRequest>({
     mutationFn: (body) => api.acceptPortalProposal(token, body, { idempotencyKey: token }),
+    /* No `toastOnSuccess` here: `ClientProposalPage` already fires a richer
+       one per call — signature ref and the new engagement ref — which a
+       generic central copy would only flatten. */
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: portalKeys.proposal(token) });
     },

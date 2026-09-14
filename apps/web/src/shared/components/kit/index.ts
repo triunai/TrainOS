@@ -63,6 +63,8 @@ export {
   chipsFromFilters,
   describeActionError,
   describeJuryPolicy,
+  extraCreatedRefs,
+  summariseEffects,
   tabsFromViews,
   TYPE_TAG,
   type ActionError,
@@ -176,6 +178,12 @@ export { EscalationLadder, type EscalationLadderProps, type LadderRung } from ".
 /* ---- System surfaces (Kit §05) -------------------------------------- */
 export { ApprovalBanner, type ApprovalBannerProps } from "./ApprovalBanner";
 export { ActionOutcome, type ActionOutcomeProps } from "./ActionOutcome";
+export {
+  defaultActionSubject,
+  describeActionToast,
+  type ActionToastInput,
+  type ActionToastMessage,
+} from "./actionToast";
 export { ExceptionBanner, type ExceptionBannerProps } from "./ExceptionBanner";
 export {
   PartialDataBanner,

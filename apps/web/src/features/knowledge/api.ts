@@ -43,6 +43,9 @@ export function useCheckSource() {
     /* Fired from a row overflow, a drawer footer and "Check all", none of which
        awaits it, and the screen no longer stacks a refusal banner of its own —
        §18 allows the page one banner and the changed source owns it. R11. */
+    /* No `toastOnSuccess`: `KnowledgeSourcesScreen#runCheck` already fires a
+       richer one per call — the source's name and whether a rule-change
+       review opened — which a generic central copy would only flatten. */
     meta: { toastOnError: true },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
@@ -58,7 +61,9 @@ export function useReingestSource() {
     mutationFn: (id) =>
       api.reingestKnowledgeSource(id).catch((thrown) => Promise.reject(toApiError(thrown))),
     /* Fire-and-forget from a button: nothing awaits this call and no screen
-       renders its `error`, so without the flag a refusal is invisible. R3. */
+       renders its `error`, so without the flag a refusal is invisible. R3.
+       No `toastOnSuccess`: `KnowledgeSourcesScreen#runReingest` already fires
+       one with the source's name in it. */
     meta: { toastOnError: true },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
@@ -74,7 +79,10 @@ export function useCreateSource() {
       api.createKnowledgeSource(body).catch((thrown) => Promise.reject(toApiError(thrown))),
     /* Fire-and-forget from a button: nothing awaits this call and no screen
        renders its `error`, so without the flag a refusal is invisible. R3. */
-    meta: { toastOnError: true },
+    meta: {
+      toastOnError: true,
+      toastOnSuccess: (data) => `Knowledge source "${(data as KnowledgeSource).name}" added`,
+    },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: knowledgeKeys.root });
     },

@@ -106,6 +106,10 @@ export function useTnaAction() {
   const queryClient = useQueryClient();
 
   return useAction({
+    /* `TnaDetailPage` renders its `ActionOutcome` unconditionally in the
+       recommendations aside, not inside the `ranked.length === 0` branch it
+       sits beside — a toast on top would repeat it. */
+    toast: false,
     onSettled: (result) => {
       if (result.kind === "error") return;
       void queryClient.invalidateQueries({ queryKey: queryKeys.tnas.all });

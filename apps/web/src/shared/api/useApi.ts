@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import type { ActionRequest, ActionResponse, Actor, Role } from "@trainos/contract";
 import {
   TRAINER_FARAH,
@@ -11,8 +12,17 @@ import {
 } from "@trainos/contract";
 import { fixtureClient } from "@trainos/fixtures";
 import { useMe } from "@/shared/hooks/useMe";
+import { navPath } from "@/shared/config/nav";
+/* Imported by their own leaf modules, not the kit barrel: the barrel also
+   re-exports components such as `PartialDataBanner` that import FROM
+   `shared/api`, and `useApi.ts` importing the barrel back would be a real
+   import cycle, not a theoretical one. `toast.ts` and `actionToast.ts` are
+   themselves leaves — no component, no import of anything in this folder. */
+import { defaultActionSubject, describeActionToast } from "@/shared/components/kit/actionToast";
+import { toast } from "@/shared/components/kit/toast";
+import { describeActionError } from "@/shared/components/kit/adapters";
 import { createRpcApiClient, type ApiClient } from "./apiClient";
-import { toApiError, type ApiError } from "./errors";
+import { readableMessage, toApiError, type ApiError } from "./errors";
 import { stableIdempotencyKey } from "./idempotency";
 import { apiMode } from "./supabase";
 
@@ -211,6 +221,28 @@ export interface UseActionOptions {
    * tells the reader their failed write might have landed.
    */
   onSettled?: (result: ActionResult) => void;
+  /**
+   * Feedback for every outcome — EXECUTED, QUEUED_FOR_APPROVAL, SUGGESTED and
+   * the refusal — shown as a toast so it survives the reader looking away,
+   * the screen navigating on success, or the surrounding data the caller
+   * conditioned an inline banner on going stale. On by default: "the button
+   * did something and nothing told me" was the report this hook exists to
+   * close, for every governed write, not the ones somebody remembered to wire.
+   *
+   * Pass `false` only where an `ActionOutcome` (or equivalent) renders
+   * UNCONDITIONALLY next to the button that triggered it — conditioned on the
+   * mutation's own state or on local state the trigger sets, never on
+   * server data the action itself can invalidate. That second shape is the
+   * exact bug this option exists to backstop; see `EnquiryDetailPage`'s fix.
+   */
+  toast?: boolean;
+  /**
+   * What was asked for, in the reader's words — "Convert ENQ-2026-0013". Pass
+   * the same string given to the screen's `ActionOutcome`, so the toast and
+   * the banner never disagree. Defaults to `humanise(request.type)` plus the
+   * target ref, which is honest but generic.
+   */
+  subject?: string;
 }
 
 /**
@@ -224,6 +256,8 @@ export interface UseActionOptions {
  */
 export function useAction(options?: UseActionOptions) {
   const client = useApi();
+  const navigate = useNavigate();
+  const showToast = options?.toast !== false;
 
   return useMutation<ActionResult, never, ActionRequest>({
     mutationFn: async (request) => {
@@ -248,6 +282,54 @@ export function useAction(options?: UseActionOptions) {
     },
     /* Every outcome arrives here, because the refusal is a value and not a
        rejection; `onError` would only ever see a bug in this hook. */
-    onSuccess: (result) => options?.onSettled?.(result),
+    onSuccess: (result, request) => {
+      if (showToast) fireActionToast(result, request, options?.subject, navigate);
+      options?.onSettled?.(result);
+    },
   });
+}
+
+/**
+ * Renders one `ActionResult` as a toast. Copy comes from `describeActionToast`
+ * — the same function `ActionOutcome`'s banner draws from — so this file adds
+ * only the two things that are genuinely about being a TOAST: which `sonner`
+ * variant to ring, and the "View the approval" hop a banner reaches by simply
+ * living on the same page.
+ *
+ * The approval link is derived from `navPath`, the one function every route
+ * in the app already derives its URL from (`shared/config/nav.ts`), rather
+ * than imported from `features/approvals/paths.ts` — `shared/api` importing a
+ * feature would run the dependency the other way round from every other file
+ * in this folder. `features/approvals/paths.ts#approvalPath` derives the same
+ * way, from the same tree, so the two cannot silently disagree.
+ */
+function fireActionToast(
+  result: ActionResult,
+  request: ActionRequest,
+  subjectOverride: string | undefined,
+  navigate: ReturnType<typeof useNavigate>,
+): void {
+  const subject = subjectOverride ?? defaultActionSubject(request);
+  const message = describeActionToast(
+    subject,
+    result.kind === "error"
+      ? { error: describeActionError(result.error, readableMessage(result.error)) }
+      : { response: result.response },
+  );
+  const options =
+    message.description !== undefined ? { description: message.description } : undefined;
+
+  if (result.kind === "QUEUED_FOR_APPROVAL") {
+    const ref = result.response.approvalRequest.ref;
+    const path = `${navPath("Home", "Approvals")}/${encodeURIComponent(ref)}`;
+    toast.info(message.title, {
+      ...options,
+      action: { label: "View approval", onClick: () => navigate(path) },
+    });
+    return;
+  }
+
+  if (message.variant === "error") toast.error(message.title, options);
+  else if (message.variant === "info") toast.info(message.title, options);
+  else toast.success(message.title, options);
 }

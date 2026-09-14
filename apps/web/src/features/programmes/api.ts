@@ -93,6 +93,7 @@ export function useEditProgramme(id: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: Partial<Programme>) => client.putProgramme(id as string, body),
+    meta: { toastOnSuccess: "Programme saved" },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.programmes.all });
     },

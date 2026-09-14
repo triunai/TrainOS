@@ -72,7 +72,9 @@ export function EnquiryDetailPage() {
   const enquiry = useEnquiry(enquiryId);
   const organisation = useOrganisation(enquiry.data?.matchedOrganisation?.ref);
   const patch = usePatchExtraction(enquiryId);
-  const action = useEnquiryAction();
+  /* The inline `ActionOutcome` below now renders unconditionally (see the
+     fix note there), so a toast on top of it would say the same thing twice. */
+  const action = useEnquiryAction({ toast: false });
   const actor = useActor();
 
   const [response, setResponse] = useState<ActionResponse | undefined>(undefined);
@@ -292,17 +294,26 @@ export function EnquiryDetailPage() {
                 <SecondaryButton onClick={() => setEditing("timing")}>Edit first</SecondaryButton>
                 <GhostButton>Dismiss</GhostButton>
               </div>
-              <ActionOutcome
-                response={response}
-                error={failure}
-                subject={`Convert ${detail.ref}`}
-                onDismiss={() => {
-                  setResponse(undefined);
-                  setFailure(undefined);
-                }}
-              />
             </section>
           ) : null}
+
+          {/* OUTSIDE the `suggestion` block on purpose. Converting sets
+              `suggestedAction` to `undefined` on the refetch this very action
+              triggers, so an `ActionOutcome` nested inside `{suggestion ? ... :
+              null}` was unmounted by its own success before anyone could read
+              it — the actual cause of "convert gave no visible confirmation".
+              `ActionOutcome` renders nothing when there is no response or
+              error, so this is a no-op on every render that isn't right after
+              `convert()`. */}
+          <ActionOutcome
+            response={response}
+            error={failure}
+            subject={`Convert ${detail.ref}`}
+            onDismiss={() => {
+              setResponse(undefined);
+              setFailure(undefined);
+            }}
+          />
         </div>
 
         <aside className="flex w-[340px] shrink-0 flex-col gap-4 px-5 py-4">

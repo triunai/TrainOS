@@ -105,6 +105,7 @@ export function useRetryRun() {
   return useMutation<AutomationRun, ApiError, { id: string; from?: "checkpoint" }>({
     mutationFn: ({ id, from }) =>
       api.retryRun(id, from).catch((thrown) => Promise.reject(toApiError(thrown))),
+    meta: { toastOnSuccess: "Retry queued from checkpoint" },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.runs.all });
     },
@@ -120,7 +121,7 @@ export function useDeadLetterRun() {
       api.deadLetterRun(id, { reason }).catch((thrown) => Promise.reject(toApiError(thrown))),
     /* Fire-and-forget from a button: nothing awaits this call and no screen
        renders its `error`, so without the flag a refusal is invisible. R3. */
-    meta: { toastOnError: true },
+    meta: { toastOnError: true, toastOnSuccess: "Run dead-lettered — held for a human" },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.runs.all });
     },

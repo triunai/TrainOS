@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { fixtureClient, opportunities, resetStore } from "@trainos/fixtures";
 import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { PipelineBoardPage } from "../PipelineBoardPage";
@@ -248,7 +249,9 @@ describe("useMoveDealStage", () => {
       wrapper: ({ children }) => (
         <QueryClientProvider client={queryClient}>
           <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
-            {children}
+            {/* `useMoveDealStage` -> `useAction` calls `useNavigate()`, for the
+                QUEUED_FOR_APPROVAL toast's "View approval" link. */}
+            <MemoryRouter>{children}</MemoryRouter>
           </MeContext.Provider>
         </QueryClientProvider>
       ),
