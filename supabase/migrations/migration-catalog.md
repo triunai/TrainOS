@@ -213,6 +213,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 
 | # | File | Summary |
 |---|------|---------|
+| 025 | `025_hrdc_compliance.sql` | **The six compliance/HRD Corp RPCs the web calls with no adapter and no SQL: `getComplianceChecks`, `getClaimPacket`, `attachPacketDocument`, `exportClaimPacket`, `createComplianceRule`, `getRuleChangeSet` (2026-09-14).** Six new `core` functions, two `app` provisioning functions with a tenant trigger and one `app.tenant_seed_checks` row, no table, no enum value, no 002 permission added (all six already exist in the matrix). No 001–021 function replaced. **`core.hrdc_document_types` was never seeded**: `core.hrdc_packet_documents.document_type` FK's to it and no migration through 021 ever inserted a row, so `attachPacketDocument` would foreign-key-violate on every call. Provisioned the way 016/017 provision `ref_formats`/`check_keys` — seed function, `AFTER INSERT` trigger on `public.tenants`, registered in `app.tenant_seed_checks`, backfilled. **No compliance rule could ever resolve ACTIVE**: 009:298's `cr_active_needs_verification` and 011's `enforce_state_transition` gate `PROPOSED -> ACTIVE` behind `RULE_CHANGE_APPROVE`, but 011's own `execute_in_database_action` for that action type updates `core.rule_changes` only, never the `compliance_rules` row a change targets — a real gap in 011, out of reach here. Not fixed in SQL (001–021 not edited); the compliance demo seed (`hosted_demo_compliance.sql`) verifies 017's three national rules over the LEGAL `RULE_CHANGE_APPROVE` path instead, the same mechanism `test_009`'s own `pg_temp.activate_rule` fixture helper uses. **Reads are `app.ok`/`app.err`, writes RAISE `TRNOS`** (`attachPacketDocument`, `createComplianceRule`), both with an optional `p_idempotency_key` in `core.put_quotation`'s shape — advisory lock, `app.idempotency_keys`, same-body replay, `IDEMPOTENT_REPLAY` on a different body. **`createComplianceRule` is tenant-scoped, never national** (009's own documented rule: a national write is a `service_role` provisioning act). ⚠ **`compliance:rule:write` is FINANCE/ADMIN only, not MD** — 002's existing matrix, unchanged here since widening it means editing 002; the "Add rule" screen will FORBID an MD tester. ⚠ **Amends one prior pin in place**: `test_009` T6b's own `hrdc_document_types` fixture INSERT is now `ON CONFLICT DO NOTHING`, since 025's provisioning trigger already seeds the row on a 001-021-plus-025 build (passes either way). Pin `test_025`: nine cases including a teeth check (removing MD's `hrdc:read` mid-transaction FORBIDS `getClaimPacket`, restoring it restores access). Seed `hosted_demo_compliance.sql` (+ wipe): verifies three national rules ACTIVE, creates three minimal engagements (no engagements exist in the base demo seed or any lane merged at authoring time), three claim packets across DRAFT/READY/SUBMITTED, four compliance check results with one version-drift row, and one rule-change set. Web: `apiClient.ts`/`rpcClient.ts`/`client.ts`, same commit, plus `conformance.compliance.test.ts` (15 cases, fixture-vs-RPC parity and not-deployed degradation). |
 | 021 | `021_golden_path_authz.sql` | **Role authorization on the golden-path RPCs, `OPPORTUNITY_STAGE_CHANGE`, and the 019 seed fix (2026-09-14).** 24 018 functions are replaced (`badge_counts` plus 23 gated), along with three 011 dispatch functions and 019's `app.seed_pipelines`. Each body is its prior text apart from blocks marked `-- 021 ·`. Also adds one action type, one move-check function, one tenant trigger with its seed function and backfill, and one policy. No table, no enum value. **Any principal with a tenant claim could call every read and write**: only `list_quotations` checked a permission. The 23 now check their 002 permission as the first statement, reads through `app.err('FORBIDDEN')` and writes through a TRNOS raise, identically for every argument. `badge_counts` zeroes the HRDC and run counts a role may not read. **The approval audit tab was still empty**: the shipped client sends `get_audit('APPROVAL', ref)` and 020 mapped only `approvals`, so 020's `get_audit` is replaced to map what `aggregateTypeOf` sends (`APPROVAL`, and the misspelt `ENQUIRIE`/`OPPORTUNITIE`). `get_rate_card` has no 002 permission and is gated on `quotation:read` (flagged). **The pipeline board could not move a deal**: 011 never catalogued R18's type. It is now an action type needing `opportunity:stage`, with arms in 011's three per-type dispatch functions. The move is refused if `fromStage` is stale (`STAGE_MOVED`), if the stage is not a step of the tenant's pipeline, or if a terminal step has no reason. It is checked when the target resolves and again under the executor's lock. `OPP-01` routes WON/LOST moves to SALES_MANAGER approval, seeded per tenant and backfilled. **019's seed aborted on a tenant with its own default pipeline** (`pipelines_one_default_uq`), and now steps aside. `app.seeded_pipelines` is FORCED with an owner-only policy. ⚠ **Amends three prior pins** in place: test_011 T1b/T1c and test_012 T1p (22→23 action types), and test_018 T19g/T36 (compliance-rule reads as SALES). |
 | 020 | `020_api_read_surface.sql` | **The API read surface: approvals that can be decided, and views a browser can read (2026-09-14).** It replaces three 018 functions (`core.list_approvals`, `core.get_approval`, `core.get_audit`) whose bodies stay 018's apart from blocks marked `-- 020 ·`. It repairs three 018 views, adds fourteen `security_invoker` views and adds two `core` definer row sources. No table, enum value or policy. **Nobody could approve anything**: 014's `core.decide_approval` requires the diff hash and 011 compares it, but 018's list and detail never sent `diffHash`, so every APPROVE was refused. Both now carry it (contract `ApprovalRequest.diffHash`). The list also accepts the contract's `value.amount` filter. **The audit drawer was always empty**: the client sends the URL segment (`approvals`) and 012 stores UPPER_SNAKE. `get_audit` maps the unambiguous segments and returns an approval's trail by action-request correlation. **Every client view raised or 404'd**: 018's three views called `app` helpers REVOKEd from `authenticated` (42501, shown to the user as signed out), and fourteen `VIEW_READS` names had no view. Money is now inlined, the budget and tier rows come from `core.ai_*_rows()`, and each view's columns are the contract keys, with no rows for a caller who lacks the 002 read permission. `$verify$` V6 asserts off `pg_depend` that no client-readable `core` view calls a function `authenticated` cannot execute. The three reads get the `approval:read` / `audit:read` gate. `decide_approval` keeps 014's uuid signature. **Not built:** `me_profile` (no table carries its required fields) and the dashboard RPCs (nothing to compute them from). Pin `test_020`: every probe runs as `authenticated`, and the build ran as a NOSUPERUSER BYPASSRLS role. |
 | 019 | `019_pipeline_provisioning.sql` | **Per-tenant pipeline provisioning: the dedicated seed pack 016 asked for, split out of 018 (2026-09-13).** One table (`app.seeded_pipelines`), four `app` functions, one trigger on `public.tenants`, two rows in 016's `app.tenant_seed_checks`, and a backfill. No enum value; no existing function, view, policy or grant modified. **A tenant had no lifecycle**: `core.pipelines` and `core.pipeline_steps` exist from 004 and nothing in 001–018 put a row in either, so `core.navigation` and `core.get_pipeline_config` returned an empty stage list for every tenant. 016 named the owner — *"it belongs in a pack that can cite `docs/architecture/01` §5.3 per row. **Owner: 018 or a dedicated seed pack.**"* — 018 took it and should not have. **The trigger name is load-bearing**: per-row AFTER INSERT triggers fire in ALPHABETICAL ORDER, and `core.pipelines` carries `trg_pipelines_ref` → `core.assign_ref('PIP')`, which raises without 016's ref format, so `trg_tenants_z_seed_pipelines` must sort after `trg_tenants_seed_ref_formats`; the `z` is not decoration and V1b asserts it. **The backfill RAISES naming every tenant it could not seed** rather than warning — it used to swallow a foreign-key violation and finish green, leaving a tenant whose shell opened on an empty stage list that read as configuration. **And the seed is REVERSIBLE**, which is the whole reason it is a pack of its own: `app.seeded_pipelines` records every row the seed actually inserted (a row that already existed under the same derived id was never inserted and is never recorded), `app.unseed_pipelines()` deletes exactly those and refuses with a count and the blocking constraint names when live data references any of them, and the rollback calls it before dropping the mechanism. Without that, rolling back left `pipelines_one_default_uq` rejecting a default `ENGAGEMENT` pipeline for every tenant permanently. Registered in `app.tenant_seed_checks` so `app.provision_tenant` refuses a tenant whose lifecycle did not land. ⚠ **Forces a fixture amendment in every pin that inserted its own default `ENGAGEMENT` pipeline** — test_008 and test_009 are amended in this pack's commit; test_016 and test_017 on `cloud/migrations` are owed at rebase. |
@@ -413,6 +414,85 @@ all three are platform-provided and none is 001's to drop. Round-tripped: applie
 re-applied, verify green each time.
 
 ---
+
+## Migration Detail — 025 (`025_hrdc_compliance.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.**
+
+### What it does
+
+| § | Object | Change |
+|---|--------|--------|
+| 1 | `app.seed_hrdc_document_types(uuid)`, `app.seed_hrdc_document_types_on_tenant()`, `trg_tenants_seed_hrdc_document_types` | New. Provisions the contract's five `HRDC_DOCUMENT_TYPES` per tenant, backfilled for tenants that already exist. |
+| 2 | `core.get_claim_packet(text)` | New. `GET /v1/hrdc/packets/{engagementRef}`, `hrdc:read`. |
+| 3 | `core.get_compliance_checks(text)` | New. `GET /v1/compliance/checks?engagementRef=`, `compliance:check:read`. |
+| 4 | `core.attach_packet_document(text, jsonb, text)` | New. `POST /v1/hrdc/packets/{id}/documents`, `hrdc:document:write`, optional idempotency key. |
+| 5 | `core.export_claim_packet(text)` | New. `GET /v1/hrdc/packets/{id}/export`, `hrdc:export`. Placeholder URL: no export job exists in 001–021. |
+| 6 | `core.create_compliance_rule(jsonb, text)` | New. `POST /v1/compliance/rules`, `compliance:rule:write`, tenant-scoped, optional idempotency key. |
+| 7 | `core.get_rule_change_set(text)` | New. `GET /v1/compliance/rule-changes/{documentId}`, `compliance:rule:read`. |
+
+No table, enum value, permission row, or 001–021 function is changed.
+
+### The 7-point RPC contract check, worked
+
+1. ENVELOPE. `app.ok`/`app.err` for the four reads; `RAISE … ERRCODE TRNOS` for the two writes
+   (`attachPacketDocument`, `createComplianceRule`), matching 021's `put_quotation`/`create_proposal`.
+2. UNWRAP. No top-level key beside `data`.
+3. RpcMap. Six new functions, `$verify$` asserts an overload count of 1 for each and
+   `SECURITY DEFINER` + `SET search_path = ''` on all six.
+4. CALL SITES. `hrdc/api.ts` (packet, checks, attach, export, create rule, rule change set),
+   `compliance/api.ts` (packet), `RulesRegistryScreen.tsx` (create rule).
+5. CASTS. `client.ts`/`apiClient.ts`/`rpcClient.ts`, one method each, same commit, no double cast.
+6. RELOAD. The two writes replay via `core.get_claim_packet` / `core.get_compliance_rule` (018) on
+   a repeated idempotency key.
+7. PUBLIC ROUTES. Nothing granted to anon; `$verify$` V3 asserts it structurally.
+
+### Pin — `tests/test_025_hrdc_compliance.sql`
+
+Self-contained fixture tenant (`a0250000-…`), independent of the demo seed. T1 proves a rule cannot
+go ACTIVE without the legal `RULE_CHANGE_APPROVE` gate. T2–T6 exercise the six RPCs' shapes and
+refusals (`VALIDATION_FAILED`, `NOT_FOUND`, `FORBIDDEN`). T7 cross-tenant NOT_FOUND. T8 anon 42501 on
+all six. T9 is a **teeth check**: MD's `hrdc:read` permission row is deleted mid-transaction,
+`getClaimPacket` is proved to FORBID where it succeeded a moment before, then the row is restored and
+access is proved to return — so the authz-first check is shown to be load-bearing, not vacuously true.
+Ends in ROLLBACK. Run against 001–021 plus 025:
+`psql "<db>" -v ON_ERROR_STOP=1 -f supabase/tests/test_025_hrdc_compliance.sql`.
+
+⚠ **Amends one prior pin in place**: `tests/test_009_compliance_rules_checks_hrdc.sql` T6b's
+`INSERT INTO core.hrdc_document_types` is now `... ON CONFLICT (tenant_id, document_type) DO NOTHING`
+— on a 001–021 build the row does not exist yet and this still inserts it; on a 001–021-plus-025
+build 025's own provisioning trigger already seeded it and the bare INSERT collided on the unique
+index. Passes either way, the same way 021 amended three pins ahead of it.
+
+### Rollback — `rollbacks/025_hrdc_compliance_rollback.sql`
+
+Drops the six functions, the two provisioning functions, the tenant trigger, and the
+`app.tenant_seed_checks` row; deletes the backfilled `core.hrdc_document_types` rows. Refuses if any
+`core.hrdc_packet_documents` row still references one of the five document types it is about to
+delete (run `hosted_demo_compliance_wipe.sql` first). `$verify$` confirms all six functions are gone,
+the table is empty, and the trigger no longer exists.
+
+### ⚠ Carried risk and standing conditions
+
+- `exportClaimPacket`'s URL is a deterministic placeholder path with a 15-minute `expiresAt`: no
+  export job assembles an actual eTRIS bundle anywhere in 001–021, and this migration does not add
+  one (non-goal: no worker changes). Listed as "could not verify."
+- `compliance:rule:write` is FINANCE/ADMIN only in 002's existing matrix — not MD. The three seeded
+  demo MD founders cannot use "Add rule" on `RulesRegistryScreen.tsx`; FINANCE or ADMIN can. Not
+  changed here, since it would mean editing 002.
+- `RulesRegistryScreen.tsx`'s "Add rule" drawer never collects `side`, `familyKey`, `checkKey` or
+  `deliveryMode`. `core.create_compliance_rule` defaults `side` to `GRANT` and synthesises
+  `family_key`/`check_key` from the caller's own rule code so the row cannot collide with an HRD
+  family it was not meant to compete with — a UI gap the screen will need a field for, not a defect
+  in this migration's data model.
+- 011's `execute_in_database_action` for `RULE_CHANGE_APPROVE` updates `core.rule_changes` only,
+  never the `compliance_rules` row a change targets — a real gap in 011 that this migration cannot
+  close (001–021 not edited). The demo seed works around it by verifying rules directly over the
+  same legal gate; a production "Approve" button on M12-S08 would need 011 amended to finish the job.
+- `ClaimPacket.submissionLog` is derived from `core.audit_entries` (012), since 009 has no dedicated
+  submission-log table; empty for a packet nothing has happened to yet, which is correct but is a
+  narrower source of truth than a dedicated log would be.
 
 ## Migration Detail — 021 (`021_golden_path_authz.sql`)
 
