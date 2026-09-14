@@ -305,4 +305,14 @@ export interface AttendanceApprovePayload {
 export interface AttendanceExport {
   url: string;
   expiresAt: Timestamp;
+  /**
+   * The exported engagement's LATEST attendance day status at export time
+   * (`core.attendance_days`, highest `day`), so a consumer can tell whether
+   * the export was taken while still OPEN or after the day LOCKED. `null`
+   * when no attendance day has ever been opened for the engagement yet.
+   * Optional: older callers (and the fixture client) do not send it.
+   */
+  status?: AttendanceStatus | null;
+  /** The moment this export was generated, distinct from `expiresAt`. */
+  snapshotAt?: Timestamp;
 }
