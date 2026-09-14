@@ -48,6 +48,14 @@
 --     or public; ten other core functions, three 028 internals and two core
 --     tables each refuse anon with 42501. A CLIENT member is still FORBIDDEN
 --     on core.perform_action (021 fail-closed untouched).
+-- T8  No staff email, ever. Every portal response this pin collected (anon and
+--     authenticated reads, the comment write, both accepts) and three more
+--     reads contain no public.user_profiles.email and no auth.users.email of
+--     any fixture user, compared case-insensitively. vendorContact.email is
+--     JSON null with no tenant tax profile (tenant A, the pin's default), null
+--     with a blank contact_email, null when contact_email is a member's own
+--     sign-in address, and exactly the trimmed tax-profile contact_email
+--     otherwise (tenant B).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -255,7 +263,9 @@ BEGIN
      OR d #>> '{investment,hrdcScheme}' IS DISTINCT FROM 'SBL_KHAS' OR (d #>> '{investment,hrdcClaimableUpTo}')::numeric IS DISTINCT FROM 1
      OR d ->> 'organisationName' IS DISTINCT FROM 'Client A Sdn Bhd' OR d ->> 'title' IS DISTINCT FROM 'Programme A — Client A Sdn Bhd'
      OR d ->> 'issuedAt' !~ '^\d{4}-\d{2}-\d{2}$'
-     OR d #>> '{vendorContact,name}' IS DISTINCT FROM 'Owner A' OR d #>> '{vendorContact,role}' IS DISTINCT FROM 'Managing Director' THEN
+     OR d #>> '{vendorContact,name}' IS DISTINCT FROM 'Owner A' OR d #>> '{vendorContact,role}' IS DISTINCT FROM 'Managing Director'
+     -- Tenant A has no core.tenant_tax_profiles row: JSON null, never the owner's A-md1@t028.test.
+     OR d #> '{vendorContact,email}' IS DISTINCT FROM 'null'::jsonb OR d #>> '{vendorContact,phone}' IS DISTINCT FROM '' THEN
     RAISE EXCEPTION 'T1e: projection values %', d;
   END IF;
   -- No internal pricing, by key or by value: the quotation's trainer line
@@ -651,5 +661,98 @@ BEGIN
   RAISE NOTICE 'T7 PASS: anon executes exactly the 3 portal RPCs in app/core/public; 15 other functions and tables refuse it 42501; a CLIENT member is FORBIDDEN on perform_action and CLIENT holds no permission';
 END
 $t7$;
+
+-- ════════ T8 · No staff email reaches a portal response, ever ════════
+
+-- Tenant B's tax profile, three ways: blank, a member's own sign-in address
+-- (upper-cased and padded, to prove the comparison is citext and trimmed), and
+-- a real business contact. Each state is read by anon in its own statement.
+INSERT INTO core.tenant_tax_profiles (tenant_id, legal_name, tin, registration_no, address_line1, city, state_code, postcode, contact_email)
+VALUES (pg_temp.id('B:tenant'), 'Provider B Sdn Bhd', 'C1234567890', '202601000001', '1 Jalan B', 'Shah Alam', '10', '40000', '   ');
+
+SELECT pg_catalog.set_config('request.jwt.claims', '{"role":"anon"}', true);
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('p28.e_blank', core.get_portal_proposal(pg_temp.tok('tenantb'))::text, true);
+RESET ROLE;
+
+UPDATE core.tenant_tax_profiles SET contact_email = '  B-MD2@T028.TEST ' WHERE tenant_id = pg_temp.id('B:tenant');
+
+SELECT pg_catalog.set_config('request.jwt.claims', '{"role":"anon"}', true);
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('p28.e_staff', core.get_portal_proposal(pg_temp.tok('tenantb'))::text, true);
+RESET ROLE;
+
+UPDATE core.tenant_tax_profiles SET contact_email = ' hello@provider-b.example ' WHERE tenant_id = pg_temp.id('B:tenant');
+
+SELECT pg_catalog.set_config('request.jwt.claims', '{"role":"anon"}', true);
+SET LOCAL ROLE anon;
+SELECT pg_catalog.set_config('p28.e_contact', core.get_portal_proposal(pg_temp.tok('tenantb'))::text, true);
+RESET ROLE;
+
+DO $t8$
+DECLARE
+  v_responses jsonb := pg_catalog.jsonb_build_object(
+    'read_live', pg_temp.got('read_live'), 'b_anon', pg_temp.got('b_anon'),
+    'b_as_a', pg_temp.got('b_as_a'), 'c_ok', pg_temp.got('c_ok'),
+    'a_first', pg_temp.got('a_first'), 'a_second', pg_temp.got('a_second'),
+    'a_read', pg_temp.got('a_read'), 'e_blank', pg_temp.got('e_blank'),
+    'e_staff', pg_temp.got('e_staff'), 'e_contact', pg_temp.got('e_contact'));
+  v_emails    text[];
+  v_hit       text;
+BEGIN
+  -- Every person-bound address in the fixture world, from both sources.
+  SELECT pg_catalog.array_agg(DISTINCT pg_catalog.lower(e)) INTO v_emails
+    FROM (SELECT p.email::text AS e FROM public.user_profiles p
+           WHERE p.tenant_id IN (pg_temp.id('A:tenant'), pg_temp.id('B:tenant'), pg_temp.id('S:tenant'))
+          UNION ALL
+          SELECT u.email::text FROM auth.users u
+           WHERE u.id IN (SELECT m.user_id FROM public.memberships m
+                           WHERE m.tenant_id IN (pg_temp.id('A:tenant'), pg_temp.id('B:tenant'), pg_temp.id('S:tenant')))) AS x
+   WHERE e IS NOT NULL;
+  IF pg_catalog.cardinality(v_emails) IS DISTINCT FROM 7 THEN
+    RAISE EXCEPTION 'T8 SETUP: expected 7 fixture person emails (6 MDs + the CLIENT member), got %', v_emails;
+  END IF;
+
+  SELECT r.key || ' contains ' || e INTO v_hit
+    FROM pg_catalog.jsonb_each(v_responses) AS r, pg_catalog.unnest(v_emails) AS e
+   WHERE pg_catalog.strpos(pg_catalog.lower(r.value::text), e) > 0
+   LIMIT 1;
+  IF v_hit IS NOT NULL THEN
+    RAISE EXCEPTION 'T8a: a staff email reached a portal response: %', v_hit;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_each(v_responses) AS r WHERE r.value IS NULL OR r.value = 'null'::jsonb) THEN
+    RAISE EXCEPTION 'T8a SETUP: a collected response is empty, so the sweep proves nothing: %', v_responses;
+  END IF;
+
+  IF pg_temp.got('read_live') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb
+     OR pg_temp.got('a_read') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb
+     OR pg_temp.got('b_anon') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'T8b: with no tenant tax profile vendorContact.email is not null: % / % / %',
+      pg_temp.got('read_live') #> '{data,vendorContact}', pg_temp.got('a_read') #> '{data,vendorContact}',
+      pg_temp.got('b_anon') #> '{data,vendorContact}';
+  END IF;
+  IF pg_temp.got('e_blank') ->> 'success' IS DISTINCT FROM 'true'
+     OR pg_temp.got('e_blank') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'T8c: a blank supplier contact_email did not read as null: %', pg_temp.got('e_blank');
+  END IF;
+  IF pg_temp.got('e_staff') ->> 'success' IS DISTINCT FROM 'true'
+     OR pg_temp.got('e_staff') #> '{data,vendorContact,email}' IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'T8d: a supplier contact equal to a member''s sign-in address was not withheld: %', pg_temp.got('e_staff');
+  END IF;
+  IF pg_temp.got('e_contact') #>> '{data,vendorContact,email}' IS DISTINCT FROM 'hello@provider-b.example'
+     OR pg_temp.got('e_contact') #>> '{data,vendorContact,name}' IS DISTINCT FROM 'Owner B'
+     OR (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(pg_temp.got('e_contact') #> '{data,vendorContact}') k)
+          IS DISTINCT FROM 'email,name,phone,role'
+     OR (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(pg_temp.got('e_contact') -> 'data') k)
+          IS DISTINCT FROM 'acceptance,comments,investment,issuedAt,organisationName,ref,sections,status,title,vendorContact' THEN
+    RAISE EXCEPTION 'T8e: the tenant supplier contact did not surface alone and trimmed: %', pg_temp.got('e_contact') #> '{data,vendorContact}';
+  END IF;
+  -- The tax profile contributes its contact address and nothing else.
+  IF pg_temp.got('e_contact')::text ~ '(C1234567890|202601000001|Jalan B|Provider B Sdn Bhd)' THEN
+    RAISE EXCEPTION 'T8f: tax-profile fields other than contact_email reached the client: %', pg_temp.got('e_contact');
+  END IF;
+  RAISE NOTICE 'T8 PASS: 10 portal responses (anon, authenticated, comment, both accepts, 3 tax-profile states) contain none of the 7 fixture person emails; vendorContact.email is null with no/blank tax profile or a member-address contact, and the trimmed supplier contact otherwise';
+END
+$t8$;
 
 ROLLBACK;

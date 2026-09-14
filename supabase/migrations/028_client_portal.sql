@@ -85,10 +85,22 @@
 --   investment.total is proposals.value_sen — the figure that was approved and
 --   sent. `levyAvailable` is OMITTED (it is optional): it is the client's HRD
 --   Corp levy statement as the provider pulled it, and a link can be forwarded.
---   vendorContact is the opportunity owner's profile name and email with their
---   role label (the web's ROLE_LABEL wording); phone is '' because no column
---   holds a staff phone number. Comments are the portal thread only (CLIENT and
---   HUMAN authors), as plain text.
+--   vendorContact is the opportunity owner's profile name with their role label
+--   (the web's ROLE_LABEL wording); phone is '' because no column holds a staff
+--   phone number. Comments are the portal thread only (CLIENT and HUMAN
+--   authors), as plain text.
+--
+--   vendorContact.email IS NEVER A STAFF ADDRESS. public.user_profiles.email is
+--   a staff member's sign-in address, and 033 M4 narrowed even signed-in
+--   members to their own profile row unless ADMIN/MD; an anonymous link-holder
+--   must not get it. The email is the tenant's own business contact,
+--   core.tenant_tax_profiles.contact_email (010: the supplier identity the
+--   tenant invoices under, one row per tenant), trimmed, or JSON null when
+--   the tenant has no tax profile or left it blank. It is never backfilled from
+--   user_profiles, auth.users or any other person's row, and a supplier contact
+--   equal to any member's profile email is withheld as null. A dedicated public
+--   contact address is a product decision still to make; until then the
+--   supplier contact is the only per-tenant address meant for customers.
 --
 -- ── WRITES ───────────────────────────────────────────────────────────────
 --
@@ -389,7 +401,21 @@ AS $fn$
                  WHEN 'TRAINER'       THEN 'Trainer'
                  ELSE ''
                END,
-      'email', COALESCE(profile.email::text, ''),
+      -- The tenant's supplier contact, or null. Never a staff sign-in address:
+      -- see the header, "vendorContact.email IS NEVER A STAFF ADDRESS"; V7.
+      -- A supplier contact typed as some member's own sign-in address is
+      -- withheld too, so no tenant setting can put one on the page.
+      'email', CASE
+                 WHEN EXISTS (SELECT 1 FROM public.user_profiles AS staff
+                               WHERE staff.tenant_id = proposal.tenant_id
+                                 -- lower() on both sides, not citext's `=`: under
+                                 -- search_path '' the bare operator resolves to
+                                 -- pg_catalog's case-sensitive text = text.
+                                 AND pg_catalog.lower(staff.email::text)
+                                     = pg_catalog.lower(pg_catalog.btrim(tax_profile.contact_email)))
+                   THEN NULL
+                 ELSE NULLIF(pg_catalog.btrim(tax_profile.contact_email), '')
+               END,
       'phone', '')
   )
     FROM core.proposals AS proposal
@@ -402,6 +428,9 @@ AS $fn$
       ON programme.tenant_id = proposal.tenant_id AND programme.id = proposal.programme_id
     LEFT JOIN public.user_profiles AS profile
       ON profile.tenant_id = proposal.tenant_id AND profile.user_id = opportunity.owner_id
+    -- UNIQUE (tenant_id) (010), so this join can never multiply the row.
+    LEFT JOIN core.tenant_tax_profiles AS tax_profile
+      ON tax_profile.tenant_id = proposal.tenant_id
     LEFT JOIN public.memberships AS membership
       ON membership.tenant_id = proposal.tenant_id AND membership.user_id = opportunity.owner_id
    WHERE proposal.tenant_id = p_tenant_id AND proposal.id = p_proposal_id;
@@ -842,6 +871,26 @@ BEGIN
     RAISE EXCEPTION '028 verify: expected 3 ungated edges (SENT/VIEWED->ACCEPTED, NULL->PROPOSED), found %', v_n;
   END IF;
 
+  -- V7 · the projection reads no person's email. vendorContact.email comes from
+  -- the tenant's supplier contact only; a staff sign-in address in an
+  -- anonymous response is the leak this closes (see the header).
+  -- Static and deliberately narrow (the pin, test_028 T8, is the behavioural
+  -- proof): the owner's profile alias and the table name must never be read
+  -- for .email, and the email value must be the tax-profile expression.
+  IF pg_catalog.pg_get_functiondef('app._portal_proposal(uuid,uuid)'::regprocedure)
+       ~* '(^|[^a-z_])(profile|user_profiles|users|membership)\.email'
+     OR pg_catalog.strpos(pg_catalog.pg_get_functiondef('app._portal_proposal(uuid,uuid)'::regprocedure),
+          'ELSE NULLIF(pg_catalog.btrim(tax_profile.contact_email), '''')') = 0 THEN
+    RAISE EXCEPTION '028 verify: app._portal_proposal''s vendorContact.email is not the tenant supplier contact alone';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
+                  WHERE conrelid = 'core.tenant_tax_profiles'::regclass AND contype = 'u'
+                    AND conkey = ARRAY[(SELECT attnum FROM pg_catalog.pg_attribute
+                                         WHERE attrelid = 'core.tenant_tax_profiles'::regclass
+                                           AND attname = 'tenant_id')]::int2[]) THEN
+    RAISE EXCEPTION '028 verify: core.tenant_tax_profiles is not UNIQUE (tenant_id); the projection join could multiply';
+  END IF;
+
   -- V6 · the hash lookup is indexed and globally unique (007).
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
                   WHERE conrelid = 'core.public_share_tokens'::regclass
@@ -850,7 +899,8 @@ BEGIN
   END IF;
 
   RAISE NOTICE '028 verify: OK - anon executes exactly the 3 portal RPCs and holds no '
-               'relation privilege; internals ungranted; CLIENT still fail-closed.';
+               'relation privilege; internals ungranted; CLIENT still fail-closed; '
+               'the projection reads no person''s email.';
 END;
 $verify$;
 
