@@ -11,6 +11,7 @@ import type {
   Budget,
   ChannelConsent,
   CollectionRule,
+  CollectionsQueueResponse,
   ComplianceRule,
   Contact,
   Enquiry,
@@ -20,6 +21,7 @@ import type {
   ErrorCode,
   ErrorDetails,
   HrdcDeadline,
+  Invoice,
   KnowledgeSource,
   ListResponse,
   MessageChannel,
@@ -41,6 +43,7 @@ import type {
   ProposalSectionRegenerateResponse,
   Quotation,
   RateCard,
+  ReceivablesAging,
   RuleChangeSet,
   SavedView,
   Template,
@@ -50,6 +53,7 @@ import type {
   Trainer,
 } from "@trainos/contract";
 import { ERROR_STATUS } from "@trainos/contract";
+import type { FixtureCommission } from "@trainos/fixtures";
 
 import type {
   ActionInput,
@@ -441,6 +445,12 @@ export const RPC_NAMES = {
     "get_contact",
     "get_programme",
     "get_compliance_rule",
+    "list_invoices",
+    "get_invoice",
+    "get_receivables_aging",
+    "get_collections_queue",
+    "get_collection_draft",
+    "list_commissions",
   ],
 } as const;
 
@@ -830,6 +840,39 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>> {
     return this.view<CollectionRule>(VIEW_READS.collectionRules);
+  }
+
+  /* ---- 026 · finance receivables ------------------------------------ */
+
+  listInvoices(query: PageRequest): Promise<Result<ListResponse<Invoice>>> {
+    return this.call<ListResponse<Invoice>>("list_invoices", pageArgs(query));
+  }
+
+  getInvoice(id: string): Promise<Result<Invoice>> {
+    return this.call<Invoice>("get_invoice", { p_id: id });
+  }
+
+  getReceivablesAging(): Promise<Result<ReceivablesAging>> {
+    return this.call<ReceivablesAging>("get_receivables_aging");
+  }
+
+  getCollectionsQueue(query: PageRequest): Promise<Result<CollectionsQueueResponse>> {
+    return this.call<CollectionsQueueResponse>("get_collections_queue", {
+      p_page: { size: query.page?.size ?? 50 },
+    });
+  }
+
+  getCollectionDraft(invoiceRef: string): Promise<Result<MessageDraft>> {
+    return this.call<MessageDraft>("get_collection_draft", { p_invoice_ref: invoiceRef });
+  }
+
+  /** See client.ts: no contract type exists for a commission row (matrix §b2). */
+  listCommissions(query: PageRequest): Promise<Result<ListResponse<FixtureCommission>>> {
+    return this.call<ListResponse<FixtureCommission>>("list_commissions", {
+      p_filter: query.filter ?? [],
+      p_sort: query.sort ?? null,
+      p_page: { size: query.page?.size ?? 50 },
+    });
   }
 
   listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>> {

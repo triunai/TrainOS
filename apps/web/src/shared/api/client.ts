@@ -13,6 +13,7 @@ import type {
   Budget,
   ChannelConsent,
   CollectionRule,
+  CollectionsQueueResponse,
   ComplianceRule,
   Contact,
   Enquiry,
@@ -20,6 +21,7 @@ import type {
   EnquiryExtractionPatch,
   FollowUp,
   HrdcDeadline,
+  Invoice,
   KnowledgeSource,
   ListResponse,
   MessageChannel,
@@ -44,6 +46,7 @@ import type {
   Quotation,
   QuotationWrite,
   RateCard,
+  ReceivablesAging,
   RuleChangeSet,
   SavedView,
   Template,
@@ -52,6 +55,7 @@ import type {
   TnaRecommendationsResponse,
   Trainer,
 } from "@trainos/contract";
+import type { FixtureCommission } from "@trainos/fixtures";
 
 import type { Result } from "./errors";
 
@@ -177,6 +181,22 @@ export interface TrainOsClient {
   getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>>;
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>>;
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>>;
+  listInvoices(query: PageRequest): Promise<Result<ListResponse<Invoice>>>;
+  getInvoice(id: string): Promise<Result<Invoice>>;
+  getReceivablesAging(): Promise<Result<ReceivablesAging>>;
+  getCollectionsQueue(query: PageRequest): Promise<Result<CollectionsQueueResponse>>;
+  getCollectionDraft(invoiceRef: string): Promise<Result<MessageDraft>>;
+  /**
+   * Finance › Commissions. `FixtureCommission` (packages/fixtures/src/data/
+   * commissions.ts:68) is not a contract type — the contract puts commission
+   * fields ON a quotation and a rate table on the rate card, and never
+   * declares a commissions collection (matrix §b2). E3 only allows a return
+   * type built from `@trainos/contract`, so this is typed `unknown` here and
+   * narrowed once, honestly, at the one adapter in apiClient.ts that knows
+   * the real shape (`SupabaseRpcClient` implements the narrower type; no
+   * double cast through `unknown` anywhere in this folder, per E2).
+   */
+  listCommissions(query: PageRequest): Promise<Result<ListResponse<unknown>>>;
   listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>>;
   getComplianceRule(id: string): Promise<Result<ComplianceRule>>;
   listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>>;

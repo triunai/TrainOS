@@ -117,17 +117,26 @@ describe("the Details disclosure", () => {
     vi.stubEnv("VITE_SHOW_ERROR_DETAILS", "true");
     const user = userEvent.setup();
 
+    // `recordPayment` is deliberately still unadapted: 011 already gates
+    // PAYMENT_RECORD behind AAL2 and a conditional approval policy (FIN-06),
+    // and what a client-facing RPC should hand back on the queued-for-approval
+    // branch is not settled anywhere the contract/fixtures say so — escalated
+    // rather than guessed. It stays the NOT_DEPLOYED example here until that
+    // lands; `listInvoices` (026) is a poor substitute now that it is real.
     const thrown = await createRpcApiClient(createRpcClient())
-      .listInvoices()
+      .recordPayment("INV-1", {
+        amount: { amount: 100, currency: "MYR" },
+        at: "2026-01-01T00:00:00Z",
+      })
       .catch((error: unknown) => error);
 
-    render(<NotDeployedState subject="The invoice list" error={toApiError(thrown)} />);
+    render(<NotDeployedState subject="Recording a payment" error={toApiError(thrown)} />);
 
-    expect(screen.getByText("The invoice list is not available here yet")).toBeVisible();
+    expect(screen.getByText("Recording a payment is not available here yet")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByText("NOT_DEPLOYED")).toBeInTheDocument();
-    expect(screen.getByText("listInvoices()")).toBeInTheDocument();
+    expect(screen.getByText("recordPayment()")).toBeInTheDocument();
   });
 
   it("stamps a view read with its view name", async () => {
