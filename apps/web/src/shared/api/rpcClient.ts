@@ -16,6 +16,7 @@ import type {
   Enquiry,
   EnquiryDetail,
   EnquiryExtractionPatch,
+  ExecutiveDashboard,
   FollowUp,
   ErrorCode,
   ErrorDetails,
@@ -39,6 +40,7 @@ import type {
   ProgrammeDelivery,
   Proposal,
   ProposalSectionRegenerateResponse,
+  ProposalsVsWonReport,
   Quotation,
   RateCard,
   RuleChangeSet,
@@ -369,8 +371,11 @@ function isApprovalRequestRef(value: unknown): value is ApprovalRequestRef {
  * an RPC, because a flat table read cannot build `{ data, page,
  * appliedFilters }`.
  *
- * Only `v_contact_consent_current` (005) exists today. The rest are named here
- * so the migrations lane has the list and the gap is one grep, not a code read.
+ * 020 built every view below except `v_pipeline_configs` (nothing in the web
+ * calls it — `get_pipeline_config` is the RPC every screen uses). `contactConsent`
+ * reads `v_contact_channel_consents` (020), not 005's `v_contact_consent_current`:
+ * that view's columns are snake_case (`recorded_at`, not `recordedAt`) and were
+ * never contract-shaped for a browser `select("*")`.
  */
 export const VIEW_READS = {
   templates: "v_templates",
@@ -379,7 +384,7 @@ export const VIEW_READS = {
   views: "v_saved_views",
   trainers: "v_trainers",
   contacts: "v_contacts",
-  contactConsent: "v_contact_consent_current",
+  contactConsent: "v_contact_channel_consents",
   programmes: "v_programmes",
   programmeDeliveries: "v_programme_deliveries",
   organisationRelations: "v_organisation_relations",
@@ -411,6 +416,8 @@ export const RPC_NAMES = {
     "me_profile",
     "navigation",
     "badge_counts",
+    "get_executive_dashboard",
+    "get_proposals_vs_won",
     "list_enquiries",
     "get_enquiry",
     "patch_enquiry_extraction",
@@ -527,8 +534,9 @@ export class SupabaseRpcClient implements TrainOsClient {
   /**
    * The UUID a uuid-keyed view is matched on, from whatever the caller holds.
    *
-   * `v_organisation_relations` and `v_contact_consent_current` key their rows
-   * by uuid, but the screens hold REFS — a route segment, `organisationRef` — and
+   * `v_organisation_relations`, `v_contact_channel_consents` and
+   * `v_programme_deliveries` key their rows by uuid, but the screens hold
+   * REFS — a route segment, `organisationRef` — and
    * a ref in a uuid `.match()` is 22P02, which reads as a server fault. The
    * record's own RPC already accepts id or ref, so it resolves one to the other;
    * a value that is already a uuid costs no round trip.
@@ -554,6 +562,14 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   badges(): Promise<Result<BadgeCounts>> {
     return this.call<BadgeCounts>("badge_counts");
+  }
+
+  getExecutiveDashboard(period: string): Promise<Result<ExecutiveDashboard>> {
+    return this.call<ExecutiveDashboard>("get_executive_dashboard", { p_period: period });
+  }
+
+  getProposalsVsWon(months: number): Promise<Result<ProposalsVsWonReport>> {
+    return this.call<ProposalsVsWonReport>("get_proposals_vs_won", { p_months: months });
   }
 
   listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>> {
@@ -817,8 +833,12 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<Programme>("get_programme", { p_id: id });
   }
 
-  getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>> {
-    return this.view<ProgrammeDelivery>(VIEW_READS.programmeDeliveries, { programme_id: id });
+  async getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>> {
+    const uuid = await this.uuidOf("get_programme", id);
+    if (uuid.error !== null) return fail(uuid.error);
+    return this.view<ProgrammeDelivery>(VIEW_READS.programmeDeliveries, {
+      programme_id: uuid.data,
+    });
   }
 
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>> {

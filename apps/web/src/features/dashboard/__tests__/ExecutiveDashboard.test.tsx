@@ -15,7 +15,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
-import { ApiErrorException, transportError } from "@/shared/api";
+import { ApiErrorException, transportError, ApiProvider } from "@/shared/api";
+import { createRpcApiClient } from "@/shared/api/apiClient";
+import { __setTransportForTests } from "@/shared/api/supabase";
+import { okEnvelope } from "@/shared/api/__tests__/oracleTransport";
+import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { ExecutiveDashboard } from "../ExecutiveDashboard";
 import { DASHBOARD_PATH } from "../paths";
 
@@ -221,5 +225,71 @@ describe("M01-S01 executive dashboard · endpoints not deployed", () => {
 
     expect(await screen.findByText("Open pipeline")).toBeInTheDocument();
     expect(listApprovals).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `ADMIN_HOURS_SAVED` against the real Supabase-backed client, not the
+ * fixture oracle: the fixture always fills in a number (DECISIONS §4's
+ * illustrative baseline), so it can never exercise the `null` case
+ * `core.get_executive_dashboard` answers before anything measures a real
+ * baseline. Driven the way `notDeployed.render.test.tsx` drives its cases —
+ * `createRpcApiClient()` against a hand-built envelope — because this is
+ * about what the WIRE sends, not what the fixture invents.
+ */
+describe("a dashboard metric with no data source", () => {
+  afterEach(() => {
+    __setTransportForTests(null);
+  });
+
+  it("says 'Not available' rather than folding the missing figure into a zero", async () => {
+    const transport = {
+      rpc: (name: string) => {
+        if (name === "get_executive_dashboard") {
+          return Promise.resolve(
+            okEnvelope({
+              metrics: [{ key: "ADMIN_HOURS_SAVED", label: "Admin hours saved", value: null }],
+              approvalsPending: [],
+              agentActivity: [],
+              autonomyMix: [],
+              agentSpend: {
+                spent: { amount: 0, currency: "MYR" },
+                budget: { amount: 0, currency: "MYR" },
+              },
+            }),
+          );
+        }
+        if (name === "get_proposals_vs_won") {
+          return Promise.resolve(okEnvelope({ series: [] }));
+        }
+        return Promise.reject(new Error(`unexpected rpc: ${name}`));
+      },
+      from: () => {
+        throw new Error("ExecutiveDashboard does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
+          <ApiProvider client={createRpcApiClient()}>
+            <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
+              <Routes>
+                <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
+              </Routes>
+            </MemoryRouter>
+          </ApiProvider>
+        </MeContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Admin hours saved")).toBeInTheDocument();
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
   });
 });
