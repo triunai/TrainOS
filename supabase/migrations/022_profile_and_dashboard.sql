@@ -27,30 +27,46 @@
 -- where the type says `string` is that lane's risk to carry, not a reason to
 -- fabricate a value here.
 --
--- `session` (`ProfileSession`) is NOT a blanket `null` — three of its five
--- fields are real, per a second ruling made once the underlying `auth.*`
--- schema was actually read:
---   `browser`, `place`         — OPTIONAL, always `null`. No user-agent or
---                                 geoip storage exists anywhere in this
---                                 schema.
---   `lastSignInAt`             — real, from `auth.users.last_sign_in_at`, a
---                                 standard GoTrue column present on every
---                                 Supabase project. Read defensively (a
---                                 caught `undefined_column` falls back to
---                                 `null`) because this migration has no
---                                 hosted access to confirm the column, and a
---                                 field this function cannot prove should
---                                 degrade rather than 500.
---   `activeSessions`           — real, `COUNT(auth.sessions)` for the caller.
---                                 `auth.sessions` is confirmed present and
---                                 definer-readable (it backs the AAL claim
---                                 already read elsewhere in this codebase).
+-- `session` (`ProfileSession`) is NOT a blanket `null` — a second ruling,
+-- made once the underlying `auth.*` schema was actually read and prompted by
+-- `web-022`'s question about which fields it could actually rely on:
+--   `lastSignInAt`             — REQUIRED on the contract
+--                                 (`packages/contract/src/domain/shell.ts`:
+--                                 "auth.users.last_sign_in_at is a stored
+--                                 column, not a derivation"), from that exact
+--                                 column, a standard GoTrue column present on
+--                                 every Supabase project. Read defensively (a
+--                                 caught `undefined_column` is treated as
+--                                 "nothing to report") because this migration
+--                                 has no hosted access to confirm the column.
+--   `session` AS A WHOLE       — answers `null` rather than a half-built
+--                                 object whenever `lastSignInAt` cannot be
+--                                 derived: the contract states this
+--                                 explicitly for `core.me_profile()` ("session:
+--                                 null as a WHOLE when it has nothing to
+--                                 report, not an object with every field
+--                                 null"), and the merged web reader
+--                                 (`SidebarProfile.tsx`) is built gated on
+--                                 `details.session` before reading anything
+--                                 inside it — a populated object with a null
+--                                 REQUIRED field would violate its own type
+--                                 and desync from the one client that reads
+--                                 it.
+--   `browser`, `place`         — OPTIONAL within a populated `session`,
+--                                 always `null`. No user-agent or geoip
+--                                 storage exists anywhere in this schema.
+--   `activeSessions`           — real, `COUNT(auth.sessions)` for the caller,
+--                                 within a populated `session`. `auth.sessions`
+--                                 is confirmed present and definer-readable
+--                                 (it backs the AAL claim already read
+--                                 elsewhere in this codebase).
 --   `twoFactorEnabled`         — real WHERE `auth.mfa_factors` exists
 --                                 (`EXISTS(... WHERE status = 'verified')`),
---                                 `null` otherwise. Standard GoTrue table on
---                                 hosted Supabase, but absent from the local
---                                 shim this migration was proved against, so
---                                 the read is guarded on `to_regclass` rather
+--                                 `null` otherwise, within a populated
+--                                 `session`. Standard GoTrue table on hosted
+--                                 Supabase, but absent from the local shim
+--                                 this migration was proved against, so the
+--                                 read is guarded on `to_regclass` rather
 --                                 than assumed — see the pin's note on what
 --                                 this could and could not exercise locally.
 --
@@ -267,6 +283,8 @@ DECLARE
   v_last_sign_in timestamptz;
   v_active_sess  integer;
   v_two_factor   boolean;
+  v_has_session  boolean := true;
+  v_session      jsonb;
 BEGIN
   SELECT actor.* INTO v_actor FROM app.current_actor() AS actor;
 
@@ -316,33 +334,56 @@ BEGIN
   -- Supabase project; guarded anyway (an `undefined_column` here becomes
   -- `null` rather than a 500) because this migration cannot execute against
   -- hosted to confirm it, and a field this function cannot prove should fail
-  -- soft, not hard.
+  -- soft, not hard. `lastSignInAt` is a REQUIRED `ProfileSession` field on the
+  -- contract (`packages/contract/src/domain/shell.ts` — "auth.users.
+  -- last_sign_in_at is a stored column, not a derivation"), so its absence
+  -- means the whole `session` block has NOTHING TO REPORT, not a half-built
+  -- object with a null required field: `v_has_session` gates the entire
+  -- block below, matching the contract's own words for `core.me_profile()`
+  -- ("answers session: null as a WHOLE") and the web reader built against it
+  -- (`apps/web/src/shared/components/layout/SidebarProfile.tsx`, gated on
+  -- `details.session` before reading anything inside it).
   BEGIN
     EXECUTE 'SELECT au.email, au.last_sign_in_at FROM auth.users AS au WHERE au.id = $1'
       INTO v_email, v_last_sign_in USING v_user_id;
   EXCEPTION WHEN undefined_column THEN
     SELECT au.email INTO v_email FROM auth.users AS au WHERE au.id = v_user_id;
-    v_last_sign_in := NULL;
+    v_has_session := false;
   END;
 
-  -- `activeSessions` — ruled derivable: `auth.sessions` is a standard GoTrue
-  -- table and the SECURITY DEFINER owner can read it regardless of what is
-  -- granted to `authenticated`. One row per live session for this user.
-  SELECT pg_catalog.count(*) INTO v_active_sess
-    FROM auth.sessions AS s WHERE s.user_id = v_user_id;
+  IF v_has_session THEN
+    -- `activeSessions` — ruled derivable: `auth.sessions` is a standard
+    -- GoTrue table and the SECURITY DEFINER owner can read it regardless of
+    -- what is granted to `authenticated`. One row per live session for this
+    -- user.
+    SELECT pg_catalog.count(*) INTO v_active_sess
+      FROM auth.sessions AS s WHERE s.user_id = v_user_id;
 
-  -- `twoFactorEnabled` — `auth.mfa_factors` is a standard GoTrue table on
-  -- hosted Supabase, but this migration has no hosted access to confirm it,
-  -- so the read is GUARDED on `to_regclass` rather than assumed: `null` on
-  -- any environment (this local shim included) where the relation is absent,
-  -- a real boolean once it exists. `status = 'verified'` is GoTrue's own
-  -- vocabulary for a factor the user has actually completed enrollment for.
-  IF pg_catalog.to_regclass('auth.mfa_factors') IS NOT NULL THEN
-    EXECUTE 'SELECT EXISTS (SELECT 1 FROM auth.mfa_factors mf
-              WHERE mf.user_id = $1 AND mf.status = ''verified'')'
-      INTO v_two_factor USING v_user_id;
+    -- `twoFactorEnabled` — `auth.mfa_factors` is a standard GoTrue table on
+    -- hosted Supabase, but this migration has no hosted access to confirm
+    -- it, so the read is GUARDED on `to_regclass` rather than assumed: this
+    -- ONE optional field stays `null` (not the whole block) on any
+    -- environment, this local shim included, where the relation is absent,
+    -- and a real boolean once it exists. `status = 'verified'` is GoTrue's
+    -- own vocabulary for a factor the user has actually completed
+    -- enrollment for.
+    IF pg_catalog.to_regclass('auth.mfa_factors') IS NOT NULL THEN
+      EXECUTE 'SELECT EXISTS (SELECT 1 FROM auth.mfa_factors mf
+                WHERE mf.user_id = $1 AND mf.status = ''verified'')'
+        INTO v_two_factor USING v_user_id;
+    ELSE
+      v_two_factor := NULL;
+    END IF;
+
+    v_session := pg_catalog.jsonb_build_object(
+      'lastSignInAt',     v_last_sign_in,
+      -- No user-agent or geoip storage exists anywhere in this schema.
+      'browser',          NULL::text,
+      'place',            NULL::text,
+      'activeSessions',   v_active_sess,
+      'twoFactorEnabled', v_two_factor);
   ELSE
-    v_two_factor := NULL;
+    v_session := NULL;
   END IF;
 
   -- `moduleCount` — see the header note. Deliberately the SAME 14 rows and
@@ -373,16 +414,9 @@ BEGIN
     'email',       COALESCE(v_email, v_profile.email::text),
     'staffNumber', NULL::text,
     'moduleCount', COALESCE(v_module_count, 0),
-    -- `browser`/`place` stay null: no user-agent or geoip storage exists
-    -- anywhere in this schema, on this migration or any before it.
-    -- `lastSignInAt`/`activeSessions`/`twoFactorEnabled` are real where the
-    -- underlying `auth.*` object is present - see the derivation above.
-    'session',     pg_catalog.jsonb_build_object(
-                     'lastSignInAt',     v_last_sign_in,
-                     'browser',          NULL::text,
-                     'place',            NULL::text,
-                     'activeSessions',   v_active_sess,
-                     'twoFactorEnabled', v_two_factor))
+    -- `null` AS A WHOLE when `lastSignInAt` has no source (see the
+    -- derivation above); otherwise a full object, never a half one.
+    'session',     v_session)
     -- `mobile` was already OPTIONAL on the contract and no table carries a
     -- staff mobile number; the key is omitted entirely rather than nulled,
     -- matching how every other optional contract field is emitted in 018/020.
@@ -395,10 +429,13 @@ COMMENT ON FUNCTION core.me_profile() IS
   'fields (location, jobTitle, department, staffNumber) are `null` because no '
   'table in 001-020 carries them - see this migration''s header. `moduleCount` '
   'is real, derived from the same nav-permission match core.navigation() '
-  '(018) uses. `session.browser`/`place` are `null` (no user-agent/geoip '
-  'storage); `session.lastSignInAt`/`activeSessions`/`twoFactorEnabled` are '
-  'real from auth.users/auth.sessions/auth.mfa_factors, the last guarded on '
-  '`to_regclass` since this migration has no hosted access to confirm it.';
+  '(018) uses. `session` answers `null` AS A WHOLE when '
+  '`auth.users.last_sign_in_at` has no source in this environment (a '
+  'REQUIRED ProfileSession field per the contract); otherwise a full object '
+  '- `browser`/`place` always null (no user-agent/geoip storage), '
+  '`activeSessions` real from auth.sessions, `twoFactorEnabled` real from '
+  'auth.mfa_factors where that relation exists, guarded on `to_regclass` '
+  'since this migration has no hosted access to confirm it.';
 
 -- ═══ 2 · core.get_executive_dashboard(p_period) ═════════════════════════════
 
