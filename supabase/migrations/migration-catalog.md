@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 26 (numbered up to 033; 023, 025 landed on main via sibling lanes during this work and are not yet merged into this branch; 024, 026–029 remain sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030, 031, 032, 033
+**Migrations:** 27 (numbered up to 034; 023, 025 landed on main via sibling lanes during this work and are not yet merged into this branch; 024, 026–029 remain sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030, 031, 032, 033, 034
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -14,83 +14,27 @@
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
 
-**Last updated:** 2026-09-14 — **031: a client-authenticated session can never set or move a
-membership's `actor_kind` to SYSTEM or AGENT, closing C1 — the insider path to unapproved
-execution of any action, money-moving included.**
-002's `memberships_write_admin` RLS policy lets an ADMIN UPDATE any column of another member's row
-— `actor_kind` included, at AAL2 — and `app.principal_claims` copies whatever the row holds
-straight into that member's next session token. `app.actor_kind() = 'SYSTEM'` makes 011's
-`perform_action` skip `has_permission`, skip the AAL2 money-moving gate, skip policy matching
-against `app.action_policies`, and dispatch straight to `EXECUTING` — on any action type. Confirmed
-on hosted before authoring: `public.memberships` currently carries zero SYSTEM rows, so the hole is
-open and unused, not exploited. Fix, two parts: (1) a `BEFORE INSERT OR UPDATE` trigger on
-`public.memberships`, `app.enforce_membership_actor_kind_lock`, refuses a client-authenticated
-INSERT with `actor_kind` SYSTEM/AGENT and refuses ANY client-authenticated UPDATE that changes
-`actor_kind` at all (immutable, not merely "can't become SYSTEM/AGENT" — a client that cannot move
-a row TO SYSTEM also cannot launder one back FROM it). Privilege is checked by ROLE ATTRIBUTE
-(`rolsuper OR rolbypassrls` on `current_user`), not by role NAME — a hardcoded `IN ('postgres',
-'service_role')` check, tried first, broke every fixture that seeds `public.memberships` as the
-migration-owning role, because this repo's own build harness stands hosted `postgres` in with a
-role named `hc_mig`, created NOSUPERUSER BYPASSRLS to match hosted `postgres`'s ATTRIBUTE profile,
-not its name (found by running the existing pin suite, not by reading it). Deliberately NOT
-`SECURITY DEFINER`: a DEFINER trigger runs with `current_user` already switched to the function's
-owner, which would make the privilege check pass on every call regardless of caller. (2)
-`app.principal_claims` (002) fails a SYSTEM row closed to HUMAN in the claims it issues — a
-backstop under the trigger, since this hook only ever runs for a GoTrue-issued (browser) session,
-and there is no such session for a genuine SYSTEM principal. AGENT is untouched throughout — 013/
-002's worker path is unaffected; grepped every RPC in 018–022 and found none writes
-`public.memberships`, so AGENT provisioning (wherever it runs) was already outside the
-authenticated path this migration closes. Pin `tests/test_031_membership_actor_kind_lock.sql`: an
-authenticated ADMIN is refused INSERTing actor_kind SYSTEM/AGENT and refused UPDATEing a colleague's
-row to SYSTEM (the exact C1 path) or away from AGENT; an unrelated column on the same AGENT row
-still updates fine; the privileged (bypassrls) connection this pin itself runs as can still create
-and alter SYSTEM/AGENT rows; `principal_claims` reports HUMAN for a row a privileged write left
-genuinely SYSTEM; `anon`/`authenticated` hold no EXECUTE on the trigger function (harmless, since
-Postgres never checks EXECUTE to fire a trigger — asserted anyway per `test_002` T11a's own
-invariant). Rollback drops the trigger and its function and restores 002's original
-`principal_claims` body verbatim, including nulling the COMMENT 031 added (002 never had one on
-this function — the comment quoted at 002:589 belongs to `custom_access_token_hook`). `test_001`–
-`test_022`, `test_030` all still pass on a clean 001–031 build. `npm run lint:sql` 86/86,
-`check:grants`/`check:rpc` clean.
-
-**Last updated:** 2026-09-14 — **032: `decide_approval` locks the target row before recomputing
-the diff hash (H2), and OPP-01's seed repairs a wrong pre-existing row instead of leaving it
-standing (H3).**
-H2: `app.decide_approval` already locks `core.approval_requests` and `core.action_requests` FOR
-UPDATE, but the diff-hash recompute that decides whether the effects changed since queue time
-called `app.plan_effects`/`app.action_value` without first locking the row those functions
-actually read — the exact TOCTOU shape R18 (021) already closed for `OPPORTUNITY_STAGE_CHANGE` by
-locking the opportunity before re-validating it. New helper `app.lock_action_value_target(type,
-tenant, target_id)` mirrors `action_value`'s own `value_source` CASE and locks FOR UPDATE the
-QUOTATION/INVOICE/HRDC_CLAIM row (or the PROPOSAL_SEND special case); PAYMENT/BUDGET_CAP/NONE are
-no-ops, since those read their amount from the action's own immutable payload, never from a row.
-`decide_approval` gains exactly one new line, immediately before `plan_effects`, resolving the
-target id it never previously kept. `app.bulk_decide` needed no edit — every branch calls
-`app.decide_approval` per item, so the fix is inherited (verified by reading its body, not
-assumed). Proved with two real `psql` sessions, not simulated: session A holds `core.quotations
-... FOR UPDATE` uncommitted; session B's `app.lock_action_value_target` call blocks on the same row
-and hits `statement_timeout` (57014, `while locking tuple ... in relation "quotations"`) after 3s;
-the same experiment against the OLD code path — a bare `app.action_value` read under the identical
-held lock — returns in 0.04s, unblocked (MVCC read of the last-committed value). H3:
-`app.seed_opportunity_stage_policy`'s `INSERT ... ON CONFLICT (tenant_id,id) DO NOTHING` let a
-WRONG pre-existing OPP-01 row (wrong `approver_role`, `active=false`, a non-matching condition)
-silently block the canonical row forever — 021's own verify only checked a row named OPP-01
-existed, never its content. Now `DO UPDATE`, converging every column to canonical on every call;
-032 re-runs it for every existing tenant in the same transaction, repairing any wrong row rather
-than waiting for the next tenant-creation trigger fire (which never touches an existing tenant).
-Confirmed on hosted before authoring: `akademi-perdana`'s OPP-01 is currently correct, so this is
-a closed latent defect, not an active incident. Pin `tests/test_032_approval_target_lock.sql`:
-`lock_action_value_target` takes a real `RowShareLock` (visible in `pg_locks` for the acquiring
-session) for QUOTATION_APPLY and PROPOSAL_SEND, is a silent no-op for PAYMENT/BUDGET_CAP/NONE;
-`decide_approval`'s source calls it strictly before `plan_effects`; an unmodified quotation still
-APPROVEs and `apply_effects` runs; a quotation edited (committed) between queue and decide is still
-refused DIFF_CHANGED; a deliberately wrong OPP-01 row is corrected by
-`seed_opportunity_stage_policy`. Rollback restores 011's `decide_approval` and 021's `seed_
-opportunity_stage_policy` bodies verbatim and drops `lock_action_value_target`; it does NOT revert
-the OPP-01 rows 032's repair pass already converged — undoing a data repair that made a wrong row
-correct would be a second, worse defect stacked on the first. `test_001`–`test_022`, `test_030`–
-`test_031` all still pass on a clean 001–032 build. `npm run lint:sql` 86/86, `check:grants`/
-`check:rpc` clean.
+**Last updated:** 2026-09-14 — **034: the two executive-dashboard RPCs are MD-only per the contract, sum MYR rows only, and evalScore is a trailing-30-day median.**
+`CREATE OR REPLACE` of `core.get_executive_dashboard(text)` and `core.get_proposals_vs_won(integer)`
+only. M1: both endpoints are `roles:['MD']` in `endpoints.ts:150-153`, narrower than the four
+roles `dashboard:executive:read` grants (002) — a function-local `app.role() IS DISTINCT FROM 'MD'`
+check added after the existing permission gate, which is untouched (nothing else reads it). M2:
+`OPEN_PIPELINE`/`AR_OVERDUE`/`CLAIM_VALUE_AT_RISK`/`agentSpend` summed every row regardless of its
+own `currency` column and labelled the result MYR; now MYR-only, with a `(N non-MYR excluded)`
+note folded into `secondary` when (and only when) a non-MYR row exists — the all-MYR fixture path
+`test_022` pins is byte-identical. `agentSpend` has no `secondary` slot in its contract shape to
+report an exclusion in; recorded as the one gap M2's own fix cannot also close. M3: the
+`agent_eval` CTE gained the same `evaluated_at >= now() - interval '30 days'` window
+`core.v_agent_evals` (020) already uses; the aggregation itself (median via `percentile_cont`) is
+unchanged. M6 (AAL2 on OPP-01 decisions) is explicitly out of scope — a product decision, listed
+open. Pin `tests/test_034_dashboard_contract_fixes.sql`: SALES_MANAGER/FINANCE/ADMIN (hold the
+permission, not MD) FORBIDDEN on both RPCs, MD succeeds; a mixed MYR/USD opportunity pair proves
+OPEN_PIPELINE sums MYR only and notes the exclusion; a 10-day and a 40-day-old eval prove
+evalScore reflects only the recent one; `get_proposals_vs_won()` with no argument returns a
+6-element series; a non-privileged role with a malformed period is refused FORBIDDEN, not
+VALIDATION_FAILED, proving the gate runs before any read. Rollback restores 022's two bodies
+verbatim. `test_001`–`test_022`, `test_030`–`test_033` all still pass on a clean 001–034 build.
+`npm run lint:sql` 86/86, `check:grants`/`check:rpc` clean.
 
 **Last updated:** 2026-09-14 — **033: sensitive-table RLS — 28 `core` tables gated on the
 permission the contract already requires at the RPC layer (H1), MY_ACCOUNTS owner-narrowing on
@@ -141,6 +85,84 @@ drops the four bespoke policies, and restores `user_profiles_select`'s original 
 NOT reopen anything the `app.can_see_owner`/permission MECHANISM itself provides — that is 014's
 code, untouched. `test_001`–`test_022`, `test_030`–`test_032` all still pass on a clean 001–033
 build. `npm run lint:sql` 86/86, `check:grants`/`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **032: `decide_approval` locks the target row before recomputing
+the diff hash (H2), and OPP-01's seed repairs a wrong pre-existing row instead of leaving it
+standing (H3).**
+H2: `app.decide_approval` already locks `core.approval_requests` and `core.action_requests` FOR
+UPDATE, but the diff-hash recompute that decides whether the effects changed since queue time
+called `app.plan_effects`/`app.action_value` without first locking the row those functions
+actually read — the exact TOCTOU shape R18 (021) already closed for `OPPORTUNITY_STAGE_CHANGE` by
+locking the opportunity before re-validating it. New helper `app.lock_action_value_target(type,
+tenant, target_id)` mirrors `action_value`'s own `value_source` CASE and locks FOR UPDATE the
+QUOTATION/INVOICE/HRDC_CLAIM row (or the PROPOSAL_SEND special case); PAYMENT/BUDGET_CAP/NONE are
+no-ops, since those read their amount from the action's own immutable payload, never from a row.
+`decide_approval` gains exactly one new line, immediately before `plan_effects`, resolving the
+target id it never previously kept. `app.bulk_decide` needed no edit — every branch calls
+`app.decide_approval` per item, so the fix is inherited (verified by reading its body, not
+assumed). Proved with two real `psql` sessions, not simulated: session A holds `core.quotations
+... FOR UPDATE` uncommitted; session B's `app.lock_action_value_target` call blocks on the same row
+and hits `statement_timeout` (57014, `while locking tuple ... in relation "quotations"`) after 3s;
+the same experiment against the OLD code path — a bare `app.action_value` read under the identical
+held lock — returns in 0.04s, unblocked (MVCC read of the last-committed value). H3:
+`app.seed_opportunity_stage_policy`'s `INSERT ... ON CONFLICT (tenant_id,id) DO NOTHING` let a
+WRONG pre-existing OPP-01 row (wrong `approver_role`, `active=false`, a non-matching condition)
+silently block the canonical row forever — 021's own verify only checked a row named OPP-01
+existed, never its content. Now `DO UPDATE`, converging every column to canonical on every call;
+032 re-runs it for every existing tenant in the same transaction, repairing any wrong row rather
+than waiting for the next tenant-creation trigger fire (which never touches an existing tenant).
+Confirmed on hosted before authoring: `akademi-perdana`'s OPP-01 is currently correct, so this is
+a closed latent defect, not an active incident. Pin `tests/test_032_approval_target_lock.sql`:
+`lock_action_value_target` takes a real `RowShareLock` (visible in `pg_locks` for the acquiring
+session) for QUOTATION_APPLY and PROPOSAL_SEND, is a silent no-op for PAYMENT/BUDGET_CAP/NONE;
+`decide_approval`'s source calls it strictly before `plan_effects`; an unmodified quotation still
+APPROVEs and `apply_effects` runs; a quotation edited (committed) between queue and decide is still
+refused DIFF_CHANGED; a deliberately wrong OPP-01 row is corrected by
+`seed_opportunity_stage_policy`. Rollback restores 011's `decide_approval` and 021's `seed_
+opportunity_stage_policy` bodies verbatim and drops `lock_action_value_target`; it does NOT revert
+the OPP-01 rows 032's repair pass already converged — undoing a data repair that made a wrong row
+correct would be a second, worse defect stacked on the first. `test_001`–`test_022`, `test_030`–
+`test_031` all still pass on a clean 001–032 build. `npm run lint:sql` 86/86, `check:grants`/
+`check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **031: a client-authenticated session can never set or move a
+membership's `actor_kind` to SYSTEM or AGENT, closing C1 — the insider path to unapproved
+execution of any action, money-moving included.**
+002's `memberships_write_admin` RLS policy lets an ADMIN UPDATE any column of another member's row
+— `actor_kind` included, at AAL2 — and `app.principal_claims` copies whatever the row holds
+straight into that member's next session token. `app.actor_kind() = 'SYSTEM'` makes 011's
+`perform_action` skip `has_permission`, skip the AAL2 money-moving gate, skip policy matching
+against `app.action_policies`, and dispatch straight to `EXECUTING` — on any action type. Confirmed
+on hosted before authoring: `public.memberships` currently carries zero SYSTEM rows, so the hole is
+open and unused, not exploited. Fix, two parts: (1) a `BEFORE INSERT OR UPDATE` trigger on
+`public.memberships`, `app.enforce_membership_actor_kind_lock`, refuses a client-authenticated
+INSERT with `actor_kind` SYSTEM/AGENT and refuses ANY client-authenticated UPDATE that changes
+`actor_kind` at all (immutable, not merely "can't become SYSTEM/AGENT" — a client that cannot move
+a row TO SYSTEM also cannot launder one back FROM it). Privilege is checked by ROLE ATTRIBUTE
+(`rolsuper OR rolbypassrls` on `current_user`), not by role NAME — a hardcoded `IN ('postgres',
+'service_role')` check, tried first, broke every fixture that seeds `public.memberships` as the
+migration-owning role, because this repo's own build harness stands hosted `postgres` in with a
+role named `hc_mig`, created NOSUPERUSER BYPASSRLS to match hosted `postgres`'s ATTRIBUTE profile,
+not its name (found by running the existing pin suite, not by reading it). Deliberately NOT
+`SECURITY DEFINER`: a DEFINER trigger runs with `current_user` already switched to the function's
+owner, which would make the privilege check pass on every call regardless of caller. (2)
+`app.principal_claims` (002) fails a SYSTEM row closed to HUMAN in the claims it issues — a
+backstop under the trigger, since this hook only ever runs for a GoTrue-issued (browser) session,
+and there is no such session for a genuine SYSTEM principal. AGENT is untouched throughout — 013/
+002's worker path is unaffected; grepped every RPC in 018–022 and found none writes
+`public.memberships`, so AGENT provisioning (wherever it runs) was already outside the
+authenticated path this migration closes. Pin `tests/test_031_membership_actor_kind_lock.sql`: an
+authenticated ADMIN is refused INSERTing actor_kind SYSTEM/AGENT and refused UPDATEing a colleague's
+row to SYSTEM (the exact C1 path) or away from AGENT; an unrelated column on the same AGENT row
+still updates fine; the privileged (bypassrls) connection this pin itself runs as can still create
+and alter SYSTEM/AGENT rows; `principal_claims` reports HUMAN for a row a privileged write left
+genuinely SYSTEM; `anon`/`authenticated` hold no EXECUTE on the trigger function (harmless, since
+Postgres never checks EXECUTE to fire a trigger — asserted anyway per `test_002` T11a's own
+invariant). Rollback drops the trigger and its function and restores 002's original
+`principal_claims` body verbatim, including nulling the COMMENT 031 added (002 never had one on
+this function — the comment quoted at 002:589 belongs to `custom_access_token_hook`). `test_001`–
+`test_022`, `test_030` all still pass on a clean 001–031 build. `npm run lint:sql` 86/86,
+`check:grants`/`check:rpc` clean.
 
 **Last updated:** 2026-09-14 — **030: `core.me_profile()`'s `session` block never leaks a null required field, closing a defect 022 shipped and hosted's own run of `test_022` caught.**
 One `CREATE OR REPLACE FUNCTION core.me_profile()`, nothing else — no table, no type, no policy, no other function touched. **The defect, found by running 022's own pin against hosted rather than by reading:** 022's header promises `session` answers `null` AS A WHOLE whenever `lastSignInAt` cannot be derived, and 022's `v_has_session` variable exists to keep that promise — but it only flips to `false` inside `EXCEPTION WHEN undefined_column`, the COLUMN-ABSENT case. When `auth.users.last_sign_in_at` EXISTS (true on hosted) but a particular row's VALUE is `NULL` — true for `test_022`'s own INSERT-not-signed-in fixture users, and equally true for any real hosted account GoTrue has not yet stamped a sign-in for — the read succeeds with no exception, `v_has_session` stays at its default `true`, and the function emits exactly the shape its own header forbids: a populated `session` object with `lastSignInAt: null`. `test_022`'s `T1j` (PR #48, commit `05e7360`) asserted the branch the column's PRESENCE implies and failed on hosted — not because the assertion was wrong, but because the function did not keep its own promise. **The fix is one `IF` statement**, immediately after the existing exception handler: `v_has_session` is now also set `false` when the read succeeds but `v_last_sign_in IS NULL`, subsuming the exception path (a harmless no-op re-confirmation there, since `v_last_sign_in` is already `NULL` by its declared default whenever the exception fires) and closing the gap it did not cover. Every other line — permission gates, `moduleCount`, `activeSessions`, `twoFactorEnabled`, the two dashboard RPCs (untouched, not redefined) — is 022's, unchanged. **Nothing changes for a caller who has actually signed in**: GoTrue stamps `last_sign_in_at` on every real sign-in, so a real session continues to get a populated `session` with a real `lastSignInAt`, confirmed against hosted directly before this migration was authored. This migration only changes the answer for a principal GoTrue has not yet stamped one for, closing a leak rather than opening a gap. **`packages/contract/src/domain/shell.ts` and the web reader (`SidebarProfile.tsx`) already document and expect this exact corrected shape** (PRs #49/#50, landed on `origin/main` ahead of this migration) — this migration is what makes the database true of the contract the web lane already built against, not the reverse. Pin `test_030`: three cases, branched STRUCTURALLY on whether `auth.users.last_sign_in_at` exists rather than assuming one environment — column absent (this local shim): `session` null as a whole, unchanged from 022; column present, value null (the closed defect): `session` null as a whole; column present, value set: a full object with exactly the 5 `ProfileSession` keys and a real, non-null `lastSignInAt`. Verified against both the unmodified local shim (only the absent-column case fires) and a locally-extended copy with `auth.users.last_sign_in_at` and `auth.mfa_factors` added (not checked in; both hosted-shaped cases fire and pass). `test_022`'s own `T1j` fixture gained a small addition in the same commit: its T1 principal now gets a real `last_sign_in_at` WHEN the column exists (a no-op `UPDATE` guarded the same structural way, otherwise absent), so `test_022` exercises the "real value" branch it always intended rather than accidentally tripping over 030's own defect — the never-signed-in/null-value case is deliberately left to `test_030` alone rather than duplicated. Rollback restores 022's original (defective) body verbatim. `test_001`–`test_022` all still pass unmodified on a clean 001–030 build (021, 023–029 excluded — the latter are sibling lanes not on this branch). `npm run lint:sql` 74/74, `npm run check:grants`/`npm run check:rpc` clean. Spine untouched: no action type, no handler, no branch in the envelope.
@@ -550,16 +572,32 @@ re-applied, verify green each time.
 
 ---
 
-## Migration Detail — 031 (`031_membership_actor_kind_lock.sql`)
+## Migration Detail — 034 (`034_dashboard_contract_fixes.sql`)
 
 **Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
-to any hosted database.** Full narrative in the dated entry above. One trigger function, one
-trigger on `public.memberships`, one `CREATE OR REPLACE` of `app.principal_claims` (002).
+to any hosted database.** Full narrative in the dated entry above. `CREATE OR REPLACE` of
+`core.get_executive_dashboard(text)` and `core.get_proposals_vs_won(integer)` only.
 
-- **Pin** — `tests/test_031_membership_actor_kind_lock.sql`. T1–T7, ends in `ROLLBACK`.
-- **Rollback** — `rollbacks/031_membership_actor_kind_lock_rollback.sql`. Drops the trigger and
-  function, restores `app.principal_claims`'s 002 body verbatim (including nulling the COMMENT
-  031 added — 002 never had one on this function).
+- **Pin** — `tests/test_034_dashboard_contract_fixes.sql`. 14 assertions, ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/034_dashboard_contract_fixes_rollback.sql`. Restores 022's two bodies
+  and comments verbatim; verified the MD-only check and the currency guards are gone after
+  rollback, and (round-tripped) reappear after a re-apply.
+
+---
+
+## Migration Detail — 033 (`033_sensitive_table_rls.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. 28 `app.apply_tenant_policies`
+calls, one bespoke policy on `core.events`, three bespoke MY_ACCOUNTS narrowing policies, one
+`public.user_profiles_select` policy replacement — no table, no type added.
+
+- **Pin** — `tests/test_033_sensitive_table_rls.sql`. 8 test groups (T1–T8), ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/033_sensitive_table_rls_rollback.sql`. `app.ungate_tenant_policy` per
+  table (stamped `033`), drops the four bespoke policies, restores `user_profiles_select`.
+- **Amended in this commit**: `tests/test_004_shell_config_and_ref_allocation.sql` (T1c),
+  `tests/test_012_events_outbox_and_jobs.sql` (T1d), `tests/test_014_rls_policies_and_client_grants.sql`
+  (T1c, T12l, T12m) — each marked ⚠ AMENDED BY 033 in place, reasons in the dated entry above.
 
 ---
 
@@ -581,19 +619,16 @@ to any hosted database.** Full narrative in the dated entry above. One new funct
 
 ---
 
-## Migration Detail — 033 (`033_sensitive_table_rls.sql`)
+## Migration Detail — 031 (`031_membership_actor_kind_lock.sql`)
 
 **Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
-to any hosted database.** Full narrative in the dated entry above. 28 `app.apply_tenant_policies`
-calls, one bespoke policy on `core.events`, three bespoke MY_ACCOUNTS narrowing policies, one
-`public.user_profiles_select` policy replacement — no table, no type added.
+to any hosted database.** Full narrative in the dated entry above. One trigger function, one
+trigger on `public.memberships`, one `CREATE OR REPLACE` of `app.principal_claims` (002).
 
-- **Pin** — `tests/test_033_sensitive_table_rls.sql`. 8 test groups (T1–T8), ends in `ROLLBACK`.
-- **Rollback** — `rollbacks/033_sensitive_table_rls_rollback.sql`. `app.ungate_tenant_policy` per
-  table (stamped `033`), drops the four bespoke policies, restores `user_profiles_select`.
-- **Amended in this commit**: `tests/test_004_shell_config_and_ref_allocation.sql` (T1c),
-  `tests/test_012_events_outbox_and_jobs.sql` (T1d), `tests/test_014_rls_policies_and_client_grants.sql`
-  (T1c, T12l, T12m) — each marked ⚠ AMENDED BY 033 in place, reasons in the dated entry above.
+- **Pin** — `tests/test_031_membership_actor_kind_lock.sql`. T1–T7, ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/031_membership_actor_kind_lock_rollback.sql`. Drops the trigger and
+  function, restores `app.principal_claims`'s 002 body verbatim (including nulling the COMMENT
+  031 added — 002 never had one on this function).
 
 ---
 
