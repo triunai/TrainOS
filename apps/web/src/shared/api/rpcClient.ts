@@ -20,6 +20,7 @@ import type {
   Enquiry,
   EnquiryDetail,
   EnquiryExtractionPatch,
+  ExecutiveDashboard,
   FollowUp,
   ErrorCode,
   ErrorDetails,
@@ -44,6 +45,7 @@ import type {
   ProgrammeDelivery,
   Proposal,
   ProposalSectionRegenerateResponse,
+  ProposalsVsWonReport,
   Quotation,
   RateCard,
   RuleChangeSet,
@@ -419,6 +421,8 @@ export const RPC_NAMES = {
     "me_profile",
     "navigation",
     "badge_counts",
+    "get_executive_dashboard",
+    "get_proposals_vs_won",
     "list_enquiries",
     "get_enquiry",
     "patch_enquiry_extraction",
@@ -542,8 +546,9 @@ export class SupabaseRpcClient implements TrainOsClient {
   /**
    * The UUID a uuid-keyed view is matched on, from whatever the caller holds.
    *
-   * `v_organisation_relations` and `v_contact_channel_consents` key their rows
-   * by uuid, but the screens hold REFS — a route segment, `organisationRef` — and
+   * `v_organisation_relations`, `v_contact_channel_consents` and
+   * `v_programme_deliveries` key their rows by uuid, but the screens hold
+   * REFS — a route segment, `organisationRef` — and
    * a ref in a uuid `.match()` is 22P02, which reads as a server fault. The
    * record's own RPC already accepts id or ref, so it resolves one to the other;
    * a value that is already a uuid costs no round trip.
@@ -569,6 +574,14 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   badges(): Promise<Result<BadgeCounts>> {
     return this.call<BadgeCounts>("badge_counts");
+  }
+
+  getExecutiveDashboard(period: string): Promise<Result<ExecutiveDashboard>> {
+    return this.call<ExecutiveDashboard>("get_executive_dashboard", { p_period: period });
+  }
+
+  getProposalsVsWon(months: number): Promise<Result<ProposalsVsWonReport>> {
+    return this.call<ProposalsVsWonReport>("get_proposals_vs_won", { p_months: months });
   }
 
   listEnquiries(query: PageRequest): Promise<Result<ListResponse<Enquiry>>> {

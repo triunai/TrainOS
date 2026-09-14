@@ -328,10 +328,20 @@ export type RunRetryFrom = 'checkpoint';
  * §10 · Dashboards — M01-S01
  * ------------------------------------------------------------------ */
 
-/** §10 one self-describing dashboard cell. */
-export interface DashboardMetric extends MetricValue<Money | number> {
+/**
+ * §10 one self-describing dashboard cell.
+ *
+ * `value` is nullable, on top of `MetricValue`'s own type: every other cell on
+ * this strip is derived from data that exists (pipeline, AR, proposals,
+ * claims), but `ADMIN_HOURS_SAVED` has no source until something measures a
+ * baseline. `null` is the server's honest answer for that case, and it means
+ * the screen must render "not available" rather than fold a missing figure
+ * into a `0` that reads as "measured, and it was zero."
+ */
+export interface DashboardMetric extends Omit<MetricValue<Money | number>, 'value'> {
   key: string;
   label: string;
+  value: Money | number | null;
   /** §10 `ADMIN_HOURS_SAVED` ships the formula it was computed from. */
   formula?: string;
 }
