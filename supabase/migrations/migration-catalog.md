@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 23 (numbered up to 030; 023–029 are sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030
+**Migrations:** 24 (numbered up to 031; 023, 025 landed on main via sibling lanes during this work and are not yet merged into this branch; 024, 026–029 remain sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030, 031
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -13,6 +13,45 @@
      number, the concrete change, the evidence checked, and what was deliberately left
      alone. A correction to an earlier entry is a NEW dated entry pointing at the old one;
      the old one is left standing. -->
+
+**Last updated:** 2026-09-14 — **031: a client-authenticated session can never set or move a
+membership's `actor_kind` to SYSTEM or AGENT, closing C1 — the insider path to unapproved
+execution of any action, money-moving included.**
+002's `memberships_write_admin` RLS policy lets an ADMIN UPDATE any column of another member's row
+— `actor_kind` included, at AAL2 — and `app.principal_claims` copies whatever the row holds
+straight into that member's next session token. `app.actor_kind() = 'SYSTEM'` makes 011's
+`perform_action` skip `has_permission`, skip the AAL2 money-moving gate, skip policy matching
+against `app.action_policies`, and dispatch straight to `EXECUTING` — on any action type. Confirmed
+on hosted before authoring: `public.memberships` currently carries zero SYSTEM rows, so the hole is
+open and unused, not exploited. Fix, two parts: (1) a `BEFORE INSERT OR UPDATE` trigger on
+`public.memberships`, `app.enforce_membership_actor_kind_lock`, refuses a client-authenticated
+INSERT with `actor_kind` SYSTEM/AGENT and refuses ANY client-authenticated UPDATE that changes
+`actor_kind` at all (immutable, not merely "can't become SYSTEM/AGENT" — a client that cannot move
+a row TO SYSTEM also cannot launder one back FROM it). Privilege is checked by ROLE ATTRIBUTE
+(`rolsuper OR rolbypassrls` on `current_user`), not by role NAME — a hardcoded `IN ('postgres',
+'service_role')` check, tried first, broke every fixture that seeds `public.memberships` as the
+migration-owning role, because this repo's own build harness stands hosted `postgres` in with a
+role named `hc_mig`, created NOSUPERUSER BYPASSRLS to match hosted `postgres`'s ATTRIBUTE profile,
+not its name (found by running the existing pin suite, not by reading it). Deliberately NOT
+`SECURITY DEFINER`: a DEFINER trigger runs with `current_user` already switched to the function's
+owner, which would make the privilege check pass on every call regardless of caller. (2)
+`app.principal_claims` (002) fails a SYSTEM row closed to HUMAN in the claims it issues — a
+backstop under the trigger, since this hook only ever runs for a GoTrue-issued (browser) session,
+and there is no such session for a genuine SYSTEM principal. AGENT is untouched throughout — 013/
+002's worker path is unaffected; grepped every RPC in 018–022 and found none writes
+`public.memberships`, so AGENT provisioning (wherever it runs) was already outside the
+authenticated path this migration closes. Pin `tests/test_031_membership_actor_kind_lock.sql`: an
+authenticated ADMIN is refused INSERTing actor_kind SYSTEM/AGENT and refused UPDATEing a colleague's
+row to SYSTEM (the exact C1 path) or away from AGENT; an unrelated column on the same AGENT row
+still updates fine; the privileged (bypassrls) connection this pin itself runs as can still create
+and alter SYSTEM/AGENT rows; `principal_claims` reports HUMAN for a row a privileged write left
+genuinely SYSTEM; `anon`/`authenticated` hold no EXECUTE on the trigger function (harmless, since
+Postgres never checks EXECUTE to fire a trigger — asserted anyway per `test_002` T11a's own
+invariant). Rollback drops the trigger and its function and restores 002's original
+`principal_claims` body verbatim, including nulling the COMMENT 031 added (002 never had one on
+this function — the comment quoted at 002:589 belongs to `custom_access_token_hook`). `test_001`–
+`test_022`, `test_030` all still pass on a clean 001–031 build. `npm run lint:sql` 86/86,
+`check:grants`/`check:rpc` clean.
 
 **Last updated:** 2026-09-14 — **030: `core.me_profile()`'s `session` block never leaks a null required field, closing a defect 022 shipped and hosted's own run of `test_022` caught.**
 One `CREATE OR REPLACE FUNCTION core.me_profile()`, nothing else — no table, no type, no policy, no other function touched. **The defect, found by running 022's own pin against hosted rather than by reading:** 022's header promises `session` answers `null` AS A WHOLE whenever `lastSignInAt` cannot be derived, and 022's `v_has_session` variable exists to keep that promise — but it only flips to `false` inside `EXCEPTION WHEN undefined_column`, the COLUMN-ABSENT case. When `auth.users.last_sign_in_at` EXISTS (true on hosted) but a particular row's VALUE is `NULL` — true for `test_022`'s own INSERT-not-signed-in fixture users, and equally true for any real hosted account GoTrue has not yet stamped a sign-in for — the read succeeds with no exception, `v_has_session` stays at its default `true`, and the function emits exactly the shape its own header forbids: a populated `session` object with `lastSignInAt: null`. `test_022`'s `T1j` (PR #48, commit `05e7360`) asserted the branch the column's PRESENCE implies and failed on hosted — not because the assertion was wrong, but because the function did not keep its own promise. **The fix is one `IF` statement**, immediately after the existing exception handler: `v_has_session` is now also set `false` when the read succeeds but `v_last_sign_in IS NULL`, subsuming the exception path (a harmless no-op re-confirmation there, since `v_last_sign_in` is already `NULL` by its declared default whenever the exception fires) and closing the gap it did not cover. Every other line — permission gates, `moduleCount`, `activeSessions`, `twoFactorEnabled`, the two dashboard RPCs (untouched, not redefined) — is 022's, unchanged. **Nothing changes for a caller who has actually signed in**: GoTrue stamps `last_sign_in_at` on every real sign-in, so a real session continues to get a populated `session` with a real `lastSignInAt`, confirmed against hosted directly before this migration was authored. This migration only changes the answer for a principal GoTrue has not yet stamped one for, closing a leak rather than opening a gap. **`packages/contract/src/domain/shell.ts` and the web reader (`SidebarProfile.tsx`) already document and expect this exact corrected shape** (PRs #49/#50, landed on `origin/main` ahead of this migration) — this migration is what makes the database true of the contract the web lane already built against, not the reverse. Pin `test_030`: three cases, branched STRUCTURALLY on whether `auth.users.last_sign_in_at` exists rather than assuming one environment — column absent (this local shim): `session` null as a whole, unchanged from 022; column present, value null (the closed defect): `session` null as a whole; column present, value set: a full object with exactly the 5 `ProfileSession` keys and a real, non-null `lastSignInAt`. Verified against both the unmodified local shim (only the absent-column case fires) and a locally-extended copy with `auth.users.last_sign_in_at` and `auth.mfa_factors` added (not checked in; both hosted-shaped cases fire and pass). `test_022`'s own `T1j` fixture gained a small addition in the same commit: its T1 principal now gets a real `last_sign_in_at` WHEN the column exists (a no-op `UPDATE` guarded the same structural way, otherwise absent), so `test_022` exercises the "real value" branch it always intended rather than accidentally tripping over 030's own defect — the never-signed-in/null-value case is deliberately left to `test_030` alone rather than duplicated. Rollback restores 022's original (defective) body verbatim. `test_001`–`test_022` all still pass unmodified on a clean 001–030 build (021, 023–029 excluded — the latter are sibling lanes not on this branch). `npm run lint:sql` 74/74, `npm run check:grants`/`npm run check:rpc` clean. Spine untouched: no action type, no handler, no branch in the envelope.
@@ -419,6 +458,19 @@ way Postgres ships them, five functions, three extensions (no CASCADE), `app` an
 `RESTRICT`. `pgcrypto` and the `extensions` and `public` schemas are deliberately left standing —
 all three are platform-provided and none is 001's to drop. Round-tripped: applied → rolled back →
 re-applied, verify green each time.
+
+---
+
+## Migration Detail — 031 (`031_membership_actor_kind_lock.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. One trigger function, one
+trigger on `public.memberships`, one `CREATE OR REPLACE` of `app.principal_claims` (002).
+
+- **Pin** — `tests/test_031_membership_actor_kind_lock.sql`. T1–T7, ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/031_membership_actor_kind_lock_rollback.sql`. Drops the trigger and
+  function, restores `app.principal_claims`'s 002 body verbatim (including nulling the COMMENT
+  031 added — 002 never had one on this function).
 
 ---
 
