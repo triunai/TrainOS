@@ -1481,19 +1481,11 @@ BEGIN
     SELECT procedure.oid::regprocedure
       FROM pg_catalog.pg_proc AS procedure
       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
-     WHERE (namespace.nspname = 'core' AND procedure.proname = ANY (ARRAY[
-             'create_provider','test_provider','get_provider_test_result',
-             'rotate_provider','reveal_provider','delete_provider']))
-        OR (namespace.nspname = 'app' AND procedure.proname = ANY (ARRAY[
-             'provider_key_actor','provider_key_json','provider_key_shape_reason',
-             'provider_key_fingerprint','provider_key_probe_request',
-             'provider_key_fire_probe','provider_key_probe_json',
-             'provider_key_tier_is_known','provider_key_validate',
-             'provider_key_destroy_secret','provider_key_opaque_error',
-             'provider_key_for_tenant']))
+     WHERE
         -- 013's Edge-Function-era entry points, superseded (header). Already
         -- revoked by 013:3114; repeated so this file's $verify$ owns the fact.
-        OR (namespace.nspname = 'public' AND procedure.proname = ANY (ARRAY[
+        -- Dynamic because they are 013's signatures, not this file's.
+        (namespace.nspname = 'public' AND procedure.proname = ANY (ARRAY[
              'ai_provider_key_set','ai_provider_key_test','ai_provider_key_rotate',
              'ai_provider_key_delete','ai_provider_key_reveal']))
   LOOP
@@ -1502,6 +1494,28 @@ BEGIN
   END LOOP;
 END
 $revoke$;
+
+-- Every function this file creates, revoked per function by literal signature
+-- (scripts/check-grants.mjs rule M2 reads these statically; $verify$ V4 below
+-- measures the resulting matrix at runtime).
+REVOKE ALL ON FUNCTION core.create_provider(text,text,text,jsonb,text,text,jsonb,text,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION core.test_provider(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION core.get_provider_test_result(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION core.rotate_provider(text,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION core.reveal_provider(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION core.delete_provider(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_actor(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_json(core.ai_provider_keys) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_shape_reason(text,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_fingerprint(uuid,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_probe_request(text,text,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_fire_probe(core.ai_provider_keys,text,jsonb,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_probe_json(app.provider_key_probes,core.ai_provider_keys) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_tier_is_known(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_validate(uuid,text,text,text,jsonb,text,text,jsonb,text,boolean,uuid,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_destroy_secret(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_opaque_error(text,text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION app.provider_key_for_tenant(uuid,text) FROM PUBLIC, anon, authenticated, service_role;
 
 GRANT EXECUTE ON FUNCTION core.create_provider(text,text,text,jsonb,text,text,jsonb,text,text) TO authenticated;
 GRANT EXECUTE ON FUNCTION core.test_provider(text)                                     TO authenticated;
