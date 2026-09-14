@@ -56,6 +56,10 @@ import type {
   PipelineConfig,
   PipelineObject,
   Policy,
+  PortalAcceptRequest,
+  PortalAcceptResponse,
+  PortalCommentRequest,
+  PortalProposal,
   Programme,
   ProgrammeDelivery,
   Proposal,
@@ -529,6 +533,9 @@ export const RPC_NAMES = {
     "reveal_provider",
     "delete_provider",
   ],
+  /* 028 · the three functions `anon` may call. The token is their only
+     argument that authorises anything; see 028's header. */
+  publicToken: ["get_portal_proposal", "add_portal_comment", "accept_portal_proposal"],
 } as const;
 
 /**
@@ -1137,6 +1144,35 @@ export class SupabaseRpcClient implements TrainOsClient {
 
   listBudgets(): Promise<Result<ListResponse<Budget>>> {
     return this.view<Budget>(VIEW_READS.aiBudgets);
+  }
+
+  /**
+   * §11 the client portal, `/p/:token`, signed out.
+   *
+   * The token is the credential and the ONLY thing sent besides the body: no
+   * tenant, no proposal id. Whatever session the browser happens to hold is
+   * irrelevant to the answer (028 never reads the JWT). Every bad link — unknown,
+   * expired, revoked, withdrawn — is one `NOT_FOUND`, so the page cannot tell
+   * them apart and neither can someone guessing.
+   */
+  getPortalProposal(token: string): Promise<Result<PortalProposal>> {
+    return this.call<PortalProposal>("get_portal_proposal", { p_token: token });
+  }
+
+  addPortalComment(token: string, body: PortalCommentRequest): Promise<Result<PortalProposal>> {
+    return this.call<PortalProposal>("add_portal_comment", { p_token: token, p_body: body });
+  }
+
+  /**
+   * §11 idempotent BY PROPOSAL on the server: a second accept returns the
+   * original acceptance whatever name it carries. So no key travels — the
+   * portal's `idempotencyKey: token` is already what the database keys on.
+   */
+  acceptPortal(token: string, body: PortalAcceptRequest): Promise<Result<PortalAcceptResponse>> {
+    return this.call<PortalAcceptResponse>("accept_portal_proposal", {
+      p_token: token,
+      p_body: body,
+    });
   }
 
   /* ---------------------------------------------------------------- *

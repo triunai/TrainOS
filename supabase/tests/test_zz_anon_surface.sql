@@ -26,16 +26,20 @@
 -- way, once the migrations actually apply.
 --
 -- T1  anon holds EXECUTE on ZERO functions in core, app or public, except an
---     explicit allowlist that starts EMPTY and is expected to gain exactly
---     the eventual client-portal endpoints (§16 in doc terms — the
---     unauthenticated proposal view and its siblings) the day they ship.
---     ⚠ WHEN 028 (client portal) LANDS: its (up to) three portal functions
---     become the first real entries. Add each one here, by its exact
---     `schema.function(args)` signature, with the SAME reason 028's own
---     migration gives for granting it — this file's allowlist is meant to
---     be read next to scripts/check-grants.mjs's `ANON_EXECUTE_ALLOWLIST`
---     (A1 there enforces textual parity between that list, the hardening
---     migration, and ITS own SQL test; this file is a SEPARATE, broader
+--     explicit allowlist: exactly the three client-portal endpoints 028
+--     grants (§16 in doc terms — the unauthenticated proposal view, its
+--     comment and its accept). T1b asserts the reverse: every allowlist
+--     entry exists and anon CAN execute it, so the list is exact, not a
+--     ceiling that could silently outlive the functions it names.
+--     028 LANDED these as the first real entries. Each is spelled exactly as
+--     scripts/check-grants.mjs's ANON_EXECUTE_ALLOWLIST spells it —
+--     `schema.function(argtypes)`, no spaces, no argument names — with the
+--     SAME reason 028's own migration gives for granting it (028's header,
+--     "WHY IT CANNOT BE REUSED" and "AUTHORIZATION"). This file's allowlist is
+--     meant to be read next to scripts/check-grants.mjs's
+--     `ANON_EXECUTE_ALLOWLIST` (A1 there enforces textual parity between that
+--     list, the migration that grants each entry, and that migration's own
+--     SQL pin, test_028; this file is a SEPARATE, broader
 --     sweep across every schema and is not itself party to A1 — keeping the
 --     two lists in the same shape, updated in the same commit, is a human
 --     discipline this header names rather than a mechanism that enforces it).
@@ -72,28 +76,50 @@ BEGIN
 END;
 $preflight$;
 
--- ── The allowlist. Empty today. See the header's note on what lands here
---    the day 028 (client portal) ships, and keep it in the same shape as
---    scripts/check-grants.mjs's ANON_EXECUTE_ALLOWLIST. ────────────────────
+-- ── The allowlist: 028's three client-portal RPCs, in the same shape as
+--    scripts/check-grants.mjs's ANON_EXECUTE_ALLOWLIST. Each takes a token
+--    and a body and nothing else; the token resolves to exactly one sent
+--    proposal through app._resolve_portal_token, which is granted to nobody.
+--    The signature is built from the schema, the name and the INPUT argument
+--    TYPES (pg_proc.proargtypes, spaces removed), never from
+--    pg_get_function_identity_arguments, which includes argument names and
+--    so could not match the check-grants spelling. ─────────────────────────
 DO $t1$
 DECLARE
-  v_allowlist text[] := ARRAY[]::text[];
+  v_allowlist text[] := ARRAY[
+    -- 028 · GET /v1/public/proposals/{token}: the client-safe PortalProposal.
+    'core.get_portal_proposal(text)',
+    -- 028 · POST …/comments: a plain-text comment, capped at 200 per proposal.
+    'core.add_portal_comment(text,jsonb)',
+    -- 028 · POST …/accept: idempotent by proposal; signature + engagement + event.
+    'core.accept_portal_proposal(text,jsonb)'
+  ]::text[];
   v_bad       text[];
+  v_missing   text[];
 BEGIN
-  SELECT pg_catalog.array_agg(
-           pg_catalog.format('%I.%I(%s)', n.nspname, p.proname,
-             pg_catalog.pg_get_function_identity_arguments(p.oid))
-           ORDER BY n.nspname, p.proname)
+  SELECT pg_catalog.array_agg(sig ORDER BY sig)
     INTO v_bad
-    FROM pg_catalog.pg_proc p
-    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname IN ('core', 'app', 'public')
-     AND pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
-     AND NOT (pg_catalog.format('%I.%I(%s)', n.nspname, p.proname,
-                pg_catalog.pg_get_function_identity_arguments(p.oid)) = ANY (v_allowlist));
+    FROM (SELECT n.nspname || '.' || p.proname || '(' ||
+                   pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes), ' ', '') || ')' AS sig,
+                 p.oid
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname IN ('core', 'app', 'public')) AS f
+   WHERE pg_catalog.has_function_privilege('anon', f.oid, 'EXECUTE')
+     AND NOT (f.sig = ANY (v_allowlist));
 
   PERFORM pg_temp.assert(v_bad IS NULL,
     pg_catalog.format('T1 anon holds EXECUTE on a function outside the allowlist: %s', v_bad));
+
+  -- T1b · the list is exact: every entry names a real function anon can call.
+  SELECT pg_catalog.array_agg(entry ORDER BY entry)
+    INTO v_missing
+    FROM pg_catalog.unnest(v_allowlist) AS entry
+   WHERE pg_catalog.to_regprocedure(entry) IS NULL
+      OR NOT pg_catalog.has_function_privilege('anon', pg_catalog.to_regprocedure(entry), 'EXECUTE');
+
+  PERFORM pg_temp.assert(v_missing IS NULL AND pg_catalog.cardinality(v_allowlist) = 3,
+    pg_catalog.format('T1b every allowlist entry exists and anon executes it (missing or ungranted: %s)', v_missing));
 END;
 $t1$;
 

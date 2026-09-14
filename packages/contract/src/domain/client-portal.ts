@@ -42,7 +42,13 @@ export interface PortalSection {
 export interface PortalVendorContact {
   name: string;
   role: string;
-  email: string;
+  /**
+   * The provider's business contact address, or `null` when it has none.
+   * Never a staff member's own sign-in address: the portal is read by anyone
+   * holding the link (migration 028, "vendorContact.email IS NEVER A STAFF
+   * ADDRESS").
+   */
+  email: string | null;
   phone: string;
 }
 

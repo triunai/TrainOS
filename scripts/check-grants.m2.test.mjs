@@ -99,16 +99,30 @@ $fn$;
 
 const emptyTests = mkdtempSync(join(tmpdir(), "check-grants-m2-tests-"));
 
+// A fixture tree carries none of the migrations that grant the real
+// ANON_EXECUTE_ALLOWLIST entries (028's portal RPCs), so A1 correctly reports
+// each entry as granted by no migration. That is A1 doing its job on a tree
+// it was never meant to bless, not an M2 outcome; "clean" for these fixtures
+// therefore means: no M2 finding, and every finding present is A1.
+function findingRules(out) {
+  return [...out.matchAll(/^ {2}([A-Z]\d+) {2}/gm)].map((m) => m[1]);
+}
+function cleanApartFromA1(result) {
+  const rules = findingRules(result.out);
+  if (result.code === 0) return rules.length === 0;
+  return result.code === 1 && rules.length > 0 && rules.every((rule) => rule === "A1");
+}
+
 const bad = runAgainst(badDir, emptyTests);
 assert(bad.code === 1, "fixture 1 (031, no REVOKE): script exits 1 (findings)");
 assert(bad.out.includes("M2") && bad.out.includes("leaky_helper"), "fixture 1: finding names M2 and app.leaky_helper");
 
 const good = runAgainst(goodDir, emptyTests);
-assert(good.code === 0, "fixture 2 (031, matching REVOKE): script exits 0 (clean)");
+assert(cleanApartFromA1(good), "fixture 2 (031, matching REVOKE): no M2 finding (clean apart from A1 allowlist parity)");
 assert(!good.out.includes("safe_helper"), "fixture 2: safe_helper is not flagged");
 
 const grandfathered = runAgainst(grandfatheredDir, emptyTests);
-assert(grandfathered.code === 0, "fixture 3 (011, no REVOKE, below M2_FROM_PACK): script exits 0 (grandfathered)");
+assert(cleanApartFromA1(grandfathered), "fixture 3 (011, no REVOKE, below M2_FROM_PACK): no M2 finding (grandfathered; clean apart from A1)");
 assert(!grandfathered.out.includes("legacy_helper"), "fixture 3: legacy_helper is not flagged (grandfathered)");
 
 for (const dir of [badDir, goodDir, grandfatheredDir, emptyTests]) {

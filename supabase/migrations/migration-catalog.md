@@ -417,6 +417,7 @@ Nothing in this set is applied anywhere, so these are amendments to the files, n
 | 024 | `024_training_delivery.sql` | **Training delivery: the seven §8/§6 client methods the gap matrix marks NO-ADAPTER — `listEngagements`, `getEngagement`, `getEngagementParticipants`, `getAttendance`, `captureAttendance`, `exportAttendance`, `putProgramme` (2026-09-14).** Seven new `core` RPCs, no DDL. Depends only on 001–021. Every function copies 018/021's pattern: `SECURITY DEFINER`, `SET search_path = ''`, the permission gate first, reads through `app.err`/writes through `RAISE TRNOS`, list/get pairs on 018's keyset helpers, writers returning through their sibling reader. `list_engagements`/`get_engagement_participants` gate on `engagement:read`/`participant:read`; `get_attendance` on `attendance:read`; `capture_attendance` on `attendance:capture`; `export_attendance` on `attendance:export`; `put_programme` on `programme:write` (ADMIN only per 002 §11). **`v_trainers`/`v_programmes`/`v_programme_deliveries` already existed** (020) — the gap-matrix audit predates that migration; verified by grep before writing, left untouched. **`getProgrammeDeliveries` fixed in the same commit**: its `rpcClient.ts` adapter matched a route REF against the view's uuid `programme_id` column; now resolves through `get_programme`'s id-or-ref lookup first, the same fix `getOrganisationRelations` already carries. `get_engagement` drops (not zeroes) `finance` for a caller without `quotation:read` (018's R7 ruling for `get_proposal`, carried over). `capture_attendance` defaults an unreasoned absence to `OTHER` to satisfy 008's `ae_absent_needs_reason` CHECK, which the fixture client does not enforce. `put_programme` writes the record's own scalar fields only — `programme_pricing_tiers.floor_price_sen` is NOT NULL and the contract's `PricingTier` carries no floor, so the four child arrays are left untouched and flagged as a decision to confirm. Scope-narrowing (○ in 002 §11) is not applied, same posture as 018/021. |
 | 030 | `030_me_profile_session_null.sql` | **`core.me_profile()`'s `session` block never leaks a null required field (2026-09-14).** `CREATE OR REPLACE` of 022's function only — one `IF` added: `v_has_session` now also goes `false` when `auth.users.last_sign_in_at` exists but its VALUE is null (022 only guarded the column-ABSENT case, via `EXCEPTION WHEN undefined_column`), closing a defect where a populated `session` object could carry `lastSignInAt: null` — found by running `test_022`'s own `T1j` against hosted, where it failed. A real, signed-in caller is unaffected (GoTrue always stamps `last_sign_in_at` on a real sign-in). Pin `test_030`: three cases branched structurally on the column's presence — absent (null as a whole, unchanged), present+null (null as a whole, the fix), present+set (full object, exact 5 keys, real value) — verified against both the unmodified shim and a locally-extended hosted-shaped copy. `test_022`'s own fixture gained a matching `UPDATE` so its T1 principal exercises the real-value branch instead of tripping the defect this migration closes. Rollback restores 022's original body verbatim. `test_001`–`test_022` unmodified and still green. `lint:sql` 74/74, `check:grants`/`check:rpc` clean. |
 | 029 | `029_byok_provider_keys_vault.sql` | **BYOK provider keys through SQL RPCs and Supabase Vault, superseding 013's Edge-Function design (2026-09-14, user ruling 19:07: no Edge Functions).** Six `core` RPCs for authenticated ADMINs (`create_provider`, `test_provider`, `get_provider_test_result`, `rotate_provider`, `reveal_provider`, `delete_provider`), one service_role accessor (`app.provider_key_for_tenant(uuid,text)`, the signature `apps/worker/src/keys.ts` already calls), eleven internal `app.provider_key_*` helpers, two `app` tables (`provider_key_salts`, `provider_key_probes`). The raw key goes to `vault.create_secret` only; `core.ai_provider_keys` gets the Vault id, `app.mask_key` and a per-tenant HMAC fingerprint. Test is pg_net async plus a result collector. Reveal is ADMIN + `app.aal2_verified()` + audit first + 3/actor/hour + 1/key/24h. Requires supabase_vault and pg_net (§0 refuses otherwise). 013's five `public.ai_provider_key_*` stay, unreachable. |
+| 028 | `028_client_portal.sql` | **The client portal behind `/p/:token`, and the only functions `anon` may call (2026-09-14).** Three `SECURITY DEFINER` RPCs in `core`: `get_portal_proposal(p_token)`, `add_portal_comment(p_token, p_body)`, `accept_portal_proposal(p_token, p_body)`, granted to `anon` and `authenticated`. Five ungranted internals in `app`: `portal_token_hash`, `issue_portal_token`, `_resolve_portal_token`, `_portal_proposal`, `_portal_text`. **The token is the only credential.** It is `tk_pt_` + base64url(`gen_random_bytes(32)`), and only its SHA-256 is stored, in 007's globally unique `token_hash`, looked up by index. It resolves only when the PROPOSAL link is unrevoked and unexpired, its tenant is ACTIVE and its proposal is SENT, VIEWED or ACCEPTED. The tenant comes from the token, never the JWT. Every failure is one identical `NOT_FOUND`. The projection is the contract's `PortalProposal` only: no quotation, cost, floor, margin, commission, provenance, review flag or levy balance. Comments are plain text, capped at 200 per proposal. Accept is idempotent by proposal: one CLICKWRAP signature, a PROPOSED engagement, the acceptance, ACCEPTED and one `ProposalAccepted` event with a CLIENT actor. **Accept deliberately does not use `app.perform_action`.** It adds no action type and no CLIENT permission, so 011/021's CLIENT fail-closed is untouched (the header argues it). The edges it walks are 011's ungated ones, still judged by 011's state triggers. `GRANT USAGE ON SCHEMA core TO anon` reverses 014:941; `$verify$` measures that anon executes exactly these three functions and holds no relation privilege in `app`/`core`/`public`. `scripts/check-grants.mjs` gains its first three allowlist entries, and A1 checks them against the granting migration and its pin; `tests/test_zz_anon_surface.sql` allowlists the same three. **`vendorContact.email` is the tenant's tax-profile `contact_email` or null, never a staff sign-in address** (security fix; `$verify$` V7, pin T8). No table, no enum. |
 | 026 | `026_finance_receivables.sql` | **The finance client RPC surface over 010: invoices, receivables aging, the collections queue and draft, and commissions (2026-09-14).** Six new `core` RPCs (`list_invoices`, `get_invoice`, `get_receivables_aging`, `get_collections_queue`, `get_collection_draft`, `list_commissions`) and two `app` internals (`_invoice_json`, `_receivables_aging_json`); no existing 001-021 object touched. **HELD:** `recordPayment` — 011 already gates `PAYMENT_RECORD` behind AAL2 and a conditional approval (FIN-06) that a new RPC must not weaken, and what it should hand back on the `QUEUED_FOR_APPROVAL` branch (the client type says `Invoice` always) is unsettled in the contract/fixtures; escalated NEEDS OPUS rather than guessed. **Two confirmed gaps closed, evidenced by grep**: `core.aging_buckets`/`core.collection_rules` were never seeded by 001-021 despite 010's own header saying 016 would (§1 backfills the 7/30/45/60/75 ladder for every tenant that exists at apply time), and `core.outbound_messages.invoice_id` carried an "FK added by 010" comment 010 never fulfilled (§2 adds it). **`core.quotations.invoice_id` observed with the same dead comment and NOT touched** — `list_commissions` links an invoice to a deal through `core.invoices.engagement_id` instead, which `INVOICE_CREATE`'s payload does set. `list_invoices`/`list_commissions`/`get_collections_queue` are deliberately single-page (`page.next` always null) — a documented scope reduction, not a silent one. `dsoDays` is an outstanding-weighted average age of open receivables, not an agreed DSO formula (010 says one does not exist yet) — flagged as a decision to confirm, `get_rate_card`-style. `FixtureCommission` has no contract type (matrix §b2); `client.ts` types it `unknown` (E3 only allows contract-sourced return types) and `apiClient.ts` narrows it once, the one place per E2's no-double-cast rule. Web: `client.ts`/`rpcClient.ts`/`apiClient.ts` gain the six adapters; one pre-existing test (`errorDetails.test.tsx`) that used `listInvoices` as its NOT_DEPLOYED example now uses the still-held `recordPayment`. Seed: `hosted_demo_finance.sql` walks two of the base seed's DRAFT quotations (`quo:aurora`, `quo:meridian`) through `QUOTATION_APPLY` → engagement → `INVOICE_CREATE`/`INVOICE_PUSH` → (Aurora only) `PAYMENT_RECORD`, and one collections case for Meridian at `REMINDER_2` — every gated write opened/closed through `app.effect_applier` directly (the same mechanism `app.apply_effects` uses for a real approved action; the base seed's own "Pending approvals" section does the equivalent one level up, by hand, for the same reason: no FINANCE-role member exists to self-authorise through, only three MDs). Executed end-to-end against a shim replica of hosted's real provisioning (`app.provision_tenant` + the three real MD ids) — not merely applied: `list_invoices`/`get_receivables_aging`/`get_collections_queue`/`get_collection_draft`/`list_commissions` all read back correct money and shape as an impersonated real MD. Wipe voids both invoices' analogue where legal (Meridian) and leaves Aurora's alone — `PARTIALLY_PAID → VOID` has no edge in 011's registry once a payment lands, found by running the wipe, not by reading the schema. **⚠ Review-fix pass (2026-09-14, PR #56):** `list_commissions` now honours `p_sort` (asc/desc, decides which rows survive the page LIMIT, not just display order) and `page.total` is a genuinely unbounded count computed before the page LIMIT, not the count of the returned page. Seeded `core.action_requests` rows in `hosted_demo_finance.sql` are now explicitly marked `ref = 'seed:hosted-demo:<type>:<target_id>'` and kept permanently through the wipe (never deleted) as the domain's audit trail, alongside the append-only seeded payment; `demo_act` uses `ON CONFLICT ... DO UPDATE` so a wipe/reseed cycle reopens the same permanent row rather than colliding on the frozen `ref`. `recordPayment` remains HELD/NEEDS OPUS — not attempted in this pass. |
 | 025 | `025_hrdc_compliance.sql` | **The six compliance/HRD Corp RPCs the web calls with no adapter and no SQL: `getComplianceChecks`, `getClaimPacket`, `attachPacketDocument`, `exportClaimPacket`, `createComplianceRule`, `getRuleChangeSet` (2026-09-14).** Six new `core` functions, two `app` provisioning functions with a tenant trigger and one `app.tenant_seed_checks` row, no table, no enum value, no 002 permission added (all six already exist in the matrix). No 001–021 function replaced. **`core.hrdc_document_types` was never seeded**: `core.hrdc_packet_documents.document_type` FK's to it and no migration through 021 ever inserted a row, so `attachPacketDocument` would foreign-key-violate on every call. Provisioned the way 016/017 provision `ref_formats`/`check_keys` — seed function, `AFTER INSERT` trigger on `public.tenants`, registered in `app.tenant_seed_checks`, backfilled. **No compliance rule could ever resolve ACTIVE**: 009:298's `cr_active_needs_verification` and 011's `enforce_state_transition` gate `PROPOSED -> ACTIVE` behind `RULE_CHANGE_APPROVE`, but 011's own `execute_in_database_action` for that action type updates `core.rule_changes` only, never the `compliance_rules` row a change targets — a real gap in 011, out of reach here. Not fixed in SQL (001–021 not edited); the compliance demo seed (`hosted_demo_compliance.sql`) verifies 017's three national rules over the LEGAL `RULE_CHANGE_APPROVE` path instead, the same mechanism `test_009`'s own `pg_temp.activate_rule` fixture helper uses. **Reads are `app.ok`/`app.err`, writes RAISE `TRNOS`** (`attachPacketDocument`, `createComplianceRule`), both with an optional `p_idempotency_key` in `core.put_quotation`'s shape — advisory lock, `app.idempotency_keys`, same-body replay, `IDEMPOTENT_REPLAY` on a different body. **`createComplianceRule` is tenant-scoped, never national** (009's own documented rule: a national write is a `service_role` provisioning act). ⚠ **`compliance:rule:write` is FINANCE/ADMIN only, not MD** — 002's existing matrix, unchanged here since widening it means editing 002; the "Add rule" screen will FORBID an MD tester. ⚠ **Amends one prior pin in place**: `test_009` T6b's own `hrdc_document_types` fixture INSERT is now `ON CONFLICT DO NOTHING`, since 025's provisioning trigger already seeds the row on a 001-021-plus-025 build (passes either way). Pin `test_025`: nine cases including a teeth check (removing MD's `hrdc:read` mid-transaction FORBIDS `getClaimPacket`, restoring it restores access). Seed `hosted_demo_compliance.sql` (+ wipe): verifies three national rules ACTIVE, creates three minimal engagements (no engagements exist in the base demo seed or any lane merged at authoring time), three claim packets across DRAFT/READY/SUBMITTED, four compliance check results with one version-drift row, and one rule-change set. Web: `apiClient.ts`/`rpcClient.ts`/`client.ts`, same commit, plus `conformance.compliance.test.ts` (15 cases, fixture-vs-RPC parity and not-deployed degradation). |
 | 023 | `023_sales_directory.sql` | **The sales directory: organisation search, opportunity and TNA lists, cross-sell suggestions, and reopening a completed TNA (2026-09-14).** Five NEW `core` RPCs — no existing function, view, table or grant touched, so the rollback is five plain drops. `search_organisations`, `list_opportunities` and `list_tnas` project each row through the existing `get_organisation`/`get_opportunity`/`get_tna` (021) rather than a second shape; `list_opportunities`/`list_tnas` copy `list_proposals`' (021) filter/sort/keyset engine byte-for-byte over their own table. `get_organisation_suggestions` reads the `core.organisation_suggestions` table 005 already built (FK closed by 006) and had never been read; `actions` is derived from the contract's one `SuggestionType` value rather than stored, and `provenance` floors to `{origin:"SYSTEM"}` when no row exists, matching `get_tna_recommendations`'s (021) own fallback. `reopen_tna` is a direct write in `patch_enquiry_extraction`'s (021) shape, not routed through the 011 action envelope (flagged in the PR): `002`'s `tna:reopen` permission, `core.tnas.reopened_at` (005, unused before this), and the TNA detail page's own copy ("reopen a completed TNA") agree the legal transition is COMPLETE → REOPENED only; an already-REOPENED row is a no-op success rather than a refusal. **Found by executing, not by reading**: `list_proposals` (021) offers `value` as a sort field over `app._keyset_scope`/`app._next_cursor` (018), whose page-boundary pair is fixed `timestamptz` — sorting by a `bigint` column breaks on the first non-empty page (`date/time field value out of range`, reproduced directly against the shim). `list_opportunities` does not repeat the mistake: `value` stays filterable and is off its sort whitelist. 021 is not touched. Teeth-checked: disabling `reopen_tna`'s gate makes `test_023` fail, confirming the pin actually enforces it. |
@@ -1052,7 +1053,7 @@ applied → rolled back (verified `app._body_sql` no longer contains the added `
 
 ## Migration Detail — 029 (`029_byok_provider_keys_vault.sql`)
 
-**Status:** authored, not applied. **Depends on:** 001–021 only, plus the platform extensions supabase_vault (hosted 0.3.1) and pg_net (hosted 0.20.4). **Rollback:** `rollbacks/029_byok_provider_keys_vault_rollback.sql`. **Pin:** `tests/test_029_byok_provider_keys_vault.sql` (62 PASS, ends ROLLBACK; the pin, not the migration, also needs 027).
+**Status:** APPLIED to hosted 2026-09-14. **Depends on:** 001–021 only, plus the platform extensions supabase_vault (hosted 0.3.1) and pg_net (hosted 0.20.4). **Rollback:** `rollbacks/029_byok_provider_keys_vault_rollback.sql`. **Pin:** `tests/test_029_byok_provider_keys_vault.sql` (62 PASS, ends ROLLBACK; the pin, not the migration, also needs 027).
 
 **Why.** 013 built the key path around an Edge Function that would hold the raw key and call `public.ai_provider_key_*` with only a mask, fingerprint and locator (013:150-210, 013:2375-2758). That function never existed, and the 2026-09-14 ruling is that none will. 029 moves the secret into Vault through SQL RPCs.
 
@@ -1080,6 +1081,154 @@ All `ai:provider:*` permissions are ADMIN-only in 002:1134-1139; MD holds none, 
 **Follow-ups applied 2026-09-14.** OPENROUTER and OTHER added to `core.ai_provider` (rollback leaves both labels; `test_003` amended to six), with `core.ai_provider_keys.base_url` required for OTHER. The five key-carrying functions carry `statement_timeout = 5s` and `lock_timeout = 2s` (V8), because hosted auto_explain logs statements over 10 s with full parameters; measured on the shim, only `lock_timeout` cancels from inside a function.
 
 **Landed onto main 2026-09-14 (PR #58, merge of 52048dc).** Re-checked against 023–027 and 030–035 as merged. 029 still depends on 001–021 only and redefines nothing of 027's. 027's `core.list_providers` already filters `key_ref NOT LIKE 'retired:%'` and emits `addedBy` as `{id, name, at}`, so both open items from 029's PR checklist are closed on main. One disagreement was found and fixed in 029: `app.provider_key_json` returned `spendMonth` as a constant 0, while 027 sums this period's TIER-scope `app.usage_rollup` rows for the key's `scope_tiers`, so a created or rotated record could differ from its listed row. 029 now uses 027's calculation. New pins: T2i checks that each created record equals its `list_providers` row, with seeded rollup spend; it fails on the pre-fix 029. T10f checks that `list_providers` leaves out the tombstoned key and the hard-deleted key. Rule M2 (`check-grants.mjs`) exempts packs below 31, so 029 was exempt. Its per-function REVOKEs ran inside a dynamic `DO` loop that the static check cannot read, and would have raised 18 M2 findings with the cutoff at 29. §5 now adds a literal `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` for each of the 18 functions. The dynamic loop stays only for 013's five `public.ai_provider_key_*` functions. The runtime EXECUTE matrix is unchanged ($verify$ V4, pin T1a). Shim proof: the hosted-like preamble, 001–027 and 030–035 as `hc_mig`, then 029 last; `test_029` and `test_zz_anon_surface` pass. Rolling back on that build leaves the function catalog, grants and columns identical to a no-029 build. The only residue is the two documented enum labels.
+
+## Migration Detail — 028 (`028_client_portal.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim (every
+migration and pin run as a NOSUPERUSER BYPASSRLS role), NOT APPLIED to any hosted database.
+Depends on 001–021 only. Re-executed after merging main (001–027 + 030–035 applied first, then 028):
+applies clean, pins T1–T8 pass.**
+
+### What it does
+
+| § | Object | Grant | Purpose |
+|---|---|---|---|
+| 1 | `app.portal_token_hash(text)` | nobody | SHA-256 of the UTF-8 token: the one definition minting and resolving share |
+| 1 | `app.issue_portal_token(uuid,uuid,interval)` | nobody | mints `tk_pt_`+43 base64url chars for a SENT/VIEWED/ACCEPTED proposal, stores the hash, RETURNS the raw token once; TTL (0, 90 days], default 30 |
+| 2 | `app._resolve_portal_token(text)` | nobody | the one credential check: shape regex, hash lookup, `PROPOSAL`, unrevoked, unexpired, tenant ACTIVE, proposal SENT/VIEWED/ACCEPTED; no row for every failure |
+| 3 | `app._portal_proposal(uuid,uuid)` | nobody | the `PortalProposal` projection |
+| 4 | `app._portal_text(jsonb,text,int,bool)` | nobody | body-field rule: string, 1..max chars after trimming whitespace, no control characters |
+| 5 | `core.get_portal_proposal(p_token text)` | anon, authenticated | `app.ok(PortalProposal)` or `app.err('NOT_FOUND')`; records `last_accessed_at`/`access_count` on the token |
+| 5 | `core.add_portal_comment(p_token text, p_body jsonb)` | anon, authenticated | `{author ≤120, body ≤4000}` → `app.ok(PortalProposal)`; 201st comment `COMMENT_LIMIT_REACHED` |
+| 5 | `core.accept_portal_proposal(p_token text, p_body jsonb)` | anon, authenticated | `{name ≤120, role ≤120}` → `app.ok({engagementRef, acceptedAt, signatureRef})`, idempotent by proposal |
+| 6 | schema `core` | USAGE to anon | PostgREST resolves the function as the request's role (014:941 had revoked it) |
+
+All eight: `SECURITY DEFINER` where they read tables, `search_path=""`, `statement_timeout=10s` on
+the three RPCs (test_018 T20e's value), one definition each, no tenant argument. Refusals: the read
+returns `app.err('NOT_FOUND')` with no details. The writes raise TRNOS `{"code":"NOT_FOUND"}` with
+the fixed message `portal link not found`, or `VALIDATION_FAILED` with `fields`/`reason`
+(`COMMENT_LIMIT_REACHED`, `NOT_ACCEPTABLE`, `PROPOSAL_HAS_NO_PROGRAMME`, `OPPORTUNITY_HAS_NO_OWNER`,
+`NO_ENGAGEMENT_PIPELINE`). The body is validated only after the token.
+
+**Decisions a reviewer should check** (argued in the forward header):
+- Accept bypasses `app.perform_action`, adds no action type and seeds no CLIENT permission. Forging
+  CLIENT claims or seeding `portal:*` for CLIENT would weaken 011/021, because a tenant ADMIN can mint
+  CLIENT members who could then accept any proposal with no token. The edges walked
+  (SENT/VIEWED→ACCEPTED, NULL→PROPOSED) are ungated in 011's registry and still validated by its
+  triggers. `$verify$` V4/V5 assert both.
+- No database rate limit: at 256 bits a guess cannot succeed, and a per-guess write would be a
+  cheaper DoS than the guessing.
+- The tenant comes from the token. A JWT for any tenant reads the same answer as anon.
+- `levyAvailable` is omitted, because a link can be forwarded. `vendorContact.phone` is `''`, because
+  no column holds a staff phone. `role` uses the web's `ROLE_LABEL` wording.
+- **`vendorContact.email` is never a staff sign-in address (security fix, 2026-09-14).** It was the
+  opportunity owner's `user_profiles.email` — a staff login — returned to anyone holding a link. It is
+  now `core.tenant_tax_profiles.contact_email` (010's supplier identity, `UNIQUE (tenant_id)`), trimmed,
+  or JSON `null` when the tenant has no tax profile, left it blank, or typed a member's own profile
+  email or `auth.users` sign-in email there (compared with `lower()`: under `search_path ''` citext's `=` resolves to case-sensitive
+  `text = text`, which the pin caught). `@trainos/contract`'s `PortalVendorContact.email` is
+  `string | null` to match. The supplier contact is the closest existing per-tenant business address,
+  not a designed public one: a product-level public contact address is still to decide.
+- A read does not move SENT→VIEWED (the contract does not ask for it). The token's access
+  bookkeeping is recorded.
+- The link is not revoked on accept (contract §16 Q6 is open), so the client can reopen the signed page.
+
+`$verify$`: V1 anon's whole surface: EXECUTE on exactly three `core` functions and none in
+`app`/`public`; no table, view, sequence or column privilege in the three schemas. V2 each RPC's
+posture and grants. V3 internals ungranted with the empty path. V4 CLIENT holds no role
+permission. V5 the three ungated edges exist. V6 the global `token_hash` unique exists. V7 the
+projection reads no person's `.email` and takes `vendorContact.email` from the tax-profile expression,
+and `tenant_tax_profiles` is still `UNIQUE (tenant_id)`.
+
+### The 7-point RPC contract check, worked
+
+In the forward header. Client: `apps/web/src/features/portal/api.ts` → `apiClient.ts` adapters →
+`rpcClient.ts` `getPortalProposal`/`addPortalComment`/`acceptPortalProposal`, return types from
+`@trainos/contract` (`PortalProposal`, `PortalAcceptResponse`). New error details only inside
+`error`/`DETAIL`; no new top-level key.
+
+### Pin — `tests/test_028_client_portal.sql`
+
+The fixtures are three tenants (one suspended), and every proposal reaches SENT through a real
+`PROPOSAL_SEND` approved by the other MD. T1: anon reads exactly the `PortalProposal` keys, no
+internal key or pricing value, and one access is recorded. T2: eleven invalid links × read/comment/accept give one
+byte-identical `NOT_FOUND` and write nothing: unknown, malformed, empty, NULL, a proposal uuid, a
+proposal ref, revoked, expired, DRAFT, LOST and a suspended tenant. T3: a tenant-A JWT reads tenant B's link exactly as
+anon does, a tenant-B JWT does not revive a revoked link, and no link is minted for a DRAFT or across tenants. T4:
+HTML round-trips literally, seven malformed bodies name their fields, and the 201st comment is refused. T5: accept
+writes one signature, engagement, acceptance and event. A second accept under another name and JWT is
+byte-identical and writes nothing. T6: accept on an expired or revoked link is `NOT_FOUND` and changes
+nothing. T7: fifteen other functions and tables refuse anon with 42501, and a CLIENT member is FORBIDDEN on
+`perform_action`. T8: eleven portal responses (anon and authenticated reads, the comment, both accepts,
+four tax-profile states) contain none of the nine fixture person emails from `user_profiles` or
+`auth.users`; `vendorContact.email` is null with no tax profile, a blank one, a member's profile
+address typed in, or a profile-less member's sign-in address typed in, and the trimmed supplier
+contact otherwise. **Mutation-tested**, each red: expiry predicate removed (T2a), `marginRate` added
+to the projection (T1b), replay branch removed (T5), whitespace trim reverted (T4b), comment cap
+lifted (T4c), tenant-status predicate removed (T2a), DRAFT/LOST made visible (T2a), token echoed in
+NOT_FOUND details (T2a); owner profile email restored (T1e, and V7 refuses the migration), member-address
+exclusion removed, compared with citext `=`, or either its profile or its `auth.users` arm dropped (T8a),
+an owner-name fallback for a missing contact (T1e).
+`$verify$` refuses the migration when anon is granted
+`app._portal_proposal` (V1) or a column of `core.public_share_tokens` (V1).
+
+**Re-verified against 031–035 after merging main.** Every pin still passes on 001–027 + 030–035 + 028,
+with the same four pre-existing refusals as on that set without 028 (test_002 T3a grant count, test_018 T0,
+and the two situational pins). `tests/test_zz_anon_surface.sql` (from main) now allowlists exactly the
+three RPCs, spelled as `ANON_EXECUTE_ALLOWLIST`, and its T1b asserts all three exist and are granted.
+- **033**: every table the portal reads or writes is `ENABLE` + `FORCE ROW LEVEL SECURITY` (since
+  002/finalise_table, not new in 033). The RPCs are `SECURITY DEFINER` owned by the migrating role,
+  and it is `BYPASSRLS` that exempts them, not table ownership. 033's permission-gated policies apply
+  to `authenticated` callers and never to the definer body. T1/T5/T8 pass after 033. On hosted this
+  rests on `postgres` being `BYPASSRLS`, the same assumption every definer RPC from 018 on already rests on.
+- **011 triggers after 031/032/033**: accept's signature, PROPOSED engagement, acceptance, SENT→ACCEPTED
+  and `ProposalAccepted` all write and are judged by 011's state gates (T5, and the seed pin's T4).
+- **032** replaces `app.decide_approval` only (a target lock before the diff-hash recompute) and
+  re-seeds opportunity stage policy. Accept never calls `decide_approval` or `perform_action`, and
+  only resolves SENT/VIEWED/ACCEPTED proposals, which a PROPOSAL_SEND approval cannot target. The
+  header's reasons for not using `perform_action` still hold. The fixtures' sends go through 032's
+  `decide_approval` and still pass.
+- **031** locks `memberships.actor_kind`; the portal writes no membership. **034/035** replace dashboard
+  and follow-up RPCs the portal does not call.
+
+Every prior pin passes on 001–021 + 028, and again on 001–022 + 028 after 022 merged; the two
+situational pins still refuse at SETUP by design, as on the baseline. None was amended. The seed pin,
+and `test_hosted_demo.sql` after it, pass on 001–022 + 028 with the three MDs provisioned.
+
+### Rollback — `rollbacks/028_client_portal_rollback.sql`
+
+The rollback revokes anon's `core` USAGE, then drops the three RPCs and five internals and verifies. Data the
+portal wrote to 004/007/008/012 tables is kept: those are business records, and the tokens are inert
+without the functions. Measured: the catalog snapshot, including schema ACLs and default ACLs, is
+identical to 001–021.
+
+### Demo data — `seeds/hosted_demo_portal.sql`
+
+The seed runs after `hosted_demo_akademi_perdana.sql`. It adds Aurora Precision Tooling's first proposal (contact on
+`.example`, opportunity, 4 sections, a priced quotation). `PROPOSAL_SEND` runs as codeshern (ADMIN on
+hosted; the precondition reads that the role holds `proposal:send`) and queues under APV-01. MD
+khumeren approves it with the diff hash, and it mints one 30-day link printed once as
+`portal_link`. Pin `seeds/test_hosted_demo_portal.sql` (T0–T6). Wipe
+`seeds/hosted_demo_portal_wipe.sql` runs before `hosted_demo_wipe.sql`.
+
+### ⚠ Carried risk and standing conditions
+
+- **The hosted project must expose `core` to PostgREST and allow anonymous calls.** rpcClient.ts
+  records PGRST106 on hosted at one point. Without `core` exposed, the portal reads `NOT_DEPLOYED`.
+- **No edge rate limit exists** for the three anon RPCs. Guessing is infeasible, but comment spam
+  with a leaked link is bounded only by the 200 cap.
+- **The send's email effect is queued (`SEND_EMAIL`) and left for the worker.** The demo contact is on
+  `.example`, so the email is undeliverable if drained.
+- **No staff RPC issues or revokes a link.** `portal:token:issue`/`revoke` exist in 002, but nothing calls
+  `app.issue_portal_token` except the seed.
+- **`vendorContact.email` needs a product-level public contact address.** Until then it is the
+  tenant's tax-profile `contact_email` or null. `vendorContact.name` is still the opportunity owner's
+  display name, which the link-holder sees.
+- **`hosted_demo_akademi_perdana.sql` still requires three MDs** (its precondition), but hosted has
+  khucode and codeshern as ADMIN and khumeren as MD. The portal seed accepts hosted's roles. The shim
+  proof ran the base seed from a scratch copy with only that check relaxed; the base seed file is unchanged.
+
+---
 
 ## Migration Detail — 023 (`023_sales_directory.sql`)
 
