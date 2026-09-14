@@ -15,7 +15,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { fixtureClient, resetStore } from "@trainos/fixtures";
 import { resetPrimaries } from "@/shared/components/kit";
-import { ApiErrorException, transportError } from "@/shared/api";
+import { ApiErrorException, transportError, ApiProvider } from "@/shared/api";
+import { createRpcApiClient } from "@/shared/api/apiClient";
+import { __setTransportForTests } from "@/shared/api/supabase";
+import { okEnvelope } from "@/shared/api/__tests__/oracleTransport";
+import { FIXTURE_ME, MeContext } from "@/shared/hooks/useMe";
 import { ExecutiveDashboard } from "../ExecutiveDashboard";
 import { DASHBOARD_PATH } from "../paths";
 
@@ -26,12 +30,14 @@ function renderDashboard() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
-        <Routes>
-          <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
-          <Route path="*" element={<div data-testid="elsewhere" />} />
-        </Routes>
-      </MemoryRouter>
+      <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
+        <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
+          <Routes>
+            <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
+            <Route path="*" element={<div data-testid="elsewhere" />} />
+          </Routes>
+        </MemoryRouter>
+      </MeContext.Provider>
     </QueryClientProvider>,
   );
 }
@@ -221,5 +227,221 @@ describe("M01-S01 executive dashboard · endpoints not deployed", () => {
 
     expect(await screen.findByText("Open pipeline")).toBeInTheDocument();
     expect(listApprovals).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `ADMIN_HOURS_SAVED` against the real Supabase-backed client, not the
+ * fixture oracle: the fixture always fills in a number (DECISIONS §4's
+ * illustrative baseline), so it can never exercise the `null` case
+ * `core.get_executive_dashboard` answers before anything measures a real
+ * baseline. Driven the way `notDeployed.render.test.tsx` drives its cases —
+ * `createRpcApiClient()` against a hand-built envelope — because this is
+ * about what the WIRE sends, not what the fixture invents.
+ */
+describe("a dashboard metric with no data source", () => {
+  afterEach(() => {
+    __setTransportForTests(null);
+  });
+
+  it("says 'Not available' rather than folding the missing figure into a zero", async () => {
+    const transport = {
+      rpc: (name: string) => {
+        if (name === "get_executive_dashboard") {
+          return Promise.resolve(
+            okEnvelope({
+              metrics: [{ key: "ADMIN_HOURS_SAVED", label: "Admin hours saved", value: null }],
+              approvalsPending: [],
+              agentActivity: [],
+              autonomyMix: [],
+              agentSpend: {
+                spent: { amount: 0, currency: "MYR" },
+                budget: { amount: 0, currency: "MYR" },
+              },
+            }),
+          );
+        }
+        if (name === "get_proposals_vs_won") {
+          return Promise.resolve(okEnvelope({ series: [] }));
+        }
+        return Promise.reject(new Error(`unexpected rpc: ${name}`));
+      },
+      from: () => {
+        throw new Error("ExecutiveDashboard does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
+          <ApiProvider client={createRpcApiClient()}>
+            <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
+              <Routes>
+                <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
+              </Routes>
+            </MemoryRouter>
+          </ApiProvider>
+        </MeContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Admin hours saved")).toBeInTheDocument();
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * `core.get_executive_dashboard(p_period text)` (022) rejects anything that
+ * is not exactly `YYYY-MM` — `p_period !~ '^\d{4}-(0[1-9]|1[0-2])$'` is
+ * `VALIDATION_FAILED`/`MUST_BE_YYYY_MM` — confirmed against hosted, where a
+ * non-conforming value (a bare `"MONTH"`, tried by hand outside this app) was
+ * refused. `ExecutiveDashboard.tsx`'s own `PERIOD` constant already conforms;
+ * this pins that on the wire, against the real Supabase-backed client, so a
+ * future edit to `PERIOD` or to how it is passed cannot drift from the
+ * server's regex without the recorded arg failing the same check.
+ */
+describe("the period the dashboard sends", () => {
+  afterEach(() => {
+    __setTransportForTests(null);
+  });
+
+  it("is YYYY-MM, matching core.get_executive_dashboard's own validation", async () => {
+    const recorded: { name: string; args: Record<string, unknown> }[] = [];
+    const empty = okEnvelope({
+      metrics: [],
+      approvalsPending: [],
+      agentActivity: [],
+      autonomyMix: [],
+      agentSpend: {
+        spent: { amount: 0, currency: "MYR" },
+        budget: { amount: 0, currency: "MYR" },
+      },
+    });
+
+    const transport = {
+      rpc: (name: string, args: Record<string, unknown>) => {
+        recorded.push({ name, args });
+        if (name === "get_executive_dashboard") return Promise.resolve(empty);
+        if (name === "get_proposals_vs_won") return Promise.resolve(okEnvelope({ series: [] }));
+        return Promise.reject(new Error(`unexpected rpc: ${name}`));
+      },
+      from: () => {
+        throw new Error("ExecutiveDashboard does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
+          <ApiProvider client={createRpcApiClient()}>
+            <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
+              <Routes>
+                <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
+              </Routes>
+            </MemoryRouter>
+          </ApiProvider>
+        </MeContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText(/Proposals sent vs won/);
+
+    const call = recorded.find((entry) => entry.name === "get_executive_dashboard");
+    expect(call).toBeDefined();
+    // Same regex 022's `core.get_executive_dashboard` validates `p_period`
+    // against — a value this fails is `VALIDATION_FAILED` on hosted.
+    expect(call?.args.p_period).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);
+  });
+});
+
+/**
+ * Fixtures mode reads the demo's fixed month regardless of when the demo is
+ * run — DECISIONS §4's illustrative data is dated to it. Supabase mode has no
+ * fixed story: a real tenant's dashboard is always "this month", so it asks
+ * for whatever month it currently is, in the signed-in holder's own timezone
+ * (the same convention `SidebarProfile.tsx`'s `formatSignIn` uses, not the
+ * browser's).
+ */
+describe("the period the dashboard reads", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    __setTransportForTests(null);
+  });
+
+  it("stays on the demo's fixed month over fixtures", async () => {
+    vi.stubEnv("VITE_API_MODE", "fixtures");
+    renderDashboard();
+
+    expect(await screen.findByText("November 2026")).toBeInTheDocument();
+  });
+
+  it("asks for the holder's current month against the real Supabase client", async () => {
+    vi.stubEnv("VITE_API_MODE", "supabase");
+    // Asia/Kuala_Lumpur has no DST, so a UTC morning is unambiguously the
+    // same calendar day and month there — March 2027, not February or April.
+    // `shouldAdvanceTime`: only `Date`/timers are faked, not the microtask
+    // queue React Query's and RTL's `findBy*` polling both run on.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2027-03-15T04:00:00Z"));
+
+    const recorded: { name: string; args: Record<string, unknown> }[] = [];
+    const empty = okEnvelope({
+      metrics: [],
+      approvalsPending: [],
+      agentActivity: [],
+      autonomyMix: [],
+      agentSpend: {
+        spent: { amount: 0, currency: "MYR" },
+        budget: { amount: 0, currency: "MYR" },
+      },
+    });
+    const transport = {
+      rpc: (name: string, args: Record<string, unknown>) => {
+        recorded.push({ name, args });
+        if (name === "get_executive_dashboard") return Promise.resolve(empty);
+        if (name === "get_proposals_vs_won") return Promise.resolve(okEnvelope({ series: [] }));
+        return Promise.reject(new Error(`unexpected rpc: ${name}`));
+      },
+      from: () => {
+        throw new Error("ExecutiveDashboard does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => undefined }}>
+          <ApiProvider client={createRpcApiClient()}>
+            <MemoryRouter initialEntries={[DASHBOARD_PATH]}>
+              <Routes>
+                <Route path={DASHBOARD_PATH} element={<ExecutiveDashboard />} />
+              </Routes>
+            </MemoryRouter>
+          </ApiProvider>
+        </MeContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("March 2027")).toBeInTheDocument();
+
+    const call = recorded.find((entry) => entry.name === "get_executive_dashboard");
+    expect(call?.args.p_period).toBe("2027-03");
+
+    vi.useRealTimers();
   });
 });

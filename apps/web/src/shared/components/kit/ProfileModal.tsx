@@ -41,10 +41,14 @@ export interface ProfileModalProps {
   roleLabel: string;
   /** "Akademi Perdana · Klang Valley". */
   orgAndLocation: string;
-  /** Already formatted: the pack writes "Last sign in 11-09-2026 08:04:22 AM". */
-  lastSignIn: string;
+  /**
+   * Already formatted: the pack writes "Last sign in 11-09-2026 08:04:22 AM".
+   * Omitted (both this and `session`) rather than drawn empty when the
+   * caller has no session to report.
+   */
+  lastSignIn?: string;
   /** "Chrome · Shah Alam, GMT+8". */
-  session: string;
+  session?: string;
   /** The build stamp, shown under the two account actions. */
   version: string;
   /**
@@ -179,8 +183,12 @@ export function ProfileModal({
             </div>
 
             <p className="pl-7 text-[14px] font-semibold text-ink">{orgAndLocation}</p>
-            <p className="pl-7 text-[13px] text-ink-muted">{lastSignIn}</p>
-            <p className="pl-7 text-[13px] italic text-ink-muted">{session}</p>
+            {lastSignIn !== undefined ? (
+              <p className="pl-7 text-[13px] text-ink-muted">{lastSignIn}</p>
+            ) : null}
+            {session !== undefined ? (
+              <p className="pl-7 text-[13px] italic text-ink-muted">{session}</p>
+            ) : null}
 
             <div className="mt-7 flex flex-col items-center gap-3.5 pl-7">
               <button
