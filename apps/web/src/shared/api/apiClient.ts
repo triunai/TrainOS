@@ -9,6 +9,7 @@ import type {
   EnquiryExtractionPatch,
   HrdcDocumentAttachRequest,
   KnowledgeSourceCreateRequest,
+  ListResponse,
   MessageChannel,
   PageRequest,
   Programme,
@@ -25,6 +26,7 @@ import {
   EventBus,
   paginate,
   type FixtureClient,
+  type FixtureCommission,
   type FixtureLibraryAsset,
   type FixtureTenant,
 } from "@trainos/fixtures";
@@ -290,6 +292,20 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
     getComplianceChecks: async (engagementRef: string) =>
       must(await rpc.getComplianceChecks(engagementRef)),
     getCollectionRules: async () => must(await rpc.listCollectionRules()),
+
+    /* 026 · finance receivables. `listCommissions` narrows the interface's
+       honest `unknown` (client.ts, E3) to the real fixture shape once, here —
+       one cast to `ListResponse<FixtureCommission>`, not the double cast
+       through `unknown` that E2 forbids in this folder. */
+    listInvoices: async (page?: PageRequest) => must(await rpc.listInvoices(page ?? {})),
+    getInvoice: async (id: string) => must(await rpc.getInvoice(id)),
+    getReceivablesAging: async () => must(await rpc.getReceivablesAging()),
+    getCollectionsQueue: async (page?: PageRequest) =>
+      must(await rpc.getCollectionsQueue(page ?? {})),
+    getCollectionDraft: async (invoiceRef: string) =>
+      must(await rpc.getCollectionDraft(invoiceRef)),
+    listCommissions: async (page?: PageRequest) =>
+      must(await rpc.listCommissions(page ?? {})) as ListResponse<FixtureCommission>,
     listComplianceRules: async (page?: PageRequest) =>
       paginate(must(await rpc.listComplianceRules()).data, page),
     getComplianceRule: async (id: string) => must(await rpc.getComplianceRule(id)),
