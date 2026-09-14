@@ -10,7 +10,9 @@ import type {
   BadgeCounts,
   Budget,
   ChannelConsent,
+  ClaimPacket,
   CollectionRule,
+  ComplianceChecksResponse,
   ComplianceRule,
   Contact,
   Enquiry,
@@ -21,6 +23,7 @@ import type {
   ErrorCode,
   ErrorDetails,
   HrdcDeadline,
+  HrdcPacketExport,
   KnowledgeSource,
   ListResponse,
   MessageChannel,
@@ -57,7 +60,9 @@ import { ERROR_STATUS } from "@trainos/contract";
 import type {
   ActionInput,
   BulkDecideInput,
+  ComplianceRuleCreateInput,
   DecideInput,
+  HrdcDocumentAttachInput,
   ProposalInput,
   QuotationInput,
   SectionInput,
@@ -451,6 +456,12 @@ export const RPC_NAMES = {
     "get_contact",
     "get_programme",
     "get_compliance_rule",
+    "get_claim_packet",
+    "get_compliance_checks",
+    "attach_packet_document",
+    "export_claim_packet",
+    "create_compliance_rule",
+    "get_rule_change_set",
   ],
 } as const;
 
@@ -881,6 +892,29 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.view<HrdcDeadline>(VIEW_READS.hrdcDeadlines);
   }
 
+  getClaimPacket(id: string): Promise<Result<ClaimPacket>> {
+    return this.call<ClaimPacket>("get_claim_packet", { p_id: id });
+  }
+
+  attachPacketDocument(id: string, input: HrdcDocumentAttachInput): Promise<Result<ClaimPacket>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<ClaimPacket>("attach_packet_document", {
+      p_id: id,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  exportClaimPacket(id: string): Promise<Result<HrdcPacketExport>> {
+    return this.call<HrdcPacketExport>("export_claim_packet", { p_id: id });
+  }
+
+  getComplianceChecks(engagementRef: string): Promise<Result<ComplianceChecksResponse>> {
+    return this.call<ComplianceChecksResponse>("get_compliance_checks", {
+      p_engagement_ref: engagementRef,
+    });
+  }
+
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>> {
     return this.view<CollectionRule>(VIEW_READS.collectionRules);
   }
@@ -893,8 +927,20 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<ComplianceRule>("get_compliance_rule", { p_id: id });
   }
 
+  createComplianceRule(input: ComplianceRuleCreateInput): Promise<Result<ComplianceRule>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<ComplianceRule>("create_compliance_rule", {
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
   listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>> {
     return this.view<RuleChangeSet>(VIEW_READS.ruleChanges);
+  }
+
+  getRuleChangeSet(documentId: string): Promise<Result<RuleChangeSet>> {
+    return this.call<RuleChangeSet>("get_rule_change_set", { p_document_id: documentId });
   }
 
   listEvals(): Promise<Result<ListResponse<AgentEval>>> {
