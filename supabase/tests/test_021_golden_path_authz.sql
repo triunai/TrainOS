@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- test_021 · Role authorization
+-- test_021 · Role authorization and OPPORTUNITY_STAGE_CHANGE
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Run against 001–021. Ends in ROLLBACK and writes nothing durable.
@@ -28,6 +28,15 @@
 -- T3b get_audit exactly as rpcClient.ts calls it, `aggregateTypeOf(segment)`:
 --     APPROVAL returns the approval's correlated trail (the same rows as
 --     `approvals`); ENQUIRIE and OPPORTUNITIE return their records' trails.
+-- T4  OPPORTUNITY_STAGE_CHANGE: a legal non-terminal move EXECUTES; a stale
+--     fromStage is STAGE_MOVED with currentStage; an unknown stage and a
+--     terminal move with no reason are VALIDATION_FAILED; an edge the registry
+--     lacks is ILLEGAL_STATE_TRANSITION; OPS is FORBIDDEN; a terminal move with
+--     a reason queues under OPP-01 without moving the deal; the manager's
+--     APPROVE moves it; an approved move whose deal moved meanwhile is refused
+--     STAGE_MOVED and the decision rolls back.
+-- T4b A tenant with ONLY MD users (akademi-perdana's shape): OPP-01 routes to
+--     the other MD, the requester cannot self-approve, the other MD approves.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -388,5 +397,265 @@ BEGIN
   RAISE NOTICE 'T3b PASS: get_audit answers what rpcClient.ts sends: APPROVAL (correlated trail, as approvals), ENQUIRIE and OPPORTUNITIE.';
 END
 $t3b$;
+
+-- ════════ T4 · OPPORTUNITY_STAGE_CHANGE (ruling R18) ════════
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_ok', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0001',
+  '{"stage":"QUALIFYING","fromStage":"NEW"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-1')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_stale', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0001',
+  '{"stage":"TNA_SENT","fromStage":"NEW"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-2')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_unknown', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0001',
+  '{"stage":"CLOSED_FOREVER","fromStage":"QUALIFYING"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-3')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_noreason', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0001',
+  '{"stage":"LOST","fromStage":"QUALIFYING"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-4')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_illegal', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0002',
+  '{"stage":"NEGOTIATION","fromStage":"NEW"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-5')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a4','a0210000-1111-4000-8000-000000000001','OPS'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_ops', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0002',
+  '{"stage":"QUALIFYING","fromStage":"NEW"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-6')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_lost', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0001',
+  '{"stage":"LOST","fromStage":"QUALIFYING","reason":"Budget withdrawn"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-7')$$)::text, true);
+RESET ROLE;
+
+-- Second terminal move, on OPP-0002, to be overtaken before it is approved.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a1','a0210000-1111-4000-8000-000000000001','SALES'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.move_lost2', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0002',
+  '{"stage":"LOST","fromStage":"NEW","reason":"No budget"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-move-8')$$)::text, true);
+RESET ROLE;
+
+DO $t4a$
+DECLARE v jsonb;
+BEGIN
+  IF pg_temp.got('move_ok') #>> '{value,data,status}' IS DISTINCT FROM 'EXECUTED'
+     OR (SELECT stage::text FROM core.opportunities WHERE id = 'a0210000-3333-4000-8000-000000000001') <> 'QUALIFYING' THEN
+    RAISE EXCEPTION 'T4a: a legal non-terminal move did not execute: %', pg_temp.got('move_ok');
+  END IF;
+  v := (pg_temp.got('move_stale') ->> 'detail')::jsonb;
+  IF pg_temp.got('move_stale') ->> 'sqlstate' <> 'TRNOS' OR v ->> 'code' <> 'VALIDATION_FAILED'
+     OR v ->> 'reason' <> 'STAGE_MOVED' OR v ->> 'currentStage' <> 'QUALIFYING' THEN
+    RAISE EXCEPTION 'T4b: a stale fromStage was not STAGE_MOVED with currentStage: %', pg_temp.got('move_stale');
+  END IF;
+  v := (pg_temp.got('move_unknown') ->> 'detail')::jsonb;
+  IF v ->> 'code' <> 'VALIDATION_FAILED' OR v #>> '{fields,0,reason}' <> 'UNKNOWN_STAGE' THEN
+    RAISE EXCEPTION 'T4c: a stage outside the pipeline was not refused: %', pg_temp.got('move_unknown');
+  END IF;
+  v := (pg_temp.got('move_noreason') ->> 'detail')::jsonb;
+  IF v ->> 'code' <> 'VALIDATION_FAILED' OR v #>> '{fields,0,field}' <> 'reason' THEN
+    RAISE EXCEPTION 'T4d: a terminal move with no reason was not refused: %', pg_temp.got('move_noreason');
+  END IF;
+  IF pg_temp.code(pg_temp.got('move_illegal')) IS DISTINCT FROM 'ILLEGAL_STATE_TRANSITION'
+     OR (SELECT stage::text FROM core.opportunities WHERE id = 'a0210000-3333-4000-8000-000000000002') <> 'NEW' THEN
+    RAISE EXCEPTION 'T4e: an edge the registry lacks was not refused: %', pg_temp.got('move_illegal');
+  END IF;
+  IF pg_temp.code(pg_temp.got('move_ops')) IS DISTINCT FROM 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'T4f: OPS (no opportunity:stage) moved a deal: %', pg_temp.got('move_ops');
+  END IF;
+  IF pg_temp.got('move_lost') #>> '{value,data,status}' IS DISTINCT FROM 'QUEUED_FOR_APPROVAL'
+     OR pg_temp.got('move_lost') #>> '{value,data,approvalRequest,policyId}' <> 'OPP-01'
+     OR (SELECT stage::text FROM core.opportunities WHERE id = 'a0210000-3333-4000-8000-000000000001') <> 'QUALIFYING' THEN
+    RAISE EXCEPTION 'T4g: a terminal move did not queue under OPP-01 with the deal unmoved: %', pg_temp.got('move_lost');
+  END IF;
+  IF pg_temp.got('move_lost2') #>> '{value,data,status}' IS DISTINCT FROM 'QUEUED_FOR_APPROVAL' THEN
+    RAISE EXCEPTION 'T4g2: the second terminal move did not queue: %', pg_temp.got('move_lost2');
+  END IF;
+END
+$t4a$;
+
+-- The world moves under the second queued move: OPP-0002 goes NEW -> QUALIFYING
+-- through the ungated edge, as any other writer could.
+UPDATE core.opportunities SET stage = 'QUALIFYING' WHERE id = 'a0210000-3333-4000-8000-000000000002';
+
+SELECT pg_catalog.set_config('a21.apv_lost', (SELECT approval.id::text FROM core.approval_requests AS approval
+  WHERE approval.target_ref = 'OPP-A21-0001' AND approval.status = 'PENDING'), true);
+SELECT pg_catalog.set_config('a21.apv_lost2', (SELECT approval.id::text FROM core.approval_requests AS approval
+  WHERE approval.target_ref = 'OPP-A21-0002' AND approval.status = 'PENDING'), true);
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a2','a0210000-1111-4000-8000-000000000001','SALES_MANAGER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.detail_lost', pg_temp.try(pg_catalog.format(
+  $$SELECT core.get_approval(%L)$$, pg_catalog.current_setting('a21.apv_lost')))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a2','a0210000-1111-4000-8000-000000000001','SALES_MANAGER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.decide_lost', pg_temp.try(pg_catalog.format(
+  $$SELECT core.decide_approval(%L::uuid, 'APPROVE', 'Agreed', %L, 'a21-decide-1')$$,
+  pg_catalog.current_setting('a21.apv_lost'), pg_temp.got('detail_lost') #>> '{value,data,diffHash}'))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a2','a0210000-1111-4000-8000-000000000001','SALES_MANAGER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.detail_lost2', pg_temp.try(pg_catalog.format(
+  $$SELECT core.get_approval(%L)$$, pg_catalog.current_setting('a21.apv_lost2')))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000a2','a0210000-1111-4000-8000-000000000001','SALES_MANAGER'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.decide_lost2', pg_temp.try(pg_catalog.format(
+  $$SELECT core.decide_approval(%L::uuid, 'APPROVE', 'Agreed', %L, 'a21-decide-2')$$,
+  pg_catalog.current_setting('a21.apv_lost2'), pg_temp.got('detail_lost2') #>> '{value,data,diffHash}'))::text, true);
+RESET ROLE;
+
+DO $t4b$
+DECLARE v jsonb;
+BEGIN
+  IF pg_temp.got('decide_lost') #>> '{value,data,status}' IS DISTINCT FROM 'APPROVED'
+     OR (SELECT stage::text FROM core.opportunities WHERE id = 'a0210000-3333-4000-8000-000000000001') <> 'LOST' THEN
+    RAISE EXCEPTION 'T4h: the approved terminal move did not move the deal: %', pg_temp.got('decide_lost');
+  END IF;
+  v := (pg_temp.got('decide_lost2') ->> 'detail')::jsonb;
+  IF v ->> 'reason' IS DISTINCT FROM 'STAGE_MOVED'
+     OR (SELECT stage::text FROM core.opportunities WHERE id = 'a0210000-3333-4000-8000-000000000002') <> 'QUALIFYING'
+     OR (SELECT status::text FROM core.approval_requests WHERE id = pg_catalog.current_setting('a21.apv_lost2')::uuid) <> 'PENDING' THEN
+    RAISE EXCEPTION 'T4i: an approval for a deal that moved meanwhile was not refused and rolled back: %',
+      pg_temp.got('decide_lost2');
+  END IF;
+  -- THE EXECUTOR RE-CHECKS UNDER ITS OWN LOCK. decide_approval above already
+  -- refused at hash time (it re-resolves the target); this proves the executor
+  -- does too, for the request that reaches it without going through decide —
+  -- the race the FOR UPDATE exists for. A request the deal has moved away from:
+  BEGIN
+    INSERT INTO core.action_requests
+      (id,tenant_id,action_type,target_ref,target_entity,target_id,payload,requested_by_kind,requested_by_id,status,effects)
+    VALUES ('a0210000-ac00-4000-8000-0000000000e1','a0210000-1111-4000-8000-000000000001',
+            'OPPORTUNITY_STAGE_CHANGE','OPP-A21-0002','opportunity','a0210000-3333-4000-8000-000000000002',
+            '{"stage":"LOST","fromStage":"NEW","reason":"race"}'::jsonb,'HUMAN','a0210000-0000-4000-8000-0000000000a1',
+            'EXECUTING', app.plan_effects('OPPORTUNITY_STAGE_CHANGE','OPP-A21-0002',
+                                          '{"stage":"LOST","fromStage":"NEW"}'::jsonb));
+    PERFORM app.apply_effects('a0210000-ac00-4000-8000-0000000000e1');
+    RAISE EXCEPTION 'T4k: the executor applied a move the deal had already left';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLSTATE <> 'TRNOS' OR SQLERRM NOT LIKE 'the opportunity has already moved%' THEN
+      RAISE EXCEPTION 'T4k: expected the executor''s STAGE_MOVED, got % %', SQLSTATE, SQLERRM;
+    END IF;
+  END;
+  IF NOT EXISTS (SELECT 1 FROM core.action_policies
+                  WHERE tenant_id = 'a0210000-1111-4000-8000-000000000001' AND id = 'OPP-01' AND active) THEN
+    RAISE EXCEPTION 'T4j: a tenant created after 021 was not seeded OPP-01';
+  END IF;
+  RAISE NOTICE 'T4 PASS: R18 moves execute, refuse stale/unknown/reasonless/illegal/unpermitted moves, queue '
+               'terminal moves under OPP-01, and re-check the deal when the approval executes.';
+END
+$t4b$;
+
+-- ════════ T4b · A tenant with ONLY MD users can still decide OPP-01 ════════
+--
+-- akademi-perdana has no SALES_MANAGER. 011 routes to the policy's approver
+-- role, falls back to its escalation role (MD) when nobody holds the first
+-- (011:2665), and decide_approval admits MD for any approver role (011:2925).
+-- Proved rather than read: one MD requests, the other decides, and neither can
+-- decide their own.
+
+INSERT INTO auth.users (id, email) VALUES
+  ('a0210000-0000-4000-8000-0000000000c1','md1@a21c.test'),
+  ('a0210000-0000-4000-8000-0000000000c2','md2@a21c.test');
+INSERT INTO public.tenants (id, slug, name, status, timezone, locale) VALUES
+  ('a0210000-1111-4000-8000-00000000000c','a21-md-only','MD-only A21','ACTIVE','Asia/Kuala_Lumpur','en-MY');
+INSERT INTO public.memberships
+  (tenant_id,user_id,role,actor_kind,client_scope,team_scope,mfa_required,status,is_default)
+VALUES
+  ('a0210000-1111-4000-8000-00000000000c','a0210000-0000-4000-8000-0000000000c1','MD','HUMAN','ALL','ALL',false,'ACTIVE',true),
+  ('a0210000-1111-4000-8000-00000000000c','a0210000-0000-4000-8000-0000000000c2','MD','HUMAN','ALL','ALL',false,'ACTIVE',true);
+INSERT INTO core.organisations
+  (id,tenant_id,name,industry,location,owner_id,status,hrdc_registered,country_code)
+VALUES ('a0210000-2222-4000-8000-00000000000c','a0210000-1111-4000-8000-00000000000c','MD-only Co',
+        'SERVICES','KL','a0210000-0000-4000-8000-0000000000c1','PROSPECT',false,'MYS');
+INSERT INTO core.opportunities
+  (id,tenant_id,ref,organisation_id,owner_id,stage,value_sen,currency,probability,created_by_kind,created_by_id)
+VALUES ('a0210000-3333-4000-8000-00000000000c','a0210000-1111-4000-8000-00000000000c','OPP-A21-C001',
+        'a0210000-2222-4000-8000-00000000000c','a0210000-0000-4000-8000-0000000000c1','NEW',500000,'MYR',0.300,
+        'HUMAN','a0210000-0000-4000-8000-0000000000c1');
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000c1','a0210000-1111-4000-8000-00000000000c','MD'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.md_move', pg_temp.try($$SELECT core.perform_action('OPPORTUNITY_STAGE_CHANGE','OPP-A21-C001',
+  '{"stage":"LOST","fromStage":"NEW","reason":"Went elsewhere"}'::jsonb, NULL, NULL, NULL, NULL, 'a21-md-move')$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('a21.md_apv', COALESCE((SELECT approval.id::text FROM core.approval_requests AS approval
+  WHERE approval.tenant_id = 'a0210000-1111-4000-8000-00000000000c' AND approval.target_ref = 'OPP-A21-C001'), ''), true);
+
+-- The requester cannot decide it.
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000c1','a0210000-1111-4000-8000-00000000000c','MD'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.md_self', pg_temp.try(pg_catalog.format(
+  $$SELECT core.decide_approval(%L::uuid, 'APPROVE', NULL,
+      (SELECT core.get_approval(%L) #>> '{data,diffHash}'), NULL)$$,
+  pg_catalog.current_setting('a21.md_apv'), pg_catalog.current_setting('a21.md_apv')))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000c2','a0210000-1111-4000-8000-00000000000c','MD'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.md_detail', pg_temp.try(pg_catalog.format(
+  $$SELECT core.get_approval(%L)$$, pg_catalog.current_setting('a21.md_apv')))::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0210000-0000-4000-8000-0000000000c2','a0210000-1111-4000-8000-00000000000c','MD'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('a21.md_decide', pg_temp.try(pg_catalog.format(
+  $$SELECT core.decide_approval(%L::uuid, 'APPROVE', 'Agreed', %L, 'a21-md-decide')$$,
+  pg_catalog.current_setting('a21.md_apv'), pg_temp.got('md_detail') #>> '{value,data,diffHash}'))::text, true);
+RESET ROLE;
+
+DO $t4c$
+BEGIN
+  IF pg_temp.got('md_move') #>> '{value,data,status}' IS DISTINCT FROM 'QUEUED_FOR_APPROVAL'
+     OR pg_temp.got('md_move') #>> '{value,data,approvalRequest,policyId}' <> 'OPP-01'
+     OR pg_temp.got('md_move') #>> '{value,data,approvalRequest,assignedTo,id}' <> 'a0210000-0000-4000-8000-0000000000c2' THEN
+    RAISE EXCEPTION 'T4k2: in an MD-only tenant the move did not queue under OPP-01 to the other MD: %', pg_temp.got('md_move');
+  END IF;
+  IF pg_temp.code(pg_temp.got('md_self')) IS DISTINCT FROM 'FORBIDDEN'
+     OR (pg_temp.got('md_self') ->> 'detail')::jsonb ->> 'policyId' <> 'GOV-03' THEN
+    RAISE EXCEPTION 'T4l: the requesting MD decided their own move: %', pg_temp.got('md_self');
+  END IF;
+  IF pg_temp.got('md_decide') #>> '{value,data,status}' IS DISTINCT FROM 'APPROVED'
+     OR (SELECT stage::text FROM core.opportunities WHERE id = 'a0210000-3333-4000-8000-00000000000c') <> 'LOST' THEN
+    RAISE EXCEPTION 'T4m: the second MD could not decide a SALES_MANAGER-routed OPP-01 approval: %', pg_temp.got('md_decide');
+  END IF;
+  RAISE NOTICE 'T4b PASS: with only MDs, OPP-01 routes to the other MD, the requester cannot self-approve, and the other MD approves.';
+END
+$t4c$;
 
 ROLLBACK;

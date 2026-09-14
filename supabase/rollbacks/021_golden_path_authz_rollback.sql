@@ -24,6 +24,384 @@ BEGIN;
 
 SET LOCAL client_min_messages = warning;
 
+-- ═══ 2 · OPPORTUNITY_STAGE_CHANGE out of the envelope ══════════════════════
+
+DO $refuse$
+DECLARE v_used text;
+BEGIN
+  SELECT pg_catalog.string_agg(used.what || '=' || used.n::text, ', ') INTO v_used
+    FROM (SELECT 'action_requests' AS what, pg_catalog.count(*) AS n FROM core.action_requests WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'approval_requests', pg_catalog.count(*) FROM core.approval_requests WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'autonomy_grants', pg_catalog.count(*) FROM core.autonomy_grants WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'suggested_drafts', pg_catalog.count(*) FROM core.suggested_drafts WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'routing_entries', pg_catalog.count(*) FROM core.routing_entries WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'jury_configs', pg_catalog.count(*) FROM core.jury_configs WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'hours_saved_baselines', pg_catalog.count(*) FROM core.hours_saved_baselines WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE'
+          UNION ALL SELECT 'evals', pg_catalog.count(*) FROM core.evals WHERE action_type = 'OPPORTUNITY_STAGE_CHANGE') AS used
+   WHERE used.n > 0;
+  IF v_used IS NOT NULL THEN
+    RAISE EXCEPTION '021 rollback refused: OPPORTUNITY_STAGE_CHANGE is referenced by live history (%). '
+      'Nothing was changed. That history is the audit of deals that moved; decide what happens to it '
+      'before removing the type.', v_used
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+END
+$refuse$;
+
+DROP TRIGGER IF EXISTS trg_tenants_seed_opportunity_stage_policy ON public.tenants;
+DROP FUNCTION IF EXISTS app.seed_opportunity_stage_policy_on_tenant();
+DROP FUNCTION IF EXISTS app.seed_opportunity_stage_policy(uuid);
+DELETE FROM core.action_policies WHERE id = 'OPP-01' AND action_type = 'OPPORTUNITY_STAGE_CHANGE';
+DELETE FROM app.action_types WHERE key = 'OPPORTUNITY_STAGE_CHANGE';
+
+CREATE OR REPLACE FUNCTION app.resolve_action_target_id(
+  p_type text,
+  p_tenant_id uuid,
+  p_target_ref text,
+  p_payload jsonb
+)
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SET search_path = ''
+AS $fn$
+DECLARE v_id uuid;
+BEGIN
+  CASE p_type
+    WHEN 'ENQUIRY_ARCHIVE', 'OPPORTUNITY_CONVERT' THEN
+      SELECT row.id INTO v_id FROM core.enquiries AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'TNA_RECOMMENDATION_ACCEPT' THEN
+      SELECT row.id INTO v_id FROM core.tnas AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'PROPOSAL_SEND' THEN
+      SELECT row.id INTO v_id FROM core.proposals AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'QUOTATION_APPLY', 'DISCOUNT_APPROVE' THEN
+      SELECT row.id INTO v_id FROM core.quotations AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'TRAINER_BOOK' THEN
+      SELECT row.id INTO v_id FROM core.trainer_bookings AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'ENGAGEMENT_CLOSE_OUT' THEN
+      SELECT row.id INTO v_id FROM core.engagements AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'ATTENDANCE_APPROVE', 'ATTENDANCE_UNLOCK' THEN
+      BEGIN
+        v_id := NULLIF(p_payload ->> 'id', '')::uuid;
+      EXCEPTION WHEN invalid_text_representation THEN
+        v_id := NULL;
+      END;
+    WHEN 'HRDC_PACKET_MARK_SUBMITTED' THEN
+      SELECT row.id INTO v_id FROM core.hrdc_packets AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'INVOICE_CREATE' THEN
+      BEGIN
+        v_id := NULLIF(p_payload ->> 'id', '')::uuid;
+      EXCEPTION WHEN invalid_text_representation THEN
+        v_id := NULL;
+      END;
+    WHEN 'INVOICE_PUSH', 'PAYMENT_RECORD' THEN
+      SELECT row.id INTO v_id FROM core.invoices AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'REMINDER_SEND', 'ACCOUNT_TRADING_HOLD' THEN
+      SELECT row.id INTO v_id FROM core.collections_cases AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'FOLLOWUP_SEND' THEN
+      SELECT row.id INTO v_id FROM core.follow_ups AS row
+       WHERE row.tenant_id = p_tenant_id AND row.ref = p_target_ref;
+    WHEN 'RULE_CHANGE_APPROVE' THEN
+      BEGIN
+        v_id := NULLIF(p_payload ->> 'id', '')::uuid;
+      EXCEPTION WHEN invalid_text_representation THEN
+        v_id := NULL;
+      END;
+    WHEN 'AGENT_AUTONOMY_CHANGE' THEN
+      SELECT row.id INTO v_id FROM core.autonomy_grants AS row
+       WHERE row.tenant_id = p_tenant_id
+         AND row.agent_id = p_payload ->> 'agentId'
+         AND row.action_type = p_payload ->> 'actionType';
+      IF v_id IS NULL THEN
+        v_id := pg_catalog.gen_random_uuid();
+      END IF;
+    WHEN 'AGENT_PAUSE', 'BUDGET_CAP_RAISE', 'BROADCAST_SEND' THEN
+      v_id := NULL;
+    ELSE
+      RAISE EXCEPTION 'unknown action type %L', p_type
+        USING ERRCODE = 'invalid_parameter_value';
+  END CASE;
+  RETURN v_id;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION app.plan_effects(
+  p_type text,
+  p_target_ref text,
+  p_payload jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_effects jsonb;
+BEGIN
+  CASE p_type
+    WHEN 'ENQUIRY_ARCHIVE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','Enquiry','ref',p_target_ref,
+        'description','Archive the enquiry'));
+    WHEN 'OPPORTUNITY_CONVERT' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','Enquiry','ref',p_target_ref,
+        'description','Mark the source enquiry converted'));
+    WHEN 'TNA_RECOMMENDATION_ACCEPT' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','TNA','ref',p_target_ref,
+        'description','Accept the TNA recommendation'));
+    WHEN 'PROPOSAL_SEND' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','Proposal','ref',p_target_ref,
+          'description','Mark the proposal sent'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','Email','ref',p_target_ref,
+          'description','Render and send the proposal email'));
+    WHEN 'QUOTATION_APPLY' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','Quotation','ref',p_target_ref,
+        'description','Apply the quotation'));
+    WHEN 'DISCOUNT_APPROVE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','Quotation','ref',p_target_ref,
+        'description','Record the approved discount'));
+    WHEN 'TRAINER_BOOK' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','TrainerBooking','ref',p_target_ref,
+          'description','Confirm the trainer booking'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','Notification','ref',p_target_ref,
+          'description','Notify the trainer'));
+    WHEN 'ENGAGEMENT_CLOSE_OUT' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','Engagement','ref',p_target_ref,
+          'description','Close the engagement'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','EvaluationLink','ref',p_target_ref,
+          'description','Send evaluation links'));
+    WHEN 'ATTENDANCE_APPROVE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','AttendanceDay','ref',p_target_ref,
+        'description','Lock approved attendance'));
+    WHEN 'ATTENDANCE_UNLOCK' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','AttendanceDay','ref',p_target_ref,
+          'description','Unlock attendance with an audit reason'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','Notification','ref',p_target_ref,
+          'description','Notify operations and finance'));
+    WHEN 'HRDC_PACKET_MARK_SUBMITTED' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','HRDCPacket','ref',p_target_ref,
+        'description','Record the HRD Corp claim submission'));
+    WHEN 'INVOICE_CREATE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','ADD','entity','Invoice','ref',p_target_ref,
+        'description','Create the invoice'));
+    WHEN 'INVOICE_PUSH' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','Invoice','ref',p_target_ref,
+          'description','Mark the invoice push dispatched'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','AccountingPackage','ref',p_target_ref,
+          'description','Push the invoice to the accounting package'));
+    WHEN 'PAYMENT_RECORD' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','ADD','entity','Payment','ref',p_target_ref,
+        'description','Record the payment and recompute the invoice balance'));
+    WHEN 'REMINDER_SEND' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','CollectionsCase','ref',p_target_ref,
+          'description','Advance the collections stage'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','Message','ref',p_target_ref,
+          'description','Send the collections reminder'));
+    WHEN 'FOLLOWUP_SEND' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','FollowUp','ref',p_target_ref,
+          'description','Mark the follow-up sent'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','Message','ref',p_target_ref,
+          'description','Send the follow-up message'));
+    WHEN 'BROADCAST_SEND' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','ADD','entity','Message','ref',p_target_ref,
+        'description','Fan out the approved broadcast'));
+    WHEN 'AGENT_AUTONOMY_CHANGE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','AutonomyGrant','ref',p_payload ->> 'agentId',
+        'description','Change the agent autonomy grant'));
+    WHEN 'AGENT_PAUSE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','AutonomyGrant','ref',p_payload ->> 'agentId',
+        'description','Pause the agent grants'));
+    WHEN 'BUDGET_CAP_RAISE' THEN
+      v_effects := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+        'op','UPDATE','entity','AIBudget','ref',p_target_ref,
+        'description','Raise the AI budget cap'));
+    WHEN 'RULE_CHANGE_APPROVE' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','RuleChange','ref',p_target_ref,
+          'description','Approve the extracted rule change'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','ComplianceRecheck','ref',p_target_ref,
+          'description','Re-evaluate affected engagements'));
+    WHEN 'ACCOUNT_TRADING_HOLD' THEN
+      v_effects := pg_catalog.jsonb_build_array(
+        pg_catalog.jsonb_build_object('op','UPDATE','entity','CollectionsCase','ref',p_target_ref,
+          'description','Place the account on trading hold'),
+        pg_catalog.jsonb_build_object('op','ADD','entity','Notification','ref',p_target_ref,
+          'description','Notify the account owner'));
+    ELSE
+      RAISE EXCEPTION 'unknown action type %L', p_type
+        USING ERRCODE = 'invalid_parameter_value';
+  END CASE;
+  RETURN v_effects;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION app.execute_in_database_action(p_action_request_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_request core.action_requests%ROWTYPE;
+BEGIN
+  SELECT request.* INTO v_request
+    FROM core.action_requests AS request
+   WHERE request.id = p_action_request_id
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'action request % does not exist', p_action_request_id
+      USING ERRCODE = 'no_data_found';
+  END IF;
+
+  CASE v_request.action_type
+    WHEN 'ENQUIRY_ARCHIVE' THEN
+      UPDATE core.enquiries SET status = COALESCE(v_request.payload ->> 'status','ARCHIVED')::core.enquiry_status
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'OPPORTUNITY_CONVERT' THEN
+      UPDATE core.enquiries SET status = 'CONVERTED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'TNA_RECOMMENDATION_ACCEPT' THEN
+      UPDATE core.tnas SET status = 'COMPLETE', completed_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'PROPOSAL_SEND' THEN
+      UPDATE core.proposals SET status = 'SENT', sent_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'QUOTATION_APPLY' THEN
+      UPDATE core.quotations SET status = 'APPLIED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'DISCOUNT_APPROVE' THEN
+      UPDATE core.quotations
+         SET sell_price_sen = COALESCE((v_request.payload ->> 'sellPriceSen')::bigint, sell_price_sen),
+             discount_approval_id = v_request.id
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'TRAINER_BOOK' THEN
+      UPDATE core.trainer_bookings SET state = 'CONFIRMED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ENGAGEMENT_CLOSE_OUT' THEN
+      UPDATE core.engagements SET status = 'CLOSED', closed_out_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ATTENDANCE_APPROVE' THEN
+      UPDATE core.attendance_days
+         SET status = 'LOCKED', approved_by_kind = v_request.requested_by_kind::app.actor_kind,
+             approved_by_id = v_request.requested_by_id,
+             approved_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ATTENDANCE_UNLOCK' THEN
+      UPDATE core.attendance_days
+         SET status = 'OPEN', unlock_reason = v_request.payload ->> 'reason'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'HRDC_PACKET_MARK_SUBMITTED' THEN
+      UPDATE core.hrdc_packets
+         SET status = 'SUBMITTED',
+             claim_reference = v_request.payload ->> 'claimReference',
+             claim_submitted_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'INVOICE_CREATE' THEN
+      INSERT INTO core.invoices
+        (id,tenant_id,organisation_id,engagement_id,status,created_by_kind,created_by_id)
+      VALUES
+        (v_request.target_id,v_request.tenant_id,
+         (v_request.payload ->> 'organisationId')::uuid,
+         NULLIF(v_request.payload ->> 'engagementId','')::uuid,
+         'DRAFT',v_request.requested_by_kind::app.actor_kind,v_request.requested_by_id);
+    WHEN 'INVOICE_PUSH' THEN
+      UPDATE core.invoices
+         SET status = 'SENT', issued_at = COALESCE(issued_at,pg_catalog.now()),
+             sync_state = 'SENT', sync_last_attempt_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'PAYMENT_RECORD' THEN
+      INSERT INTO core.payments
+        (tenant_id,invoice_id,amount_sen,currency,method,external_reference,
+         created_by_kind,created_by_id)
+      VALUES
+        (v_request.tenant_id,v_request.target_id,
+         (v_request.payload #>> '{amount,amount}')::bigint,
+         COALESCE(v_request.payload #>> '{amount,currency}','MYR')::core.currency_code,
+         COALESCE(v_request.payload ->> 'method','BANK_TRANSFER'),
+         v_request.payload ->> 'externalReference',
+         v_request.requested_by_kind::app.actor_kind,v_request.requested_by_id);
+    WHEN 'REMINDER_SEND' THEN
+      UPDATE core.collections_cases
+         SET stage = (v_request.payload ->> 'stage')::core.collection_stage,
+             stage_entered_at = pg_catalog.now()
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'FOLLOWUP_SEND' THEN
+      UPDATE core.follow_ups SET status = 'SENT'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'BROADCAST_SEND' THEN
+      NULL; -- fan-out is external and 012 owns its jobs
+    WHEN 'AGENT_AUTONOMY_CHANGE' THEN
+      INSERT INTO core.autonomy_grants
+        (id,tenant_id,agent_id,action_type,level,approver_role,value_threshold_sen,
+         min_confidence,granted_by)
+      VALUES
+        (v_request.target_id,v_request.tenant_id,v_request.payload ->> 'agentId',
+         v_request.payload ->> 'actionType',v_request.payload ->> 'level',
+         v_request.payload ->> 'approverRole',
+         (v_request.payload ->> 'valueThresholdSen')::bigint,
+         COALESCE((v_request.payload ->> 'minConfidence')::numeric,0.700),
+         v_request.requested_by_id)
+      ON CONFLICT (tenant_id,agent_id,action_type) DO UPDATE
+        SET level = EXCLUDED.level,
+            approver_role = EXCLUDED.approver_role,
+            value_threshold_sen = EXCLUDED.value_threshold_sen,
+            min_confidence = EXCLUDED.min_confidence,
+            granted_by = EXCLUDED.granted_by,
+            granted_at = pg_catalog.now();
+    WHEN 'AGENT_PAUSE' THEN
+      UPDATE core.autonomy_grants
+         SET paused = true, paused_at = pg_catalog.now(),
+             paused_reason = COALESCE(v_request.payload ->> 'reason','MANUAL')
+       WHERE tenant_id = v_request.tenant_id
+         AND agent_id = v_request.payload ->> 'agentId'
+         AND (v_request.payload ->> 'actionType' IS NULL
+              OR action_type = v_request.payload ->> 'actionType');
+    WHEN 'BUDGET_CAP_RAISE' THEN
+      NULL; -- app.ai_budgets is created by 013, not invented here
+    WHEN 'RULE_CHANGE_APPROVE' THEN
+      UPDATE core.rule_changes SET status = 'APPROVED'
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    WHEN 'ACCOUNT_TRADING_HOLD' THEN
+      UPDATE core.collections_cases
+         SET stage = 'TRADING_HOLD', stage_entered_at = pg_catalog.now(),
+             trading_hold_action_id = v_request.id
+       WHERE tenant_id = v_request.tenant_id AND id = v_request.target_id;
+    ELSE
+      RAISE EXCEPTION 'unknown action type %L', v_request.action_type
+        USING ERRCODE = 'invalid_parameter_value';
+  END CASE;
+END;
+$fn$;
+
+DROP FUNCTION IF EXISTS app.check_opportunity_stage_move(uuid, uuid, jsonb);
+
 -- ═══ 4 · 020's get_audit, and the 018 bodies ═══════════════════════════════
 
 CREATE OR REPLACE FUNCTION core.get_audit(p_resource_type text, p_id text)
