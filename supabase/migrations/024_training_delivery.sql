@@ -109,6 +109,18 @@ BEGIN
 END
 $preflight$;
 
+-- ═══ 0 · Permission patch — TRAINER gets attendance:export ══════════════════
+--
+-- 002 grants TRAINER `attendance:capture`/`attendance:read` but not
+-- `attendance:export` (a review-mandated correction: `packages/contract/src/
+-- endpoints.ts` already lists roles `['OPS','TRAINER']` for all three
+-- attendance endpoints, so 002/024 was the side behind, not the contract).
+-- 002 is frozen (already applied to hosted), so the grant is patched in here
+-- rather than edited into 002's own INSERT. `ON CONFLICT DO NOTHING` makes
+-- this idempotent alongside 002's own row if it is ever added there later.
+INSERT INTO app.role_permissions (role, permission) VALUES ('TRAINER', 'attendance:export')
+  ON CONFLICT (role, permission) DO NOTHING;
+
 -- ═══ 1 · core.list_engagements ══════════════════════════════════════════════
 --
 -- The client never sends a filter or a sort for this list today

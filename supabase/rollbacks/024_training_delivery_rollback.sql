@@ -2,9 +2,12 @@
 -- 024 ROLLBACK · training delivery
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- 024 is purely additive: seven new `core` functions, no DDL, no function it
--- replaced. The rollback is therefore seven `DROP FUNCTION`, nothing to
--- restore. Run against a database with 024 applied and nothing later.
+-- 024 is mostly additive: seven new `core` functions, no DDL, no function it
+-- replaced — plus one DATA patch (§0 of the forward migration), a
+-- TRAINER/attendance:export row in `app.role_permissions` that 002 (frozen)
+-- does not carry. The rollback is therefore seven `DROP FUNCTION` plus that
+-- one `DELETE`, nothing else to restore. Run against a database with 024
+-- applied and nothing later.
 --
 --   psql "<db>" -v ON_ERROR_STOP=1 -f supabase/rollbacks/024_training_delivery_rollback.sql
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -21,6 +24,8 @@ DROP FUNCTION IF EXISTS core.capture_attendance(text,integer,jsonb);
 DROP FUNCTION IF EXISTS core.export_attendance(text,text);
 DROP FUNCTION IF EXISTS core.put_programme(text,jsonb);
 
+DELETE FROM app.role_permissions WHERE role = 'TRAINER' AND permission = 'attendance:export';
+
 DO $verify$
 DECLARE v_left text[];
 BEGIN
@@ -35,6 +40,9 @@ BEGIN
    WHERE pg_catalog.to_regprocedure(f.name) IS NOT NULL;
   IF v_left IS NOT NULL THEN
     RAISE EXCEPTION '024 rollback verify: function(s) still present: %', v_left;
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.role_permissions WHERE role = 'TRAINER' AND permission = 'attendance:export') THEN
+    RAISE EXCEPTION '024 rollback verify: TRAINER still holds attendance:export';
   END IF;
 END
 $verify$;
