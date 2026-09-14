@@ -31,6 +31,7 @@ import type {
   Opportunity,
   Organisation,
   OrganisationRelations,
+  OrganisationSuggestion,
   PageRequest,
   PipelineConfig,
   PipelineObject,
@@ -144,8 +145,13 @@ export interface TrainOsClient {
   getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>>;
   getOrganisation(id: string): Promise<Result<Organisation>>;
   getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>>;
+  searchOrganisations(query: string): Promise<Result<Organisation[]>>;
+  getOrganisationSuggestions(id: string): Promise<Result<ListResponse<OrganisationSuggestion>>>;
   getOpportunity(id: string): Promise<Result<Opportunity>>;
+  listOpportunities(query: PageRequest): Promise<Result<ListResponse<Opportunity>>>;
   getTna(id: string): Promise<Result<Tna>>;
+  listTnas(query: PageRequest): Promise<Result<ListResponse<Tna>>>;
+  reopenTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
   createProposal(input: ProposalInput): Promise<Result<Proposal>>;
   listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>>;
