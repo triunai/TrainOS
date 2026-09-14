@@ -3,7 +3,7 @@
 > The canonical record of every Supabase migration in TrainOS. One Migration Order row and one
 > Migration Detail section per migration, updated in the SAME commit as the migration itself.
 
-**Migrations:** 25 (numbered up to 032; 023, 025 landed on main via sibling lanes during this work and are not yet merged into this branch; 024, 026–029 remain sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030, 031, 032
+**Migrations:** 26 (numbered up to 033; 023, 025 landed on main via sibling lanes during this work and are not yet merged into this branch; 024, 026–029 remain sibling lanes not on this branch) · **Applied (hosted):** 001–019, 021, 022 · **Authored, not applied:** 020, 030, 031, 032, 033
 **Last snapshot of `tables/`:** never
 **Amendment passes:** 2 (2026-09-13 rulings R-EXT / search_path / FORCE RLS; 2026-09-13 pack 014 — six earlier pins amended from "before 014" to the post-014 state, each marked ⚠ AMENDED BY 014 in place; 2026-09-13 pack 016 — ten pins' ref_formats fixtures made upserts, because 016 now provisions what they were faking; 2026-09-13 pack 017 — test_006's trainer fixture and test_014's two counts updated for the constraints and tables 017 adds; 2026-09-13 pack 014 review pass — 014's forward, rollback and pin revised against docs/reviews/2026-09-13-codex-retrofit-014-017.md, a new post-rollback pin added at supabase/tests/test_014_rollback_restores_002_grants.sql, and scripts/check-grants.mjs given a pg_temp exception; no file in 001-013, 015 or 016 was touched; 2026-09-13 pack 016 — `app.provision_tenant` gained `p_id`, requested by the seeds lane; 2026-09-13 pack 018 — **018 does not edit `test_014` at all**: its three `core` view grants are asserted in `test_018` T38 by name. ⚠ `test_014` counts LIVE grants and therefore reads 124 once 018 is applied; scoping that assertion to 014-time objects is owed to the 014 lane, and the exact assertion is in PR #11's body. 2026-09-13 pack 019 — test_008's and test_009's pipeline fixtures amended, because a default `ENGAGEMENT` pipeline per tenant is now a repo-wide fact and `pipelines_one_default_uq` is a partial unique index on `(tenant_id, object) WHERE is_default`; ⚠ `test_016` and `test_017` on `cloud/migrations` need the same amendment and their newer versions are not on this branch, so both are owed at rebase with the exact edit recorded in 019's detail section)
 
@@ -91,6 +91,56 @@ the OPP-01 rows 032's repair pass already converged — undoing a data repair th
 correct would be a second, worse defect stacked on the first. `test_001`–`test_022`, `test_030`–
 `test_031` all still pass on a clean 001–032 build. `npm run lint:sql` 86/86, `check:grants`/
 `check:rpc` clean.
+
+**Last updated:** 2026-09-14 — **033: sensitive-table RLS — 28 `core` tables gated on the
+permission the contract already requires at the RPC layer (H1), MY_ACCOUNTS owner-narrowing on
+organisations/opportunities/enquiries role-gated to SALES/SALES_MANAGER (H4), `public.
+user_profiles` narrowed to self-or-ADMIN/MD (M4), `ai_budgets`/`model_tiers` gated on their own
+`ai:*:read` permissions (M5).**
+Every gate is applied via 014's own `app.apply_tenant_policies('core', <table>, '033',
+<permission>)` — the function already refuses a permission held by every role and already refuses
+a two-argument call that would silently strip a gate, so 033 adds no new mechanism, only new
+callers. The table→permission mapping is written out in full in 033's own header. `core.events` is
+the one exception: `audit:read` is held by every non-CLIENT/AGENT role, so `apply_tenant_policies`
+correctly refuses to build a gate from it (decoration, not narrowing) — found by RUNNING the
+migration, not by reading it — and gets a bespoke RESTRICTIVE policy excluding CLIENT by role name
+instead. H4's narrowing is gated on `app.role() IN ('SALES','SALES_MANAGER')` rather than on
+`app.client_scope()` alone: every role's membership defaults to `client_scope = MY_ACCOUNTS`
+(grepped — nothing in 016/019/seeds ever overrides it for OPS/FINANCE/MD/ADMIN), so a
+scope-only predicate would have silently narrowed those roles too, which 002 §11 never marks ○ for
+them. `core.enquiries.assigned_to_user_id` is nullable; an unassigned enquiry stays visible to a
+MY_ACCOUNTS SALES caller rather than disappearing, on the ground that hiding an unclaimed-enquiry
+inbox is a functional regression this migration has no product sign-off to make. `core.quotations`,
+`core.proposals`, `core.contacts`, `core.invoices`, `core.collections_cases` also carry 002's ○
+mark but have no direct owner column — left at permission-level gating only, the join-chain
+narrowing recorded as an open item rather than guessed at and risking either a silent no-op or a
+hidden row a screen needs. `public.user_profiles_select` (002) was blanket tenant-membership;
+grepped `apps/web/src` for a cross-user `user_profiles` read and found none, so it now matches
+`user_profiles_update_self_or_admin`'s existing self-or-ADMIN shape, MD added alongside ADMIN.
+Two amendments landed in this commit: `test_004` T1c (the core-wide restrictive-policy inventory)
+now names 033's four new policies by name, same shape as its own 014 amendment; `test_012` T1d's
+`core.events` policy count is 5→6; `test_014` T1c's 014-time-object identification (by policy
+migration stamp) now also recognises `033` stamps, since `apply_tenant_policies` re-stamps a
+table's policy with the CALLING pack's number even though the table's SELECT grant it is
+identifying was never touched; `test_014` T12l's gated-table count is 9→37, T12m's named-exception
+list gains 033's four policies. Pin `tests/test_033_sensitive_table_rls.sql`: CLIENT reads zero
+rows, direct SELECT, on five tables spanning the gated set, and on `core.events`; two SALES reps
+each owning a different organisation in the same tenant see only their own — OPS/FINANCE/MD/ADMIN
+see both, unnarrowed, despite defaulting to the same `client_scope`; an unassigned enquiry stays
+visible; `public.user_profiles` self-or-ADMIN/MD; tenant B's ADMIN sees zero of tenant A's
+organisations (spot check); `core.v_contact_channel_consents` (security_invoker) still returns a
+permitted SALES caller's own row. Sampled separately against a hosted-shaped `akademi-perdana`
+fixture (real tenant/user ids) across every `rpcClient.ts` `VIEW_READS` view for MD, ADMIN, SALES,
+CLIENT, TRAINER and a tenant-B ADMIN, before vs after 033: every permitted role's row count is
+UNCHANGED; the only delta is a SALES sample principal who owns none of the fixture's seeded
+organisations, whose `v_contacts`/`v_organisation_relations` counts drop from 6 to 0 — the intended
+H4 narrowing, not a regression (v_contacts narrows via its own JOIN to `core.organisations`, a
+side effect this migration did not have to add by hand). Rollback uses 014's own
+`app.ungate_tenant_policy` escape hatch per table (stamped `033`, the pack removing the gate),
+drops the four bespoke policies, and restores `user_profiles_select`'s original predicate; it does
+NOT reopen anything the `app.can_see_owner`/permission MECHANISM itself provides — that is 014's
+code, untouched. `test_001`–`test_022`, `test_030`–`test_032` all still pass on a clean 001–033
+build. `npm run lint:sql` 86/86, `check:grants`/`check:rpc` clean.
 
 **Last updated:** 2026-09-14 — **030: `core.me_profile()`'s `session` block never leaks a null required field, closing a defect 022 shipped and hosted's own run of `test_022` caught.**
 One `CREATE OR REPLACE FUNCTION core.me_profile()`, nothing else — no table, no type, no policy, no other function touched. **The defect, found by running 022's own pin against hosted rather than by reading:** 022's header promises `session` answers `null` AS A WHOLE whenever `lastSignInAt` cannot be derived, and 022's `v_has_session` variable exists to keep that promise — but it only flips to `false` inside `EXCEPTION WHEN undefined_column`, the COLUMN-ABSENT case. When `auth.users.last_sign_in_at` EXISTS (true on hosted) but a particular row's VALUE is `NULL` — true for `test_022`'s own INSERT-not-signed-in fixture users, and equally true for any real hosted account GoTrue has not yet stamped a sign-in for — the read succeeds with no exception, `v_has_session` stays at its default `true`, and the function emits exactly the shape its own header forbids: a populated `session` object with `lastSignInAt: null`. `test_022`'s `T1j` (PR #48, commit `05e7360`) asserted the branch the column's PRESENCE implies and failed on hosted — not because the assertion was wrong, but because the function did not keep its own promise. **The fix is one `IF` statement**, immediately after the existing exception handler: `v_has_session` is now also set `false` when the read succeeds but `v_last_sign_in IS NULL`, subsuming the exception path (a harmless no-op re-confirmation there, since `v_last_sign_in` is already `NULL` by its declared default whenever the exception fires) and closing the gap it did not cover. Every other line — permission gates, `moduleCount`, `activeSessions`, `twoFactorEnabled`, the two dashboard RPCs (untouched, not redefined) — is 022's, unchanged. **Nothing changes for a caller who has actually signed in**: GoTrue stamps `last_sign_in_at` on every real sign-in, so a real session continues to get a populated `session` with a real `lastSignInAt`, confirmed against hosted directly before this migration was authored. This migration only changes the answer for a principal GoTrue has not yet stamped one for, closing a leak rather than opening a gap. **`packages/contract/src/domain/shell.ts` and the web reader (`SidebarProfile.tsx`) already document and expect this exact corrected shape** (PRs #49/#50, landed on `origin/main` ahead of this migration) — this migration is what makes the database true of the contract the web lane already built against, not the reverse. Pin `test_030`: three cases, branched STRUCTURALLY on whether `auth.users.last_sign_in_at` exists rather than assuming one environment — column absent (this local shim): `session` null as a whole, unchanged from 022; column present, value null (the closed defect): `session` null as a whole; column present, value set: a full object with exactly the 5 `ProfileSession` keys and a real, non-null `lastSignInAt`. Verified against both the unmodified local shim (only the absent-column case fires) and a locally-extended copy with `auth.users.last_sign_in_at` and `auth.mfa_factors` added (not checked in; both hosted-shaped cases fire and pass). `test_022`'s own `T1j` fixture gained a small addition in the same commit: its T1 principal now gets a real `last_sign_in_at` WHEN the column exists (a no-op `UPDATE` guarded the same structural way, otherwise absent), so `test_022` exercises the "real value" branch it always intended rather than accidentally tripping over 030's own defect — the never-signed-in/null-value case is deliberately left to `test_030` alone rather than duplicated. Rollback restores 022's original (defective) body verbatim. `test_001`–`test_022` all still pass unmodified on a clean 001–030 build (021, 023–029 excluded — the latter are sibling lanes not on this branch). `npm run lint:sql` 74/74, `npm run check:grants`/`npm run check:rpc` clean. Spine untouched: no action type, no handler, no branch in the envelope.
@@ -528,6 +578,22 @@ to any hosted database.** Full narrative in the dated entry above. One new funct
   verification; transcript in the PR body.
 - **Rollback** — `rollbacks/032_approval_target_lock_rollback.sql`. Restores 011's and 021's
   bodies verbatim, drops `lock_action_value_target`; does not revert OPP-01 rows 032 repaired.
+
+---
+
+## Migration Detail — 033 (`033_sensitive_table_rls.sql`)
+
+**Status: AUTHORED + EXECUTED 2026-09-14 against the hosted-like PostgreSQL 17 shim, NOT APPLIED
+to any hosted database.** Full narrative in the dated entry above. 28 `app.apply_tenant_policies`
+calls, one bespoke policy on `core.events`, three bespoke MY_ACCOUNTS narrowing policies, one
+`public.user_profiles_select` policy replacement — no table, no type added.
+
+- **Pin** — `tests/test_033_sensitive_table_rls.sql`. 8 test groups (T1–T8), ends in `ROLLBACK`.
+- **Rollback** — `rollbacks/033_sensitive_table_rls_rollback.sql`. `app.ungate_tenant_policy` per
+  table (stamped `033`), drops the four bespoke policies, restores `user_profiles_select`.
+- **Amended in this commit**: `tests/test_004_shell_config_and_ref_allocation.sql` (T1c),
+  `tests/test_012_events_outbox_and_jobs.sql` (T1d), `tests/test_014_rls_policies_and_client_grants.sql`
+  (T1c, T12l, T12m) — each marked ⚠ AMENDED BY 033 in place, reasons in the dated entry above.
 
 ---
 

@@ -135,13 +135,25 @@ BEGIN
   -- is no longer the right shape. H-02's guard is still asserted by name, and the
   -- new question — is there a restrictive policy nobody stamped? — is asked
   -- alongside it.
+  -- ⚠ AMENDED BY 033 (2026-09-14). 033 (H4 + the core.events bespoke fix — see
+  -- its migration header for why apply_tenant_policies could not gate
+  -- core.events on a permission) adds four more named, deliberate RESTRICTIVE
+  -- policies beside H-02's kill switch: MY_ACCOUNTS owner-narrowing on
+  -- core.organisations/opportunities/enquiries, and CLIENT-exclusion on
+  -- core.events. Same shape as 014's own amendment above — asserted by NAME,
+  -- not by count, so a fifth policy appearing under any OTHER name is still
+  -- caught.
   WHERE n.nspname = 'core' AND c.relkind = 'r' AND NOT pol.polpermissive
     AND pol.polname <> c.relname || '_tenant_isolation';
-  ASSERT v_bad = 'autonomy_grants.autonomy_grants_agents_cannot_write',
+  ASSERT v_bad = 'autonomy_grants.autonomy_grants_agents_cannot_write, '
+                 'enquiries.enquiries_my_accounts_narrow_033, '
+                 'events.events_no_client_033, '
+                 'opportunities.opportunities_my_accounts_narrow_033, '
+                 'organisations.organisations_my_accounts_narrow_033',
     format('T1c FAIL: setting aside 014''s <table>_tenant_isolation policies, the '
-           'restrictive set is %s, expected exactly '
-           'autonomy_grants.autonomy_grants_agents_cannot_write (H-02). That '
-           'policy is the agent kill switch and nothing else belongs beside it.',
+           'restrictive set is %s, expected exactly H-02''s kill switch plus '
+           '033''s four named policies. A restrictive policy under any other '
+           'name is still the thing this check exists to catch.',
            v_bad);
   RAISE NOTICE 'T1 PASS - every core table is RLS-forced, every permissive and '
                'restrictive policy in core is one 014 stamped, and the H-02 '
