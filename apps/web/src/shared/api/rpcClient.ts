@@ -16,7 +16,9 @@ import type {
   BudgetScope,
   BudgetWrite,
   ChannelConsent,
+  ClaimPacket,
   CollectionRule,
+  ComplianceChecksResponse,
   ComplianceRule,
   Contact,
   Enquiry,
@@ -27,6 +29,7 @@ import type {
   ErrorCode,
   ErrorDetails,
   HrdcDeadline,
+  HrdcPacketExport,
   KnowledgeSource,
   KnowledgeSourceCheckResponse,
   KnowledgeSourceCreateRequest,
@@ -41,6 +44,7 @@ import type {
   Opportunity,
   Organisation,
   OrganisationRelations,
+  OrganisationSuggestion,
   PageRequest,
   PipelineConfig,
   PipelineObject,
@@ -70,7 +74,9 @@ import { ERROR_STATUS } from "@trainos/contract";
 import type {
   ActionInput,
   BulkDecideInput,
+  ComplianceRuleCreateInput,
   DecideInput,
+  HrdcDocumentAttachInput,
   ProposalInput,
   QuotationInput,
   SectionInput,
@@ -439,8 +445,13 @@ export const RPC_NAMES = {
     "list_follow_ups",
     "get_follow_up_draft",
     "get_organisation",
+    "search_organisations",
+    "get_organisation_suggestions",
     "get_opportunity",
+    "list_opportunities",
     "get_tna",
+    "list_tnas",
+    "reopen_tna",
     "get_tna_recommendations",
     "create_proposal",
     "list_proposals",
@@ -477,6 +488,12 @@ export const RPC_NAMES = {
     "get_usage",
     "put_budget",
     "get_tenant",
+    "get_claim_packet",
+    "get_compliance_checks",
+    "attach_packet_document",
+    "export_claim_packet",
+    "create_compliance_rule",
+    "get_rule_change_set",
   ],
 } as const;
 
@@ -654,12 +671,42 @@ export class SupabaseRpcClient implements TrainOsClient {
     return ok(first);
   }
 
+  /** §5 the org picker: name-or-ref, best match first, capped at 50 rows. */
+  searchOrganisations(query: string): Promise<Result<Organisation[]>> {
+    return this.call<Organisation[]>("search_organisations", { p_query: query });
+  }
+
+  /** §5 the cross-sell panel. Only OPEN suggestions render. */
+  getOrganisationSuggestions(id: string): Promise<Result<ListResponse<OrganisationSuggestion>>> {
+    return this.call<ListResponse<OrganisationSuggestion>>("get_organisation_suggestions", {
+      p_id: id,
+    });
+  }
+
   getOpportunity(id: string): Promise<Result<Opportunity>> {
     return this.call<Opportunity>("get_opportunity", { p_id: id });
   }
 
+  listOpportunities(query: PageRequest): Promise<Result<ListResponse<Opportunity>>> {
+    return this.call<ListResponse<Opportunity>>("list_opportunities", pageArgs(query));
+  }
+
   getTna(id: string): Promise<Result<Tna>> {
     return this.call<Tna>("get_tna", { p_id: id });
+  }
+
+  /**
+   * §13 never published a TNA collection (a TNA is normally reached from its
+   * opportunity); the nav tree has a `Sales › TNA` leaf regardless, and the
+   * fixture oracle implements the list and reports the gap.
+   */
+  listTnas(query: PageRequest): Promise<Result<ListResponse<Tna>>> {
+    return this.call<ListResponse<Tna>>("list_tnas", pageArgs(query));
+  }
+
+  /** The "Reopen questionnaire" button on `TnaDetailPage`. COMPLETE -> REOPENED only. */
+  reopenTna(id: string): Promise<Result<Tna>> {
+    return this.call<Tna>("reopen_tna", { p_id: id });
   }
 
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>> {
@@ -877,6 +924,29 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.view<HrdcDeadline>(VIEW_READS.hrdcDeadlines);
   }
 
+  getClaimPacket(id: string): Promise<Result<ClaimPacket>> {
+    return this.call<ClaimPacket>("get_claim_packet", { p_id: id });
+  }
+
+  attachPacketDocument(id: string, input: HrdcDocumentAttachInput): Promise<Result<ClaimPacket>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<ClaimPacket>("attach_packet_document", {
+      p_id: id,
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
+  exportClaimPacket(id: string): Promise<Result<HrdcPacketExport>> {
+    return this.call<HrdcPacketExport>("export_claim_packet", { p_id: id });
+  }
+
+  getComplianceChecks(engagementRef: string): Promise<Result<ComplianceChecksResponse>> {
+    return this.call<ComplianceChecksResponse>("get_compliance_checks", {
+      p_engagement_ref: engagementRef,
+    });
+  }
+
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>> {
     return this.view<CollectionRule>(VIEW_READS.collectionRules);
   }
@@ -889,8 +959,20 @@ export class SupabaseRpcClient implements TrainOsClient {
     return this.call<ComplianceRule>("get_compliance_rule", { p_id: id });
   }
 
+  createComplianceRule(input: ComplianceRuleCreateInput): Promise<Result<ComplianceRule>> {
+    const { idempotencyKey, ...body } = input;
+    return this.call<ComplianceRule>("create_compliance_rule", {
+      p_body: body,
+      p_idempotency_key: idempotencyKey,
+    });
+  }
+
   listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>> {
     return this.view<RuleChangeSet>(VIEW_READS.ruleChanges);
+  }
+
+  getRuleChangeSet(documentId: string): Promise<Result<RuleChangeSet>> {
+    return this.call<RuleChangeSet>("get_rule_change_set", { p_document_id: documentId });
   }
 
   listEvals(): Promise<Result<ListResponse<AgentEval>>> {

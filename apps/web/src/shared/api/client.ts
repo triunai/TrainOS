@@ -18,7 +18,9 @@ import type {
   BudgetScope,
   BudgetWrite,
   ChannelConsent,
+  ClaimPacket,
   CollectionRule,
+  ComplianceChecksResponse,
   ComplianceRule,
   Contact,
   Enquiry,
@@ -27,6 +29,8 @@ import type {
   EnquiryExtractionPatch,
   FollowUp,
   HrdcDeadline,
+  HrdcDocumentAttachRequest,
+  HrdcPacketExport,
   KnowledgeSource,
   KnowledgeSourceCheckResponse,
   KnowledgeSourceCreateRequest,
@@ -41,6 +45,7 @@ import type {
   Opportunity,
   Organisation,
   OrganisationRelations,
+  OrganisationSuggestion,
   PageRequest,
   PipelineConfig,
   PipelineObject,
@@ -142,6 +147,12 @@ export type SectionWriteInput = Idempotent<ProposalSectionWrite>;
 /** `GET /v1/ai/usage?groupBy=`. Kept local so the signature fits one line (027). */
 export type UsageGroupBy = "TIER" | "AGENT" | "ACTION_TYPE";
 
+/** `POST /v1/hrdc/packets/{id}/documents`. */
+export type HrdcDocumentAttachInput = Idempotent<HrdcDocumentAttachRequest>;
+
+/** `POST /v1/compliance/rules`. */
+export type ComplianceRuleCreateInput = Idempotent<Omit<ComplianceRule, "status">>;
+
 /**
  * The methods, grouped by golden-path order then by the §8 view reads.
  *
@@ -165,8 +176,13 @@ export interface TrainOsClient {
   getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>>;
   getOrganisation(id: string): Promise<Result<Organisation>>;
   getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>>;
+  searchOrganisations(query: string): Promise<Result<Organisation[]>>;
+  getOrganisationSuggestions(id: string): Promise<Result<ListResponse<OrganisationSuggestion>>>;
   getOpportunity(id: string): Promise<Result<Opportunity>>;
+  listOpportunities(query: PageRequest): Promise<Result<ListResponse<Opportunity>>>;
   getTna(id: string): Promise<Result<Tna>>;
+  listTnas(query: PageRequest): Promise<Result<ListResponse<Tna>>>;
+  reopenTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
   createProposal(input: ProposalInput): Promise<Result<Proposal>>;
   listProposals(query: PageRequest): Promise<Result<ListResponse<Proposal>>>;
@@ -197,10 +213,16 @@ export interface TrainOsClient {
   getProgramme(id: string): Promise<Result<Programme>>;
   getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>>;
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>>;
+  getClaimPacket(id: string): Promise<Result<ClaimPacket>>;
+  attachPacketDocument(id: string, input: HrdcDocumentAttachInput): Promise<Result<ClaimPacket>>;
+  exportClaimPacket(id: string): Promise<Result<HrdcPacketExport>>;
+  getComplianceChecks(engagementRef: string): Promise<Result<ComplianceChecksResponse>>;
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>>;
   listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>>;
   getComplianceRule(id: string): Promise<Result<ComplianceRule>>;
+  createComplianceRule(input: ComplianceRuleCreateInput): Promise<Result<ComplianceRule>>;
   listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>>;
+  getRuleChangeSet(documentId: string): Promise<Result<RuleChangeSet>>;
   listEvals(): Promise<Result<ListResponse<AgentEval>>>;
   listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>>;
   listAiTiers(): Promise<Result<ListResponse<ModelTier>>>;

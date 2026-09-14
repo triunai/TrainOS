@@ -4,7 +4,9 @@ import type {
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
   Budget,
+  ComplianceRule,
   EnquiryExtractionPatch,
+  HrdcDocumentAttachRequest,
   KnowledgeSourceCreateRequest,
   MessageChannel,
   PageRequest,
@@ -130,10 +132,19 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
 
     getOrganisation: async (id: string) => must(await rpc.getOrganisation(id)),
     getOrganisationRelations: async (id: string) => must(await rpc.getOrganisationRelations(id)),
+    searchOrganisations: async (query: string) => must(await rpc.searchOrganisations(query)),
+    getOrganisationSuggestions: async (id: string) =>
+      must(await rpc.getOrganisationSuggestions(id)),
 
     getOpportunity: async (id: string) => must(await rpc.getOpportunity(id)),
+    listOpportunities: async (page?: PageRequest) => must(await rpc.listOpportunities(page ?? {})),
 
     getTna: async (id: string) => must(await rpc.getTna(id)),
+    listTnas: async (page?: PageRequest) => must(await rpc.listTnas(page ?? {})),
+    /* No options bag on the RPC signature: `reopen_tna` is a `patch_enquiry_
+       extraction`-shaped detail edit, not a doc 09 §9 governed write, so it
+       takes no idempotency key server-side either. */
+    reopenTna: async (id: string, _options?: RequestOptions) => must(await rpc.reopenTna(id)),
     getTnaRecommendations: async (id: string) => must(await rpc.getTnaRecommendations(id)),
 
     createProposal: async (body: ProposalCreateRequest, options?: RequestOptions) =>
@@ -250,12 +261,36 @@ function adapters(rpc: TrainOsClient): Record<string, (...args: never[]) => unkn
     getProgrammeDeliveries: async (id: string) => must(await rpc.getProgrammeDeliveries(id)),
     listHrdcDeadlines: async (page?: PageRequest) =>
       paginate(must(await rpc.listHrdcDeadlines()).data, page),
+    getClaimPacket: async (engagementRef: string) => must(await rpc.getClaimPacket(engagementRef)),
+    /* No options bag on the fixture signature, so the key is derived here —
+       the same derivation the hooks use, not a second one. */
+    attachPacketDocument: async (engagementRef: string, body: HrdcDocumentAttachRequest) =>
+      must(
+        await rpc.attachPacketDocument(engagementRef, {
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("hrdc-packet-attach", engagementRef, body),
+        }),
+      ),
+    exportClaimPacket: async (engagementRef: string) =>
+      must(await rpc.exportClaimPacket(engagementRef)),
+    getComplianceChecks: async (engagementRef: string) =>
+      must(await rpc.getComplianceChecks(engagementRef)),
     getCollectionRules: async () => must(await rpc.listCollectionRules()),
     listComplianceRules: async (page?: PageRequest) =>
       paginate(must(await rpc.listComplianceRules()).data, page),
     getComplianceRule: async (id: string) => must(await rpc.getComplianceRule(id)),
+    /* No options bag on the fixture signature, so the key is derived here —
+       the same derivation the hooks use, not a second one. */
+    createComplianceRule: async (body: Omit<ComplianceRule, "status">) =>
+      must(
+        await rpc.createComplianceRule({
+          ...body,
+          idempotencyKey: derivedIdempotencyKey("compliance-rule-create", body.id, body),
+        }),
+      ),
     listRuleChanges: async (page?: PageRequest) =>
       paginate(must(await rpc.listRuleChanges()).data, page),
+    getRuleChangeSet: async (documentId: string) => must(await rpc.getRuleChangeSet(documentId)),
     listEvals: async (agentId?: string) => {
       const rows = must(await rpc.listEvals()).data;
       return paginate(agentId === undefined ? rows : rows.filter((e) => e.agentId === agentId));
