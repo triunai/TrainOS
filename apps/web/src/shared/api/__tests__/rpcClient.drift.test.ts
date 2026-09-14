@@ -20,6 +20,7 @@ import { okEnvelope } from "./oracleTransport";
 
 const ORG_UUID = "7d1c2a4e-1111-4222-8333-944455556666";
 const CONTACT_UUID = "0b9f3e2d-aaaa-4bbb-8ccc-dddd11112222";
+const PROGRAMME_UUID = "5c8e1f3a-2222-4111-9aaa-bbbb33334444";
 
 interface Recorded {
   rpc: { name: string; args: Record<string, unknown> }[];
@@ -100,6 +101,18 @@ describe("the uuid-keyed view reads resolve a ref first", () => {
     expect(recorded.rpc).toEqual([{ name: "get_contact", args: { p_id: "CON-0007" } }]);
     expect(recorded.match).toEqual([
       { table: "v_contact_channel_consents", filter: { contact_id: CONTACT_UUID } },
+    ]);
+  });
+
+  it("programme deliveries match on the programme's id", async () => {
+    const { transport, recorded } = recorder({ rpc: () => record(PROGRAMME_UUID) });
+    __setTransportForTests(transport);
+
+    await createRpcClient().getProgrammeDeliveries("PRG-0007");
+
+    expect(recorded.rpc).toEqual([{ name: "get_programme", args: { p_id: "PRG-0007" } }]);
+    expect(recorded.match).toEqual([
+      { table: "v_programme_deliveries", filter: { programme_id: PROGRAMME_UUID } },
     ]);
   });
 

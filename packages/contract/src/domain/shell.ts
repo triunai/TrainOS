@@ -84,17 +84,32 @@ export interface MeProfile {
   id: string;
   /** The employing tenant, as the modal's identity line names it. */
   tenant: TenantIdentity;
-  /** Where the holder works, e.g. `Klang Valley`. Not the session's place. */
-  location: string;
-  jobTitle: string;
-  department: string;
+  /**
+   * Where the holder works, e.g. `Klang Valley`. Not the session's place.
+   *
+   * Optional: no table in the schema stores a principal's work location —
+   * `public.user_profiles` carries only `display_name`, `email`, `locale`,
+   * `timezone`, `theme` and `avatar_url` (`location`, like `jobTitle`,
+   * `department` and `staffNumber` below, exists on `core.contacts`, a
+   * different entity). `null` on the wire until something stores it.
+   */
+  location?: string;
+  jobTitle?: string;
+  department?: string;
   email: string;
   /** E.164 with the pack's spacing, e.g. `+60 12-448 9021`. */
   mobile?: string;
-  staffNumber: string;
+  staffNumber?: string;
   /** Modules the principal is entitled to — the modal's first chip. */
   moduleCount: number;
-  session: ProfileSession;
+  /**
+   * Optional, and coarser than its own fields' optionality: `core.me_profile()`
+   * answers `session: null` as a WHOLE when it has nothing to report, not an
+   * object with every field null. A reader that unwrapped `session` first and
+   * only then checked its fields would throw on that shape; the block is
+   * gated on `session` itself before anything inside it is read.
+   */
+  session?: ProfileSession;
 }
 
 /** §2 ruled R14 · the tenant as the profile panel names it. */
@@ -111,16 +126,26 @@ export interface TenantIdentity {
  * `browser` and `place` are separate because the artboard's "Chrome · Shah
  * Alam, GMT+8" is a sentence the screen builds, and because a place is the
  * thing a person scans for when checking whether a session is theirs.
+ *
+ * All four fields below `lastSignInAt` are optional. Nothing in the schema
+ * stores a user-agent string or a geo-located place, so `browser` and `place`
+ * have no source and are optional for that reason alone. `activeSessions` and
+ * `twoFactorEnabled` are optional too, provisionally: Supabase's `auth.sessions`
+ * and `auth.mfa_factors` could in principle derive them, but until the SQL
+ * lane building `core.me_profile()` (022) confirms it actually populates them,
+ * treating them as certain would be a claim this file cannot back up.
+ * `lastSignInAt` stays required — `auth.users.last_sign_in_at` is a stored
+ * column, not a derivation.
  */
 export interface ProfileSession {
   lastSignInAt: Timestamp;
   /** e.g. `Chrome`. */
-  browser: string;
+  browser?: string;
   /** e.g. `Shah Alam`. */
-  place: string;
+  place?: string;
   /** Sessions open right now, this one included. */
-  activeSessions: number;
-  twoFactorEnabled: boolean;
+  activeSessions?: number;
+  twoFactorEnabled?: boolean;
 }
 
 /**
