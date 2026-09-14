@@ -29,7 +29,9 @@ const TARGETS = [
   { dir: join(ROOT, "supabase", "rollbacks"), match: /\.sql$/ },
   { dir: join(ROOT, "supabase", "tests"), match: /\.sql$/ },
   { dir: join(ROOT, "supabase", "tables"), match: /\.sql$/ },
-  { dir: join(ROOT, "supabase", "seeds"), match: /\.sql$/ },
+  // Seeds are run by hand with psql (supabase/seeds/README.md), so their
+  // whole-line psql meta-commands (\ir, \set) are stripped before parsing.
+  { dir: join(ROOT, "supabase", "seeds"), match: /\.sql$/, psqlMeta: true },
 ];
 
 let parse;
@@ -48,7 +50,7 @@ function collect() {
     // seeds or tests yet.
     if (!existsSync(target.dir)) continue;
     for (const name of readdirSync(target.dir).sort()) {
-      if (target.match.test(name)) files.push(join(target.dir, name));
+      if (target.match.test(name)) files.push({ path: join(target.dir, name), psqlMeta: target.psqlMeta === true });
     }
   }
   return files;
@@ -68,9 +70,10 @@ if (files.length === 0) {
 
 let failures = 0;
 
-for (const file of files) {
+for (const { path: file, psqlMeta } of files) {
   const shown = relative(ROOT, file);
-  const sql = readFileSync(file, "utf8");
+  const raw = readFileSync(file, "utf8");
+  const sql = psqlMeta ? raw.replace(/^[ \t]*\\.*$/gm, "") : raw;
 
   // An empty file parses fine and proves nothing. Say so rather than pass it.
   if (sql.trim() === "") {
