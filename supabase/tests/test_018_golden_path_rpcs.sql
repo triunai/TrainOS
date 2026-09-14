@@ -1461,7 +1461,10 @@ BEGIN
   IF core.get_policy('NO-SUCH-POLICY') #>> '{error,code}' <> 'NOT_FOUND' THEN
     RAISE EXCEPTION 'T19f: an unknown policy did not refuse';
   END IF;
-  IF core.get_compliance_rule('NO-SUCH-RULE') #>> '{error,code}' <> 'NOT_FOUND' THEN
+  -- ⚠ AMENDED BY 021: this block runs as SALES, and 021 gates get_compliance_rule
+  -- on compliance:rule:read, which 002 §11 does not give SALES. The refusal is
+  -- still asserted: FORBIDDEN before any lookup, which is what 021 requires.
+  IF core.get_compliance_rule('NO-SUCH-RULE') #>> '{error,code}' NOT IN ('NOT_FOUND','FORBIDDEN') THEN
     RAISE EXCEPTION 'T19g: an unknown compliance rule did not refuse';
   END IF;
   RAISE NOTICE 'T19 PASS: programme complete with a server floor price; policy complete; '
@@ -2722,6 +2725,12 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM core.compliance_rules WHERE tenant_id IS NULL) THEN
     RAISE EXCEPTION 'T36u: 017 seeds three global compliance rules and none is here';
   END IF;
+  -- ⚠ AMENDED BY 021: read as the MD, who holds compliance:rule:read (002 §11);
+  -- SALES is FORBIDDEN here since 021. Claims return to SALES below.
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    pg_catalog.json_build_object('sub','33333333-3333-4333-8333-333333333333',
+      'tenant_id','11111111-1111-4111-8111-111111111111',
+      'app_role','MD','actor_kind','HUMAN','role','authenticated')::text, true);
   d := pg_temp.data('T36s', core.get_compliance_rule(
          (SELECT id::text FROM core.compliance_rules
            WHERE tenant_id IS NULL ORDER BY rule_code LIMIT 1)));
@@ -2750,6 +2759,10 @@ BEGIN
   IF v -> 'success' <> 'false'::jsonb OR v #>> '{error,code}' <> 'NOT_FOUND' THEN
     RAISE EXCEPTION 'T36w: another tenant''s compliance rule was readable: %', v;
   END IF;
+  PERFORM pg_catalog.set_config('request.jwt.claims',
+    pg_catalog.json_build_object('sub','22222222-2222-4222-8222-222222222222',
+      'tenant_id','11111111-1111-4111-8111-111111111111','app_role','SALES',
+      'actor_kind','HUMAN','role','authenticated')::text, true);
 
   RAISE NOTICE 'T36 PASS: get_proposal and get_quotation are invoked, project the shapes '
                'the contract declares, refuse an absent id, and agree byte-for-byte with '

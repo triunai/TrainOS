@@ -370,8 +370,10 @@ BEGIN
     'T1n FAIL: expected 18 job_type_map rows';
   ASSERT (SELECT pg_catalog.count(DISTINCT entry.action_type) FROM app.job_type_map AS entry) = 16,
     'T1o FAIL: expected 16 mapped action types';
-  ASSERT (SELECT pg_catalog.count(*) FROM app.action_types) = 22,
-    'T1p FAIL: app.action_types is no longer 22 rows; the coverage arithmetic moved';
+  -- ⚠ AMENDED BY 021: 22 -> 23. OPPORTUNITY_STAGE_CHANGE is in-database only, so
+  -- it is one more deliberately-unmapped type and the 18/16 map counts hold.
+  ASSERT (SELECT pg_catalog.count(*) FROM app.action_types) = 23,
+    'T1p FAIL: app.action_types is no longer 23 rows; the coverage arithmetic moved';
 
   RAISE NOTICE 'T1 PASS - 10 RLS-forced tables, 1 policy, 31 functions at '
     'search_path="", one drawer index with H-26''s ordering, the seam at 011''s '
