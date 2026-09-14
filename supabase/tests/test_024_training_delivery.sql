@@ -27,13 +27,23 @@
 --     not the trigger's generic text.
 -- T7  `put_programme`: ADMIN's write lands and is read back through
 --     `core.get_programme`; OPS is FORBIDDEN with `requiredRole: 'ADMIN'`.
--- T8  Teeth check for T3: `core.get_engagement`'s gate, no other function's,
+-- T8  `export_attendance`: TRAINER (holding the review-mandated
+--     `attendance:export` grant) succeeds on an engagement they can see; the
+--     response carries `status` (the latest attendance day's status) and
+--     `snapshotAt`.
+-- T9  `capture_attendance` is scope-narrowed for TRAINER: one assigned to the
+--     engagement (via `core.engagement_trainers`) succeeds; one not assigned
+--     is FORBIDDEN, non-enumerable — the same response for a real engagement
+--     id (not theirs) and a fabricated one, mirroring T3's non-enumerability
+--     pattern.
+-- T10 Teeth check for T3: `core.get_engagement`'s gate, no other function's,
 --     is proven load-bearing by disabling only its own `has_permission` call
---     for this pin's own attendance-free session and observing the same
---     CLIENT principal read data it was refused a moment before — then the
---     original body is restored so no later assertion is affected. Run once
---     manually while authoring the migration is the discipline; this leaves
---     the mechanism checkable by anyone re-running the file.
+--     — the live body captured with `pg_get_functiondef` and surgically cut
+--     with `regexp_replace`, never a hand-copied duplicate of the function —
+--     and observing the same CLIENT principal read data it was refused a
+--     moment before, then restoring the original body byte-for-byte (from
+--     the SAME captured text) before a fresh CLIENT call proves the gate is
+--     back.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 SET client_min_messages = notice;
@@ -49,6 +59,19 @@ LANGUAGE sql AS $fn$
   SELECT (pg_catalog.jsonb_build_object(
     'sub', p_user, 'role', 'authenticated', 'tenant_id', p_tenant,
     'app_role', p_role, 'actor_kind', p_kind, 'aal', 'aal1'))::text;
+$fn$;
+
+-- Same as `pg_temp.claims`, TRAINER-shaped: carries `trainer_id`, the claim
+-- `app.trainer_id()` (002:388) reads — nothing else in this file's fixtures
+-- needs it, so it is a separate helper rather than an optional param bolted
+-- onto every other call site.
+CREATE FUNCTION pg_temp.trainer_claims(p_user uuid, p_tenant uuid, p_trainer uuid)
+RETURNS text
+LANGUAGE sql AS $fn$
+  SELECT (pg_catalog.jsonb_build_object(
+    'sub', p_user, 'role', 'authenticated', 'tenant_id', p_tenant,
+    'app_role', 'TRAINER', 'actor_kind', 'HUMAN', 'aal', 'aal1',
+    'trainer_id', p_trainer))::text;
 $fn$;
 
 CREATE FUNCTION pg_temp.try(p_sql text) RETURNS jsonb
@@ -180,6 +203,42 @@ VALUES
 INSERT INTO core.attendance_days (id, tenant_id, engagement_id, day, on_date)
 VALUES ('a0240000-9999-4000-8000-000000000001','a0240000-1111-4000-8000-000000000001',
         'a0240000-6666-4000-8000-000000000001', 1, '2026-11-12');
+
+-- Day 2, kept OPEN throughout this pin (T6 locks day 1, not day 2) so T8/T9's
+-- TRAINER capture probes — which run after T6 — have a day that still
+-- accepts a write, and so `export_attendance`'s "latest day" status (T8) has
+-- a deterministic OPEN answer regardless of where T8 runs relative to T6.
+INSERT INTO core.attendance_days (id, tenant_id, engagement_id, day, on_date)
+VALUES ('a0240000-9999-4000-8000-000000000002','a0240000-1111-4000-8000-000000000001',
+        'a0240000-6666-4000-8000-000000000001', 2, '2026-11-13');
+
+-- ── Fixtures: a second TRAINER, NOT assigned to the tenant-A engagement,
+--    for T9's non-enumerability probe. `Farah Aziz` (already a core.trainers
+--    row, above) is assigned via session 1's `trainer_id` (the trigger
+--    mirrors it into `core.engagement_trainers`, 008:608-611); this one
+--    is not.
+INSERT INTO core.trainers (id, tenant_id, name, ttt_certified, ttt_ref)
+VALUES ('a0240000-5555-4000-8000-000000000002','a0240000-1111-4000-8000-000000000001',
+        'Zul Hakim', true,'TTT-2021-5582');
+
+-- Staff logins for both trainers (T8/T9 impersonate these, not the
+-- `core.trainers` rows themselves — `app.trainer_id()` reads the JWT claim,
+-- so the login and the `core.trainers` row are linked only by that claim,
+-- same as `user_id` links them for real, here set for realism).
+INSERT INTO auth.users (id, email) VALUES
+  ('a0240000-0000-4000-8000-0000000000a4','t024-trainer-farah@example.invalid'),
+  ('a0240000-0000-4000-8000-0000000000a5','t024-trainer-zul@example.invalid');
+UPDATE core.trainers SET user_id = 'a0240000-0000-4000-8000-0000000000a4'
+ WHERE id = 'a0240000-5555-4000-8000-000000000001';
+UPDATE core.trainers SET user_id = 'a0240000-0000-4000-8000-0000000000a5'
+ WHERE id = 'a0240000-5555-4000-8000-000000000002';
+INSERT INTO public.memberships
+  (tenant_id,user_id,role,actor_kind,trainer_id,client_scope,team_scope,mfa_required,status,is_default)
+VALUES
+  ('a0240000-1111-4000-8000-000000000001','a0240000-0000-4000-8000-0000000000a4','TRAINER','HUMAN',
+   'a0240000-5555-4000-8000-000000000001','ALL','ALL',false,'ACTIVE',true),
+  ('a0240000-1111-4000-8000-000000000001','a0240000-0000-4000-8000-0000000000a5','TRAINER','HUMAN',
+   'a0240000-5555-4000-8000-000000000002','ALL','ALL',false,'ACTIVE',true);
 
 -- ── Fixtures: tenant B, ADMIN only, for T5 (cross-tenant) ────────────────────
 
@@ -428,5 +487,167 @@ BEGIN
   END IF;
 END
 $t7$;
+
+-- ════════ T8 · export_attendance: TRAINER succeeds, status + snapshotAt ════
+--
+-- Farah holds TRAINER's new `attendance:export` grant (024 §0) and can see
+-- this engagement (export itself is not scope-narrowed by assignment, only
+-- `capture_attendance` is per the review — T9 below). Day 2 is the engagement's
+-- latest attendance day and stays OPEN throughout this pin, so `status` here
+-- is deterministic regardless of T6's day-1 lock.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.trainer_claims('a0240000-0000-4000-8000-0000000000a4','a0240000-1111-4000-8000-000000000001',
+                         'a0240000-5555-4000-8000-000000000001'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t024.trainer_export', pg_temp.try(
+  $$SELECT core.export_attendance('a0240000-6666-4000-8000-000000000001')$$)::text, true);
+RESET ROLE;
+
+DO $t8$
+DECLARE
+  v      jsonb := pg_catalog.current_setting('t024.trainer_export')::jsonb;
+  v_data jsonb;
+BEGIN
+  IF NOT (v ->> 'ok')::boolean OR NOT (v -> 'value' ->> 'success')::boolean THEN
+    RAISE EXCEPTION 'T8a FAIL: TRAINER (holding the new attendance:export grant) should succeed: %', v;
+  END IF;
+  v_data := v -> 'value' -> 'data';
+  IF v_data ->> 'status' IS DISTINCT FROM 'OPEN' THEN
+    RAISE EXCEPTION 'T8b FAIL: status should be day 2''s (the latest attendance day) OPEN status: %', v_data;
+  END IF;
+  IF v_data ->> 'snapshotAt' IS NULL THEN
+    RAISE EXCEPTION 'T8c FAIL: snapshotAt missing from the export response: %', v_data;
+  END IF;
+END
+$t8$;
+
+-- ════════ T9 · capture_attendance is scope-narrowed for TRAINER ════════════
+--
+-- Farah is assigned to this engagement (session 1's trainer_id mirrors into
+-- core.engagement_trainers). Zul is not assigned to anything. Day 2 (OPEN,
+-- untouched by T6's day-1 lock) is used so this section's outcome does not
+-- depend on running before or after T6.
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.trainer_claims('a0240000-0000-4000-8000-0000000000a4','a0240000-1111-4000-8000-000000000001',
+                         'a0240000-5555-4000-8000-000000000001'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t024.trainer_ok', pg_temp.try(
+  $$SELECT core.capture_attendance('a0240000-6666-4000-8000-000000000001', 2,
+      '{"participantRef":"a0240000-8888-4000-8000-000000000001","session":"AM","present":true,"method":"QR"}'::jsonb)$$)::text, true);
+RESET ROLE;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.trainer_claims('a0240000-0000-4000-8000-0000000000a5','a0240000-1111-4000-8000-000000000001',
+                         'a0240000-5555-4000-8000-000000000002'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t024.trainer_real', pg_temp.try(
+  $$SELECT core.capture_attendance('a0240000-6666-4000-8000-000000000001', 2,
+      '{"participantRef":"a0240000-8888-4000-8000-000000000001","session":"PM","present":true,"method":"QR"}'::jsonb)$$)::text, true);
+SELECT pg_catalog.set_config('t024.trainer_fake', pg_temp.try(
+  $$SELECT core.capture_attendance('a0240000-6666-4000-8000-00000000ffff', 2,
+      '{"participantRef":"a0240000-8888-4000-8000-000000000001","session":"PM","present":true,"method":"QR"}'::jsonb)$$)::text, true);
+RESET ROLE;
+
+DO $t9$
+DECLARE
+  v_ok   jsonb := pg_catalog.current_setting('t024.trainer_ok')::jsonb;
+  v_real jsonb := pg_catalog.current_setting('t024.trainer_real')::jsonb;
+  v_fake jsonb := pg_catalog.current_setting('t024.trainer_fake')::jsonb;
+BEGIN
+  IF NOT (v_ok ->> 'ok')::boolean THEN
+    RAISE EXCEPTION 'T9a FAIL: Farah (assigned via engagement_trainers) should be able to capture: %', v_ok;
+  END IF;
+
+  IF v_real ->> 'sqlstate' <> 'TRNOS' OR pg_temp.code(v_real) <> 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'T9b FAIL: Zul (not assigned) should be FORBIDDEN on a real engagement: %', v_real;
+  END IF;
+  IF v_fake ->> 'sqlstate' <> 'TRNOS' OR pg_temp.code(v_fake) <> 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'T9c FAIL: Zul should be FORBIDDEN on a fabricated engagement id too: %', v_fake;
+  END IF;
+  -- Non-enumerable: a real engagement (not Zul's) and a fabricated one must
+  -- answer with the exact same shape, same as T3's real-vs-fake check.
+  IF v_real ->> 'detail' IS DISTINCT FROM v_fake ->> 'detail' THEN
+    RAISE EXCEPTION 'T9d FAIL: real (not Zul''s) vs fabricated engagement id answered differently for Zul: % vs %', v_real, v_fake;
+  END IF;
+END
+$t9$;
+
+-- ════════ T10 · teeth-check: core.get_engagement's gate is load-bearing ════
+--
+-- Disables ONLY core.get_engagement's own has_permission('engagement:read')
+-- gate — the CURRENT body captured live via pg_get_functiondef and cut with
+-- regexp_replace, never a hand-copied duplicate of the ~170-line function,
+-- which would drift and silently stop testing anything the moment the real
+-- body changes — calls it as the SAME CLIENT principal T3 refused, and
+-- confirms CLIENT now reads data: the refusal in T3 came from THIS gate, not
+-- some other check. The original body (captured before any change) is
+-- restored byte-for-byte, and a fresh CLIENT call afterward proves the gate
+-- is back before any later statement in this file relies on it.
+
+DROP TABLE IF EXISTS pg_temp.t10_orig;
+CREATE TEMP TABLE t10_orig (body text) ON COMMIT DROP;
+
+DO $t10_disable$
+DECLARE
+  v_orig     text;
+  v_disabled text;
+BEGIN
+  v_orig := pg_catalog.pg_get_functiondef('core.get_engagement(text)'::regprocedure);
+  IF pg_catalog.strpos(v_orig, $q$has_permission('engagement:read')$q$) = 0 THEN
+    RAISE EXCEPTION 'T10 SETUP FAILURE: expected engagement:read gate text not found in core.get_engagement''s current body — the teeth-check would silently no-op';
+  END IF;
+
+  v_disabled := pg_catalog.regexp_replace(v_orig,
+    $q$IF NOT app\.has_permission\('engagement:read'\) THEN.*?END IF;$q$,
+    '', 's');
+  IF v_disabled = v_orig THEN
+    RAISE EXCEPTION 'T10 SETUP FAILURE: the gate-removal regex matched nothing — refusing to run a teeth-check that changed nothing';
+  END IF;
+
+  INSERT INTO t10_orig (body) VALUES (v_orig);
+  EXECUTE v_disabled;
+END;
+$t10_disable$;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0240000-0000-4000-8000-0000000000a3','a0240000-1111-4000-8000-000000000001','CLIENT','CLIENT'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t024.t10_disabled', pg_temp.try(
+  $$SELECT core.get_engagement('a0240000-6666-4000-8000-000000000001')$$)::text, true);
+RESET ROLE;
+
+DO $t10_restore$
+DECLARE v_orig text;
+BEGIN
+  SELECT body INTO v_orig FROM t10_orig;
+  IF v_orig IS NULL THEN
+    RAISE EXCEPTION 'T10 SETUP FAILURE: no captured original body to restore from — refusing to leave the gate disabled';
+  END IF;
+  EXECUTE v_orig;
+END;
+$t10_restore$;
+
+SELECT pg_catalog.set_config('request.jwt.claims',
+  pg_temp.claims('a0240000-0000-4000-8000-0000000000a3','a0240000-1111-4000-8000-000000000001','CLIENT','CLIENT'), true);
+SET LOCAL ROLE authenticated;
+SELECT pg_catalog.set_config('t024.t10_restored', pg_temp.try(
+  $$SELECT core.get_engagement('a0240000-6666-4000-8000-000000000001')$$)::text, true);
+RESET ROLE;
+
+DO $t10$
+DECLARE
+  v_disabled jsonb := pg_catalog.current_setting('t024.t10_disabled')::jsonb;
+  v_restored jsonb := pg_catalog.current_setting('t024.t10_restored')::jsonb;
+BEGIN
+  IF NOT (v_disabled ->> 'ok')::boolean OR NOT (v_disabled -> 'value' ->> 'success')::boolean THEN
+    RAISE EXCEPTION 'T10a FAIL: CLIENT should read data once the gate is disabled — the refusal in T3 is not proven load-bearing: %', v_disabled;
+  END IF;
+  IF pg_temp.code(v_restored) <> 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'T10b FAIL: CLIENT should be refused again once the original body is restored: %', v_restored;
+  END IF;
+END;
+$t10$;
 
 ROLLBACK;
