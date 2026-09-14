@@ -695,6 +695,7 @@ SET statement_timeout = '10s'
 AS $fn$
 DECLARE
   v_tenant uuid := app.require_tenant_id();
+  v_role   app.app_role := app.role();
   v_eng    core.engagements%ROWTYPE;
   v_day    core.attendance_days%ROWTYPE;
   v_part   core.participants%ROWTYPE;
@@ -710,10 +711,41 @@ BEGIN
               'code','FORBIDDEN','requiredPermission','attendance:capture')::text;
   END IF;
 
+  -- `attendance:capture` is "scope-narrowed" for TRAINER (002 §11): OPS, MD
+  -- and ADMIN are unrestricted, but a TRAINER may only capture attendance for
+  -- an engagement they are assigned to. `core.engagement_trainers` (008) is
+  -- the join purpose-built for exactly this check — "the join sb-tenancy's
+  -- trainer-scoped policies read" (008's own comment on the table) — kept in
+  -- sync by trigger from `core.sessions.trainer_id`, so a session assignment
+  -- is enough without also joining `core.sessions` here. The scope is per
+  -- ENGAGEMENT, not per session/day: `core.attendance_days` carries no
+  -- session/trainer link to check a narrower scope against, and the 008
+  -- table comment is explicit that policies should read this one join, not
+  -- union sessions and engagement_trainers on every row check.
+  --
+  -- The scope check is folded INTO this lookup (rather than left as a
+  -- separate check after a plain, unscoped `v_eng` lookup) so that, for a
+  -- TRAINER, "this engagement does not exist" and "this engagement exists
+  -- but I am not assigned to it" are indistinguishable — same NOT FOUND
+  -- branch below, same FORBIDDEN response, same shape, for a real id and a
+  -- fake one alike. A separate post-lookup check would leak existence
+  -- through NOT_FOUND vs FORBIDDEN, which is exactly what the codebase's
+  -- non-enumerable-permission convention (T3's CLIENT probes, test_024)
+  -- exists to prevent for a full stranger's engagement id.
   SELECT engagement.* INTO v_eng FROM core.engagements AS engagement
    WHERE engagement.tenant_id = v_tenant
-     AND (engagement.id::text = p_id OR engagement.ref = p_id);
+     AND (engagement.id::text = p_id OR engagement.ref = p_id)
+     AND (v_role <> 'TRAINER' OR EXISTS (
+           SELECT 1 FROM core.engagement_trainers AS et
+            WHERE et.tenant_id = v_tenant AND et.engagement_id = engagement.id
+              AND et.trainer_id = app.trainer_id()));
   IF NOT FOUND THEN
+    IF v_role = 'TRAINER' THEN
+      RAISE EXCEPTION 'requester lacks attendance:capture for this engagement'
+        USING ERRCODE = 'TRNOS',
+              DETAIL = pg_catalog.jsonb_build_object(
+                'code','FORBIDDEN','requiredPermission','attendance:capture')::text;
+    END IF;
     RAISE EXCEPTION 'engagement not found'
       USING ERRCODE = 'TRNOS',
             DETAIL = pg_catalog.jsonb_build_object('code','NOT_FOUND','id', p_id)::text;
