@@ -4,7 +4,7 @@ import { ApprovalBanner } from "./ApprovalBanner";
 import { ExceptionBanner } from "./ExceptionBanner";
 import { GhostButton } from "./Button";
 import { humanise } from "./format";
-import type { ActionError } from "./adapters";
+import { summariseEffects, type ActionError } from "./adapters";
 
 /**
  * What `POST /v1/actions` answered, rendered.
@@ -119,7 +119,7 @@ export function ActionOutcome({
     <ExceptionBanner
       severity="INFO"
       title={`${subject} · done`}
-      subtitle={response.result.effects.map((effect) => effect.description).join(" · ")}
+      subtitle={summariseEffects(response.result.effects)}
       action={dismiss}
       className={className}
     />

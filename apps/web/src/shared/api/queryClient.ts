@@ -3,11 +3,11 @@ import { toast } from "sonner";
 import { isRetryable, readableMessage, toApiError } from "./errors";
 
 /**
- * ONE place decides what a failed mutation looks like.
+ * ONE place decides what a failed OR succeeded mutation looks like.
  *
  * Per-hook `onError: () => toast(...)` drifts in copy and in coverage. Here a
- * mutation opts in with `meta: { toastOnError: true }` and gets consistent
- * behaviour for free.
+ * mutation opts in with `meta: { toastOnError: true }` / `meta: {
+ * toastOnSuccess: "…" }` and gets consistent behaviour for free.
  *
  * THE ASYMMETRY RULE — this is not stylistic:
  *
@@ -19,6 +19,15 @@ import { isRetryable, readableMessage, toApiError } from "./errors";
  * Approve and reject buttons are exactly the first shape. Omitting the flag
  * there produces the bug where a denied write shows nothing at all and the only
  * symptom is "the button does nothing".
+ *
+ * `toastOnSuccess` follows the same rule, for the write's HAPPY path: a plain
+ * resource write — `put_quotation`, capturing attendance, a knowledge source
+ * add — has no §3 envelope and so no `ActionOutcome` to render; without this a
+ * "Save" button that succeeded looked exactly like one that had not been
+ * clicked yet. It is a string (or a function of the mutation's result and
+ * variables, for a message that names what was saved) rather than `true`,
+ * because unlike a refusal — which always reads as `readableMessage(error)` —
+ * a save has no one sentence every mutation can share.
  */
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +49,12 @@ export const queryClient = new QueryClient({
       if (mutation.options.meta?.toastOnError !== true) return;
       toast.error(readableMessage(toApiError(error)));
     },
+    onSuccess: (data, variables, _context, mutation) => {
+      const spec = mutation.options.meta?.toastOnSuccess;
+      if (!spec) return;
+      const message = typeof spec === "function" ? spec(data, variables) : spec;
+      if (message) toast.success(message);
+    },
   }),
 });
 
@@ -48,6 +63,14 @@ declare module "@tanstack/react-query" {
     mutationMeta: {
       /** Surface this mutation's failure as a toast. Required for fire-and-forget calls. */
       toastOnError?: boolean;
+      /**
+       * Surface this mutation's success as a toast: a fixed string, or a
+       * function of `(data, variables)` for copy that names what was saved.
+       * Returning a falsy value from the function skips the toast for that
+       * particular result — for a save that already has its own richer inline
+       * confirmation on some but not all outcomes, say.
+       */
+      toastOnSuccess?: string | ((data: unknown, variables: unknown) => string | undefined);
     };
   }
 }

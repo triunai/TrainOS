@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ActionRequest, Me } from "@trainos/contract";
 import { PROPOSAL_AURORA, TEMPLATE_EMAIL_PROPOSAL, USER_AMIRAH } from "@trainos/contract";
@@ -51,7 +52,11 @@ function wrapper({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <MeContext.Provider value={{ me, setRole: () => undefined }}>{children}</MeContext.Provider>
+      <MeContext.Provider value={{ me, setRole: () => undefined }}>
+        {/* `useAction` now calls `useNavigate()` for the QUEUED_FOR_APPROVAL
+            toast's "View approval" link. */}
+        <MemoryRouter>{children}</MemoryRouter>
+      </MeContext.Provider>
     </QueryClientProvider>
   );
 }

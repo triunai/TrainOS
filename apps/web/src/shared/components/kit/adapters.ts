@@ -1,6 +1,8 @@
 import type {
+  ActionResult,
   AppliedFilter,
   AutonomyLevel,
+  Effect,
   JuryPolicy,
   EvidenceType,
   Provenance,
@@ -208,6 +210,38 @@ export function describeActionError(
     ...(typeof bag.code === "string" ? { code: bag.code } : {}),
     ...(blockers && blockers.length > 0 ? { blockers } : {}),
   };
+}
+
+/**
+ * The `EXECUTED` receipt, in one sentence.
+ *
+ * §7 requires `effects[]` to say what changed, and every description already
+ * reads as plain-English prose — "Mark the source enquiry converted", not a
+ * code. Joining them is the whole job; a second copy of this join was the
+ * thing that drifted `ActionOutcome`'s banner and the action toast apart, so
+ * both call this rather than writing their own `.join(" · ")`.
+ */
+export function summariseEffects(effects: Effect[]): string {
+  return effects.map((effect) => effect.description).join(" · ");
+}
+
+/**
+ * A created-or-changed ref that `effects[]` itself did not carry.
+ *
+ * `ActionResult` is `{ effects: Effect[] } & Record<string, unknown>` on
+ * purpose (§3): an action can hand back a typed extra, such as
+ * `OPPORTUNITY_CONVERT`'s `result.opportunity`, and that extra is frequently
+ * the one ref a reader most wants — "created OPP-2026-0005" — when the effect
+ * line for it has none. Scanned generically, by shape, rather than by a
+ * hand-maintained list of action types: a new action's extra is picked up
+ * without a second place remembering it exists.
+ */
+export function extraCreatedRefs(result: ActionResult): Array<{ entity: string; ref: string }> {
+  return Object.entries(result).flatMap(([key, value]) => {
+    if (key === "effects" || value === null || typeof value !== "object") return [];
+    const ref = (value as { ref?: unknown }).ref;
+    return typeof ref === "string" ? [{ entity: key, ref }] : [];
+  });
 }
 
 /* ---- List chrome ---------------------------------------------------- */
