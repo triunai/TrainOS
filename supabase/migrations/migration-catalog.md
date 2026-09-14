@@ -491,8 +491,9 @@ lifted (T4c), tenant-status predicate removed (T2a), DRAFT/LOST made visible (T2
 NOT_FOUND details (T2a). `$verify$` refuses the migration when anon is granted
 `app._portal_proposal` (V1) or a column of `core.public_share_tokens` (V1).
 
-Every prior pin passes on 001–021 + 028 (two situational pins still refuse at SETUP by design, as on
-the baseline). None was amended.
+Every prior pin passes on 001–021 + 028, and again on 001–022 + 028 after 022 merged; the two
+situational pins still refuse at SETUP by design, as on the baseline. None was amended. The seed pin,
+and `test_hosted_demo.sql` after it, pass on 001–022 + 028 with the three MDs provisioned.
 
 ### Rollback — `rollbacks/028_client_portal_rollback.sql`
 
