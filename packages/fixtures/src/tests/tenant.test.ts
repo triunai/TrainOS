@@ -90,7 +90,7 @@ describe("getMeProfile", () => {
      the rest of the console is configuring — one trading name, one code. */
   it("names one tenant across every principal", async () => {
     const names = new Set<string>();
-    const codes = new Set<string>();
+    const codes = new Set<string | undefined>();
     for (const user of users) {
       const profile = await createFixtureClient({ latencyMs: 0, actorId: user.id }).getMeProfile();
       names.add(profile.tenant.name);
@@ -107,6 +107,11 @@ describe("getMeProfile", () => {
   it("has two-factor on for every principal who approves money", async () => {
     for (const id of ["u_lim", "u_kelvin", "u_jason"]) {
       const profile = await createFixtureClient({ latencyMs: 0, actorId: id }).getMeProfile();
+      /* Fixtures always populate `session` — only `core.me_profile()` (022)
+         answers `null` for it, when `lastSignInAt` cannot be derived — so a
+         missing one here is the fixture data itself regressing, not the
+         optional type this test has to accommodate. */
+      if (!profile.session) throw new Error(`${id} has no session data`);
       expect(profile.session.twoFactorEnabled, `${id} approves money`).toBe(true);
     }
   });

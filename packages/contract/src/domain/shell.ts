@@ -84,25 +84,49 @@ export interface MeProfile {
   id: string;
   /** The employing tenant, as the modal's identity line names it. */
   tenant: TenantIdentity;
-  /** Where the holder works, e.g. `Klang Valley`. Not the session's place. */
-  location: string;
-  jobTitle: string;
-  department: string;
+  /**
+   * Where the holder works, e.g. `Klang Valley`. Not the session's place.
+   *
+   * Optional: no table in the schema stores a principal's work location —
+   * `public.user_profiles` carries only `display_name`, `email`, `locale`,
+   * `timezone`, `theme` and `avatar_url` (`location`, like `jobTitle`,
+   * `department` and `staffNumber` below, exists on `core.contacts`, a
+   * different entity). `null` on the wire until something stores it.
+   */
+  location?: string;
+  jobTitle?: string;
+  department?: string;
   email: string;
   /** E.164 with the pack's spacing, e.g. `+60 12-448 9021`. */
   mobile?: string;
-  staffNumber: string;
+  staffNumber?: string;
   /** Modules the principal is entitled to — the modal's first chip. */
   moduleCount: number;
-  session: ProfileSession;
+  /**
+   * `core.me_profile()`'s FINAL shape (022, PR #46 2551359, sql-022):
+   * `session` is `null` AS A WHOLE precisely when `lastSignInAt` cannot be
+   * derived — the guard that would otherwise leave a partial object instead
+   * withholds the block entirely, so a present `session` always has a real
+   * `lastSignInAt`. (Two earlier readings of this got it wrong in opposite
+   * directions: one had `session` always present with `lastSignInAt`
+   * possibly null, the other had `session` always present full stop. This is
+   * the SQL lane's own word, superseding both.)
+   */
+  session?: ProfileSession;
 }
 
-/** §2 ruled R14 · the tenant as the profile panel names it. */
+/**
+ * §2 ruled R14 · the tenant as the profile panel names it.
+ *
+ * `code` is optional for the same reason the fields below `MeProfile.email`
+ * are: `core.me_profile()` (022) always answers it `null` today — nothing
+ * populates a tenant short code yet.
+ */
 export interface TenantIdentity {
   /** Trading name, e.g. `Akademi Perdana`. Not the registered name. */
   name: string;
   /** The tenant's short code, e.g. `APSB`. */
-  code: string;
+  code?: string;
 }
 
 /**
@@ -111,16 +135,29 @@ export interface TenantIdentity {
  * `browser` and `place` are separate because the artboard's "Chrome · Shah
  * Alam, GMT+8" is a sentence the screen builds, and because a place is the
  * thing a person scans for when checking whether a session is theirs.
+ *
+ * Confirmed against `core.me_profile()`'s FINAL shape (022, PR #46 2551359,
+ * sql-022):
+ *   - `lastSignInAt` — required WITHIN a present `session`. `session` itself
+ *     goes `null` instead of carrying this field as null — see `MeProfile`.
+ *   - `browser`, `place` — always `null`. Nothing in the schema stores a
+ *     user-agent string or a geo-located place; there is no path to ever
+ *     populate these two, not just a gap today.
+ *   - `twoFactorEnabled` — `EXISTS(auth.mfa_factors …)`, guarded on
+ *     `to_regclass('auth.mfa_factors')` (unconfirmed against hosted GoTrue
+ *     from the SQL lane's own access), `null` if the table is not there.
+ *   - `activeSessions` — `COUNT(auth.sessions)` for the caller, no guard: a
+ *     plain number, always present within a present `session`.
  */
 export interface ProfileSession {
   lastSignInAt: Timestamp;
   /** e.g. `Chrome`. */
-  browser: string;
+  browser?: string;
   /** e.g. `Shah Alam`. */
-  place: string;
+  place?: string;
   /** Sessions open right now, this one included. */
   activeSessions: number;
-  twoFactorEnabled: boolean;
+  twoFactorEnabled?: boolean;
 }
 
 /**
