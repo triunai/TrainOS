@@ -1,7 +1,10 @@
 import type {
   ActionRequest,
   ActionResponse,
+  Agent,
   AgentEval,
+  AgentPauseRequest,
+  AgentRegistryResponse,
   ApprovalBulkDecideRequest,
   ApprovalDecideRequest,
   ApprovalDecideResponse,
@@ -12,10 +15,15 @@ import type {
   AttendanceExport,
   AttendanceSheet,
   AuditEntry,
+  AutomationRun,
   BadgeCounts,
   Budget,
+  BudgetScope,
+  BudgetWrite,
   ChannelConsent,
+  ClaimPacket,
   CollectionRule,
+  ComplianceChecksResponse,
   ComplianceRule,
   Contact,
   Engagement,
@@ -25,7 +33,12 @@ import type {
   EnquiryExtractionPatch,
   FollowUp,
   HrdcDeadline,
+  HrdcDocumentAttachRequest,
+  HrdcPacketExport,
   KnowledgeSource,
+  KnowledgeSourceCheckResponse,
+  KnowledgeSourceCreateRequest,
+  KnowledgeSourceReingestResponse,
   ListResponse,
   MessageChannel,
   MessageDraft,
@@ -36,6 +49,7 @@ import type {
   Opportunity,
   Organisation,
   OrganisationRelations,
+  OrganisationSuggestion,
   PageRequest,
   Participant,
   PipelineConfig,
@@ -48,16 +62,21 @@ import type {
   ProposalSectionRegenerateResponse,
   ProposalSectionWrite,
   ProposalsVsWonReport,
+  ProviderKey,
   Quotation,
   QuotationWrite,
   RateCard,
+  RoutingEntry,
+  RoutingResponse,
   RuleChangeSet,
+  RunDeadLetterRequest,
   SavedView,
   Template,
   TemplateType,
   Tna,
   TnaRecommendationsResponse,
   Trainer,
+  UsageResponse,
 } from "@trainos/contract";
 
 import type { Result } from "./errors";
@@ -130,6 +149,15 @@ export type SectionInput = Idempotent<{ title: string; body?: string }>;
 /** `PUT /v1/proposals/{id}/sections/{n}`. */
 export type SectionWriteInput = Idempotent<ProposalSectionWrite>;
 
+/** `GET /v1/ai/usage?groupBy=`. Kept local so the signature fits one line (027). */
+export type UsageGroupBy = "TIER" | "AGENT" | "ACTION_TYPE";
+
+/** `POST /v1/hrdc/packets/{id}/documents`. */
+export type HrdcDocumentAttachInput = Idempotent<HrdcDocumentAttachRequest>;
+
+/** `POST /v1/compliance/rules`. */
+export type ComplianceRuleCreateInput = Idempotent<Omit<ComplianceRule, "status">>;
+
 /**
  * The methods, grouped by golden-path order then by the §8 view reads.
  *
@@ -153,8 +181,13 @@ export interface TrainOsClient {
   getFollowUpDraft(id: string, channel: MessageChannel): Promise<Result<MessageDraft>>;
   getOrganisation(id: string): Promise<Result<Organisation>>;
   getOrganisationRelations(id: string): Promise<Result<OrganisationRelations>>;
+  searchOrganisations(query: string): Promise<Result<Organisation[]>>;
+  getOrganisationSuggestions(id: string): Promise<Result<ListResponse<OrganisationSuggestion>>>;
   getOpportunity(id: string): Promise<Result<Opportunity>>;
+  listOpportunities(query: PageRequest): Promise<Result<ListResponse<Opportunity>>>;
   getTna(id: string): Promise<Result<Tna>>;
+  listTnas(query: PageRequest): Promise<Result<ListResponse<Tna>>>;
+  reopenTna(id: string): Promise<Result<Tna>>;
   getTnaRecommendations(id: string): Promise<Result<TnaRecommendationsResponse>>;
   listEngagements(query: PageRequest): Promise<Result<ListResponse<Engagement>>>;
   getEngagement(id: string): Promise<Result<Engagement>>;
@@ -199,12 +232,44 @@ export interface TrainOsClient {
   getProgrammeDeliveries(id: string): Promise<Result<ListResponse<ProgrammeDelivery>>>;
   putProgramme(id: string, body: Partial<Programme>): Promise<Result<Programme>>;
   listHrdcDeadlines(): Promise<Result<ListResponse<HrdcDeadline>>>;
+  getClaimPacket(id: string): Promise<Result<ClaimPacket>>;
+  attachPacketDocument(id: string, input: HrdcDocumentAttachInput): Promise<Result<ClaimPacket>>;
+  exportClaimPacket(id: string): Promise<Result<HrdcPacketExport>>;
+  getComplianceChecks(engagementRef: string): Promise<Result<ComplianceChecksResponse>>;
   listCollectionRules(): Promise<Result<ListResponse<CollectionRule>>>;
   listComplianceRules(): Promise<Result<ListResponse<ComplianceRule>>>;
   getComplianceRule(id: string): Promise<Result<ComplianceRule>>;
+  createComplianceRule(input: ComplianceRuleCreateInput): Promise<Result<ComplianceRule>>;
   listRuleChanges(): Promise<Result<ListResponse<RuleChangeSet>>>;
+  getRuleChangeSet(documentId: string): Promise<Result<RuleChangeSet>>;
   listEvals(): Promise<Result<ListResponse<AgentEval>>>;
   listKnowledgeSources(): Promise<Result<ListResponse<KnowledgeSource>>>;
   listAiTiers(): Promise<Result<ListResponse<ModelTier>>>;
   listBudgets(): Promise<Result<ListResponse<Budget>>>;
+
+  /* §10 automation: agents and runs (027). */
+  listAgents(): Promise<Result<AgentRegistryResponse>>;
+  pauseAgent(id: string, body: AgentPauseRequest): Promise<Result<Agent>>;
+  listRuns(query: PageRequest): Promise<Result<ListResponse<AutomationRun>>>;
+  getRun(id: string): Promise<Result<AutomationRun>>;
+  retryRun(id: string, from?: "checkpoint"): Promise<Result<AutomationRun>>;
+  deadLetterRun(id: string, body: RunDeadLetterRequest): Promise<Result<AutomationRun>>;
+
+  /* §17 knowledge (027). */
+  createKnowledgeSource(body: KnowledgeSourceCreateRequest): Promise<Result<KnowledgeSource>>;
+  checkKnowledgeSource(id: string): Promise<Result<KnowledgeSourceCheckResponse>>;
+  reingestKnowledgeSource(id: string): Promise<Result<KnowledgeSourceReingestResponse>>;
+  /* Fixture-only (data/library.ts) — no contract type, so this is untyped
+     past ListResponse. See 027's PR body. */
+  listLibraryAssets(query: PageRequest): Promise<Result<ListResponse<unknown>>>;
+
+  /* §17 AI settings: routing, providers (read), usage, budgets, tenant (027). */
+  getAiRouting(): Promise<Result<RoutingResponse>>;
+  putAiRouting(entries: RoutingEntry[]): Promise<Result<RoutingResponse>>;
+  listProviders(): Promise<Result<ListResponse<ProviderKey>>>;
+  getUsage(period?: string, groupBy?: UsageGroupBy): Promise<Result<UsageResponse>>;
+  putBudget(scope: BudgetScope, key: string, body: BudgetWrite): Promise<Result<Budget>>;
+  /* Fixture-only (data/tenant.ts) — §1 keeps tenancy out of the API surface,
+     so there is no contract type. See 027's PR body. */
+  getTenant(): Promise<Result<unknown>>;
 }
