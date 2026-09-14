@@ -440,6 +440,11 @@ COMMENT ON FUNCTION core.get_proposals_vs_won(integer) IS
 
 -- Grants unchanged: 022:757-761 already grants both to authenticated only,
 -- and CREATE OR REPLACE on an unchanged signature does not reset them.
+-- check:grants M2: 022 already revokes both from PUBLIC/anon (not
+-- authenticated, which is meant to call these) and CREATE OR REPLACE does
+-- not reset it; reasserted here so this migration is self-contained.
+REVOKE ALL ON FUNCTION core.get_executive_dashboard(text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION core.get_proposals_vs_won(integer) FROM PUBLIC, anon;
 
 -- ═══ Verify ═════════════════════════════════════════════════════════════
 

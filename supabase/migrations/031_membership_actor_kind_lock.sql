@@ -242,6 +242,13 @@ COMMENT ON FUNCTION app.principal_claims(uuid) IS
   'and there is no such session for a genuine SYSTEM principal. Fail-closed '
   'backstop under 031''s trigger, which is the primary control.';
 
+-- check:grants M2: 002 already revokes this from PUBLIC/anon/authenticated
+-- (002:620) and CREATE OR REPLACE on an unchanged signature does not reset
+-- it, but a per-file, per-function REVOKE is asserted here too so this
+-- migration is self-contained under the new rule rather than depending on a
+-- reader knowing 002's line number.
+REVOKE ALL ON FUNCTION app.principal_claims(uuid) FROM PUBLIC, anon, authenticated;
+
 -- ── Verify ──────────────────────────────────────────────────────────────
 
 DO $verify$

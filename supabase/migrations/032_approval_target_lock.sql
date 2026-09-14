@@ -456,7 +456,12 @@ $fn$;
 
 -- Grants unchanged: 011:3408-3413 already grants app.decide_approval to
 -- service_role only, and CREATE OR REPLACE on an unchanged signature does not
--- reset existing grants.
+-- reset existing grants. That revoke, though, is a DYNAMIC one — 011 §13
+-- loops `EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, '
+-- 'anon, authenticated', v_function)` over an array of bare names, which no
+-- static tool (including check:grants M2) can read as a literal REVOKE.
+-- Asserted here too, literally, so this migration is self-contained under M2.
+REVOKE ALL ON FUNCTION app.decide_approval(uuid,text,text,text,text) FROM PUBLIC, anon, authenticated;
 
 -- ═══ H3 · OPP-01 seed, content-repairing rather than presence-only ════════
 
@@ -512,6 +517,11 @@ COMMENT ON FUNCTION app.seed_opportunity_stage_policy(uuid) IS
   'or trigger reads this function''s output to distinguish fresh-insert from '
   'already-correct), so a re-run against an already-correct row is a no-op '
   'in effect, one row touched in bookkeeping.';
+
+-- check:grants M2: 021 already revokes this from PUBLIC/anon/authenticated
+-- (021:3855) and CREATE OR REPLACE does not reset it; reasserted here so
+-- this migration is self-contained.
+REVOKE ALL ON FUNCTION app.seed_opportunity_stage_policy(uuid) FROM PUBLIC, anon, authenticated;
 
 -- Repair pass: every tenant that exists gets its OPP-01 row converged right
 -- now, in this transaction, rather than waiting for the next
