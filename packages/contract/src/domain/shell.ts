@@ -102,7 +102,14 @@ export interface MeProfile {
   staffNumber?: string;
   /** Modules the principal is entitled to — the modal's first chip. */
   moduleCount: number;
-  session: ProfileSession;
+  /**
+   * Optional, and coarser than its own fields' optionality: `core.me_profile()`
+   * answers `session: null` as a WHOLE when it has nothing to report, not an
+   * object with every field null. A reader that unwrapped `session` first and
+   * only then checked its fields would throw on that shape; the block is
+   * gated on `session` itself before anything inside it is read.
+   */
+  session?: ProfileSession;
 }
 
 /** §2 ruled R14 · the tenant as the profile panel names it. */

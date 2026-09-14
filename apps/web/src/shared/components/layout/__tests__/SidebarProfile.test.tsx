@@ -261,4 +261,71 @@ describe("SidebarProfile", () => {
     expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
     expect(panel().getByText("7 modules")).toBeInTheDocument();
   });
+
+  /**
+   * `core.me_profile()` answers `session: null` as a WHOLE when it has
+   * nothing to report, not an object with every field null — sql-022
+   * confirmed this is the actual RPC shape. That is coarser than the
+   * per-field nulls above: nothing inside `session` can be read at all, so
+   * the "Last sign in" line, the "browser · place, GMT+8" line and both
+   * session chips have to be gone together, not fall back to a GMT-only line.
+   */
+  it("omits the whole session block when the server sends session: null, rather than reading into it", async () => {
+    const user = userEvent.setup();
+
+    const transport = {
+      rpc: (name: string) =>
+        name === "me_profile"
+          ? Promise.resolve(
+              okEnvelope({
+                id: "u_test",
+                tenant: { name: "Akademi Perdana", code: "APSB" },
+                location: "Klang Valley",
+                jobTitle: "Senior Sales Consultant",
+                department: "Commercial",
+                email: "amirah.yusof@akademiperdana.my",
+                staffNumber: "APSB-0142",
+                moduleCount: 7,
+                session: null,
+              }),
+            )
+          : Promise.reject(new Error(`unexpected rpc: ${name}`)),
+      from: () => {
+        throw new Error("SidebarProfile does not read a view");
+      },
+    };
+    __setTransportForTests(transport);
+
+    render(
+      <MemoryRouter initialEntries={["/dashboard"]}>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MeContext.Provider value={{ me: FIXTURE_ME, setRole: () => {} }}>
+            <ApiProvider client={createRpcApiClient()}>
+              <I18nProvider>
+                <SidebarProfile collapsed={false} />
+              </I18nProvider>
+            </ApiProvider>
+          </MeContext.Provider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Amirah Yusof/ }));
+
+    const panel = () => within(screen.getByRole("dialog"));
+    await panel().findByText("Senior Sales Consultant");
+
+    /* Neither line the session powers is drawn — not even a GMT-offset-only
+       fallback, which is the per-field-null case's answer, not this one. */
+    expect(panel().queryByText(/Last sign in/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/GMT\+/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/2FA/)).not.toBeInTheDocument();
+    expect(panel().queryByText(/active sessions/)).not.toBeInTheDocument();
+
+    /* Everything that does NOT depend on `session` is unaffected. */
+    expect(panel().getByText("Akademi Perdana · Klang Valley")).toBeInTheDocument();
+    expect(panel().getByText("7 modules")).toBeInTheDocument();
+  });
 });
