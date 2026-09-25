@@ -1,0 +1,75 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "../styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* FORKED FROM TrainOS apps/web/src/index.css — base type scale and the
+   invisible-until-scrolling scrollbar rule. */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    background-color: rgb(var(--canvas));
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  h1 {
+    @apply text-[28px] font-semibold tracking-[-0.02em];
+  }
+
+  h2 {
+    @apply text-[20px] font-semibold tracking-[-0.01em];
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-canvas;
+  }
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  *:hover {
+    scrollbar-color: rgb(var(--border-strong)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--border-strong));
+  }
+}
+
+/* The Univer canvas brings its own stylesheet; this keeps its host box sized. */
+.univer-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+}

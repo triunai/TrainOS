@@ -1,0 +1,36 @@
+-- Rollback for 0002_domain.sql
+set local search_path = tpms, extensions, public;
+
+drop table if exists decisions;
+drop function if exists decisions_audit();
+drop table if exists quotations;
+drop table if exists certificates;
+drop table if exists compliance_vault;
+drop function if exists vault_audit();
+drop function if exists vault_guard();
+drop table if exists magic_link_tokens;
+drop table if exists quiz_banks;
+drop table if exists participant_assessments;
+drop view if exists v_attendance_effective;
+drop table if exists attendance_records;
+drop table if exists package_participants;
+drop table if exists vendor_commitments;
+drop table if exists trainer_engagements;
+drop table if exists training_packages;
+drop function if exists packages_after_write();
+drop function if exists jsonb_row_diff(jsonb, jsonb, text[]);
+drop function if exists packages_refuse_delete();
+drop function if exists packages_before_update();
+drop function if exists packages_before_insert();
+drop function if exists fsm_check(text, text, text, text, text);
+drop table if exists fsm_transitions;
+drop sequence if exists package_code_seq;
+drop table if exists cost_matrix_policies;
+drop table if exists vendors;
+drop table if exists trainers;
+drop table if exists knowledge_chunks;
+drop table if exists course_catalog;
+drop table if exists outbound_campaign_outbox;
+drop table if exists lead_records;
+drop table if exists raw_lead_payloads;
+drop table if exists corporate_clients;

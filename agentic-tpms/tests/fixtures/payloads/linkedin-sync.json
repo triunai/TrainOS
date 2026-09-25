@@ -1,0 +1,17 @@
+{
+  "leadId": "urn:li:leadGenFormResponse:7210987654321",
+  "formId": "urn:li:leadGenForm:1234567",
+  "firstName": "Siti",
+  "lastName": "Rahman",
+  "emailAddress": "siti.rahman@axiata-digital.com",
+  "phoneNumber": "+6019-876 5432",
+  "companyName": "Axiata Digital Services Sdn Bhd",
+  "jobTitle": "Learning & Development Lead",
+  "campaignId": "urn:li:sponsoredCampaign:998877",
+  "li_fat_id": "abc123-li-fat",
+  "answers": [
+    { "question": "What training topic?", "answer": "Data analytics with Power BI" },
+    { "question": "Team size", "answer": "team of 15" },
+    { "question": "Is the programme HRD Corp claimable for you?", "answer": "Yes, we are a levy payer" }
+  ]
+}

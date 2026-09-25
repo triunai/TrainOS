@@ -1,0 +1,19 @@
+{
+  "lead_id": "TeSter-123-ABCDEFGHIJKLMNOPQRSTUVWXYZ-abcdefghijklmnopqrstuvwxyz-0123456789",
+  "user_column_data": [
+    { "column_name": "Full Name", "string_value": "Tan Wei Ming", "column_id": "FULL_NAME" },
+    { "column_name": "User Email", "string_value": "weiming.tan@petrosains-logistics.com.my", "column_id": "EMAIL" },
+    { "column_name": "User Phone", "string_value": "012-345 6780", "column_id": "PHONE_NUMBER" },
+    { "column_name": "Company Name", "string_value": "Petrosains Logistics Sdn Bhd", "column_id": "COMPANY_NAME" },
+    { "column_name": "Which programme are you interested in?", "string_value": "Forklift safety and HIRARC", "column_id": "which_programme_are_you_interested_in?" },
+    { "column_name": "Number of participants", "string_value": "18", "column_id": "number_of_participants" }
+  ],
+  "api_version": "1.0",
+  "form_id": 40000000001,
+  "campaign_id": 20000000001,
+  "google_key": "gk_live_s3cr3t_value",
+  "is_test": false,
+  "gcl_id": "EAIaIQobChMI7r2x0-TEST-GCLID",
+  "adgroup_id": 30000000001,
+  "creative_id": 50000000001
+}

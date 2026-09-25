@@ -1,0 +1,12 @@
+# Optional secondary engine: printed-name cross-check on T3 sheets and text
+# from image / scanned-PDF e-TRiS letters. Never required for attendance.
+#
+# NOTE: paddleocr (via paddlex) depends on opencv-contrib-python, which ships
+# the same `cv2` package as the base requirement opencv-python-headless. The
+# Dockerfile removes both after this install and reinstalls the contrib build
+# alone, so exactly one cv2 is on the path.
+#
+# Models are downloaded on first use from HuggingFace / ModelScope / AIStudio /
+# BOS; an offline host keeps paddleocr=false in /health (see README).
+paddlepaddle>=3.0,<4
+paddleocr>=3.0,<4

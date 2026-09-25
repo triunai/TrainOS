@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.next-*/
+out/
+coverage/
+.scratch/
+.env
+.env.local
+!.env.example
+/storage/
+/test-results/
+*.tsbuildinfo
+next-env.d.ts
+__pycache__/
+*.pyc
+.venv/

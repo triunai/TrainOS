@@ -1,0 +1,37 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": { "display_phone_number": "60380001234", "phone_number_id": "106540352242922" },
+            "contacts": [{ "profile": { "name": "Farid Ismail" }, "wa_id": "60137778899" }],
+            "messages": [
+              {
+                "from": "60137778899",
+                "id": "wamid.HBgLNjAxMzc3Nzg4OTkVAgASGBQzQUY2QjM0RkQ3RjhBMEI4RTg2NAA=",
+                "timestamp": "1758793000",
+                "type": "text",
+                "text": {
+                  "body": "Hi, I'm Farid from Sinaran Manufacturing Sdn Bhd. We need ISO 45001 internal audit training for 20 staff, HRDC claimable. Email me at farid@sinaran-mfg.com.my"
+                },
+                "referral": {
+                  "source_url": "https://fb.me/2kQxYz",
+                  "source_id": "120210987654399999",
+                  "source_type": "ad",
+                  "headline": "HRDC-claimable safety training",
+                  "body": "Zero upfront cost with SBL-Khas",
+                  "ctwa_clid": "ARAkLkA8rmlFeiCktEJQ-QTwRiyYHAFDLMNDBH0CD3qpjd0HR4-TEST"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

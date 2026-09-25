@@ -1,0 +1,344 @@
+/*
+ * FORKED FROM TrainOS — apps/web/src/styles/tokens.css (read-only reference).
+ * Copied verbatim so the TPMS cockpit renders in the same design language:
+ * ink neutrals, electric blue #1F5BFF, charcoal #181A1F, status colour on chips
+ * only. The mission's "emerald / amber / rose" badge palette maps onto the
+ * TrainOS status triplets: emerald -> --success, amber -> --warning,
+ * rose -> --danger. There is still ONE colour mechanism; no second palette.
+ */
+
+/*
+ * TrainOS design tokens — the single source of colour, type, geometry and
+ * elevation for the whole app.
+ *
+ * MECHANISM: every colour is stored as an `R G B` channel triplet, not a hex
+ * string, so Tailwind can compose it with an alpha modifier
+ * (`rgb(var(--token) / <alpha-value>)`) and `bg-ai-tint/60` works. The hex the
+ * design pack specifies is written beside each value; the hex is the source of
+ * truth for a human, the triplet is the same colour for the machine.
+ *
+ * There is ONE colour mechanism. Do not add a second (no hex literals in
+ * components, no parallel Tailwind palette, no inline rgba()).
+ *
+ * THEME: light values live on bare `:root`. `[data-theme="dark"]` redefines
+ * ONLY the tokens the design pack's dark map changes. Dark is a straight token
+ * swap — no component, layout, spacing or geometry changes between themes.
+ *
+ * Source: docs/research/09-design-pack-inventory.md §1.1 (light), §1.2 (dark
+ * map), §1.3 (typography), §1.4 (geometry). Every value below is quoted from
+ * that document except the six marked DERIVED.
+ */
+
+/*
+ * `:root` carries light so an unstamped document is light by default, and
+ * `[data-theme="light"]` carries the same values so a light ISLAND can be
+ * stamped inside a dark page. Without the second selector, pinning a subtree to
+ * light is impossible: nothing would re-assert the light values against the
+ * dark ones inherited from the root. The kit showcase renders every component
+ * twice, one panel following the app theme and one pinned, and needs both
+ * directions to work.
+ */
+:root,
+[data-theme="light"] {
+  /* ---- Surfaces ------------------------------------------------------- */
+  /* The shell ground: the sidebar, the top bar and the canvas band around the
+     content card are ONE surface. Every artboard in the pack draws its
+     1440x900 frame on this single colour — 25 of 25 light frames at #F3F5F7,
+     including the external proposal screen — and nothing sits on a second
+     ground behind the card. `--sidebar` is kept as a name for the same value
+     so `bg-sidebar` still reads as intent at a call site; it must never hold a
+     different colour, or the junction between the rail and the top bar comes
+     back as a visible cutoff. */
+  --canvas: 243 245 247; /* #F3F5F7  the shell ground, behind and around the card */
+  --sidebar: var(--canvas); /* the rail is the same ground, by the pack */
+  --card: 255 255 255; /* #FFFFFF  every content card and popover */
+  /* L1 — the recess INSIDE a card. At the pack's #FAFBFC this sat 1.43 L*
+     below the white card, which is under the threshold at which a flat tint
+     reads as a separate plane at all: the pipeline lane, which is nothing but
+     this surface on a white card, came back reported as invisible. 3.19 L* is
+     the step that makes a borderless lane read as a lane — enough to separate
+     the plane, short of reading as a second card, and it is what lets
+     CLAUDE.md's "surface before borders" rule actually carry the hierarchy.
+     It cannot go darker: `--ink-muted` is the floor for readable text and it
+     measures 4.56:1 here, so a further step would put muted text under AA. */
+  --surface: 244 246 249; /* #F4F6F9  table headers, recessed rails, zebra rows, kanban lanes */
+  --surface-hover: 241 244 248; /* #F1F4F8  row and nav hover */
+
+  /* ---- Lines ---------------------------------------------------------- */
+  --border: 227 231 236; /* #E3E7EC  1px container border */
+  --divider: 236 239 243; /* #ECEFF3  hairline inside a surface */
+  --border-strong: 213 218 225; /* #D5DAE1  emphasised container */
+  --connector: 205 211 219; /* #CDD3DB  sidebar parent-to-child connector line */
+
+  /* ---- Text ----------------------------------------------------------- */
+  --ink: 24 26 31; /* #181A1F  primary text, charcoal accent */
+  --ink-secondary: 80 86 95; /* #50565F  secondary text */
+  --ink-muted: 105 113 124; /* #69717C  floor for text a user must read */
+  --ink-disabled: 163 169 178; /* #A3A9B2  disabled controls and rules ONLY */
+
+  /* ---- Accent (the one accent; blue budget 5-15% per screen) ---------- */
+  --primary: 31 91 255; /* #1F5BFF  electric blue */
+  --primary-hover: 24 73 214; /* #1849D6  hover, links, text-on-tint */
+  --primary-border: 203 216 255; /* #CBD8FF  accent border */
+  --on-primary: 255 255 255; /* #FFFFFF  label on a solid primary button */
+
+  /* The SOLID FILL, split out of `--primary` (verification row 1c).
+     ------------------------------------------------------------------------
+     One token was being asked to do two contradictory jobs. `--primary` is
+     TEXT and MARKS on the shell's own grounds — a link, a selected dot, an
+     `accent-primary` checkbox, a focus ring — so on the dark map it is lifted
+     to #4C82FF to clear 4.5:1 against #171C25. `--primary` was ALSO the fill
+     under a near-white label, and there that same lift is the defect:
+     `--on-primary` #F2F5FF on #4C82FF measures 3.24:1. Darkening the token
+     fixes the fill and breaks the text; lightening it does the reverse. No
+     single value does both, so the fill becomes its own token.
+
+     THE FILL IS THE BRAND HEX, IN BOTH THEMES, and is deliberately NOT
+     redefined in the dark map below. This is not a fourth accent and not a new
+     colour: it is #1F5BFF, the one accent CLAUDE.md names, painted at the one
+     place the rule is about — "solid blue means a human triggered it". A
+     promise that changes colour between themes is a weaker promise.
+
+     Measured, dark theme:
+       --on-primary on the fill          4.82:1  (AA text, was 3.24:1)
+       the fill against --card           3.25:1  (non-text floor 3:1)
+       the fill against --canvas         3.39:1
+       the fill against --surface        3.01:1
+     Light is unchanged in appearance: the fill is the value `--primary`
+     already carried there, and white on it is 5.25:1.
+
+     The HOVER deepens in both themes rather than lifting in dark, for the same
+     reason: lifting is what puts the label under AA. #1849D6 carries
+     `--on-primary` at 6.51:1 light and dark. Its own separation from the dark
+     card drops to 2.41:1, which is a hover state under the reader's cursor
+     with a 6.5:1 label on it, not a resting boundary they have to find. */
+  --primary-solid: 31 91 255; /* #1F5BFF  fill of the one solid button */
+  --primary-solid-hover: 24 73 214; /* #1849D6  that fill, hovered */
+
+  /* ---- AI surfaces (6% tint + the glyph + a label; never a solid fill) - */
+  --ai-tint: 244 247 255; /* #F4F7FF  AI surfaces */
+  --ai-tint-2: 235 241 255; /* #EBF1FF  selected row, active nav, active pill */
+
+  /* The accent BAND — the record header's blue card (tightening brief §15a).
+     Two candidates, both live, so the user can pick on screen; the card reads
+     `--surface-accent-gradient` is the chosen one; `?gradient=alt` swaps in the
+     `-alt` so the two can still be compared on the real screen.
+
+     RULES THIS OBEYS, from the 11:56 correction: blue family only, THREE colour
+     stops maximum, electric #1F5BFF as the anchor, one deeper stop for depth
+     and at most one lighter or violet-leaning stop at the far corner. The
+     interest comes from the angle, the stop positions and the hue pairing, not
+     from more colours.
+
+     WHITE AA IS THE BINDING CONSTRAINT, and it is why neither candidate simply
+     quotes the artboard. Kit.dc.html §07 runs `120deg, #123AC9, #1F5BFF 52%,
+     #4E82FF` and white on that last stop reads 3.52:1 — every label on this
+     card is white at 11px, so the published ramp fails. Sampling white against
+     every percent of each candidate below, the worst point is 4.56:1 (A) and
+     5.25:1 (B).
+
+     No sheen layer. A white overlay would be the obvious way to make these
+     prettier, but it lightens the ramp and A has only 0.06 of headroom over the
+     4.5:1 floor — the sheen would spend the contrast the labels need.
+
+     OPAQUE and identical in both themes. This is a brand surface, not a tint:
+     it does not take its lightness from the card behind it, it does not read
+     `--primary*` (which theme-swap, and whose dark values put white at 3.53:1
+     and 2.44:1), and `[data-theme="dark"]` redefines neither. */
+
+  /* CHOSEN · "violet edge". Electric #1F5BFF anchors the middle; the origin is
+     a near-pure blue and the far corner leans violet rather than simply
+     lighter, so the card gains depth without gaining brightness. Three stops,
+     one hue family, and the interest is in the angle and the stop positions.
+
+     Both stops are pushed as SATURATED as the contrast floor allows rather than
+     muted toward it: mean chroma 0.793, and white clears 5.25:1 at every point
+     along the ramp because the violet end is bounded by HUE rather than by
+     lightness. That headroom is why this one won — the alternate spends its
+     margin getting bright, this one spends it getting deep. */
+  --surface-accent-gradient: linear-gradient(128deg, #0f1fdb 0%, #1f5bff 48%, #5a3df0 100%);
+
+  /* ALTERNATE · "indigo rise", kept live at `?gradient=alt` for comparison. The
+     artboard's shape with real depth at the origin: #0413D6 is 0.98 HSV
+     saturation and still 10.15:1 for white. Mean chroma 0.835, higher than the
+     chosen ramp, but its worst point is 4.72:1 rather than 5.25:1 because it
+     ends bright — and the artboard's own #4E82FF end, which this replaces,
+     measured 3.52:1 and would have failed every white label on the card.
+     Delete this and the `isAltGradient` reader once the comparison is over. */
+  --surface-accent-gradient-alt: linear-gradient(115deg, #0413d6 0%, #1f5bff 55%, #3568f5 100%);
+
+  /* Ink ON the band. Full white for both levels, and the hierarchy is size,
+     weight and tracking rather than opacity — 70% white over #1F5BFF reads
+     3.35:1 and fails AA at the 11px the captions use. Only the hairlines and
+     the ghost-button borders are translucent white; neither carries information
+     the layout does not already carry. */
+  --on-accent: 255 255 255;
+
+  /* Ink for text on a WHITE surface inside the blue card — the label of the
+     solid primary, which on this card is a white button. Theme-stable for the
+     same reason the gradient is, and deliberately not `--primary`: #1F5BFF on
+     white is 5.25:1 and the dark `--primary` #4C82FF is 3.53:1, which fails.
+     This is the gradient's own deep stop, at 10.54:1 on white.
+
+     NOTE ON THE ARTBOARD'S REJECT. Kit.dc.html §11-13 draws Reject as a pale
+     red label directly on the blue. No red reaches 4.5:1 there — #FFDEDB, which
+     is already almost white, peaks at 3.63:1 on the lighter end of the ramp —
+     so there is no danger-on-accent token and there should not be one. On the
+     card the three actions escalate by WEIGHT, not by hue: Reject borderless,
+     Request changes white-outlined, Approve solid white. CLAUDE.md already says
+     status colour lives on chips, and Button's own contract already says the
+     red fill is earned in the confirm step rather than spent on the trigger. */
+  --accent-ink: 15 47 168; /* #0F2FA8 */
+
+  /* The destructive outline ON the accent card. A 1px rule, never a fill, and
+     the label beside it stays white.
+
+     The artboard draws Reject as a pale red LABEL, which cannot work: no red
+     reaches 4.5:1 as text on this blue (#FFDEDB, already almost white, peaks at
+     3.63:1). A 1px border is a non-text affordance and CLAUDE.md sets that floor
+     at 3:1, which is reachable — #FFB3AE measures 3.08:1 at the ramp's electric
+     midpoint and 3.67:1 at its violet end, so it clears everywhere the button
+     can sit. The destructiveness is carried by the outline; the reading is
+     carried by white type. Status colour still never becomes a fill. */
+  --danger-on-accent: 255 179 174; /* #FFB3AE */
+
+  /* ---- Status (chips ONLY — status colour never leaves a chip) -------- */
+  --success: 43 113 83; /* #2B7153 */
+  --success-fill: 236 246 240; /* #ECF6F0 */
+  --success-border: 191 220 203; /* #BFDCCB */
+  --warning: 150 97 25; /* #966119 */
+  --warning-fill: 255 247 232; /* #FFF7E8 */
+  --warning-border: 236 210 156; /* #ECD29C */
+  --danger: 180 64 59; /* #B4403B */
+  --danger-fill: 255 240 239; /* #FFF0EF */
+  --danger-border: 236 194 191; /* #ECC2BF */
+  --info: 70 100 135; /* #466487 */
+  --info-fill: 239 243 247; /* #EFF3F7 */
+  --info-border: 203 215 227; /* #CBD7E3 */
+
+  /* ---- Kit supplements (adopted from the kit's token report) ---------- *
+   * Three values the Kit.dc.html artboards use that §1.1 does not name.
+   * They live here, with every other colour, so there is one token file. */
+
+  /* AI badge hover popover surface. Kit §02: #FCFAFF on a bblue border. NOT
+     --ai-tint — the popover is a half-step warmer than the chip it belongs to,
+     which is what separates the two planes without a shadow. */
+  --ai-popover: 252 250 255; /* #FCFAFF */
+
+  /* The low-confidence dot on an AI badge. Kit §02 draws it amber at #B67422.
+     A non-text affordance, deliberately NOT --warning (#966119), which is a
+     text colour and would darken the dot below the artboard. */
+  --warning-accent: 182 116 34; /* #B67422 */
+
+  /* Allowed-hours peak band. Kit §10 shades a peak hour #F3E3C6 against
+     --ai-tint-2 for an allowed one. A band, not a status: it says "expensive
+     window", which is a routing fact. */
+  --peak: 243 227 198; /* #F3E3C6 */
+
+  /* ---- Identity ------------------------------------------------------- */
+  --avatar-surface: 24 26 31; /* #181A1F  charcoal circle, light initials */
+
+  /* ---- Typography (§1.3, and the tightening brief §1) ------------------ *
+   * TWO ROLES, NOT TWO FONTS. The names say what a face is FOR, which is the
+   * whole point of the brief's §1: `--font-ui` carries everything a person
+   * reads as language — labels, table headings, section captions, sidebar
+   * captions, metric captions, money and counts — and `--font-code` carries
+   * only machine-ish values a person may have to transcribe or match
+   * character by character: record references (`PRG-0031`), versions, hashes,
+   * tool names, diffs, error codes, `⌘K`.
+   *
+   * A NUMBER IS NOT A MACHINE VALUE. `RM 214,300` is money a human reads, and
+   * §1 is explicit that numbers align with `tabular-nums` rather than with a
+   * monospace face. Reaching for `font-mono` to line a column up is the single
+   * commonest way mono spreads across a screen, and `tabular-nums` on the UI
+   * font does the same job without changing the voice.
+   *
+   * The Tailwind class names stay `font-sans` and `font-mono` — that is
+   * Tailwind's own vocabulary, the way `bg-card` is — and `tailwind.config.ts`
+   * reads these two tokens. */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- Geometry (§1.4) — 8px grid with a 4px half-step ---------------- */
+  --radius-control: 8px;
+  /* The tightening brief's §6 middle step: a panel that sits INSIDE a card and
+     must read as a panel rather than a second card. Between control and card
+     on purpose — 10px is the radius at which a full-width band stops looking
+     like a button and stops looking like a nested card. */
+  --radius-panel: 10px;
+  --radius-card: 12px;
+  --radius-card-lg: 14px; /* RecordHeader card and some shells */
+  --radius-modal: 18px; /* profile modal */
+  --radius-pill: 999px;
+
+  /* ---- Shell dimensions (§5) ------------------------------------------ */
+  --shell-sidebar-width: 240px;
+  --shell-rail-width: 64px; /* collapsed sidebar, flyout on hover */
+  --shell-topbar-height: 56px;
+  --shell-content-inset: 14px;
+
+  /* ---- Elevation — no shadow heavier than these ----------------------- */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+
+[data-theme="dark"] {
+  /* Only the tokens the §1.2 map changes. Geometry, type and spacing are
+     identical across themes by design. */
+
+  /* 27 of 27 dark frames in the pack draw the shell ground at #131820. */
+  --canvas: 19 24 32; /* #131820  the shell ground, behind and around the card */
+  --sidebar: var(--canvas);
+  --card: 23 28 37; /* #171C25 */
+  /* L1 in dark, held at the same 3.3 L* step above `--card` that light holds
+     below it, so a lane reads as a lane in both themes and the theme stays a
+     straight token swap. The pack's #1B212B was 2.42 L* and drifts under the
+     step for the same reason the light value did. */
+  --surface: 28 35 45; /* #1C232D */
+  --surface-hover: 30 37 48; /* #1E2530 */
+
+  --border: 42 50 62; /* #2A323E */
+  --divider: 35 42 53; /* #232A35 */
+  --border-strong: 58 67 80; /* #3A4350 */
+  --connector: 42 50 62; /* DERIVED — the pack gives no dark connector value */
+
+  --ink: 232 235 240; /* #E8EBF0  never pure white — reduces halation */
+  --ink-secondary: 170 178 190; /* #AAB2BE */
+  --ink-muted: 137 146 160; /* #8992A0  AA on the dark card at 12px */
+  --ink-disabled: 92 101 114; /* #5C6572 */
+
+  --primary: 76 130 255; /* #4C82FF  lifted to keep 4.5:1 on dark */
+  --primary-hover: 157 187 255; /* #9DBBFF */
+  --primary-border: 46 68 120; /* #2E4478 */
+  --on-primary: 242 245 255; /* #F2F5FF  the accent never carries dark text */
+
+  --ai-tint: 22 33 58; /* #16213A */
+  --ai-tint-2: 27 42 71; /* #1B2A47 */
+
+  --success: 111 211 160; /* #6FD3A0 */
+  --success-fill: 18 42 32; /* #122A20 */
+  --success-border: 31 74 54; /* DERIVED — the pack gives no dark chip border */
+  --warning: 232 180 92; /* #E8B45C */
+  --warning-fill: 42 33 18; /* DERIVED — the pack gives only the dark text colour */
+  --warning-border: 74 58 24; /* DERIVED */
+  --danger: 240 138 133; /* #F08A85 */
+  --danger-fill: 46 25 24; /* DERIVED — the pack gives only the dark text colour */
+  --danger-border: 77 40 37; /* DERIVED */
+  --info: 157 190 228; /* #9DBEE4 */
+  --info-fill: 22 32 43; /* #16202B */
+  --info-border: 36 55 74; /* DERIVED */
+
+  /* Kit supplements. All three DERIVED — the pack's dark map covers none of
+     them. Each sits at the same lightness step from its dark neighbour as the
+     light value sits from its light neighbour. */
+  --ai-popover: 28 34 52; /* one step warmer than --ai-tint */
+  --warning-accent: 232 180 92; /* tracks --warning on dark, already a lifted amber */
+  --peak: 74 58 24; /* the amber band at dark-surface lightness */
+
+  --avatar-surface: 42 50 62; /* #2A323E  raised graphite chip, light initials */
+
+  /* Shadows deepen rather than lighten; elevation is carried by surface
+     lightness, not heavier borders. */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.55);
+  --shadow-raised: 0 1px 3px rgb(0 0 0 / 0.55);
+}

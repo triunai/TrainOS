@@ -1,0 +1,58 @@
+# Single-tenant deployment: Postgres 16 + pgvector, the cockpit, the task
+# worker, and the Level 2 extraction microservice. `docker compose up`.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: tpms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tpms}
+      POSTGRES_DB: tpms
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tpms"]
+      interval: 5s
+      retries: 10
+
+  ocr:
+    build:
+      context: ./services/paddleocr
+      args:
+        WITH_PADDLE: ${WITH_PADDLE:-0}
+    environment:
+      TPMS_OCR_DEV: ${TPMS_OCR_DEV:-0}
+    ports:
+      - "8866:8866"
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tpms:${POSTGRES_PASSWORD:-tpms}@db:5432/tpms
+      PADDLEOCR_URL: http://ocr:8866
+      TPMS_STORAGE_DIR: /app/storage
+    volumes:
+      - vault:/app/storage
+    ports:
+      - "3100:3100"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["npm", "run", "worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tpms:${POSTGRES_PASSWORD:-tpms}@db:5432/tpms
+      PADDLEOCR_URL: http://ocr:8866
+      TPMS_STORAGE_DIR: /app/storage
+    volumes:
+      - vault:/app/storage
+    depends_on:
+      app:
+        condition: service_started
+
+volumes:
+  pgdata:
+  vault:
