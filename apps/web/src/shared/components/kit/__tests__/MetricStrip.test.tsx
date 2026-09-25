@@ -124,8 +124,9 @@ describe("MetricStrip accent", () => {
   it("writes every level in full white, never a translucent muted step", () => {
     const { container } = render(<MetricStrip variant="accent" cells={cells} />);
 
-    /* 70% white over #1F5BFF is 3.35:1 and fails AA at the 11px the captions
-       use, so there is no muted step on this surface at all. */
+    /* 70% white over the accent fill (#D53900 on this branch) fails AA at
+       the 11px the captions use, so there is no muted step on this surface
+       at all. */
     expect(container.querySelector(".text-ink-muted")).toBeNull();
     expect(screen.getByText("Value").className).toContain("text-[rgb(var(--on-accent))]");
     expect(screen.getByText("RM 48,000").className).toContain("text-[rgb(var(--on-accent))]");

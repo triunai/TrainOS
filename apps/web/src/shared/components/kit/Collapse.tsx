@@ -98,7 +98,7 @@ export interface DisclosureButtonProps {
   /**
    * `"onAccent"` puts the button on the vivid accent band, where the ink pair
    * and the hover fill both have to come from white rather than from the ink
-   * ramp — an ink-muted chevron on #1F5BFF is invisible.
+   * ramp — an ink-muted chevron on the accent fill (#D53900 on this branch) is invisible.
    */
   tone?: "ink" | "onAccent";
   className?: string;

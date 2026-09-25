@@ -22,11 +22,12 @@ const BASE =
 /*
  * `primary` fills with `--primary-solid`, not `--primary`.
  *
- * The two are the same electric #1F5BFF in light. They diverge in dark, where
- * `--primary` is lifted to #4C82FF so the accent can be READ as text and as a
- * mark on #171C25 — and a near-white label on that lifted value measures
- * 3.24:1. The fill keeps the brand hex in both themes and carries
- * `--on-primary` at 4.82:1. See the `--primary-solid` note in `tokens.css`.
+ * The two are the same red-orange #D53900 (orange-accent trial) in light.
+ * They diverge in dark, where `--primary` is lifted to #FF4806 so the accent
+ * can be READ as text and as a mark on the dark card — and a near-white
+ * label on that lifted value fails AA. The fill keeps the brand hex in both
+ * themes and carries `--on-primary` at 4.62:1. See the `--primary-solid`
+ * note in `tokens.css`.
  */
 const KIND = {
   primary:

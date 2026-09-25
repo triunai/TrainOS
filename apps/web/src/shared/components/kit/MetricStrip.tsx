@@ -125,8 +125,9 @@ export function MetricCell({
           SECTION_LABEL,
           "whitespace-nowrap",
           /* On the accent band the muted step cannot be a lighter ink or a
-             lower opacity — both fail AA at this size over #1F5BFF. Full
-             white, and the caption/value hierarchy is carried by the size and
+             lower opacity — both fail AA at this size over the accent fill
+             (#D53900 on this branch). Full white, and the caption/value
+             hierarchy is carried by the size and
              weight difference SECTION_LABEL leaves against the value below:
              12px medium muted under 16px semibold ink. */
           onAccent && "text-[rgb(var(--on-accent))]",
@@ -293,11 +294,12 @@ export function MetricStrip({ cells, bare, variant = "default", className }: Met
  * §15a is explicit that there is exactly one. This is the strip, re-inked.
  *
  * WHAT CHANGES from the default strip is only ink and rules: full white
- * throughout (a translucent muted step fails AA on this blue — 70% white over
- * #1F5BFF is 3.35:1 at the 11px the captions use), and a single white-at-15%
- * vertical hairline between cells instead of the `--border` rule, because a
- * neutral grey line over a saturated blue reads as a seam between two surfaces
- * rather than a division within one.
+ * throughout (a translucent muted step fails AA on this accent — 70% white
+ * over the fill (#D53900 on this branch) is well under 4.5:1 at the 11px the
+ * captions use), and a single white-at-15% vertical hairline between cells
+ * instead of the `--border` rule, because a neutral grey line over a
+ * saturated accent reads as a seam between two surfaces rather than a
+ * division within one.
  *
  * WHAT DOES NOT CHANGE is the cell: same component, same caption/value/subline
  * anatomy, same mini bar, same drill rules. §15a's "no per-cell slabs" is honoured
