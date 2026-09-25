@@ -9,6 +9,7 @@ import { PDF_MIME } from "../documents/pdf";
 import { DomainError } from "../domain/errors";
 import { transition, transitionInTx, type TransitionOutcome } from "../fsm/service";
 import { checkTransition } from "../fsm/transitions";
+import { draftProposalKey } from "../queue/keys";
 import { enqueue } from "../queue/queue";
 import { storeDocument } from "../storage/vault";
 import {
@@ -392,7 +393,7 @@ export async function requestRevision(packageId: string, note: string, actor: Ac
     await enqueue(tx, {
       type: "commercial.draft_proposal",
       payload: { packageId, revisionNote: text },
-      idempotencyKey: `draft:${packageId}:v${outcome.pkg.version}`,
+      idempotencyKey: draftProposalKey(packageId, outcome.pkg.version),
     });
     return outcome;
   });

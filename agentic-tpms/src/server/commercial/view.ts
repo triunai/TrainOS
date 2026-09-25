@@ -2,6 +2,7 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { type Actor, db, schema, withTx } from "../db/client";
 import type { Decision, Quotation, TrainingPackage } from "../db/schema";
 import { DomainError } from "../domain/errors";
+import { draftProposalKey } from "../queue/keys";
 import { enqueue } from "../queue/queue";
 import { EDITABLE_CELLS, QUOTE_CELLS } from "@/server/pricing";
 import type { TrainerEngagement, VendorCommitment } from "../packages/snapshot";
@@ -80,7 +81,7 @@ export async function requestProposalDraft(packageId: string, actor: Actor): Pro
     const taskId = await enqueue(tx, {
       type: "commercial.draft_proposal",
       payload: { packageId },
-      idempotencyKey: `draft:${packageId}:v${pkg.version}`,
+      idempotencyKey: draftProposalKey(packageId, pkg.version),
     });
     return { taskId };
   });

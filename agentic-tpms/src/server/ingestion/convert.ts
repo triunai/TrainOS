@@ -5,6 +5,7 @@ import type { Client, Lead, TrainingPackage } from "@/server/db/schema";
 import { recordAudit } from "@/server/audit/ledger";
 import { DELIVERY_MODES } from "@/server/domain/stages";
 import { DomainError } from "@/server/domain/errors";
+import { draftProposalKey } from "@/server/queue/keys";
 import { enqueue } from "@/server/queue/queue";
 import { normaliseMalaysianPhone } from "./phone";
 import { lockLead } from "./queries";
@@ -89,7 +90,7 @@ export async function convertLeadToPackage(leadId: string, input: PackageFields,
       details: `Converted to ${pkg.packageCode}`,
       metadata: { package_id: pkg.id, package_code: pkg.packageCode, client_id: client.id, client_created: created, from: lead.status },
     });
-    const proposalTaskId = await enqueueProposal(tx, pkg.id);
+    const proposalTaskId = await enqueueProposal(tx, pkg);
     return { package: pkg, client, clientCreated: created, proposalTaskId };
   });
 }
@@ -172,8 +173,8 @@ async function insertPackage(
   return pkg;
 }
 
-async function enqueueProposal(tx: Tx, packageId: string): Promise<string | null> {
-  return enqueue(tx, { type: "commercial.draft_proposal", payload: { packageId }, idempotencyKey: `proposal:${packageId}` });
+async function enqueueProposal(tx: Tx, pkg: TrainingPackage): Promise<string | null> {
+  return enqueue(tx, { type: "commercial.draft_proposal", payload: { packageId: pkg.id }, idempotencyKey: draftProposalKey(pkg.id, pkg.version) });
 }
 
 // ---------------------------------------------------------------- manual creation
@@ -192,7 +193,7 @@ export async function createPackageDirect(
     const client = await one<{ id: string }>(tx, sql`select id from tpms.corporate_clients where id = ${clientId}::uuid`);
     if (!client) throw new DomainError("CLIENT_NOT_FOUND", `Client ${clientId} not found`);
     const pkg = await insertPackage(tx, clientId, fields, actor, null);
-    const proposalTaskId = draftProposal === false ? null : await enqueueProposal(tx, pkg.id);
+    const proposalTaskId = draftProposal === false ? null : await enqueueProposal(tx, pkg);
     return { package: pkg, proposalTaskId };
   });
 }

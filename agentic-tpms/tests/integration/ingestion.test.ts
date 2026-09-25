@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { db, one, rows } from "@/server/db/client";
 import type { Task } from "@/server/db/schema";
+import { requestProposalDraft } from "@/server/commercial";
 import { DomainError } from "@/server/domain/errors";
 import { convertLeadToPackage, createClient, createPackageDirect } from "@/server/ingestion/convert";
 import { type IngestResult, ingestLead, ingestWebhook } from "@/server/ingestion/ingest";
@@ -414,6 +415,11 @@ describe("lead -> package conversion", () => {
     const [proposal] = await tasks("commercial.draft_proposal", result.package.id);
     expect(proposal.payload).toEqual({ packageId: result.package.id });
     expect(result.proposalTaskId).toBe(proposal.id);
+    // "Draft now" on the Commercial desk enqueues under the same key
+    // (draftProposalKey), so it cannot start a second L3 run for this version.
+    const again = await requestProposalDraft(result.package.id, ALEX);
+    expect(again.taskId).toBeNull(); // enqueue answers null when the key already exists
+    expect(await tasks("commercial.draft_proposal", result.package.id)).toHaveLength(1);
 
     await expect(
       convertLeadToPackage(leadId, { title: "Again", deliveryMode: "IN_HOUSE", pax: 10 }, ALEX),

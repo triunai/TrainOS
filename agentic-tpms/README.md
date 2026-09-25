@@ -25,9 +25,10 @@ spends money or commits the provider.
 6. [The state machines](#the-state-machines)
 7. [The three HITL gates](#the-three-hitl-gates)
 8. [Compliance: audit ledger, vault, PII](#compliance)
-9. [Testing](#testing)
-10. [Repository map](#repository-map)
-11. [Honest limitations](#honest-limitations)
+9. [The golden path](#the-golden-path)
+10. [Testing](#testing)
+11. [Repository map](#repository-map)
+12. [Honest limitations](#honest-limitations)
 
 ---
 
@@ -79,17 +80,22 @@ Python FastAPI + OpenCV (+ optional PaddleOCR PP-StructureV3) for L2 extraction.
 ## Running it
 
 Requirements: Node 20+, PostgreSQL 16 with the `vector` and `pgcrypto` extensions, Python 3.11
-for the extraction service.
+for the extraction service. A non-superuser role cannot create extensions: run
+`create extension vector; create extension pgcrypto;` once as a superuser (on Supabase, enable
+them under Database › Extensions).
 
 ```bash
 cd agentic-tpms
 cp .env.example .env            # set DATABASE_URL and the three secrets
 npm install
 npm run db:migrate              # applies db/migrations/*.sql (checksummed)
-npm run db:seed                 # fictional demo portfolio across every stage
+npm run db:seed                 # demo portfolio: 13 packages across every stage, 3 open leads
 npm run dev                     # cockpit on http://localhost:3100
 npm run worker                  # task worker (T-14 checks, OCR, claims, retention …)
 ```
+
+`npm run db:seed -- --reset` drops and re-migrates first. Stop the worker while seeding, because
+the seed runs each package's due tasks itself.
 
 The extraction service (Track B attendance, grant letters):
 
@@ -98,8 +104,13 @@ cd services/paddleocr
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt            # OpenCV grid engine (always on)
 pip install -r requirements-paddle.txt     # optional: PaddleOCR PP-StructureV3
-uvicorn app.main:app --port 8866
+uvicorn app.main:app --port 8866          # or: npm run ocr:dev (dev mode on)
 ```
+
+With `TPMS_OCR_DEV=1` the service also synthesises a filled-in scan of a printed Form T3.
+The attendance tab offers **Simulate a filled scan**, so the whole OCR path can be demoed
+without paper. Without the service, Track B degrades cleanly: digital T3 from Track A
+signatures, and grant letters fall back to manual entry.
 
 Or everything at once: `docker compose up` (Postgres + pgvector, cockpit, worker, OCR service).
 
@@ -170,6 +181,18 @@ for that actor and reason. **No transition accepts an `AGENT` actor.**
 
 All pending gates appear on the **Decisions desk** (`/decisions`).
 
+**Where things are**
+
+| Area | Screens |
+|---|---|
+| Demand | `/leads` inbox and lead detail (L1 verdict, triage, micro-TNA, convert) · `/outbox` outbound batches (approve before anything sends) · `/clients` |
+| Operations | `/operations` board (Trainer × Venue × e-TRiS lights) · `/operations/new` · a package record with its Overview, Commercials, Grant, Logistics, Participants, Attendance, Claims & AP and Audit tabs |
+| Delivery | `/delivery/attendance` cross-package desk · `/delivery/certificates` · on the package: the Univer exception grid, T3 scans, EXIF photos, magic links and a projected room QR |
+| Participants (public, no login) | `/c/<token>` check-in with a signature · `/c/s/<token>` room QR · `/q/<token>` pre/post quiz · `/verify/<serial>` certificate check |
+| Finance | `/finance/claims` queue with the 6-month window · `/finance/payables` pay-when-paid AP · `/finance/retention` T+14/T+90/T+300 drafts · KPIs on Home |
+| Knowledge | `/knowledge/catalog` semantic search · `/knowledge/cost-matrix` versioned Allowable Cost Matrix |
+| System | `/system/agents` · `/system/queue` · `/system/audit` · `/settings/ai/keys` (BYOK) · `/settings/ai/usage` (cost breakdown) |
+
 ## Compliance
 
 - **Audit ledger** (`tpms.audit_ledger`): each row's checkpoint is
@@ -186,15 +209,62 @@ All pending gates appear on the **Decisions desk** (`/decisions`).
 - **Cost policy**: the Allowable Cost Matrix is versioned policy data, not code
   (`tpms.cost_matrix_policies`, editable in Knowledge › Cost matrix).
 
+## The golden path
+
+`npm run golden-path` drives **one package from an inbound web-form lead to `SETTLED_CLOSED`**.
+It uses only the domain services and the worker's own task handlers, with no inserts into
+domain tables. It prints a step table, then checks the audit chain, the task queue and the
+certificates. An abridged real run:
+
+```
+ #  step               operational                        financial
+ 2  lead.ingest        lead → LEAD_INGESTED                —            WEB_FORM, lead.triage queued in-transaction
+ 3  lead.triage        lead → TRIAGE_REVIEW                —            L1 template: P(levy) 0.769 → review band
+ 4  lead.qualify       lead → LEAD_QUALIFIED_TNA           —            operator; WhatsApp micro-TNA reply parsed
+ 5  lead.convert       — → DRAFT                           — → ESTIMATE
+ 6  proposal.draft     DRAFT                               ESTIMATE     pgvector course match, trainer + venue, Univer price
+ 7  gate1.approve      DRAFT → QUOTED                      ESTIMATE     operator edits a cell; line-item diff in the audit row
+ 8  client.accept      QUOTED → GRANT_PENDING              → GRANT_RESERVED   e-TRiS dossier compiled
+ 9  grant.letter       GRANT_PENDING                       GRANT_RESERVED     L2 extraction: grant ID, amount, pax
+10  grant.confirm      → GRANT_APPROVED                    GRANT_RESERVED     viability.t14_check scheduled
+11  logistics.lock     → OPERATIONS_LOCKED                 GRANT_RESERVED     trainer confirmed, BEO signed
+13  t14                → READY_FOR_EVENT                   GRANT_RESERVED     ⏩ fast-forward: T-14 check run now
+14  links              READY_FOR_EVENT                     GRANT_RESERVED     12 magic links; PRE quiz mean 45%
+15  delivery.start     → DELIVERY_IN_PROGRESS              GRANT_RESERVED     ⚠ STARTED_EARLY (operator, ahead of day 1)
+16  attendance.day1    …                                                    Track A e-signatures + one room-QR check-in
+17  t3.day1            …                                                    paper T3 → OCR: 23/24 present, 1 UNSIGNED exception
+18  t3.resolve         …                                                    operator resolves it ABSENT with a note
+21  photos             …                                                    EXIF GPS 0.03 km from venue → VERIFIED ×2
+23  delivery.complete  → DELIVERY_COMPLETED                → CLAIM_NOT_READY   ⚠ SOME_BELOW_80; 11 certificates VALID
+24  claim.evidence     DELIVERY_COMPLETED                  → CLAIM_READY      JD/14 verified; tax invoice + claim pack
+25–28 claim …          DELIVERY_COMPLETED                  → SUBMITTED → QUERIED → SUBMITTED → APPROVED
+29  claim.remit        DELIVERY_COMPLETED                  → REMITTED         pay-when-paid opens; PVs drafted
+30  ap.settle          DELIVERY_COMPLETED                  → SETTLED_CLOSED   PVs paid (bank ref + receipt)
+31  retention.t14      DELIVERY_COMPLETED                  SETTLED_CLOSED     ⏩ T+14 executive pack drafted, approved, sent
+Audit chain: INTACT · dead-lettered tasks: 0
+```
+
+**What "fast-forward" means.** Some tasks are due in the future. The T-14 check, the T+14
+retention run and the day-1 `delivery.start` are run immediately through their real
+handlers, and each is logged with ⏩. Participant actions (check-ins, quizzes) pass an
+explicit `now` inside each session window. Delivery is started early by an operator, which
+the L0 guard allows with a recorded `STARTED_EARLY` warning. Nothing is backdated: training
+dates are real future dates.
+
 ## Testing
 
 ```bash
 npm run typecheck
 npm test                      # unit + integration, against TEST_DATABASE_URL (rebuilt per file)
-npm run golden-path           # full lifecycle end to end against a scratch database
+npm run test:ocr              # the extraction service's own pytest suite
+npm run golden-path           # full lifecycle end to end against DATABASE_URL
+npm run audit:verify          # recompute the audit hash chain from genesis
 ```
 
-Integration tests run against real Postgres because the guards under test live in triggers.
+Integration tests run against real Postgres, because the guards under test live in triggers.
+At the time of writing: **522 Vitest tests in 51 files** (including the golden path and the
+seed) and **28 pytest tests**, all passing. `next build` is green for all 47 routes.
+`npm test` reads `.env` itself; variables already set in the environment win.
 
 ## Repository map
 
@@ -212,6 +282,8 @@ agentic-tpms/
   src/server/{operations,participants,resources}/    Stage 4
   src/server/{attendance,extraction,assessments,certificates}/   Stage 5
   src/server/{claims,finance,retention}/     Stages 6–7
+  src/server/demo/                 golden path + demo portfolio (real services only)
+  scripts/                         migrate, seed, golden-path, audit-verify, screenshots, docs:fsm
   services/paddleocr/              L2 extraction microservice (FastAPI)
   worker/                          task worker entry point
   tests/                           unit + integration (real Postgres)
@@ -231,3 +303,16 @@ agentic-tpms/
 - **No scraping.** Outbound signal enrichment accepts permissioned lists and webhooks only.
 - **Identity.** Operators authenticate with HTTP Basic (`TPMS_BASIC_AUTH`) and pick "acting as";
   SSO is deferred.
+- **OCR accuracy on real paper is unmeasured.** The Form T3 reader (OpenCV template grid, with
+  fiducials and a QR on every page) is calibrated on synthesised scans. PaddleOCR PP-StructureV3
+  is optional; its model hosts were unreachable from the build sandbox, so the printed-name
+  cross-check has not run end to end. The design sends anything ambiguous to the exception desk
+  rather than guessing. Every unsigned cell is an exception an operator confirms.
+- **Room-QR identity is light by design.** It uses a name plus the last 4 NRIC digits, with an
+  in-memory, per-process limit on failed attempts. Put a shared rate limiter in front before
+  running several instances.
+- **The demo scan is synthesised.** The golden path's Track B sheet is rendered by the service's
+  dev synthesiser from the real template, not photographed.
+- **Cost-matrix corrections.** Revising bands publishes a new version. The in-place correction
+  refuses a version any quotation cites, but it checks without a lock, so a quotation priced in
+  the same instant could slip past it.

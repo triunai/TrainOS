@@ -263,7 +263,7 @@ export const COURSE_SEEDS: readonly CourseSeed[] = [
     level: 1,
     nextCourseCode: "DATA-201",
     durationDays: 1,
-    specialties: ["artificial intelligence", "generative ai", "productivity", "digital transformation"],
+    specialties: ["artificial intelligence", "generative ai", "ai productivity", "productivity", "digital transformation"],
     learningOutcomes: [
       outcome("Explain what generative AI tools can and cannot do reliably at work"),
       outcome("Write structured prompts to draft, summarise and analyse business documents"),

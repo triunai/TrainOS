@@ -33,3 +33,41 @@ Python FastAPI extraction service (services/paddleocr).
    No hex, no rgba() in components. Status colour lives on chips only.
 10. **Tests hit real Postgres.** `useTestDatabase()` rebuilds the database named
     by `TEST_DATABASE_URL`; parallel lanes each use their own database.
+11. **RSC boundaries.** A `"use client"` module exports only components;
+    constants and helpers it shares with server code live in a server-safe
+    file beside it (`shell/theme.ts`, `kit/buttonStyles.ts`,
+    `finance/tones.ts`). Never pass a plain function prop from a server
+    component to a client one; server actions are fine. Pass domain results
+    through `plain()` first.
+12. **Date text is deterministic.** Format dates only with `src/lib/dates.ts`.
+    It takes numbers from `Intl` and words from fixed tables, because Node and
+    Chromium ICU disagree ("Sept" vs "Sep") and a mismatch breaks hydration.
+13. **Shared idempotency keys live in `src/server/queue/keys.ts`.** A key
+    that two modules spell differently silently stops deduping.
+14. **One pattern, one component.** If a screen needs a variant of a kit
+    component, extend the kit (e.g. `PillTabNav`'s `label`) rather than
+    growing a second copy. `components/finance/VoucherList` is the one voucher
+    list.
+
+## Working in parallel
+
+- Each lane gets its own database (`tpms_ui_N`, `tpms_test_*`), its own
+  `TPMS_STORAGE_DIR`, and its own dev server with
+  `NEXT_DIST_DIR=.next-<lane> next dev -p <port>`.
+- `next dev` appends its dist dir's types to `tsconfig.json` `include`. Never
+  commit that line.
+- Commit with explicit pathspecs and never rewrite history (the root
+  `CLAUDE.md` R9/R12).
+- Creating a database from scratch needs the `vector` and `pgcrypto`
+  extensions, which a non-superuser role cannot create. Create them once as a
+  superuser, or clone an already-migrated database
+  (`create database x template tpms`).
+
+## The golden path
+
+`src/server/demo/` drives one package from an inbound lead to SETTLED_CLOSED
+using only the domain services and the worker's own handlers.
+`npm run golden-path` prints the step table. `npm run db:seed -- --reset`
+builds the demo portfolio from the same steps. Tasks due in the future are
+fast-forwarded through their handlers, and every fast-forward is logged with
+⏩. Change a service's contract and this path breaks first.
