@@ -18,3 +18,4 @@ export {
   type CourseHit,
   type SearchOptions,
 } from "./service";
+export { listCourses, type CourseSummary } from "./listing";

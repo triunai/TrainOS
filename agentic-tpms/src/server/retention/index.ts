@@ -7,3 +7,4 @@ export { runRetention, RETENTION_AGENT, CADENCE_LABEL, type RetentionRunResult }
 export { approveRetention, skipRetention, type RetentionEdits, type ApproveRetentionResult } from "./dispatch";
 export { recommendNextCourse, type LadderRecommendation } from "./ladder";
 export { loadOutcomeData, type OutcomeData, type KirkpatrickCohort } from "./execPack";
+export { listRetentionDesk, type RetentionDeskRow } from "./desk";

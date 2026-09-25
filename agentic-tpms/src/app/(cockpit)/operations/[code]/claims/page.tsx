@@ -1,8 +1,8 @@
 import { Banner, Body, Checkbox, DefinitionList, Field, MoneyInput, Section, Select, StatusChip, TextArea, TextInput, type StatusTone } from "@/components/kit";
+import { VoucherList } from "@/components/finance/VoucherList";
 import { ActionButton } from "@/components/actions/ActionButton";
 import { FormDrawer } from "@/components/forms/FormDrawer";
 import { DOCUMENT_LABEL } from "@/components/packages/VaultTable";
-import { formatDate } from "@/lib/dates";
 import { formatRM, fromSen } from "@/lib/money";
 import { plain } from "@/server/actions";
 import { claimChecklist } from "@/server/claims";
@@ -27,7 +27,6 @@ import {
 export const dynamic = "force-dynamic";
 
 const DOC_TONE: Record<string, StatusTone> = { PENDING: "warning", VERIFIED: "success", FLAGGED: "danger" };
-const PV_TONE: Record<string, StatusTone> = { DRAFT: "warning", APPROVED: "info", PAID: "success", CANCELLED: "neutral" };
 const CLAIM_STAGES = new Set(["CLAIM_NOT_READY", "CLAIM_READY", "CLAIM_SUBMITTED", "QUERIED", "APPROVED", "REMITTED", "SETTLED_CLOSED"]);
 
 export default async function ClaimsPage({ params }: { params: { code: string } }) {
@@ -206,40 +205,13 @@ export default async function ClaimsPage({ params }: { params: { code: string } 
             {vouchers.length === 0 ? (
               <p className="px-4 py-3 text-[13px] text-ink-muted">Payment vouchers are drafted when HRD Corp remits. The database refuses a PAID voucher before that.</p>
             ) : (
-              <ul>
-                {vouchers.map((v) => (
-                  <li key={v.id} className="flex flex-wrap items-center gap-3 border-b border-divider px-4 py-3 last:border-b-0">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-medium text-ink">
-                        {v.payeeName} <span className="font-normal text-ink-muted">· {v.payeeType.toLowerCase()}</span>
-                      </p>
-                      <p className="text-[12px] text-ink-secondary">
-                        <span className="font-mono">{v.pvNumber}</span> · agreed {formatRM(v.agreedAmount)} · final {formatRM(v.finalAmount)}
-                        {v.bankReference ? ` · ref ${v.bankReference}` : ""}
-                        {v.paidAt ? ` · paid ${formatDate(v.paidAt)}` : ""}
-                      </p>
-                    </div>
-                    <StatusChip tone={PV_TONE[v.status] ?? "neutral"}>{v.status.toLowerCase()}</StatusChip>
-                    {v.status === "DRAFT" ? (
-                      <FormDrawer trigger="Adjust & approve" triggerKind="ghost" title={`Approve ${v.pvNumber}`} subtitle={v.payeeName} action={adjustVoucherAction} submitLabel="Approve voucher">
-                        <input type="hidden" name="pvId" value={v.id} />
-                        <p className="text-[13px] text-ink-secondary">Agreed {formatRM(v.agreedAmount)}. Enter verified adjustments; leave blank to approve as agreed.</p>
-                        <Field label="Mileage (add)"><MoneyInput name="mileage" /></Field>
-                        <Field label="Travel allowance (add)"><MoneyInput name="allowance" /></Field>
-                        <Field label="Withholding tax (deduct)"><MoneyInput name="wht" /></Field>
-                      </FormDrawer>
-                    ) : null}
-                    {v.status === "APPROVED" ? (
-                      <FormDrawer trigger="Record payment" triggerKind="ghost" title={`Pay ${v.pvNumber}`} subtitle={`${v.payeeName} · ${formatRM(v.finalAmount)}`} action={markPaidAction} submitLabel="Record payment">
-                        <input type="hidden" name="pvId" value={v.id} />
-                        <p className="text-[13px] text-ink-secondary">Make the transfer in your bank, then record its reference and attach the receipt. Both are mandatory.</p>
-                        <Field label="Bank transfer reference"><TextInput name="bankReference" required /></Field>
-                        <Field label="Transfer receipt"><input name="receipt" type="file" accept="application/pdf,image/*" required className="text-[13px]" /></Field>
-                      </FormDrawer>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+              <VoucherList
+                vouchers={vouchers}
+                payable={fin === "REMITTED"}
+                waitingReason="Vouchers become payable once HRD Corp remits (pay-when-paid)"
+                adjust={adjustVoucherAction}
+                pay={markPaidAction}
+              />
             )}
             {fin === "REMITTED" ? (
               <div className="flex items-center justify-between gap-3 border-t border-divider px-4 py-3">

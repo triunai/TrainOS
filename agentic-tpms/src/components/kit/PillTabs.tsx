@@ -36,9 +36,20 @@ export function PillTabs({ tabs, activeId, onSelect, label = "Views", className 
   );
 }
 
-export function PillTabNav({ tabs, activeId, className }: { tabs: Array<PillTab & { href: string }>; activeId: string; className?: string }) {
+export function PillTabNav({
+  tabs,
+  activeId,
+  className,
+  label = "Record sections",
+}: {
+  tabs: Array<PillTab & { href: string }>;
+  activeId: string;
+  className?: string;
+  /** Accessible name of the nav landmark: what these tabs switch between. */
+  label?: string;
+}) {
   return (
-    <nav aria-label="Record sections" className={cn("inline-flex w-fit max-w-full items-center gap-0.5 overflow-x-auto rounded-panel border border-border bg-surface p-0.5", className)}>
+    <nav aria-label={label} className={cn("inline-flex w-fit max-w-full items-center gap-0.5 overflow-x-auto rounded-panel border border-border bg-surface p-0.5", className)}>
       {tabs.map((tab) => {
         const active = tab.id === activeId;
         return (

@@ -36,3 +36,4 @@ export {
 } from "./http";
 export { LEAD_CHANNELS, LEAD_STATUSES, type LeadChannel, type LeadStatus, type NormalisedLead, type IntakeMeta } from "./types";
 export { handlers } from "./tasks";
+export { listLeadInbox, leadInboxRow, leadAgentRuns, type LeadInboxRow, type L1Verdict, type LeadAgentRun } from "./inbox";

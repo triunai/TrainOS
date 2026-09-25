@@ -35,3 +35,5 @@ export {
   type DsoSummary,
 } from "./kpis";
 export { financeConfig } from "./common";
+export { payablesDesk, payablesState, type PayablesDesk, type PayablesGroup, type PayablesState, type PlannedPayable } from "./payables";
+export { marginByPackage, type PackageMargin } from "./margins";

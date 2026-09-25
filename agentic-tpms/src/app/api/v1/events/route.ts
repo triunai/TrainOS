@@ -17,29 +17,39 @@ export async function GET(request: Request) {
   await client.connect();
   const encoder = new TextEncoder();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
+
+  // Abort (client navigated away) and cancel (the runtime tore the stream
+  // down) both land here, in either order; only the first one does anything.
+  // After it, a late NOTIFY or heartbeat must not enqueue into a closed stream.
+  const shutdown = async (controller?: ReadableStreamDefaultController<Uint8Array>) => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    await client.query("unlisten tpms_events").catch(() => undefined);
+    await client.end().catch(() => undefined);
+    try {
+      controller?.close();
+    } catch {
+      /* already closed by the runtime */
+    }
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: string, data: string) => controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data}\n\n`));
+      const write = (chunk: string) => {
+        if (!closed) controller.enqueue(encoder.encode(chunk));
+      };
       client.on("notification", (msg) => {
-        if (msg.channel === "tpms_events" && msg.payload) send("domain", msg.payload);
+        if (msg.channel === "tpms_events" && msg.payload) write(`event: domain\ndata: ${msg.payload}\n\n`);
       });
       await client.query("listen tpms_events");
-      send("ready", JSON.stringify({ at: new Date().toISOString() }));
-      heartbeat = setInterval(() => controller.enqueue(encoder.encode(": keep-alive\n\n")), 25_000);
-      request.signal.addEventListener("abort", async () => {
-        clearInterval(heartbeat);
-        try {
-          await client.query("unlisten tpms_events");
-        } finally {
-          await client.end().catch(() => undefined);
-          controller.close();
-        }
-      });
+      write(`event: ready\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+      heartbeat = setInterval(() => write(": keep-alive\n\n"), 25_000);
+      request.signal.addEventListener("abort", () => void shutdown(controller));
     },
     async cancel() {
-      clearInterval(heartbeat);
-      await client.end().catch(() => undefined);
+      await shutdown();
     },
   });
 
