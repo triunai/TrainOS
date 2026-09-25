@@ -38,7 +38,7 @@ export default async function CockpitLayout({ children }: { children: ReactNode 
   const operator = currentOperator();
   const badges = await badgeCounts();
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-sidebar">
+    <div className="relative flex h-dvh w-full overflow-hidden bg-sidebar">
       <Sidebar
         badges={badges}
         operator={{ id: operator.id, name: operator.name, roleLabel: operator.roleLabel }}

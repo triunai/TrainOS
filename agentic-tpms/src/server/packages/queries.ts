@@ -19,6 +19,8 @@ export interface PackageCard extends ReadinessFacts {
   quotedAmount: string;
   grantApprovedAmount: string | null;
   pendingDecisions: number;
+  /** Gate 2 halted vendor auto-confirmations: the cohort was below minimum at T-14. */
+  viabilityHalted: boolean;
   updatedAt: Date;
 }
 
@@ -32,6 +34,7 @@ export async function listPackageCards(opts: { includeClosed?: boolean; search?:
                p.start_date as "startDate", p.end_date as "endDate", p.pax_estimate as "paxEstimate",
                p.quoted_amount as "quotedAmount", p.grant_approved_amount as "grantApprovedAmount",
                p.etris_grant_id as "etrisGrantId", p.updated_at as "updatedAt",
+               p.vendor_autoconfirm_halted as "viabilityHalted",
                te.status as "trainerStatus", (te.ttt_cert_verified and t.ttt_verified) as "trainerTttVerified",
                te.hold_expiry_date as "trainerHoldExpiry", t.full_name as "trainerName",
                vc.status as "venueStatus", vc.postponement_deadline as "venuePostponementDeadline", v.name as "venueName",

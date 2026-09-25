@@ -33,7 +33,10 @@ export default async function OperationsBoardPage() {
     lights: readinessLights(c, today),
   }));
   const live = board.filter((c) => !["CANCELLED", "DELIVERY_COMPLETED"].includes(c.operationalStage));
-  const atRisk = live.filter((c) => c.lights.some((l) => l.light === "red")).length;
+  // At risk: a red readiness light, or Gate 2 halted the vendors (cohort
+  // below minimum at T-14) — the tri-factor lights do not show the cohort.
+  const halted = new Set(cards.filter((c) => c.viabilityHalted).map((c) => c.id));
+  const atRisk = live.filter((c) => halted.has(c.id) || c.lights.some((l) => l.light === "red")).length;
   const pipeline = live.reduce((acc, c) => acc + Number(c.amount || 0), 0);
   const lanes = OPS_STAGES.filter((s) => s !== "CANCELLED").map((stage) => ({ id: stage, cards: board.filter((c) => c.operationalStage === stage) }));
 

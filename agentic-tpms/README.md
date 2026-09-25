@@ -18,17 +18,18 @@ spends money or commits the provider.
 ## Contents
 
 1. [What it does](#what-it-does)
-2. [Architecture](#architecture)
-3. [Running it](#running-it)
-4. [Bring your own key](#bring-your-own-key)
-5. [Moving to Supabase](#moving-to-supabase)
-6. [The state machines](#the-state-machines)
-7. [The three HITL gates](#the-three-hitl-gates)
-8. [Compliance: audit ledger, vault, PII](#compliance)
-9. [The golden path](#the-golden-path)
-10. [Testing](#testing)
-11. [Repository map](#repository-map)
-12. [Honest limitations](#honest-limitations)
+2. [Screenshots](#screenshots)
+3. [Architecture](#architecture)
+4. [Running it](#running-it)
+5. [Bring your own key](#bring-your-own-key)
+6. [Moving to Supabase](#moving-to-supabase)
+7. [The state machines](#the-state-machines)
+8. [The three HITL gates](#the-three-hitl-gates)
+9. [Compliance: audit ledger, vault, PII](#compliance)
+10. [The golden path](#the-golden-path)
+11. [Testing](#testing)
+12. [Repository map](#repository-map)
+13. [Honest limitations](#honest-limitations)
 
 ---
 
@@ -43,6 +44,24 @@ spends money or commits the provider.
 | 5 · Delivery | Dual-track attendance: zero-auth JWT magic links and session QR (Track A), Form T3 scans through the OpenCV/PaddleOCR microservice (Track B), photo EXIF checks, Kirkpatrick L2 pre/post quizzes, tamper-evident PDF certificates with public QR verification. | Operator resolves attendance exceptions on the exception desk. |
 | 6 · Claims & AP | HRD Corp tax invoice, SBL-Khas claim pack (ZIP + manifest of hashes), claim FSM through query/approval/remittance, payment vouchers, bank reference + receipt, unit economics. | **Gate 3** — operator approves the claim pack, then confirms every disbursement. |
 | 7 · Retention | T+14 executive delivery pack, T+90 curriculum laddering, T+300 levy-utilisation alert — drafted by L4, dispatched only on approval. | Operator approves each proposal. |
+
+## Screenshots
+
+Captured from the seeded demo (`npm run db:seed -- --reset`). `npm run screenshots` photographs
+every screen (each nav route, and every record tab for one package per stage) into
+`test-results/screenshots`. It fails if any screen errors, shows the Next error overlay, or lets
+the page scroll sideways; the latest run covered 86 screens with 0 failures. Every company,
+person and reference below is fictional.
+
+| | |
+|---|---|
+| ![Home](docs/screenshots/home.png) **Home**: pipeline by stage, cash and margin, what is waiting on you | ![Package board](docs/screenshots/operations-board.dark.png) **Package board**: Trainer × Venue × e-TRiS readiness lights (dark theme) |
+| ![Gate 1](docs/screenshots/gate1-commercials.png) **Gate 1**: the AI quotation on the Univer Allowable Cost Matrix worksheet, awaiting approval | ![Gate 2](docs/screenshots/gate2-logistics.png) **Gate 2**: T-14 viability below the minimum cohort, with postpone / pivot to ROT / cancel / proceed |
+| ![Attendance](docs/screenshots/attendance-desk.dark.png) **Attendance exception desk**: Univer grid with the Track A / Track B readings, the OCR exception and the completion guard | ![Claims tab](docs/screenshots/claims-tab.png) **Gate 3 (claim)**: evidence checklist, claim pack and the claim FSM |
+| ![Payables](docs/screenshots/finance-payables.dark.png) **Gate 3 (AP)**: pay-when-paid vouchers across packages | ![Claims queue](docs/screenshots/finance-claims.png) **Claims queue**: every open claim with its 6-month window |
+| ![Leads](docs/screenshots/leads.png) **Leads**: every channel, L1 verdicts with their provenance | ![Outbox](docs/screenshots/outbox.png) **Outbound outbox**: nothing sends until a named operator approves the batch |
+| ![Decisions](docs/screenshots/decisions.png) **Decisions desk**: every pending human gate in one queue | ![Usage](docs/screenshots/ai-usage.png) **BYOK usage & cost**: spend by tier, agent, model and package |
+| ![Check-in](docs/screenshots/public-checkin.png) **Participant check-in** (phone, zero-login magic link) | ![Verify](docs/screenshots/public-verify.png) **Public certificate verification** (masked NRIC, SHA-256 checks) |
 
 ## Architecture
 

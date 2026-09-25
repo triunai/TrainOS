@@ -32,7 +32,11 @@ export function KanbanBoard<T>({
   className?: string;
 }) {
   return (
-    <div className={cn("flex min-h-0 flex-1 gap-4 overflow-x-auto overflow-y-hidden", className)}>
+    // `relative` makes this scroller the containing block for absolutely
+    // positioned descendants (the cards' sr-only light labels). Without it
+    // they escape the clip and widen the whole document, so a sideways swipe
+    // shifts the entire cockpit.
+    <div className={cn("relative flex min-h-0 flex-1 gap-4 overflow-x-auto overflow-y-hidden", className)}>
       <ol aria-label={label} className="flex min-h-0 flex-1 items-stretch gap-4">
         {lanes.map((lane) => (
           <li key={lane.id} aria-label={lane.label} data-lane-id={lane.id} className="flex min-h-0 w-[288px] min-w-[272px] shrink-0 flex-col">

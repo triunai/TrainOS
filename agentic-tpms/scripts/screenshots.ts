@@ -1,7 +1,10 @@
 /**
  * Screenshot gallery of every cockpit screen, for the README and for review.
  *
- *   npm run screenshots -- [--base http://localhost:3100] [--out docs/screenshots] [--dark]
+ *   npm run screenshots -- [--base http://localhost:3100] [--out test-results/screenshots] [--dark]
+ *
+ * The full run (every screen, ~100 per theme) goes to a gitignored folder;
+ * the README's curated set lives in docs/screenshots.
  *
  * Reads the nav tree (src/lib/nav.ts), so a screen added to the nav is captured
  * without editing this file. Package-record tabs are captured for the first
@@ -23,7 +26,7 @@ const flag = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const BASE = (flag("base") ?? process.env.TPMS_PUBLIC_BASE_URL ?? "http://localhost:3100").replace(/\/$/, "");
-const OUT = flag("out") ?? "docs/screenshots";
+const OUT = flag("out") ?? "test-results/screenshots";
 const THEMES: Array<"light" | "dark"> = args.includes("--dark") ? ["light", "dark"] : ["light"];
 const CHROME = process.env.PLAYWRIGHT_CHROMIUM ?? "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const PACKAGE_TABS = ["", "commercials", "grant", "logistics", "participants", "attendance", "claims", "audit"];
@@ -49,13 +52,38 @@ async function packageCodes(): Promise<Array<{ code: string; stage: string }>> {
 }
 
 async function capture(page: Page, route: string, file: string): Promise<string | null> {
-  const response = await page.goto(`${BASE}${route}`, { waitUntil: "networkidle", timeout: 60_000 });
+  // Not "networkidle": cockpit pages hold an EventSource (/api/v1/events) open
+  // on purpose, so the network never goes idle. Load, then let it settle.
+  const response = await page.goto(`${BASE}${route}`, { waitUntil: "load", timeout: 60_000 });
   const status = response?.status() ?? 0;
   if (status >= 400) return `${route} answered HTTP ${status}`;
   if (await page.locator("nextjs-portal, [data-nextjs-dialog]").count()) return `${route} rendered the Next error overlay`;
+  // The cockpit is a fixed-height app shell: the document itself must never
+  // scroll sideways. An absolutely positioned descendant with no positioned
+  // ancestor escapes overflow clipping and does exactly that (found on the
+  // board: off-screen cards' sr-only labels).
+  const sideways = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  if (sideways > 1) return `${route} scrolls sideways by ${sideways}px`;
   // The Univer canvas and live refresh settle after network idle.
-  await page.waitForTimeout(route.includes("commercials") || route.includes("attendance") ? 2500 : 500);
+  await page.waitForTimeout(route.includes("commercials") || route.includes("attendance") ? 3000 : 800);
+  // The cockpit scrolls inside its own panel, not the document, so a
+  // "full page" capture stops at the viewport. Grow the viewport to the
+  // panel's content first (capped), capture, then restore it.
+  const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
+  const hidden = await page.evaluate(() =>
+    Math.max(
+      0,
+      ...Array.from(document.querySelectorAll<HTMLElement>("main, main *"))
+        .filter((el) => /(auto|scroll)/.test(getComputedStyle(el).overflowY))
+        .map((el) => el.scrollHeight - el.clientHeight),
+    ),
+  );
+  if (hidden > 0) {
+    await page.setViewportSize({ width: viewport.width, height: Math.min(viewport.height + hidden, 8000) });
+    await page.waitForTimeout(400);
+  }
   await page.screenshot({ path: file, fullPage: true });
+  if (hidden > 0) await page.setViewportSize(viewport);
   return null;
 }
 

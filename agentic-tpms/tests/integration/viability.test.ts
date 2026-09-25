@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addDays, todayMY } from "@/lib/dates";
 import { db, rows, schema } from "@/server/db/client";
 import { assessViability, cancelPackage, confirmReschedule, resolveViability, runT14Check } from "@/server/operations/viability";
+import { listPackageCards } from "@/server/packages/queries";
 import { releaseTestDatabase, useTestDatabase } from "../helpers/db";
 import { ALEX } from "../helpers/factory";
 import { buildPackageAt } from "../helpers/lifecycle";
@@ -42,6 +43,9 @@ describe("Gate 2 — T-14 viability", () => {
     const [decision] = await db().select().from(schema.decisions).where(eq(schema.decisions.subjectRef, pkg.packageCode));
     expect(decision.gate).toBe("GATE2_VIABILITY");
     expect(decision.options.map((o) => o.id)).toEqual(["POSTPONE", "PIVOT_ROT", "CANCEL", "PROCEED"]);
+    // The board counts it as at risk: the tri-factor lights say nothing about the cohort.
+    const card = (await listPackageCards()).find((c) => c.id === pkg.id);
+    expect(card?.viabilityHalted).toBe(true);
   });
 
   it("skips a stale task after the dates moved", async () => {
