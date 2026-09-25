@@ -80,3 +80,28 @@ export {
 } from "./sessions";
 export { analyseSignaturePath, validateSignaturePath, SIGNATURE_MAX_BYTES } from "./signature";
 export { handlers } from "./tasks";
+// UI lane 1 read models (screens only; no writes, no new policy).
+export {
+  type AttendanceDeskRow,
+  type EvidenceTaskState,
+  type EvidenceTaskType,
+  type LinkIssuanceSummary,
+  DESK_OPERATIONAL_STAGES,
+  PRE_CLAIM_FINANCIAL_STAGES,
+  EVIDENCE_TASK_TYPES,
+  attendanceDesk,
+  dayOfDelivery,
+  evidenceTaskStates,
+  linkIssuanceSummary,
+  t3DaysCovered,
+} from "./desk";
+export {
+  type AttendanceWorkbook,
+  ATTENDANCE_SHEET_ID,
+  TRACK_LETTER,
+  buildAttendanceWorkbook,
+  cellText,
+  columnLetter,
+  shortDay,
+} from "./workbook";
+export { type QuizPurpose, QUIZ_PURPOSES, quizPurposeOf, verifyQuizToken } from "./quizLink";

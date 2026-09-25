@@ -96,7 +96,10 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(funct
         sheetRef.current = sheet;
         // Token colours are CSS variables; the canvas needs literal values, so
         // read the computed tokens rather than hardcoding a second palette.
-        const css = getComputedStyle(document.documentElement);
+        // Univer paints on an always-white canvas, so the host is a light
+        // island (tokens.css): read ITS tokens, not the page's, or a dark-mode
+        // fill lands on white and the cell text becomes unreadable.
+        const css = getComputedStyle(host.current);
         const token = (name: string) => `rgb(${css.getPropertyValue(name).trim().split(/\s+/).join(",")})`;
         for (const cell of inputCells) sheet.getRange(cell).setBackgroundColor(token("--ai-tint-2"));
         for (const cell of flaggedCells) sheet.getRange(cell).setBackgroundColor(token("--warning-fill"));
@@ -121,7 +124,7 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(funct
 
   return (
     <div className="relative overflow-hidden rounded-panel border border-border" style={{ height }}>
-      <div ref={host} className="univer-host" style={{ height }} />
+      <div ref={host} data-theme="light" className="univer-host" style={{ height }} />
       {status !== "ready" ? (
         <div className="absolute inset-0 flex items-center justify-center bg-card text-[13px] text-ink-muted">
           {status === "loading" ? (snapshot ? "Loading the spreadsheet canvas…" : "No worksheet yet") : `Canvas failed to load: ${error}`}

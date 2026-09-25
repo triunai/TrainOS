@@ -54,9 +54,11 @@ export async function raiseDecision(executor: Executor, input: RaiseInput): Prom
     .from(schema.decisions)
     .where(and(eq(schema.decisions.gate, input.gate), eq(schema.decisions.subjectRef, input.subjectRef), eq(schema.decisions.status, "PENDING")));
   if (existing) {
+    // A re-raise describes the subject NOW (e.g. "3 exceptions" becoming "1"),
+    // so the title refreshes with the summary; the SLA clock does not restart.
     const [refreshed] = await executor
       .update(schema.decisions)
-      .set({ summary: input.summary, payload: input.payload ?? existing.payload, options: input.options ?? existing.options })
+      .set({ title: input.title, summary: input.summary, payload: input.payload ?? existing.payload, options: input.options ?? existing.options })
       .where(eq(schema.decisions.id, existing.id))
       .returning();
     return refreshed;

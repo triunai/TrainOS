@@ -15,7 +15,7 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
       <header className="flex h-14 items-center gap-2.5 px-5">
         <span aria-hidden="true" className="h-1 w-5 rounded-pill bg-primary" />
         <span className="text-[14px] font-semibold text-ink">{provider}</span>
-        <span className="text-[12px] text-ink-muted">· HRD Corp registered training provider</span>
+        <span className="hidden text-[12px] text-ink-muted sm:inline">· HRD Corp registered training provider</span>
       </header>
       <main className="mx-auto flex w-full max-w-[560px] flex-1 flex-col px-4 pb-10">{children}</main>
       <footer className="px-5 py-4 text-center text-[11px] text-ink-muted">Zero-login link · your NRIC is never shown in full · verified by SHA-256</footer>
